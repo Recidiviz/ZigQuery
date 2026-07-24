@@ -6,7 +6,10 @@ const std = @import("std");
 // the Homebrew keg (the macOS SDK stub lacks window-function support).
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    const opts: std.Build.StandardOptimizeOptionOptions = .{
+        .preferred_optimize_mode = std.builtin.OptimizeMode.ReleaseFast
+    };
+    const optimize = b.standardOptimizeOption(opts);
 
     const googlesql_root = b.option(
         []const u8,

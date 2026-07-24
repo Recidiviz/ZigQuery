@@ -54,8 +54,14 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
     try db.createScalarFunction("zetasqlite_decode_array", -1, state, decodeArrayTramp);
     try db.createScalarFunction("zetasqlite_group_by", -1, state, groupByTramp);
     try db.createCollation("zetasqlite_collate", state, collateCmp);
+
+    // Aggregate UDFs + option marker functions (Go: aggregateFuncs plus the
+    // distinct/limit/order_by/ignore_nulls/having_* normalFuncs entries).
+    try aggregate.registerAggregates(db, state);
     return state;
 }
+
+const aggregate = @import("aggregate.zig");
 
 // ----------------------------------------------------------------------
 // Generic scalar trampoline (Go setupNormalFuncMap closure equivalent)
@@ -285,6 +291,7 @@ test {
     testing.refAllDecls(@import("fn_string.zig"));
     testing.refAllDecls(@import("fn_array.zig"));
     testing.refAllDecls(@import("fn_misc.zig"));
+    testing.refAllDecls(@import("aggregate.zig"));
 }
 
 const TestEnv = struct {

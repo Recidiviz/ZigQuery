@@ -1,0 +1,630 @@
+//! Port of go-zetasqlite internal/function_aggregate.go (foundation set):
+//! ARRAY, ANY_VALUE, ARRAY_AGG, ARRAY_CONCAT_AGG, AVG, BIT_AND_AGG,
+//! BIT_OR_AGG, BIT_XOR_AGG, COUNT, COUNT_STAR, COUNTIF, LOGICAL_AND,
+//! LOGICAL_OR, MAX, MIN, STRING_AGG, SUM plus sortAggregatedValues.
+//!
+//! Each struct merges Go's bindX closure (argument plucking from the
+//! filtered arg list) with the corresponding FN.Step/Done methods:
+//!   step(self, alloc, values, opt)  — values/opt from parseAggregateOptions
+//!   done(self, alloc) -> Value      — the aggregate result
+//! Zero-initialized structs must produce Go's empty-group results (SUM/MAX/
+//! MIN/AVG -> NULL, COUNT/COUNTIF -> 0, LOGICAL_AND -> true, LOGICAL_OR ->
+//! false, BIT_AND -> -1, BIT_OR -> -1, BIT_XOR -> 1, ARRAY_AGG -> []), since
+//! aggregate.zig calls done() on a fresh struct when SQLite never stepped.
+
+const std = @import("std");
+const bind = @import("bind.zig");
+const agg_opt = @import("aggregate_option.zig");
+
+const value_mod = bind.value_mod;
+pub const Value = bind.Value;
+pub const Error = bind.Error;
+pub const AggregatorOption = agg_opt.AggregatorOption;
+
+/// Go OrderedValue.
+pub const OrderedValue = struct {
+    order_by: []const *agg_opt.AggregateOrderBy = &.{},
+    value: Value,
+};
+
+/// Go sortAggregatedValues: in-place sort by the per-row ORDER BY keys.
+/// Comparison errors are swallowed exactly like Go's `_ =` discards.
+pub fn sortAggregatedValues(values: []*OrderedValue, opt: ?*const AggregatorOption) void {
+    // Go: if opt != nil && len(opt.OrderBy) == 0 { return values }
+    if (opt) |o| {
+        if (o.order_by.len == 0) return;
+    }
+    if (values.len == 0) return;
+    std.mem.sort(*OrderedValue, values, values, orderedLessThan);
+}
+
+fn orderedLessThan(all: []*OrderedValue, i_val: *OrderedValue, j_val: *OrderedValue) bool {
+    // Go indexes values[0].OrderBy for both the loop bound and isAsc.
+    for (all[0].order_by, 0..) |first_order, k| {
+        if (k >= i_val.order_by.len or k >= j_val.order_by.len) break;
+        const iv = i_val.order_by[k].value;
+        const jv = j_val.order_by[k].value;
+        const is_asc = first_order.is_asc;
+        // Go returns isAsc whenever iV is nil; Zig's std sort asserts a
+        // strict weak order, so NULL/NULL must be a tie instead.
+        if (iv == .@"null" and jv == .@"null") continue;
+        if (iv == .@"null") return is_asc;
+        if (jv == .@"null") return !is_asc;
+        if (iv.eq(jv) catch false) continue; // break tie with subsequent fields
+        if (is_asc) {
+            return iv.lt(jv) catch false;
+        } else {
+            return iv.gt(jv) catch false;
+        }
+    }
+    return false;
+}
+
+/// Shared Done tail for ARRAY_AGG / ARRAY_CONCAT_AGG / STRING_AGG:
+/// sort + LIMIT truncation.
+fn sortAndLimit(values: *std.ArrayList(*OrderedValue), opt: ?*const AggregatorOption) void {
+    sortAggregatedValues(values.items, opt);
+    if (opt) |o| {
+        if (o.limit) |limit| {
+            const min_len = @min(@as(i64, @intCast(values.items.len)), limit);
+            values.items.len = @intCast(@max(min_len, 0));
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// ARRAY (Go type ARRAY; used by ARRAY subqueries): collects every value,
+// NULLs included, no ORDER BY/LIMIT handling.
+// ----------------------------------------------------------------------
+
+pub const ARRAY = struct {
+    values: std.ArrayList(Value) = .empty,
+
+    pub fn step(f: *ARRAY, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = opt;
+        if (values.len < 1) return bind.fail("ARRAY: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        try f.values.append(alloc, values[0]);
+    }
+
+    pub fn done(f: *ARRAY, alloc: std.mem.Allocator) Error!Value {
+        return value_mod.arrayValue(alloc, f.values.items);
+    }
+};
+
+// ----------------------------------------------------------------------
+// ANY_VALUE
+// ----------------------------------------------------------------------
+
+pub const ANY_VALUE = struct {
+    const Pair = struct { value: Value, having: Value };
+
+    opt_having: ?*agg_opt.AggregateHavingModifier = null,
+    once: bool = false,
+    value: Value = .@"null",
+    having_values: std.ArrayList(Pair) = .empty,
+
+    pub fn step(f: *ANY_VALUE, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        if (values.len < 1) return bind.fail("ANY_VALUE: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        const v = values[0];
+        if (v == .@"null") return;
+        if (!f.once) {
+            f.once = true;
+            f.opt_having = opt.having_modifier;
+        }
+        if (opt.having_modifier) |having| {
+            try f.having_values.append(alloc, .{ .value = v, .having = having.value });
+            return;
+        }
+        if (f.value == .@"null") f.value = v;
+    }
+
+    pub fn done(f: *ANY_VALUE, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        if (f.opt_having != null and f.having_values.items.len > 0) {
+            const kind = f.opt_having.?.kind;
+            // Find the max/min having value.
+            var target: Value = .@"null";
+            for (f.having_values.items) |pair| {
+                if (pair.having == .@"null") continue;
+                if (target == .@"null") {
+                    target = pair.having;
+                    continue;
+                }
+                const should_update = switch (kind) {
+                    .max => try pair.having.gt(target),
+                    .min => try pair.having.lt(target),
+                };
+                if (should_update) target = pair.having;
+            }
+            // First value whose having value equals the target.
+            if (target != .@"null") {
+                for (f.having_values.items) |pair| {
+                    if (pair.having == .@"null") continue;
+                    if (try pair.having.eq(target)) return pair.value;
+                }
+            }
+        }
+        return f.value;
+    }
+};
+
+// ----------------------------------------------------------------------
+// ARRAY_AGG / ARRAY_CONCAT_AGG
+// ----------------------------------------------------------------------
+
+pub const ARRAY_AGG = struct {
+    opt: ?*const AggregatorOption = null,
+    values: std.ArrayList(*OrderedValue) = .empty,
+
+    pub fn step(f: *ARRAY_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        if (values.len < 1) return bind.fail("ARRAY_AGG: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") {
+            return bind.fail("ARRAY_AGG: input value must be not null", .{}, error.NullValue);
+        }
+        if (f.opt == null) f.opt = opt;
+        const ov = try alloc.create(OrderedValue);
+        ov.* = .{ .order_by = opt.order_by, .value = values[0] };
+        try f.values.append(alloc, ov);
+    }
+
+    pub fn done(f: *ARRAY_AGG, alloc: std.mem.Allocator) Error!Value {
+        sortAndLimit(&f.values, f.opt);
+        const out = try alloc.alloc(Value, f.values.items.len);
+        for (f.values.items, 0..) |ov, i| out[i] = ov.value;
+        return value_mod.arrayValue(alloc, out);
+    }
+};
+
+pub const ARRAY_CONCAT_AGG = struct {
+    opt: ?*const AggregatorOption = null,
+    values: std.ArrayList(*OrderedValue) = .empty,
+
+    pub fn step(f: *ARRAY_CONCAT_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        if (values.len < 1) return bind.fail("ARRAY_CONCAT_AGG: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        // Go bindArrayConcatAgg: NULL input rows are skipped.
+        if (values[0] == .@"null") return;
+        const arr = try values[0].toArray();
+        if (f.opt == null) f.opt = opt;
+        for (arr.values) |vv| {
+            const ov = try alloc.create(OrderedValue);
+            ov.* = .{ .order_by = opt.order_by, .value = vv };
+            try f.values.append(alloc, ov);
+        }
+    }
+
+    pub fn done(f: *ARRAY_CONCAT_AGG, alloc: std.mem.Allocator) Error!Value {
+        sortAndLimit(&f.values, f.opt);
+        const out = try alloc.alloc(Value, f.values.items.len);
+        for (f.values.items, 0..) |ov, i| out[i] = ov.value;
+        return value_mod.arrayValue(alloc, out);
+    }
+};
+
+// ----------------------------------------------------------------------
+// AVG / SUM
+// ----------------------------------------------------------------------
+
+pub const AVG = struct {
+    sum: Value = .@"null",
+    num: i64 = 0,
+
+    pub fn step(f: *AVG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = opt;
+        if (values.len < 1) return bind.fail("AVG: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        const v = values[0];
+        if (v == .@"null") return;
+        f.sum = if (f.sum == .@"null") v else try f.sum.add(alloc, v);
+        f.num += 1;
+    }
+
+    pub fn done(f: *AVG, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        if (f.sum == .@"null") return .@"null";
+        const base = try f.sum.toFloat64();
+        return .{ .float = base / @as(f64, @floatFromInt(f.num)) };
+    }
+};
+
+pub const SUM = struct {
+    sum: Value = .@"null",
+
+    pub fn step(f: *SUM, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = opt;
+        if (values.len < 1) return bind.fail("SUM: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        const v = values[0];
+        if (v == .@"null") return;
+        f.sum = if (f.sum == .@"null") v else try f.sum.add(alloc, v);
+    }
+
+    pub fn done(f: *SUM, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return f.sum;
+    }
+};
+
+// ----------------------------------------------------------------------
+// BIT_AND_AGG / BIT_OR_AGG / BIT_XOR_AGG (Go sentinel initializers kept
+// bug-for-bug: empty groups yield -1 / -1 / 1, and a leading -1 (OR) or
+// 1 (XOR) input is treated as "unset").
+// ----------------------------------------------------------------------
+
+pub const BIT_AND_AGG = struct {
+    value: Value = .{ .int = -1 }, // Go: &BIT_AND_AGG{IntValue(-1)}
+
+    pub fn step(f: *BIT_AND_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = alloc;
+        _ = opt;
+        if (values.len < 1) return bind.fail("BIT_AND: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") return;
+        const i = try values[0].toInt64();
+        const cur = try f.value.toInt64();
+        f.value = .{ .int = cur & i };
+    }
+
+    pub fn done(f: *BIT_AND_AGG, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return f.value;
+    }
+};
+
+pub const BIT_OR_AGG = struct {
+    value: i64 = -1, // Go: &BIT_OR_AGG{-1}
+
+    pub fn step(f: *BIT_OR_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = alloc;
+        _ = opt;
+        if (values.len < 1) return bind.fail("BIT_OR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") return;
+        const i = try values[0].toInt64();
+        if (f.value == -1) {
+            f.value = i;
+        } else {
+            f.value |= i;
+        }
+    }
+
+    pub fn done(f: *BIT_OR_AGG, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return .{ .int = f.value };
+    }
+};
+
+pub const BIT_XOR_AGG = struct {
+    value: i64 = 1, // Go: &BIT_XOR_AGG{1}
+
+    pub fn step(f: *BIT_XOR_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = alloc;
+        _ = opt;
+        if (values.len < 1) return bind.fail("BIT_XOR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") return;
+        const i = try values[0].toInt64();
+        if (f.value == 1) {
+            f.value = i;
+        } else {
+            f.value ^= i;
+        }
+    }
+
+    pub fn done(f: *BIT_XOR_AGG, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return .{ .int = f.value };
+    }
+};
+
+// ----------------------------------------------------------------------
+// COUNT / COUNT_STAR / COUNTIF
+// ----------------------------------------------------------------------
+
+pub const COUNT = struct {
+    count: Value = .@"null",
+
+    pub fn step(f: *COUNT, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = opt;
+        if (values.len < 1) return bind.fail("COUNT: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") return;
+        f.count = if (f.count == .@"null")
+            .{ .int = 1 }
+        else
+            try f.count.add(alloc, .{ .int = 1 });
+    }
+
+    pub fn done(f: *COUNT, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        if (f.count == .@"null") return .{ .int = 0 };
+        return f.count;
+    }
+};
+
+pub const COUNT_STAR = struct {
+    count: i64 = 0,
+
+    pub fn step(f: *COUNT_STAR, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = alloc;
+        _ = values;
+        _ = opt;
+        f.count += 1;
+    }
+
+    pub fn done(f: *COUNT_STAR, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return .{ .int = f.count };
+    }
+};
+
+pub const COUNTIF = struct {
+    count: Value = .@"null",
+
+    pub fn step(f: *COUNTIF, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = opt;
+        if (values.len < 1) return bind.fail("COUNTIF: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") return;
+        if (try values[0].toBool()) {
+            f.count = if (f.count == .@"null")
+                .{ .int = 1 }
+            else
+                try f.count.add(alloc, .{ .int = 1 });
+        }
+    }
+
+    pub fn done(f: *COUNTIF, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        if (f.count == .@"null") return .{ .int = 0 };
+        return f.count;
+    }
+};
+
+// ----------------------------------------------------------------------
+// LOGICAL_AND / LOGICAL_OR (Go returns the running bool even for empty /
+// all-NULL groups: true for AND, false for OR).
+// ----------------------------------------------------------------------
+
+pub const LOGICAL_AND = struct {
+    v: bool = true, // Go: &LOGICAL_AND{true}
+
+    pub fn step(f: *LOGICAL_AND, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = alloc;
+        _ = opt;
+        if (values.len < 1) return bind.fail("LOGICAL_AND: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") return;
+        if (!(try values[0].toBool())) f.v = false;
+    }
+
+    pub fn done(f: *LOGICAL_AND, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return .{ .bool = f.v };
+    }
+};
+
+pub const LOGICAL_OR = struct {
+    v: bool = false,
+
+    pub fn step(f: *LOGICAL_OR, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = alloc;
+        _ = opt;
+        if (values.len < 1) return bind.fail("LOGICAL_OR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") return;
+        if (try values[0].toBool()) f.v = true;
+    }
+
+    pub fn done(f: *LOGICAL_OR, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return .{ .bool = f.v };
+    }
+};
+
+// ----------------------------------------------------------------------
+// MAX / MIN
+// ----------------------------------------------------------------------
+
+pub const MAX = struct {
+    initialized: bool = false,
+    max: Value = .@"null",
+
+    pub fn step(f: *MAX, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = alloc;
+        _ = opt;
+        if (values.len < 1) return bind.fail("MAX: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        const v = values[0];
+        if (v == .@"null") return;
+        if (f.initialized) {
+            if (try v.gt(f.max)) f.max = v;
+        } else {
+            f.max = v;
+            f.initialized = true;
+        }
+    }
+
+    pub fn done(f: *MAX, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return f.max;
+    }
+};
+
+pub const MIN = struct {
+    initialized: bool = false,
+    min: Value = .@"null",
+
+    pub fn step(f: *MIN, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        _ = alloc;
+        _ = opt;
+        if (values.len < 1) return bind.fail("MIN: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        const v = values[0];
+        if (v == .@"null") return;
+        if (f.initialized) {
+            if (try v.lt(f.min)) f.min = v;
+        } else {
+            f.min = v;
+            f.initialized = true;
+        }
+    }
+
+    pub fn done(f: *MIN, alloc: std.mem.Allocator) Error!Value {
+        _ = alloc;
+        return f.min;
+    }
+};
+
+// ----------------------------------------------------------------------
+// STRING_AGG
+// ----------------------------------------------------------------------
+
+pub const STRING_AGG = struct {
+    once: bool = false,
+    delim: []const u8 = "",
+    opt: ?*const AggregatorOption = null,
+    values: std.ArrayList(*OrderedValue) = .empty,
+
+    pub fn step(f: *STRING_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+        if (values.len < 1) return bind.fail("STRING_AGG: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        // Go bindStringAgg: 1 arg -> delim "", else delim = args[1].ToString().
+        var delim: []const u8 = "";
+        if (values.len > 1) delim = try values[1].toString(alloc);
+        const v = values[0];
+        if (v == .@"null") return;
+        if (!f.once) {
+            f.once = true;
+            f.delim = if (delim.len == 0) "," else delim;
+            f.opt = opt;
+        }
+        const ov = try alloc.create(OrderedValue);
+        ov.* = .{ .order_by = opt.order_by, .value = v };
+        try f.values.append(alloc, ov);
+    }
+
+    pub fn done(f: *STRING_AGG, alloc: std.mem.Allocator) Error!Value {
+        sortAndLimit(&f.values, f.opt);
+        if (f.values.items.len == 0) return .@"null"; // Go foundNotNilValue
+        var out: std.ArrayList(u8) = .empty;
+        for (f.values.items, 0..) |ov, i| {
+            if (i > 0) try out.appendSlice(alloc, f.delim);
+            try out.appendSlice(alloc, try ov.value.toString(alloc));
+        }
+        return .{ .string = try out.toOwnedSlice(alloc) };
+    }
+};
+
+// ----------------------------------------------------------------------
+// Tests (impl-level; SQL-level coverage lives in aggregate.zig)
+// ----------------------------------------------------------------------
+
+const testing = std.testing;
+
+test "sortAggregatedValues orders by per-row keys with NULLs first/last" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const no_opt = AggregatorOption{};
+    var with_order = AggregatorOption{};
+    const dummy = try alloc.create(agg_opt.AggregateOrderBy);
+    dummy.* = .{ .value = .@"null", .is_asc = true };
+    const order_slice = try alloc.alloc(*agg_opt.AggregateOrderBy, 1);
+    order_slice[0] = dummy;
+    with_order.order_by = order_slice;
+
+    var items: [4]*OrderedValue = undefined;
+    const keys = [_]Value{ .{ .int = 2 }, .@"null", .{ .int = 3 }, .{ .int = 1 } };
+    for (keys, 0..) |k, i| {
+        const ob = try alloc.create(agg_opt.AggregateOrderBy);
+        ob.* = .{ .value = k, .is_asc = true };
+        const obs = try alloc.alloc(*agg_opt.AggregateOrderBy, 1);
+        obs[0] = ob;
+        const ov = try alloc.create(OrderedValue);
+        ov.* = .{ .order_by = obs, .value = .{ .int = @intCast(i) } };
+        items[i] = ov;
+    }
+
+    // With empty opt.order_by the input order is preserved.
+    var copy = items;
+    sortAggregatedValues(&copy, &no_opt);
+    try testing.expectEqual(@as(i64, 0), copy[0].value.int);
+
+    sortAggregatedValues(&items, &with_order);
+    // NULL key first for ascending, then 1, 2, 3.
+    try testing.expect(items[0].order_by[0].value == .@"null");
+    try testing.expectEqual(@as(i64, 1), items[1].order_by[0].value.int);
+    try testing.expectEqual(@as(i64, 2), items[2].order_by[0].value.int);
+    try testing.expectEqual(@as(i64, 3), items[3].order_by[0].value.int);
+}
+
+test "empty-group done() results mirror Go" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var sum = SUM{};
+    try value_mod.expectValueEqual(.@"null", try sum.done(alloc));
+    var avg = AVG{};
+    try value_mod.expectValueEqual(.@"null", try avg.done(alloc));
+    var max = MAX{};
+    try value_mod.expectValueEqual(.@"null", try max.done(alloc));
+    var min = MIN{};
+    try value_mod.expectValueEqual(.@"null", try min.done(alloc));
+    var count = COUNT{};
+    try value_mod.expectValueEqual(.{ .int = 0 }, try count.done(alloc));
+    var countif = COUNTIF{};
+    try value_mod.expectValueEqual(.{ .int = 0 }, try countif.done(alloc));
+    var count_star = COUNT_STAR{};
+    try value_mod.expectValueEqual(.{ .int = 0 }, try count_star.done(alloc));
+    var land = LOGICAL_AND{};
+    try value_mod.expectValueEqual(.{ .bool = true }, try land.done(alloc));
+    var lor = LOGICAL_OR{};
+    try value_mod.expectValueEqual(.{ .bool = false }, try lor.done(alloc));
+    var band = BIT_AND_AGG{};
+    try value_mod.expectValueEqual(.{ .int = -1 }, try band.done(alloc));
+    var bor = BIT_OR_AGG{};
+    try value_mod.expectValueEqual(.{ .int = -1 }, try bor.done(alloc));
+    var bxor = BIT_XOR_AGG{};
+    try value_mod.expectValueEqual(.{ .int = 1 }, try bxor.done(alloc));
+    var string_agg = STRING_AGG{};
+    try value_mod.expectValueEqual(.@"null", try string_agg.done(alloc));
+    var array_agg = ARRAY_AGG{};
+    const arr = try array_agg.done(alloc);
+    try testing.expectEqual(@as(usize, 0), arr.array.values.len);
+    var any_value = ANY_VALUE{};
+    try value_mod.expectValueEqual(.@"null", try any_value.done(alloc));
+}
+
+test "SUM keeps int typing; AVG divides as float" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const opt = AggregatorOption{};
+
+    var sum = SUM{};
+    try sum.step(alloc, &.{.{ .int = 1 }}, &opt);
+    try sum.step(alloc, &.{.@"null"}, &opt);
+    try sum.step(alloc, &.{.{ .int = 2 }}, &opt);
+    try value_mod.expectValueEqual(.{ .int = 3 }, try sum.done(alloc));
+
+    var fsum = SUM{};
+    try fsum.step(alloc, &.{.{ .float = 1.5 }}, &opt);
+    try fsum.step(alloc, &.{.{ .int = 2 }}, &opt);
+    try value_mod.expectValueEqual(.{ .float = 3.5 }, try fsum.done(alloc));
+
+    var avg = AVG{};
+    try avg.step(alloc, &.{.{ .int = 1 }}, &opt);
+    try avg.step(alloc, &.{.{ .int = 2 }}, &opt);
+    try avg.step(alloc, &.{.@"null"}, &opt);
+    try value_mod.expectValueEqual(.{ .float = 1.5 }, try avg.done(alloc));
+}
+
+test "ANY_VALUE having max/min selection" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var opt = AggregatorOption{};
+    const modifier = try alloc.create(agg_opt.AggregateHavingModifier);
+    modifier.* = .{ .kind = .max, .value = .@"null" };
+    opt.having_modifier = modifier;
+
+    var f = ANY_VALUE{};
+    modifier.value = .{ .int = 10 };
+    try f.step(alloc, &.{.{ .string = "ten" }}, &opt);
+    modifier.value = .{ .int = 30 };
+    try f.step(alloc, &.{.{ .string = "thirty" }}, &opt);
+    modifier.value = .{ .int = 20 };
+    try f.step(alloc, &.{.{ .string = "twenty" }}, &opt);
+    try value_mod.expectValueEqual(.{ .string = "thirty" }, try f.done(alloc));
+}

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="BuildScanner">
+    <option name="projects">
+      <list><![CDATA[{
+  "name": "zetasqlite_zig",
+  "version": "0.0.0",
+  "path": "/Users/danhansen/workspace/zetasqlite-zig",
+  "steps": [
+    {
+      "name": "install",
+      "description": "Copy build artifacts to prefix path",
+      "kind": "install_artifact"
+    },
+    {
+      "name": "uninstall",
+      "description": "Remove build artifacts from prefix path",
+      "kind": "uninstall"
+    },
+    {
+      "name": "run",
+      "description": "Run the CLI",
+      "kind": "run"
+    },
+    {
+      "name": "test",
+      "description": "Run unit tests",
+      "kind": "run"
+    },
+    {
+      "name": "corpus",
+      "description": "Run the conformance corpus",
+      "kind": "run"
+    }
+  ],
+  "modules": [
+    {
+      "root": "src/main.zig",
+      "public": false,
+      "imports": [
+        {
+          "name": "zetasqlite",
+          "owner": 0,
+          "module": 2
+        }
+      ]
+    },
+    {
+      "root": "harness/corpus_runner.zig",
+      "public": false,
+      "imports": [
+        {
+          "name": "zetasqlite",
+          "owner": 0,
+          "module": 2
+        }
+      ]
+    },
+    {
+      "root": "src/root.zig",
+      "public": false,
+      "imports": []
+    }
+  ],
+  "dependencies": []
+}]]></list>
+    </option>
+  </component>
+  <component name="ZigToolchain" toolchain="de80aa35-a354-43bc-b6b3-45c7630667d9" />
+</project>
