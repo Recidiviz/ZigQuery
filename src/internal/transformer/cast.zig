@@ -1,18 +1,195 @@
-//! Stub for go-zetasqlite internal/transformer_cast.go — ported by a later task.
+//! Faithful port of go-zetasqlite internal/transformer_cast.go.
+//!
+//! Recursively transforms the cast expression, JSON-encodes the source and
+//! target types (matching Go's json.Marshal of the internal Type spec, field
+//! order and null emission included), and emits a zetasqlite_cast function
+//! call: zetasqlite_cast(expr, fromTypeJSON, toTypeJSON, returnNullOnErr).
 
+const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const spec = @import("../spec.zig");
+const common = @import("common.zig");
 
+const Error = interfaces.Error;
+
+/// Go CastTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ExpressionData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.SQLExpression {
-    _ = coord;
-    _ = data;
-    _ = ctx;
-    return error.Unimplemented;
+) Error!*sqlbuilder.SQLExpression {
+    // Go: "expected cast expression data, got type %v"
+    if (data.type != .cast) return error.UnsupportedNode;
+    const cast = data.cast orelse return error.UnsupportedNode;
+    const alloc = coord.alloc;
+
+    // Transform the inner expression recursively.
+    const inner_expr = try coord.transformExpression(cast.expression, ctx);
+
+    // Go createZetaSQLiteCast: encode type information as JSON string
+    // literals plus the safe-cast flag.
+    const from_type = cast.from_type orelse return error.InvalidType;
+    const to_type = cast.to_type orelse return error.InvalidType;
+    const json_from_type = try marshalType(alloc, from_type);
+    const json_to_type = try marshalType(alloc, to_type);
+
+    const encoded_from = try common.newLiteralExpressionFromValue(
+        alloc,
+        .{ .string = json_from_type },
+    );
+    const encoded_to = try common.newLiteralExpressionFromValue(
+        alloc,
+        .{ .string = json_to_type },
+    );
+
+    const args = try alloc.alloc(*sqlbuilder.SQLExpression, 4);
+    args[0] = inner_expr; // Expression to cast
+    args[1] = encoded_from; // Source type
+    args[2] = encoded_to; // Target type
+    // Safe cast flag (Go: fmt.Sprintf("%t", cast.ReturnNullOnErr)).
+    args[3] = try sqlbuilder.newLiteralExpression(
+        alloc,
+        if (cast.return_null_on_err) "true" else "false",
+    );
+
+    return sqlbuilder.newFunctionExpression(alloc, "zetasqlite_cast", args);
+}
+
+/// Byte-identical mirror of Go's json.Marshal over the internal Type spec:
+///   {"name":"","kind":N,"signatureKind":N,"elementType":<Type|null>,
+///    "fieldTypes":<[NameWithType]|null>}
+/// with NameWithType as {"name":"...","type":<Type|null>}. Go's newType
+/// leaves FieldTypes nil (-> null) unless the type is a struct with fields.
+pub fn marshalType(alloc: std.mem.Allocator, t: *const spec.Type) Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try writeType(alloc, &out, t);
+    return out.toOwnedSlice(alloc);
+}
+
+fn writeType(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    t: *const spec.Type,
+) Error!void {
+    try out.appendSlice(alloc, "{\"name\":");
+    try writeJsonString(alloc, out, t.name);
+    try out.print(alloc, ",\"kind\":{d},\"signatureKind\":{d},\"elementType\":", .{
+        t.kind,
+        t.signature_kind,
+    });
+    if (t.element_type) |elem| {
+        try writeType(alloc, out, elem);
+    } else {
+        try out.appendSlice(alloc, "null");
+    }
+    try out.appendSlice(alloc, ",\"fieldTypes\":");
+    if (t.field_types.len == 0) {
+        // Go: nil slice marshals as null.
+        try out.appendSlice(alloc, "null");
+    } else {
+        try out.append(alloc, '[');
+        for (t.field_types, 0..) |field, i| {
+            if (i > 0) try out.append(alloc, ',');
+            try out.appendSlice(alloc, "{\"name\":");
+            try writeJsonString(alloc, out, field.name);
+            try out.appendSlice(alloc, ",\"type\":");
+            if (field.type) |ft| {
+                try writeType(alloc, out, ft);
+            } else {
+                try out.appendSlice(alloc, "null");
+            }
+            try out.append(alloc, '}');
+        }
+        try out.append(alloc, ']');
+    }
+    try out.append(alloc, '}');
+}
+
+fn writeJsonString(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    s: []const u8,
+) Error!void {
+    try out.append(alloc, '"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try out.appendSlice(alloc, "\\\""),
+            '\\' => try out.appendSlice(alloc, "\\\\"),
+            '\n' => try out.appendSlice(alloc, "\\n"),
+            '\r' => try out.appendSlice(alloc, "\\r"),
+            '\t' => try out.appendSlice(alloc, "\\t"),
+            else => {
+                if (c < 0x20) {
+                    try out.print(alloc, "\\u{x:0>4}", .{c});
+                } else {
+                    try out.append(alloc, c);
+                }
+            },
+        }
+    }
+    try out.append(alloc, '"');
+}
+
+// ----------------------------------------------------------------------
+// Tests
+// ----------------------------------------------------------------------
+
+const testing = std.testing;
+const pb = @import("../../proto/resolved_ast.zig");
+
+test "marshalType matches Go json.Marshal shapes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var int_tp = pb.TypeProto{ .type_kind = .TYPE_INT64 };
+    const int_t = try spec.newTypeFromProto(a, &int_tp);
+    try testing.expectEqualStrings(
+        "{\"name\":\"\",\"kind\":2,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null}",
+        try marshalType(a, int_t),
+    );
+
+    var elem_tp = pb.TypeProto{ .type_kind = .TYPE_STRING };
+    var arr_inner = pb.ArrayTypeProto{ .element_type = &elem_tp };
+    var arr_tp = pb.TypeProto{ .type_kind = .TYPE_ARRAY, .array_type = &arr_inner };
+    const arr_t = try spec.newTypeFromProto(a, &arr_tp);
+    const arr_json = try marshalType(a, arr_t);
+    try testing.expect(std.mem.indexOf(u8, arr_json, "\"elementType\":{\"name\":\"\",\"kind\":8,") != null);
+}
+
+test "cast transform emits zetasqlite_cast call" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var coord = coordinator.QueryCoordinator.init(a);
+    const config = try a.create(context.TransformConfig);
+    config.* = .{};
+    const ctx = try context.TransformContext.init(a, config);
+
+    var int_tp = pb.TypeProto{ .type_kind = .TYPE_INT64 };
+    var str_tp = pb.TypeProto{ .type_kind = .TYPE_STRING };
+
+    const lit = try a.create(types_data.LiteralData);
+    lit.* = .{ .value = .{ .int = 1 } };
+    const cast_data = try a.create(types_data.CastData);
+    cast_data.* = .{
+        .expression = .{ .type = .literal, .literal = lit },
+        .from_type = try spec.newTypeFromProto(a, &int_tp),
+        .to_type = try spec.newTypeFromProto(a, &str_tp),
+        .return_null_on_err = false,
+    };
+
+    const expr = try transform(&coord, .{ .type = .cast, .cast = cast_data }, ctx);
+    try testing.expectEqual(sqlbuilder.ExpressionType.function, expr.type);
+    const call = expr.function_call.?;
+    try testing.expectEqualStrings("zetasqlite_cast", call.name);
+    try testing.expectEqual(@as(usize, 4), call.arguments.len);
+    try testing.expectEqualStrings("1", call.arguments[0].value);
+    // Type args are double-quoted base64 payloads; the flag is plain.
+    try testing.expect(call.arguments[1].value[0] == '"');
+    try testing.expectEqualStrings("false", call.arguments[3].value);
 }

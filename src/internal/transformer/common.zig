@@ -1,0 +1,133 @@
+//! Shared transformer helpers ported from go-zetasqlite:
+//! - createOrderByItems (internal/transformer_scan_orderby.go)
+//! - NewLiteralExpressionFromGoValue (internal/sqlbuilder_sqlbuilder.go),
+//!   here taking an already-constructed Value
+//! - currentTimeFuncMap (internal/function_register.go); the extractor keeps
+//!   its own private copy for name normalization.
+
+const std = @import("std");
+const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const types_data = @import("../coordinator/types_data.zig");
+const interfaces = @import("../coordinator/types_interfaces.zig");
+const encoder = @import("../encoder.zig");
+const value_mod = @import("../value.zig");
+
+pub const Error = interfaces.Error;
+
+/// internal/function_register.go currentTimeFuncMap.
+pub const current_time_func_names = std.StaticStringMap(void).initComptime(.{
+    .{"current_date"},
+    .{"current_datetime"},
+    .{"current_time"},
+    .{"current_timestamp"},
+    .{"zetasqlite_current_date"},
+    .{"zetasqlite_current_datetime"},
+    .{"zetasqlite_current_time"},
+    .{"zetasqlite_current_timestamp"},
+});
+
+/// Go NewLiteralExpressionFromGoValue: ValueFromGoValue + LiteralFromValue +
+/// NewLiteralExpression. The zType parameter is unused in Go; callers here
+/// pass the Value directly.
+pub fn newLiteralExpressionFromValue(
+    alloc: std.mem.Allocator,
+    v: value_mod.Value,
+) Error!*sqlbuilder.SQLExpression {
+    const literal = try encoder.LiteralFromValue(alloc, v);
+    return sqlbuilder.newLiteralExpression(alloc, literal);
+}
+
+/// Go createOrderByItems (transformer_scan_orderby.go): ORDER BY items with
+/// proper NULL handling. An explicit NULLS FIRST/LAST modifier becomes an
+/// extra `expr IS NOT NULL` term (ASC puts nulls first, DESC last); the main
+/// term always gets the zetasqlite_collate collation.
+pub fn createOrderByItems(
+    alloc: std.mem.Allocator,
+    expr: *sqlbuilder.SQLExpression,
+    order_data: *const types_data.OrderByItemData,
+) Error![]const *sqlbuilder.OrderByItem {
+    var items: std.ArrayList(*sqlbuilder.OrderByItem) = .empty;
+
+    // Handle NULL ordering only when an explicit NULLS FIRST/LAST modifier
+    // is present (go-googlesql numbers ORDER_UNSPECIFIED as 1, so Go checks
+    // the two explicit modes rather than != 0).
+    if (order_data.null_order == .NULLS_FIRST or order_data.null_order == .NULLS_LAST) {
+        const bin = try alloc.create(sqlbuilder.BinaryExpression);
+        bin.* = .{
+            .left = expr,
+            .operator = "IS NOT",
+            .right = try sqlbuilder.newLiteralExpression(alloc, "NULL"),
+        };
+        const null_expr = try alloc.create(sqlbuilder.SQLExpression);
+        null_expr.* = .{ .type = .binary, .binary_expression = bin };
+        null_expr.collation = "zetasqlite_collate";
+
+        // IS NOT NULL is 0 for nulls and 1 for non-nulls, so ASC puts nulls
+        // first.
+        const direction: []const u8 = if (order_data.null_order == .NULLS_LAST)
+            "DESC"
+        else
+            "ASC";
+
+        const item = try alloc.create(sqlbuilder.OrderByItem);
+        item.* = .{ .expression = null_expr, .direction = direction };
+        try items.append(alloc, item);
+    }
+
+    // Add the main ORDER BY item.
+    const direction: []const u8 = if (order_data.is_descending) "DESC" else "ASC";
+    expr.collation = "zetasqlite_collate";
+    const item = try alloc.create(sqlbuilder.OrderByItem);
+    item.* = .{ .expression = expr, .direction = direction };
+    try items.append(alloc, item);
+
+    return items.toOwnedSlice(alloc);
+}
+
+// ----------------------------------------------------------------------
+// Tests
+// ----------------------------------------------------------------------
+
+const testing = std.testing;
+
+test "createOrderByItems adds NULLS FIRST/LAST term and collation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Unspecified: single item, collation applied.
+    {
+        const expr = try sqlbuilder.newColumnExpression(a, "x", null);
+        const data = types_data.OrderByItemData{ .is_descending = true };
+        const items = try createOrderByItems(a, expr, &data);
+        try testing.expectEqual(@as(usize, 1), items.len);
+        try testing.expectEqualStrings("DESC", items[0].direction);
+        try testing.expectEqualStrings(
+            "`x` COLLATE zetasqlite_collate DESC",
+            try items[0].toString(a),
+        );
+    }
+
+    // NULLS LAST: IS NOT NULL DESC term first, then main term ASC.
+    {
+        const expr = try sqlbuilder.newColumnExpression(a, "x", null);
+        const data = types_data.OrderByItemData{ .null_order = .NULLS_LAST };
+        const items = try createOrderByItems(a, expr, &data);
+        try testing.expectEqual(@as(usize, 2), items.len);
+        try testing.expectEqualStrings(
+            "`x` COLLATE zetasqlite_collate IS NOT NULL COLLATE zetasqlite_collate DESC",
+            try items[0].toString(a),
+        );
+        try testing.expectEqualStrings("ASC", items[1].direction);
+    }
+}
+
+test "newLiteralExpressionFromValue encodes ints natively" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const expr = try newLiteralExpressionFromValue(a, .{ .int = 1136239445000000000 });
+    try testing.expectEqual(sqlbuilder.ExpressionType.literal, expr.type);
+    try testing.expectEqualStrings("1136239445000000000", expr.value);
+}

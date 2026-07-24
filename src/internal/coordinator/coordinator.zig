@@ -375,7 +375,7 @@ pub const QueryCoordinator = struct {
 const testing = std.testing;
 const analyzer_ffi = @import("../../analyzer_ffi.zig");
 
-test "transformStatementNode extracts then dispatches (stub transformers)" {
+test "transformStatementNode transforms SELECT 1 AS x end-to-end" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
@@ -385,11 +385,10 @@ test "transformStatementNode extracts then dispatches (stub transformers)" {
     const ctx = try TransformContext.init(alloc, &config);
     var coordinator = QueryCoordinator.init(alloc);
 
-    // The query-statement transformer is still a stub: extraction must
-    // succeed and dispatch must reach it.
-    try testing.expectError(
-        error.Unimplemented,
-        coordinator.transformStatementNode(analyzed.node, ctx),
+    const fragment = try coordinator.transformStatementNode(analyzed.node, ctx);
+    try testing.expectEqualStrings(
+        "SELECT\n`x__1` AS `x`\nFROM (\nSELECT  \n1 AS `x__1`\n) AS `project_scan_3`",
+        try fragment.toString(alloc),
     );
     // Scope bookkeeping unwinds cleanly.
     try testing.expectEqualStrings("0", ctx.fragmentContext().getID());

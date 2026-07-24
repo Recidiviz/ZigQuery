@@ -22,10 +22,12 @@ pub const TransformConfig = struct {
     debug: bool = false,
 };
 
-/// Go DefaultTransformConfig (ZETASQLITE_DEBUG env toggle).
+/// Go DefaultTransformConfig (ZETASQLITE_DEBUG env toggle). Zig 0.16
+/// removed std.posix.getenv; the module always links libc, so read the
+/// variable through it.
 pub fn defaultTransformConfig() TransformConfig {
-    const debug = if (std.posix.getenv("ZETASQLITE_DEBUG")) |v|
-        std.mem.eql(u8, v, "true")
+    const debug = if (std.c.getenv("ZETASQLITE_DEBUG")) |v|
+        std.mem.eql(u8, std.mem.sliceTo(v, 0), "true")
     else
         false;
     return .{ .debug = debug };

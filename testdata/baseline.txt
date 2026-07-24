@@ -1,1 +1,124 @@
 # Baseline: cases that must pass (idx<TAB>name). Regressions fail the build.
+4	unary plus operator
+5	unary minus operator
+6	bit not operator
+7	mul operator
+8	div operator
+9	safe div operator
+10	concat string operator
+11	concat array operator
+12	add operator
+13	sub operator
+14	left shift operator
+15	right shift operator
+16	bit and operator
+17	bit xor operator
+18	bit or operator
+19	eq operator
+20	lt operator
+21	gt operator
+22	lte operator
+23	gte operator
+24	ne operator
+25	ne operator2
+26	like operator
+27	like operator - special regex characters
+28	like operator2
+29	like operator3
+30	like operator4
+31	not like operator
+34	in operator
+45	not in operator
+46	is null operator
+47	is not null operator
+48	is true operator
+49	is not true operator
+50	is false operator
+51	is not false operator
+52	not operator
+53	and operator
+54	and operator with true and true
+55	and operator with true and false
+56	and operator with true and null
+57	and operator with false and true
+58	and operator with false and false
+59	and operator with false and null
+60	and operator with null and true
+61	and operator with null and false
+62	and operator with null and null
+63	or operator
+64	or operator with true and true
+65	or operator with true and false
+66	or operator with true and null
+67	or operator with false and true
+68	or operator with false and false
+69	or operator with false and null
+70	or operator with null and true
+71	or operator with null and false
+72	or operator with null and null
+75	is distinct from with 1 and 2
+76	is distinct from with 1 and null
+77	is not distinct from with 1 and 1
+78	is not distinct from with null and null
+79	is distinct from with null and null
+80	is distinct from with 1 and 1
+81	is not distinct from with 1 and 2
+82	is not distinct from with 1 and null
+85	coalesce
+86	coalesce with null
+87	coalesce with all nulls
+88	if return int64
+89	if return string
+90	if with case that causes errors
+91	ifnull with case that causes errors
+92	case with case that causes errors
+93	ifnull
+94	ifnull with null
+95	nullif true
+96	nullif false
+97	nullif null
+98	rounding
+99	rounding precision
+102	struct with bool
+108	date operator
+177	safe sum
+194	null
+247	array formatting
+263	array_concat function
+281	array_length function
+282	array_length null
+334	safe cast for invalid cast
+335	cast string to int64
+359	contains_substr nil
+378	left with string value
+380	length
+385	lower
+430	substr
+442	upper
+489	parse date exceeding month maximum
+490	parse date beneath month minimum
+491	parse date exceeding day maximum
+492	parse date beneath day minimum
+493	parse date exceeding day of year maximum
+494	parse date beneath day of year minimum
+501	parse date with %F no day field
+502	parse date with %F no month field
+503	parse date with %F separator but no month
+506	parse date ( the year element is in different locations )
+508	parse date ( one of the year elements is missing )
+540	parse datetime ( the year element is in different locations )
+541	parse datetime ( one of the year elements is missing )
+551	parse_time with %R without minute element
+552	parse_time with %R without separator
+563	parse time ( the seconds element is in different locations )
+564	parse time ( one of the seconds elements is missing )
+566	minimum / maximum date value
+601	parse timestamp ( the year element is in different locations )
+602	parse timestamp ( one of the year elements is missing )
+707	net_ip_net_mask with invalid output bytes
+708	net_ip_net_mask with invalid prefix length
+711	net_ip_trunc with invalid ip address
+712	net_ip_trunc with invalid length
+720	not enough positional params given
+724	function call with many arguments - under limit
+725	function call with many arguments - above limit
