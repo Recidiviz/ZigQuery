@@ -7,6 +7,10 @@ pub const analyzer_ffi = @import("analyzer_ffi.zig");
 pub const pb = @import("proto/resolved_ast.zig");
 pub const wire = @import("proto/wire.zig");
 pub const driver = @import("driver.zig");
+pub const value = @import("internal/value.zig");
+pub const codec_binary = @import("internal/codec_binary.zig");
+pub const encoder = @import("internal/encoder.zig");
+pub const sqlbuilder = @import("internal/sqlbuilder/sqlbuilder.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
