@@ -1,0 +1,1 @@
+# Baseline: cases that must pass (idx<TAB>name). Regressions fail the build.
