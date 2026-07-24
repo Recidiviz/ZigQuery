@@ -23,6 +23,10 @@ const parameter = @import("../transformer/parameter.zig");
 
 // Statement transformers.
 const stmt_query = @import("../transformer/stmt_query.zig");
+const stmt_dml = @import("../transformer/stmt_dml.zig");
+const stmt_create_table_as_select = @import("../transformer/stmt_create_table_as_select.zig");
+const stmt_create_view = @import("../transformer/stmt_create_view.zig");
+const stmt_drop = @import("../transformer/stmt_drop.zig");
 
 // Scan transformers.
 const scan_table = @import("../transformer/scan_table.zig");
@@ -108,28 +112,30 @@ pub const QueryCoordinator = struct {
 
         switch (stmt_data.type) {
             .select => return stmt_query.transform(self, stmt_data, ctx),
-            // DML transformer (insert/update/delete), create view, create
-            // table as select, drop and merge arrive with later tasks; the
-            // Go dispatch shape (including the CreateData sub-dispatch) is
-            // preserved here.
-            .insert, .update, .delete => return error.Unimplemented,
+            .insert, .update, .delete => return stmt_dml.transform(self, stmt_data, ctx),
             .create => {
                 if (stmt_data.create) |create_data| {
                     switch (create_data.type) {
                         .table => {
                             if (create_data.table) |table| {
-                                if (table.as_select != null) return error.Unimplemented;
+                                if (table.as_select != null) {
+                                    return stmt_create_table_as_select.transform(self, stmt_data, ctx);
+                                }
                             }
                             // Go: "unsupported CREATE TABLE statement"
+                            // (plain CREATE TABLE never reaches the
+                            // transformer; spec.SQLiteSchema handles it).
                             return error.UnsupportedNode;
                         },
-                        .view => return error.Unimplemented,
+                        .view => return stmt_create_view.transform(self, stmt_data, ctx),
                     }
                 }
                 // Go: "unsupported create statement type"
                 return error.UnsupportedNode;
             },
-            .drop, .merge => return error.Unimplemented,
+            .drop => return stmt_drop.transform(self, stmt_data, ctx),
+            // MERGE transformer arrives with a later task.
+            .merge => return error.Unimplemented,
         }
     }
 

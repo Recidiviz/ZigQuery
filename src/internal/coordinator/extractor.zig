@@ -8,7 +8,9 @@
 //!
 //! Foundation subset (everything else returns error.Unimplemented, matching
 //! the plan in the port handoff):
-//! - statements: ResolvedQueryStmt
+//! - statements: ResolvedQueryStmt, Insert/Update/Delete, CreateTableAsSelect,
+//!   CreateView, Drop/DropFunction (Merge deferred; plain CreateTable is
+//!   handled by the driver action via spec.SQLiteSchema, like Go)
 //! - scans: SingleRow, Project, Filter, Join, Aggregate (no grouping sets),
 //!   OrderBy, LimitOffset, SetOperation, With/WithRef/WithEntry, Array
 //! - expressions: Literal, ColumnRef, FunctionCall, AggregateFunctionCall,
@@ -40,113 +42,113 @@ const TransformContext = context.TransformContext;
 /// registers a "safe_<name>" map key for each entry (setupNormalFuncMap);
 /// `existsNormalFunc` below reproduces that without duplicating the table.
 const normal_func_names = std.StaticStringMap(void).initComptime(.{
-    .{"add"},           .{"subtract"},            .{"multiply"},
-    .{"divide"},        .{"equal"},               .{"not_equal"},
-    .{"greater"},       .{"greater_or_equal"},    .{"less"},
-    .{"less_or_equal"}, .{"bitwise_not"},         .{"bitwise_left_shift"},
-    .{"bitwise_right_shift"}, .{"bitwise_and"},   .{"bitwise_or"},
-    .{"bitwise_xor"},   .{"in_array"},            .{"get_struct_field"},
-    .{"get_json_field"}, .{"subscript"},          .{"array_at_offset"},
-    .{"array_at_ordinal"}, .{"safe_negate"},      .{"is_distinct_from"},
-    .{"is_not_distinct_from"}, .{"session_user"}, .{"generate_uuid"},
-    .{"error"},         .{"current_date"},        .{"extract"},
-    .{"extract_date"},  .{"date"},                .{"date_add"},
-    .{"date_sub"},      .{"date_diff"},           .{"date_trunc"},
-    .{"date_from_unix_date"}, .{"format_date"},   .{"last_day"},
-    .{"parse_date"},    .{"unix_date"},           .{"current_datetime"},
-    .{"datetime"},      .{"datetime_add"},        .{"datetime_sub"},
-    .{"datetime_diff"}, .{"datetime_trunc"},      .{"format_datetime"},
-    .{"parse_datetime"}, .{"current_time"},       .{"time"},
-    .{"time_add"},      .{"time_sub"},            .{"time_diff"},
-    .{"time_trunc"},    .{"format_time"},         .{"parse_time"},
-    .{"current_timestamp"}, .{"string"},          .{"timestamp"},
-    .{"timestamp_add"}, .{"timestamp_sub"},       .{"timestamp_diff"},
-    .{"timestamp_trunc"}, .{"format_timestamp"},  .{"parse_timestamp"},
-    .{"timestamp_seconds"}, .{"timestamp_millis"}, .{"timestamp_micros"},
-    .{"unix_seconds"},  .{"unix_millis"},         .{"unix_micros"},
-    .{"like"},          .{"between"},             .{"in"},
-    .{"is_null"},       .{"is_true"},             .{"is_false"},
-    .{"not"},           .{"and"},                 .{"or"},
-    .{"coalesce"},      .{"if"},                  .{"ifnull"},
-    .{"nullif"},        .{"length"},              .{"cast"},
-    .{"interval"},      .{"make_interval"},       .{"justify_days"},
-    .{"justify_hours"}, .{"justify_interval"},    .{"parse_numeric"},
-    .{"parse_bignumeric"}, .{"farm_fingerprint"}, .{"md5"},
-    .{"sha1"},          .{"sha256"},              .{"sha512"},
-    .{"ascii"},         .{"byte_length"},         .{"char_length"},
-    .{"chr"},           .{"code_points_to_bytes"}, .{"code_points_to_string"},
-    .{"collate"},       .{"concat"},              .{"contains_substr"},
-    .{"ends_with"},     .{"format"},              .{"from_base32"},
-    .{"from_base64"},   .{"from_hex"},            .{"initcap"},
-    .{"instr"},         .{"left"},                .{"lpad"},
-    .{"lower"},         .{"ltrim"},               .{"normalize"},
-    .{"normalize_and_casefold"}, .{"regexp_contains"}, .{"regexp_extract"},
-    .{"regexp_extract_all"}, .{"regexp_instr"},   .{"regexp_replace"},
-    .{"replace"},       .{"repeat"},              .{"reverse"},
-    .{"right"},         .{"rpad"},                .{"rtrim"},
-    .{"safe_convert_bytes_to_string"}, .{"soundex"}, .{"split"},
-    .{"starts_with"},   .{"strpos"},              .{"substr"},
-    .{"to_base32"},     .{"to_base64"},           .{"to_code_points"},
-    .{"to_hex"},        .{"translate"},           .{"trim"},
-    .{"unicode"},       .{"upper"},               .{"json_extract"},
-    .{"json_extract_scalar"}, .{"json_extract_array"}, .{"json_extract_string_array"},
-    .{"json_query"},    .{"json_value"},          .{"json_query_array"},
-    .{"json_value_array"}, .{"parse_json"},       .{"to_json"},
-    .{"to_json_string"}, .{"bool"},               .{"int64"},
-    .{"double"},        .{"float64"},             .{"json_type"},
-    .{"abs"},           .{"sign"},                .{"is_inf"},
-    .{"is_nan"},        .{"ieee_divide"},         .{"rand"},
-    .{"sqrt"},          .{"pow"},                 .{"power"},
-    .{"exp"},           .{"ln"},                  .{"log"},
-    .{"log10"},         .{"greatest"},            .{"least"},
-    .{"div"},           .{"mod"},                 .{"round"},
-    .{"trunc"},         .{"ceil"},                .{"ceiling"},
-    .{"floor"},         .{"cos"},                 .{"cosh"},
-    .{"acos"},          .{"acosh"},               .{"sin"},
-    .{"sinh"},          .{"asin"},                .{"asinh"},
-    .{"tan"},           .{"tanh"},                .{"atan"},
-    .{"atanh"},         .{"atan2"},               .{"range_bucket"},
-    .{"array_concat"},  .{"array_first"},         .{"array_last"},
-    .{"array_slice"},   .{"array_length"},        .{"array_to_string"},
-    .{"generate_array"}, .{"generate_date_array"}, .{"generate_timestamp_array"},
-    .{"array_reverse"}, .{"make_array"},          .{"make_struct"},
-    .{"hll_count_extract"}, .{"bit_count"},       .{"distinct"},
-    .{"limit"},         .{"order_by"},            .{"ignore_nulls"},
-    .{"having_max"},    .{"having_min"},          .{"eval_javascript"},
-    .{"net_host"},      .{"net_ip_from_string"},  .{"net_ip_net_mask"},
-    .{"net_ip_to_string"}, .{"net_ip_trunc"},     .{"net_ipv4_from_int64"},
-    .{"net_ipv4_to_int64"}, .{"net_public_suffix"}, .{"net_reg_domain"},
+    .{"add"},                          .{"subtract"},             .{"multiply"},
+    .{"divide"},                       .{"equal"},                .{"not_equal"},
+    .{"greater"},                      .{"greater_or_equal"},     .{"less"},
+    .{"less_or_equal"},                .{"bitwise_not"},          .{"bitwise_left_shift"},
+    .{"bitwise_right_shift"},          .{"bitwise_and"},          .{"bitwise_or"},
+    .{"bitwise_xor"},                  .{"in_array"},             .{"get_struct_field"},
+    .{"get_json_field"},               .{"subscript"},            .{"array_at_offset"},
+    .{"array_at_ordinal"},             .{"safe_negate"},          .{"is_distinct_from"},
+    .{"is_not_distinct_from"},         .{"session_user"},         .{"generate_uuid"},
+    .{"error"},                        .{"current_date"},         .{"extract"},
+    .{"extract_date"},                 .{"date"},                 .{"date_add"},
+    .{"date_sub"},                     .{"date_diff"},            .{"date_trunc"},
+    .{"date_from_unix_date"},          .{"format_date"},          .{"last_day"},
+    .{"parse_date"},                   .{"unix_date"},            .{"current_datetime"},
+    .{"datetime"},                     .{"datetime_add"},         .{"datetime_sub"},
+    .{"datetime_diff"},                .{"datetime_trunc"},       .{"format_datetime"},
+    .{"parse_datetime"},               .{"current_time"},         .{"time"},
+    .{"time_add"},                     .{"time_sub"},             .{"time_diff"},
+    .{"time_trunc"},                   .{"format_time"},          .{"parse_time"},
+    .{"current_timestamp"},            .{"string"},               .{"timestamp"},
+    .{"timestamp_add"},                .{"timestamp_sub"},        .{"timestamp_diff"},
+    .{"timestamp_trunc"},              .{"format_timestamp"},     .{"parse_timestamp"},
+    .{"timestamp_seconds"},            .{"timestamp_millis"},     .{"timestamp_micros"},
+    .{"unix_seconds"},                 .{"unix_millis"},          .{"unix_micros"},
+    .{"like"},                         .{"between"},              .{"in"},
+    .{"is_null"},                      .{"is_true"},              .{"is_false"},
+    .{"not"},                          .{"and"},                  .{"or"},
+    .{"coalesce"},                     .{"if"},                   .{"ifnull"},
+    .{"nullif"},                       .{"length"},               .{"cast"},
+    .{"interval"},                     .{"make_interval"},        .{"justify_days"},
+    .{"justify_hours"},                .{"justify_interval"},     .{"parse_numeric"},
+    .{"parse_bignumeric"},             .{"farm_fingerprint"},     .{"md5"},
+    .{"sha1"},                         .{"sha256"},               .{"sha512"},
+    .{"ascii"},                        .{"byte_length"},          .{"char_length"},
+    .{"chr"},                          .{"code_points_to_bytes"}, .{"code_points_to_string"},
+    .{"collate"},                      .{"concat"},               .{"contains_substr"},
+    .{"ends_with"},                    .{"format"},               .{"from_base32"},
+    .{"from_base64"},                  .{"from_hex"},             .{"initcap"},
+    .{"instr"},                        .{"left"},                 .{"lpad"},
+    .{"lower"},                        .{"ltrim"},                .{"normalize"},
+    .{"normalize_and_casefold"},       .{"regexp_contains"},      .{"regexp_extract"},
+    .{"regexp_extract_all"},           .{"regexp_instr"},         .{"regexp_replace"},
+    .{"replace"},                      .{"repeat"},               .{"reverse"},
+    .{"right"},                        .{"rpad"},                 .{"rtrim"},
+    .{"safe_convert_bytes_to_string"}, .{"soundex"},              .{"split"},
+    .{"starts_with"},                  .{"strpos"},               .{"substr"},
+    .{"to_base32"},                    .{"to_base64"},            .{"to_code_points"},
+    .{"to_hex"},                       .{"translate"},            .{"trim"},
+    .{"unicode"},                      .{"upper"},                .{"json_extract"},
+    .{"json_extract_scalar"},          .{"json_extract_array"},   .{"json_extract_string_array"},
+    .{"json_query"},                   .{"json_value"},           .{"json_query_array"},
+    .{"json_value_array"},             .{"parse_json"},           .{"to_json"},
+    .{"to_json_string"},               .{"bool"},                 .{"int64"},
+    .{"double"},                       .{"float64"},              .{"json_type"},
+    .{"abs"},                          .{"sign"},                 .{"is_inf"},
+    .{"is_nan"},                       .{"ieee_divide"},          .{"rand"},
+    .{"sqrt"},                         .{"pow"},                  .{"power"},
+    .{"exp"},                          .{"ln"},                   .{"log"},
+    .{"log10"},                        .{"greatest"},             .{"least"},
+    .{"div"},                          .{"mod"},                  .{"round"},
+    .{"trunc"},                        .{"ceil"},                 .{"ceiling"},
+    .{"floor"},                        .{"cos"},                  .{"cosh"},
+    .{"acos"},                         .{"acosh"},                .{"sin"},
+    .{"sinh"},                         .{"asin"},                 .{"asinh"},
+    .{"tan"},                          .{"tanh"},                 .{"atan"},
+    .{"atanh"},                        .{"atan2"},                .{"range_bucket"},
+    .{"array_concat"},                 .{"array_first"},          .{"array_last"},
+    .{"array_slice"},                  .{"array_length"},         .{"array_to_string"},
+    .{"generate_array"},               .{"generate_date_array"},  .{"generate_timestamp_array"},
+    .{"array_reverse"},                .{"make_array"},           .{"make_struct"},
+    .{"hll_count_extract"},            .{"bit_count"},            .{"distinct"},
+    .{"limit"},                        .{"order_by"},             .{"ignore_nulls"},
+    .{"having_max"},                   .{"having_min"},           .{"eval_javascript"},
+    .{"net_host"},                     .{"net_ip_from_string"},   .{"net_ip_net_mask"},
+    .{"net_ip_to_string"},             .{"net_ip_trunc"},         .{"net_ipv4_from_int64"},
+    .{"net_ipv4_to_int64"},            .{"net_public_suffix"},    .{"net_reg_domain"},
     .{"net_safe_ip_from_string"},
 });
 
 /// internal/function_register.go aggregateFuncs names.
 const aggregate_func_names = std.StaticStringMap(void).initComptime(.{
-    .{"array"},        .{"any_value"},    .{"array_agg"},
-    .{"array_concat_agg"}, .{"avg"},      .{"count"},
-    .{"count_star"},   .{"bit_and"},      .{"bit_or"},
-    .{"bit_xor"},      .{"countif"},      .{"logical_and"},
-    .{"logical_or"},   .{"max"},          .{"min"},
-    .{"string_agg"},   .{"sum"},          .{"corr"},
-    .{"covar_pop"},    .{"covar_samp"},   .{"stddev_pop"},
-    .{"stddev_samp"},  .{"stddev"},       .{"var_pop"},
-    .{"var_samp"},     .{"variance"},     .{"approx_count_distinct"},
+    .{"array"},            .{"any_value"},        .{"array_agg"},
+    .{"array_concat_agg"}, .{"avg"},              .{"count"},
+    .{"count_star"},       .{"bit_and"},          .{"bit_or"},
+    .{"bit_xor"},          .{"countif"},          .{"logical_and"},
+    .{"logical_or"},       .{"max"},              .{"min"},
+    .{"string_agg"},       .{"sum"},              .{"corr"},
+    .{"covar_pop"},        .{"covar_samp"},       .{"stddev_pop"},
+    .{"stddev_samp"},      .{"stddev"},           .{"var_pop"},
+    .{"var_samp"},         .{"variance"},         .{"approx_count_distinct"},
     .{"approx_quantiles"}, .{"approx_top_count"}, .{"approx_top_sum"},
-    .{"hll_count_init"}, .{"hll_count_merge"}, .{"hll_count_merge_partial"},
+    .{"hll_count_init"},   .{"hll_count_merge"},  .{"hll_count_merge_partial"},
 });
 
 /// internal/function_register.go windowFuncs names.
 const window_func_names = std.StaticStringMap(void).initComptime(.{
-    .{"any_value"},   .{"array_agg"},   .{"avg"},
-    .{"count"},       .{"count_star"},  .{"countif"},
-    .{"logical_and"}, .{"logical_or"},  .{"max"},
-    .{"min"},         .{"string_agg"},  .{"sum"},
-    .{"corr"},        .{"covar_pop"},   .{"covar_samp"},
-    .{"stddev_pop"},  .{"stddev_samp"}, .{"stddev"},
-    .{"var_pop"},     .{"var_samp"},    .{"variance"},
-    .{"first_value"}, .{"last_value"},  .{"nth_value"},
-    .{"lead"},        .{"lag"},         .{"percentile_cont"},
-    .{"percentile_disc"}, .{"rank"},    .{"dense_rank"},
-    .{"percent_rank"}, .{"cume_dist"},  .{"ntile"},
+    .{"any_value"},       .{"array_agg"},   .{"avg"},
+    .{"count"},           .{"count_star"},  .{"countif"},
+    .{"logical_and"},     .{"logical_or"},  .{"max"},
+    .{"min"},             .{"string_agg"},  .{"sum"},
+    .{"corr"},            .{"covar_pop"},   .{"covar_samp"},
+    .{"stddev_pop"},      .{"stddev_samp"}, .{"stddev"},
+    .{"var_pop"},         .{"var_samp"},    .{"variance"},
+    .{"first_value"},     .{"last_value"},  .{"nth_value"},
+    .{"lead"},            .{"lag"},         .{"percentile_cont"},
+    .{"percentile_disc"}, .{"rank"},        .{"dense_rank"},
+    .{"percent_rank"},    .{"cume_dist"},   .{"ntile"},
     .{"row_number"},
 });
 
@@ -241,6 +243,18 @@ fn replaceDots(alloc: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]u8 
     return out;
 }
 
+/// Go NamePath.format with an empty base path (the driver holds no
+/// WithNamePath state): normalizePath (split each segment on ".") then
+/// formatPath ("_"-join) — equivalent to joining with "_" and replacing
+/// any remaining dots.
+pub fn formatNamePath(alloc: std.mem.Allocator, path: []const []const u8) error{OutOfMemory}![]u8 {
+    const joined = try std.mem.join(alloc, "_", path);
+    for (joined) |*c| {
+        if (c.* == '.') c.* = '_';
+    }
+    return joined;
+}
+
 // ----------------------------------------------------------------------
 // Shared helpers (Go: extractColumnData / scanColumnList / ...)
 // ----------------------------------------------------------------------
@@ -255,7 +269,7 @@ pub fn extractColumnData(
     data.* = .{};
     const c = col orelse return data;
     var kind_str: []const u8 = "";
-    if (c.@"type") |tp| {
+    if (c.type) |tp| {
         kind_str = @tagName(tp.type_kind orelse .TYPE_UNKNOWN);
     }
     data.* = .{
@@ -291,7 +305,7 @@ pub fn newColumnExpressionData(
         .column_name = column.name orelse "",
         .column_id = column.column_id orelse 0,
         .table_name = column.table_name orelse "",
-        .type = if (column.@"type") |tp| try spec.newTypeFromProto(alloc, tp) else null,
+        .type = if (column.type) |tp| try spec.newTypeFromProto(alloc, tp) else null,
     };
     return .{ .type = .column, .column = ref };
 }
@@ -351,7 +365,7 @@ fn exprTypeProto(expr: *const pb.AnyResolvedExprProto) Error!*pb.TypeProto {
         else => return error.Unimplemented,
     };
     const p = parent orelse return error.InvalidAST;
-    return p.@"type" orelse error.InvalidAST;
+    return p.type orelse error.InvalidAST;
 }
 
 /// Unwraps AnyResolvedFunctionCallBaseProto down to the shared
@@ -396,16 +410,14 @@ pub const NodeExtractor = struct {
         const stmt_node = stmt.node orelse return error.InvalidAST;
         switch (stmt_node) {
             .resolved_query_stmt_node => |q| return self.extractQueryStatementData(alloc, q, ctx),
-            // CreateTable/CreateTableAsSelect/CreateView/Insert/Update/
-            // Delete/Merge/Drop/DropFunction: extracted by later tasks.
-            .resolved_create_statement_node,
-            .resolved_insert_stmt_node,
-            .resolved_update_stmt_node,
-            .resolved_delete_stmt_node,
-            .resolved_merge_stmt_node,
-            .resolved_drop_stmt_node,
-            .resolved_drop_function_stmt_node,
-            => return error.Unimplemented,
+            .resolved_create_statement_node => |n| return self.extractCreateStatementData(alloc, n, ctx),
+            .resolved_insert_stmt_node => |n| return self.extractInsertStatementData(alloc, n, ctx),
+            .resolved_update_stmt_node => |n| return self.extractUpdateStatementData(alloc, n, ctx),
+            .resolved_delete_stmt_node => |n| return self.extractDeleteStatementData(alloc, n, ctx),
+            .resolved_drop_stmt_node => |n| return extractDropStatementData(alloc, n),
+            .resolved_drop_function_stmt_node => |n| return extractDropFunctionStatementData(alloc, n),
+            // Merge: deferred (Go extractMergeStatementData; MERGE milestone).
+            .resolved_merge_stmt_node => return error.Unimplemented,
             else => return error.UnsupportedNode,
         }
     }
@@ -440,6 +452,273 @@ pub const NodeExtractor = struct {
         const select = try alloc.create(types_data.SelectData);
         select.* = .{ .select_list = select_items, .from_clause = from_clause };
         return .{ .type = .select, .select = select };
+    }
+
+    /// Go ExtractStatementData's ResolvedCreateTableStmt /
+    /// ResolvedCreateTableAsSelectStmt / ResolvedCreateViewStmt cases,
+    /// dispatched through the proto union wrappers.
+    fn extractCreateStatementData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        cs: *const pb.AnyResolvedCreateStatementProto,
+        ctx: *TransformContext,
+    ) Error!StatementData {
+        const node = cs.node orelse return error.InvalidAST;
+        switch (node) {
+            .resolved_create_table_stmt_base_node => |base_any| {
+                const base_node = base_any.node orelse return error.InvalidAST;
+                switch (base_node) {
+                    .resolved_create_table_as_select_stmt_node => |n| {
+                        return self.extractCreateTableAsSelectStatementData(alloc, n, ctx);
+                    },
+                    // Go extractCreateTableStatementData: "create table
+                    // statement extraction not implemented" (handled by
+                    // spec.SQLiteSchema in the driver action instead).
+                    .resolved_create_table_stmt_node => return error.Unimplemented,
+                    else => return error.UnsupportedNode,
+                }
+            },
+            .resolved_create_view_base_node => |vb_any| {
+                const vb_node = vb_any.node orelse return error.InvalidAST;
+                switch (vb_node) {
+                    .resolved_create_view_stmt_node => |n| {
+                        return self.extractCreateViewStatementData(alloc, n, ctx);
+                    },
+                    else => return error.UnsupportedNode,
+                }
+            },
+            // CREATE FUNCTION and the rest: not statement-extracted in Go
+            // either (functions go through newFunctionSpec).
+            else => return error.UnsupportedNode,
+        }
+    }
+
+    /// Go extractInsertStatementData.
+    fn extractInsertStatementData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedInsertStmtProto,
+        ctx: *TransformContext,
+    ) Error!StatementData {
+        const table_scan = node.table_scan orelse return error.InvalidAST;
+        // Go getTableName: the resolved Table carries the canonical name it
+        // was registered under in the catalog.
+        const table_name = (table_scan.table orelse return error.InvalidAST).name orelse
+            return error.InvalidAST;
+
+        const columns = try alloc.alloc([]const u8, node.insert_column_list.len);
+        for (node.insert_column_list, 0..) |col, i| {
+            columns[i] = col.name orelse "";
+        }
+
+        const insert_data = try alloc.create(types_data.InsertData);
+        insert_data.* = .{ .table_name = table_name, .columns = columns };
+
+        if (node.query) |query_node| {
+            // INSERT ... SELECT.
+            const query_scan = try self.ExtractScanData(alloc, query_node, ctx);
+            const query_column_list = try scanColumnListOf(query_node);
+
+            const select_items = try alloc.alloc(*types_data.SelectItemData, query_column_list.len);
+            for (query_column_list, 0..) |col, i| {
+                const item = try alloc.create(types_data.SelectItemData);
+                item.* = .{
+                    .expression = try newColumnExpressionData(alloc, col),
+                    .alias = col.name orelse "",
+                };
+                select_items[i] = item;
+            }
+
+            const from_clause = try alloc.create(ScanData);
+            from_clause.* = query_scan;
+            const select = try alloc.create(types_data.SelectData);
+            select.* = .{ .select_list = select_items, .from_clause = from_clause };
+            insert_data.query = select;
+        } else {
+            // INSERT ... VALUES. Go routes each ResolvedDMLValue through
+            // ExtractExpressionData's DMLValue case (unwrap .Value()).
+            const values = try alloc.alloc([]const ExpressionData, node.row_list.len);
+            for (node.row_list, 0..) |row, i| {
+                const row_values = try alloc.alloc(ExpressionData, row.value_list.len);
+                for (row.value_list, 0..) |dml_value, j| {
+                    const value_expr = dml_value.value orelse return error.InvalidAST;
+                    row_values[j] = try self.ExtractExpressionData(alloc, value_expr, ctx);
+                }
+                values[i] = row_values;
+            }
+            insert_data.values = values;
+        }
+
+        return .{ .type = .insert, .insert = insert_data };
+    }
+
+    /// Go extractUpdateStatementData.
+    fn extractUpdateStatementData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedUpdateStmtProto,
+        ctx: *TransformContext,
+    ) Error!StatementData {
+        const table_scan_node = node.table_scan orelse return error.InvalidAST;
+        const table_name = (table_scan_node.table orelse return error.InvalidAST).name orelse
+            return error.InvalidAST;
+
+        // Table scan data provides column info for WHERE / SET resolution.
+        const table_scan = try alloc.create(ScanData);
+        table_scan.* = try extractTableScanData(alloc, table_scan_node);
+
+        const set_items = try alloc.alloc(*types_data.SetItemData, node.update_item_list.len);
+        for (node.update_item_list, 0..) |item, i| {
+            const target = item.target orelse return error.InvalidAST;
+            const target_data = try self.ExtractExpressionData(alloc, target, ctx);
+
+            const set_value = item.set_value orelse return error.InvalidAST;
+            const value_expr = set_value.value orelse return error.InvalidAST;
+            const value_data = try self.ExtractExpressionData(alloc, value_expr, ctx);
+
+            // Go: column name from the target column ref, else fallback.
+            var column_name: []const u8 = "unknown_column";
+            if (target_data.type == .column) {
+                if (target_data.column) |col_ref| column_name = col_ref.column_name;
+            }
+
+            const set_item = try alloc.create(types_data.SetItemData);
+            set_item.* = .{ .column = column_name, .value = value_data };
+            set_items[i] = set_item;
+        }
+
+        var where_clause: ?*ExpressionData = null;
+        if (node.where_expr) |where_expr| {
+            const where_data = try alloc.create(ExpressionData);
+            where_data.* = try self.ExtractExpressionData(alloc, where_expr, ctx);
+            where_clause = where_data;
+        }
+
+        var from_clause: ?*ScanData = null;
+        if (node.from_scan) |from_scan| {
+            const from_data = try alloc.create(ScanData);
+            from_data.* = try self.ExtractScanData(alloc, from_scan, ctx);
+            from_clause = from_data;
+        }
+
+        const update_data = try alloc.create(types_data.UpdateData);
+        update_data.* = .{
+            .table_name = table_name,
+            .table_scan = table_scan,
+            .set_items = set_items,
+            .from_clause = from_clause,
+            .where_clause = where_clause,
+        };
+        return .{ .type = .update, .update = update_data };
+    }
+
+    /// Go extractDeleteStatementData.
+    fn extractDeleteStatementData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedDeleteStmtProto,
+        ctx: *TransformContext,
+    ) Error!StatementData {
+        const table_scan_node = node.table_scan orelse return error.InvalidAST;
+        const table_name = (table_scan_node.table orelse return error.InvalidAST).name orelse
+            return error.InvalidAST;
+
+        const table_scan = try alloc.create(ScanData);
+        table_scan.* = try extractTableScanData(alloc, table_scan_node);
+
+        var where_clause: ?*ExpressionData = null;
+        if (node.where_expr) |where_expr| {
+            const where_data = try alloc.create(ExpressionData);
+            where_data.* = try self.ExtractExpressionData(alloc, where_expr, ctx);
+            where_clause = where_data;
+        }
+
+        const delete_data = try alloc.create(types_data.DeleteData);
+        delete_data.* = .{
+            .table_name = table_name,
+            .table_scan = table_scan,
+            .where_clause = where_clause,
+        };
+        return .{ .type = .delete, .delete = delete_data };
+    }
+
+    /// Go extractCreateTableAsSelectStatementData.
+    fn extractCreateTableAsSelectStatementData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedCreateTableAsSelectStmtProto,
+        ctx: *TransformContext,
+    ) Error!StatementData {
+        const base = node.parent orelse return error.InvalidAST;
+        const create = base.parent orelse return error.InvalidAST;
+        const table_name = try formatNamePath(alloc, create.name_path);
+
+        const query = node.query orelse return error.InvalidAST;
+        const query_scan = try self.ExtractScanData(alloc, query, ctx);
+
+        const select_items = try alloc.alloc(*types_data.SelectItemData, node.output_column_list.len);
+        for (node.output_column_list, 0..) |oc, i| {
+            const column = oc.column orelse return error.InvalidAST;
+            const item = try alloc.create(types_data.SelectItemData);
+            item.* = .{
+                .expression = try newColumnExpressionData(alloc, column),
+                .alias = oc.name orelse "",
+            };
+            select_items[i] = item;
+        }
+
+        const from_clause = try alloc.create(ScanData);
+        from_clause.* = query_scan;
+        const as_select = try alloc.create(types_data.SelectData);
+        as_select.* = .{ .select_list = select_items, .from_clause = from_clause };
+
+        const create_table = try alloc.create(types_data.CreateTableData);
+        create_table.* = .{
+            .table_name = table_name,
+            .as_select = as_select,
+            .if_not_exists = (create.create_mode orelse .CREATE_DEFAULT) == .CREATE_IF_NOT_EXISTS,
+        };
+        const create_data = try alloc.create(types_data.CreateData);
+        create_data.* = .{ .type = .table, .table = create_table };
+        return .{ .type = .create, .create = create_data };
+    }
+
+    /// Go extractCreateViewStatementData.
+    fn extractCreateViewStatementData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedCreateViewStmtProto,
+        ctx: *TransformContext,
+    ) Error!StatementData {
+        const base = node.parent orelse return error.InvalidAST;
+        const create = base.parent orelse return error.InvalidAST;
+        const view_name = try formatNamePath(alloc, create.name_path);
+
+        const query = base.query orelse return error.InvalidAST;
+        const query_scan = try self.ExtractScanData(alloc, query, ctx);
+
+        const select_items = try alloc.alloc(*types_data.SelectItemData, base.output_column_list.len);
+        for (base.output_column_list, 0..) |oc, i| {
+            const column = oc.column orelse return error.InvalidAST;
+            const item = try alloc.create(types_data.SelectItemData);
+            item.* = .{
+                .expression = try newColumnExpressionData(alloc, column),
+                .alias = oc.name orelse "",
+            };
+            select_items[i] = item;
+        }
+
+        const from_clause = try alloc.create(ScanData);
+        from_clause.* = query_scan;
+
+        const create_view = try alloc.create(types_data.CreateViewData);
+        create_view.* = .{
+            .view_name = view_name,
+            .query = .{ .select_list = select_items, .from_clause = from_clause },
+        };
+        const create_data = try alloc.create(types_data.CreateData);
+        create_data.* = .{ .type = .view, .view = create_view };
+        return .{ .type = .create, .create = create_data };
     }
 
     /// Go ExtractScanData.
@@ -952,11 +1231,17 @@ pub const NodeExtractor = struct {
             .resolved_subquery_expr_node => |n| return self.extractSubqueryData(alloc, n, ctx),
             .resolved_get_struct_field_node => |n| return self.extractGetStructFieldData(alloc, n, ctx),
             .resolved_make_struct_node => |n| return self.extractMakeStructData(alloc, n, ctx),
-            // Parameter / ArgumentRef / DMLDefault / GetJsonField /
-            // analytic: deferred to later tasks.
+            // Go extractDMLDefaultData: a zero-value literal stands in for
+            // the DEFAULT keyword (renders as NULL — no column defaults).
+            .resolved_dmldefault_node => {
+                const literal = try alloc.create(types_data.LiteralData);
+                literal.* = .{};
+                return .{ .type = .literal, .literal = literal };
+            },
+            // Parameter / ArgumentRef / GetJsonField / analytic: deferred
+            // to later tasks.
             .resolved_parameter_node,
             .resolved_argument_ref_node,
-            .resolved_dmldefault_node,
             .resolved_get_json_field_node,
             => return error.Unimplemented,
             else => return error.UnsupportedNode, // Go: "unsupported expression node type"
@@ -971,7 +1256,7 @@ pub const NodeExtractor = struct {
     ) Error!ExpressionData {
         _ = self;
         const vwt = node.value orelse return error.InvalidAST;
-        const type_proto = vwt.@"type" orelse return error.InvalidAST;
+        const type_proto = vwt.type orelse return error.InvalidAST;
         const value_proto = vwt.value orelse return error.InvalidAST;
 
         const zetasqlite_value = try encoder.valueFromProto(alloc, value_proto, type_proto);
@@ -1018,7 +1303,7 @@ pub const NodeExtractor = struct {
             for (sig.argument, 0..) |arg, i| {
                 const info = try alloc.create(types_data.ArgumentInfo);
                 info.* = .{};
-                if (arg.@"type") |tp| {
+                if (arg.type) |tp| {
                     info.type = try spec.newTypeFromProto(alloc, tp);
                 } else {
                     // Templated argument: carry the SignatureArgumentKind.
@@ -1167,7 +1452,7 @@ pub const NodeExtractor = struct {
         const expr_data = try self.ExtractExpressionData(alloc, expr, ctx);
 
         const parent = node.parent orelse return error.InvalidAST;
-        const to_type_proto = parent.@"type" orelse return error.InvalidAST;
+        const to_type_proto = parent.type orelse return error.InvalidAST;
 
         const cast = try alloc.create(types_data.CastData);
         cast.* = .{
@@ -1234,7 +1519,7 @@ pub const NodeExtractor = struct {
         ctx: *TransformContext,
     ) Error!ExpressionData {
         const parent = node.parent orelse return error.InvalidAST;
-        const type_proto = parent.@"type" orelse return error.InvalidAST;
+        const type_proto = parent.type orelse return error.InvalidAST;
         const struct_type = type_proto.struct_type orelse return error.InvalidAST;
         if (struct_type.field.len != node.field_list.len) return error.InvalidAST;
 
@@ -1250,6 +1535,35 @@ pub const NodeExtractor = struct {
         return types_data.newFunctionCallExpressionData(alloc, "zetasqlite_make_struct", field_args);
     }
 };
+
+/// Go extractDropStatementData. The object type passes through verbatim
+/// (Go's switch only canonicalizes the names it already matches).
+fn extractDropStatementData(
+    alloc: std.mem.Allocator,
+    node: *const pb.ResolvedDropStmtProto,
+) Error!StatementData {
+    const drop_data = try alloc.create(types_data.DropData);
+    drop_data.* = .{
+        .if_exists = node.is_if_exists orelse false,
+        .object_type = node.object_type orelse "",
+        .object_name = try formatNamePath(alloc, node.name_path),
+    };
+    return .{ .type = .drop, .drop = drop_data };
+}
+
+/// Go extractDropFunctionStatementData.
+fn extractDropFunctionStatementData(
+    alloc: std.mem.Allocator,
+    node: *const pb.ResolvedDropFunctionStmtProto,
+) Error!StatementData {
+    const drop_data = try alloc.create(types_data.DropData);
+    drop_data.* = .{
+        .if_exists = node.is_if_exists orelse false,
+        .object_type = "FUNCTION",
+        .object_name = try formatNamePath(alloc, node.name_path),
+    };
+    return .{ .type = .drop, .drop = drop_data };
+}
 
 /// Unwraps AnyResolvedComputedColumnBaseProto down to the plain
 /// ResolvedComputedColumnProto (deferred computed columns are not part of

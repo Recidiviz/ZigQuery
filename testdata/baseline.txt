@@ -251,3 +251,8 @@
 743	group by struct values with aggregation
 744	group by array values basic
 745	group by array values with aggregation
+250	unnest struct
+254	unnest struct with multiple tables
+721	limit offset test
+732	simple truncate
+733	simple drop
