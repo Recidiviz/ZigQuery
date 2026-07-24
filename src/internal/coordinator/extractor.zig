@@ -470,8 +470,8 @@ pub const NodeExtractor = struct {
             .resolved_with_scan_node => |n| return self.extractWithScanNode(alloc, n, ctx),
             .resolved_with_ref_scan_node => |n| return self.extractWithRefScanNode(alloc, n, ctx),
             .resolved_array_scan_node => |n| return self.extractArrayScanData(alloc, n, ctx),
+            .resolved_table_scan_node => |n| return extractTableScanData(alloc, n),
             // Deferred foundation gaps:
-            .resolved_table_scan_node => return error.Unimplemented, // needs catalog (later task)
             .resolved_analytic_scan_node => return error.Unimplemented,
             .resolved_recursive_scan_node => return error.Unimplemented,
             .resolved_recursive_ref_scan_node => return error.Unimplemented,
@@ -483,6 +483,33 @@ pub const NodeExtractor = struct {
         _ = self;
         // Go: ScanData{Type: ScanTypeSingleRow} (no column list).
         return .{ .type = .single_row };
+    }
+
+    /// Go extractTableScanData. The table name comes from the resolved
+    /// TableRefProto: the catalog registers every SimpleTableProto with
+    /// `name` = the canonical "_"-joined SQLite table name (Go's
+    /// getTableName migration note — Table().Name() carries the name the
+    /// catalog registered), so no NodeMap/parser-AST walk is needed.
+    /// Wildcard-table recognition (Gap G) is not ported; the catalog never
+    /// registers wildcard tables, so the Go branch is unreachable here.
+    fn extractTableScanData(
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedTableScanProto,
+    ) Error!ScanData {
+        const table_ref = node.table orelse return error.InvalidAST;
+        const table_name = table_ref.name orelse return error.InvalidAST;
+
+        const parent = node.parent orelse return error.InvalidAST;
+        const table_scan = try alloc.create(types_data.TableScanData);
+        table_scan.* = .{
+            .table_name = table_name,
+            .alias = node.alias orelse "",
+        };
+        return .{
+            .type = .table,
+            .column_list = try extractColumnDataList(alloc, parent.column_list),
+            .table_scan = table_scan,
+        };
     }
 
     fn extractProjectScanData(

@@ -29,6 +29,7 @@ const sqlbuilder = @import("internal/sqlbuilder/sqlbuilder.zig");
 const coordinator_mod = @import("internal/coordinator/coordinator.zig");
 const context_mod = @import("internal/coordinator/context.zig");
 const function = @import("internal/function/register.zig");
+const catalog_mod = @import("internal/catalog.zig");
 
 pub const Error = error{
     Unimplemented,
@@ -83,6 +84,7 @@ pub const Db = struct {
     gpa: std.mem.Allocator,
     sqlite_db: sqlite.Db,
     udf_state: *function.State,
+    catalog: *catalog_mod.Catalog,
     last_error: ?[]u8 = null,
 
     pub fn open(gpa: std.mem.Allocator, path: [:0]const u8) Error!*Db {
@@ -92,17 +94,25 @@ pub const Db = struct {
             .gpa = gpa,
             .sqlite_db = try sqlite.Db.open(path),
             .udf_state = undefined,
+            .catalog = undefined,
         };
         errdefer db.sqlite_db.close();
         // zetasqlite_* UDFs + collation (Go: RegisterFunctions in driver init).
         db.udf_state = function.registerAll(&db.sqlite_db, gpa) catch
             return error.ExecFailed;
-        // zetasqlite_catalog table setup lands with the catalog task.
+        errdefer db.udf_state.deinit();
+        // zetasqlite_catalog tables + initial sync (Go: Catalog.Sync at the
+        // top of Analyzer.Analyze; done eagerly here and re-checked per
+        // query via syncCatalog).
+        db.catalog = try catalog_mod.Catalog.init(gpa);
+        errdefer db.catalog.deinit();
+        db.catalog.sync(&db.sqlite_db) catch return error.ExecFailed;
         return db;
     }
 
     pub fn close(db: *Db) void {
         db.clearLastError();
+        db.catalog.deinit();
         db.sqlite_db.close();
         db.udf_state.deinit();
         db.gpa.destroy(db);
@@ -176,8 +186,26 @@ pub const Db = struct {
         const sqlz = try arena.dupeZ(u8, sql);
         var offset: usize = 0;
 
+        // Go Analyzer.Analyze: catalog sync before analysis.
+        db.catalog.sync(&db.sqlite_db) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                db.setLastError(db.sqlite_db.errmsg());
+                return error.ExecFailed;
+            },
+        };
+
         while (true) {
-            const analyzed = analyzer_ffi.analyzeNextStatement(arena, sqlz, offset, "{}") catch |err| {
+            // Re-rendered per statement: later DDL/DML tasks mutate the
+            // catalog between statements of one script.
+            const catalog_json = db.catalog.catalogJson(arena) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    db.setLastError(@errorName(err));
+                    return error.AnalyzeFailed;
+                },
+            };
+            const analyzed = analyzer_ffi.analyzeNextStatement(arena, sqlz, offset, catalog_json) catch |err| {
                 switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => {
@@ -595,4 +623,201 @@ test "exec runs statements to completion" {
     defer db.close();
 
     try db.exec("SELECT 1; SELECT 2", &.{}, .{});
+}
+
+// ----------------------------------------------------------------------
+// Table scan end-to-end (catalog + extractor + scan_table transformer)
+// ----------------------------------------------------------------------
+
+const catalog_test = struct {
+    /// Builds the t1 spec (INT64, STRING, BOOL, DOUBLE, DATE, ARRAY<INT64>),
+    /// creates the SQLite table from spec.SQLiteSchema, inserts one row of
+    /// encoder-encoded values, and registers the spec in db.catalog.
+    fn setupTable(db: *Db, arena: std.mem.Allocator) !void {
+        const kinds = [_]pb.TypeKind{
+            .TYPE_INT64, .TYPE_STRING, .TYPE_BOOL, .TYPE_DOUBLE, .TYPE_DATE, .TYPE_ARRAY,
+        };
+        const names = [_][]const u8{ "a", "b", "c", "d", "e", "f" };
+        const cols = try arena.alloc(*spec.ColumnSpec, kinds.len);
+        for (kinds, names, 0..) |kind, name, i| {
+            const t = try spec.newSimpleType(arena, kind);
+            if (kind == .TYPE_ARRAY) t.element_type = try spec.newSimpleType(arena, .TYPE_INT64);
+            const col = try arena.create(spec.ColumnSpec);
+            col.* = .{ .name = name, .type = t };
+            cols[i] = col;
+        }
+        const table_spec = try arena.create(spec.TableSpec);
+        table_spec.* = .{
+            .name_path = &.{"t1"},
+            .columns = cols,
+            .create_mode = spec.create_mode_create_default,
+            .updated_at = "2024-01-02T03:04:05Z",
+            .created_at = "2024-01-02T03:04:05Z",
+        };
+
+        // Raw SQLite DDL from the spec schema.
+        try db.sqlite_db.exec(try arena.dupeZ(u8, try table_spec.sqliteSchema(arena)));
+
+        // One row, built by hand through encoder.LiteralFromValue (what the
+        // INSERT transformer will emit later).
+        const arr = try value_mod.arrayValue(arena, &.{
+            .{ .int = 1 }, .{ .int = 2 }, .{ .int = 3 },
+        });
+        const row = [_]value_mod.Value{
+            .{ .int = 42 },
+            .{ .string = "hello" },
+            .{ .bool = true },
+            .{ .float = 1.5 },
+            .{ .date = try value_mod.parseDateDays("2023-01-15") },
+            arr,
+        };
+        var insert: std.ArrayList(u8) = .empty;
+        try insert.appendSlice(arena, "INSERT INTO `t1` VALUES (");
+        for (row, 0..) |v, i| {
+            if (i > 0) try insert.appendSlice(arena, ",");
+            try insert.appendSlice(arena, try encoder.LiteralFromValue(arena, v));
+        }
+        try insert.appendSlice(arena, ")");
+        try db.sqlite_db.exec(try arena.dupeZ(u8, insert.items));
+
+        try db.catalog.addNewTableSpec(&db.sqlite_db, table_spec);
+    }
+};
+
+test "table scan end-to-end: typed columns decode through the catalog" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    try catalog_test.setupTable(db, arena_state.allocator());
+
+    var rows = try db.query("SELECT a, b, c, d, e, f FROM t1", &.{}, .{});
+    defer rows.deinit();
+
+    try testing.expectEqual(@as(usize, 6), rows.columns().len);
+    try testing.expectEqualStrings("a", rows.columns()[0]);
+    try testing.expectEqualStrings("f", rows.columns()[5]);
+
+    const row = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 42 }, row[0]);
+    try testing.expectEqualStrings("hello", row[1].string);
+    try testing.expectEqual(true, row[2].bool);
+    try testing.expectEqual(@as(f64, 1.5), row[3].float);
+    try testing.expectEqualStrings("2023-01-15", row[4].date);
+    try testing.expectEqual(@as(usize, 3), row[5].array.len);
+    try testing.expectEqual(Cell{ .int = 2 }, row[5].array[1]);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "table scan with WHERE filter and expressions" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    try catalog_test.setupTable(db, arena_state.allocator());
+
+    // Matching filter over multiple column kinds.
+    {
+        var rows = try db.query(
+            "SELECT a + 1, UPPER(b) FROM t1 WHERE a = 42 AND c AND e = DATE '2023-01-15'",
+            &.{},
+            .{},
+        );
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqual(Cell{ .int = 43 }, row[0]);
+        try testing.expectEqualStrings("HELLO", row[1].string);
+        try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+    }
+    // Non-matching filter yields no rows.
+    {
+        var rows = try db.query("SELECT a FROM t1 WHERE a = 0", &.{}, .{});
+        defer rows.deinit();
+        try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+    }
+    // SELECT * (star expansion through the catalog columns).
+    {
+        var rows = try db.query("SELECT * FROM t1", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqual(@as(usize, 6), row.len);
+        try testing.expectEqual(Cell{ .int = 42 }, row[0]);
+    }
+    // Aggregate over the table.
+    {
+        var rows = try db.query("SELECT COUNT(*), SUM(a) FROM t1", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqual(Cell{ .int = 1 }, row[0]);
+        try testing.expectEqual(Cell{ .int = 42 }, row[1]);
+    }
+}
+
+test "dotted table names resolve and scan" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const col = try arena.create(spec.ColumnSpec);
+    col.* = .{ .name = "x", .type = try spec.newSimpleType(arena, .TYPE_INT64) };
+    const table_spec = try arena.create(spec.TableSpec);
+    table_spec.* = .{
+        .name_path = &.{ "proj", "ds", "t" },
+        .columns = &.{col},
+        .create_mode = spec.create_mode_create_default,
+        .updated_at = "2024-01-02T03:04:05Z",
+        .created_at = "2024-01-02T03:04:05Z",
+    };
+    // SQLite table under the canonical "_"-joined name.
+    try db.sqlite_db.exec(try arena.dupeZ(u8, try table_spec.sqliteSchema(arena)));
+    try db.sqlite_db.exec("INSERT INTO `proj_ds_t` VALUES (7)");
+    try db.catalog.addNewTableSpec(&db.sqlite_db, table_spec);
+
+    inline for (.{
+        "SELECT x FROM proj.ds.t",
+        "SELECT x FROM `proj.ds.t`",
+        "SELECT x FROM ds.t",
+    }) |query_sql| {
+        var rows = try db.query(query_sql, &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqual(Cell{ .int = 7 }, row[0]);
+    }
+}
+
+test "catalog persists across driver connections to the same file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // tmpDir lives at .zig-cache/tmp/<sub_path> relative to the test cwd;
+    // sqlite resolves the same relative path against the same cwd.
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena,
+        ".zig-cache/tmp/{s}/catalog_e2e.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try catalog_test.setupTable(db, arena);
+    }
+    // A fresh connection loads the spec via Catalog.sync.
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        var rows = try db.query("SELECT b FROM t1 WHERE a = 42", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqualStrings("hello", row[0].string);
+    }
 }

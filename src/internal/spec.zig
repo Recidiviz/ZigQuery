@@ -2,8 +2,10 @@
 //! used by the coordinator/extractor layer (Go `zType` fields become
 //! `*spec.Type` built eagerly from the decoded `pb.TypeProto`).
 //!
-//! FunctionSpec / TableSpec / CatalogSpec are deferred to the catalog
-//! milestone; this file stays extensible for them.
+//! Also ports the catalog-milestone TableSpec/ColumnSpec with their
+//! Go-compatible JSON encoding (the persisted `spec` column must
+//! interoperate with DBs written by go-zetasqlite). FunctionSpec is
+//! deferred to the CREATE FUNCTION milestone.
 
 const std = @import("std");
 const pb = @import("../proto/resolved_ast.zig");
@@ -148,6 +150,359 @@ pub fn sqliteTypeName(k: pb.TypeKind) []const u8 {
     };
 }
 
+// ----------------------------------------------------------------------
+// TableSpec / ColumnSpec (Go spec.go TableSpec, ColumnSpec)
+// ----------------------------------------------------------------------
+
+/// go-googlesql ResolvedCreateStatementEnums_CreateMode values as persisted
+/// by Go in TableSpec JSON (`createMode`). NOTE: these are the Go binding's
+/// 1-based values, NOT the googlesql fork's 0-based proto enum
+/// (pb.ResolvedCreateStatementEnums_CreateMode); converting a resolved
+/// CREATE statement's proto mode requires +1 (CREATE-statement task).
+pub const create_mode_unspecified: i64 = 0;
+pub const create_mode_create_default: i64 = 1;
+pub const create_mode_create_or_replace: i64 = 2;
+pub const create_mode_create_if_not_exists: i64 = 3;
+
+/// Go name_path.go formatPath: "_"-joined (the canonical SQLite name).
+pub fn formatPath(alloc: std.mem.Allocator, path: []const []const u8) error{OutOfMemory}![]u8 {
+    return std.mem.join(alloc, "_", path);
+}
+
+/// Go spec.go ColumnSpec.
+pub const ColumnSpec = struct {
+    name: []const u8 = "",
+    type: *Type,
+    is_not_null: bool = false,
+
+    /// Go ColumnSpec.SQLiteSchema: "`name` TYPE[ NOT NULL]".
+    pub fn sqliteSchema(self: *const ColumnSpec, alloc: std.mem.Allocator) Error![]u8 {
+        const typ = sqliteTypeName(self.type.typeKind());
+        if (self.is_not_null) {
+            return std.fmt.allocPrint(alloc, "`{s}` {s} NOT NULL", .{ self.name, typ });
+        }
+        return std.fmt.allocPrint(alloc, "`{s}` {s}", .{ self.name, typ });
+    }
+};
+
+/// Go spec.go TableSpec. `updated_at`/`created_at` hold the RFC3339 strings
+/// Go's time.Time marshals to; they are round-tripped opaquely.
+pub const TableSpec = struct {
+    is_temp: bool = false,
+    is_view: bool = false,
+    name_path: []const []const u8 = &.{},
+    columns: []const *ColumnSpec = &.{},
+    primary_key: []const []const u8 = &.{},
+    create_mode: i64 = create_mode_unspecified,
+    query: []const u8 = "",
+    updated_at: []const u8 = "",
+    created_at: []const u8 = "",
+
+    /// Go TableSpec.Column.
+    pub fn column(self: *const TableSpec, name: []const u8) ?*ColumnSpec {
+        for (self.columns) |col| {
+            if (std.mem.eql(u8, col.name, name)) return @constCast(col);
+        }
+        return null;
+    }
+
+    /// Go TableSpec.TableName: formatPath(NamePath).
+    pub fn tableName(self: *const TableSpec, alloc: std.mem.Allocator) error{OutOfMemory}![]u8 {
+        return formatPath(alloc, self.name_path);
+    }
+
+    /// Go TableSpec.SQLiteSchema (exact text, including the trailing space
+    /// Go's "%s `%s` (%s) %s" leaves when there is no clustering clause).
+    pub fn sqliteSchema(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
+        if (self.is_view) return self.viewSqliteSchema(alloc);
+        const table_name = try self.tableName(alloc);
+        if (self.query.len != 0) {
+            return std.fmt.allocPrint(alloc, "CREATE TABLE `{s}` AS {s}", .{ table_name, self.query });
+        }
+        var columns: std.ArrayList([]const u8) = .empty;
+        for (self.columns) |c| {
+            try columns.append(alloc, try c.sqliteSchema(alloc));
+        }
+        if (self.primary_key.len != 0) {
+            const primary_keys = try alloc.alloc([]const u8, self.primary_key.len);
+            for (self.primary_key, 0..) |key, i| {
+                primary_keys[i] = try std.fmt.allocPrint(alloc, "{s} COLLATE zetasqlite_collate", .{key});
+            }
+            try columns.append(alloc, try std.fmt.allocPrint(
+                alloc,
+                "PRIMARY KEY ({s})",
+                .{try std.mem.join(alloc, ",", primary_keys)},
+            ));
+        }
+        const clustering: []const u8 = if (self.primary_key.len > 0) "WITHOUT ROWID" else "";
+        const stmt: []const u8 = switch (self.create_mode) {
+            create_mode_create_default, create_mode_create_or_replace => "CREATE TABLE",
+            create_mode_create_if_not_exists => "CREATE TABLE IF NOT EXISTS",
+            else => "", // Go's switch has no default: stmt stays "".
+        };
+        return std.fmt.allocPrint(alloc, "{s} `{s}` ({s}) {s}", .{
+            stmt,
+            table_name,
+            try std.mem.join(alloc, ",", columns.items),
+            clustering,
+        });
+    }
+
+    /// Go viewSQLiteSchema.
+    fn viewSqliteSchema(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
+        const stmt: []const u8 = switch (self.create_mode) {
+            create_mode_create_default, create_mode_create_or_replace => "CREATE VIEW",
+            create_mode_create_if_not_exists => "CREATE VIEW IF NOT EXISTS",
+            else => "",
+        };
+        return std.fmt.allocPrint(alloc, "{s} `{s}` AS {s}", .{
+            stmt,
+            try self.tableName(alloc),
+            self.query,
+        });
+    }
+
+    /// json.Marshal(*TableSpec) equivalent: field order, casing and
+    /// null-vs-[] conventions match what Go produces (nil PrimaryKey -> null,
+    /// always-built Columns/NamePath -> arrays).
+    pub fn toJson(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
+        var out: std.ArrayList(u8) = .empty;
+        try out.appendSlice(alloc, "{\"isTemp\":");
+        try out.appendSlice(alloc, if (self.is_temp) "true" else "false");
+        try out.appendSlice(alloc, ",\"isView\":");
+        try out.appendSlice(alloc, if (self.is_view) "true" else "false");
+        try out.appendSlice(alloc, ",\"namePath\":");
+        try appendJsonStringArray(&out, alloc, self.name_path);
+        try out.appendSlice(alloc, ",\"columns\":[");
+        for (self.columns, 0..) |col, i| {
+            if (i > 0) try out.append(alloc, ',');
+            try appendColumnSpecJson(&out, alloc, col);
+        }
+        try out.appendSlice(alloc, "],\"primaryKey\":");
+        if (self.primary_key.len == 0) {
+            try out.appendSlice(alloc, "null");
+        } else {
+            try appendJsonStringArray(&out, alloc, self.primary_key);
+        }
+        try out.appendSlice(alloc, ",\"createMode\":");
+        try out.print(alloc, "{d}", .{self.create_mode});
+        try out.appendSlice(alloc, ",\"query\":");
+        try appendJsonString(&out, alloc, self.query);
+        try out.appendSlice(alloc, ",\"updatedAt\":");
+        try appendJsonString(&out, alloc, self.updated_at);
+        try out.appendSlice(alloc, ",\"createdAt\":");
+        try appendJsonString(&out, alloc, self.created_at);
+        try out.append(alloc, '}');
+        return out.toOwnedSlice(alloc);
+    }
+};
+
+fn appendColumnSpecJson(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    col: *const ColumnSpec,
+) Error!void {
+    try out.appendSlice(alloc, "{\"name\":");
+    try appendJsonString(out, alloc, col.name);
+    try out.appendSlice(alloc, ",\"type\":");
+    try appendTypeJson(out, alloc, col.type);
+    try out.appendSlice(alloc, ",\"isNotNull\":");
+    try out.appendSlice(alloc, if (col.is_not_null) "true" else "false");
+    try out.append(alloc, '}');
+}
+
+/// The Go spec.go Type JSON shape: {"name","kind","signatureKind",
+/// "elementType","fieldTypes"} with null for absent pointers/nil slices.
+fn appendTypeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, t: *const Type) Error!void {
+    try out.appendSlice(alloc, "{\"name\":");
+    try appendJsonString(out, alloc, t.name);
+    try out.print(alloc, ",\"kind\":{d},\"signatureKind\":{d},\"elementType\":", .{ t.kind, t.signature_kind });
+    if (t.element_type) |elem| {
+        try appendTypeJson(out, alloc, elem);
+    } else {
+        try out.appendSlice(alloc, "null");
+    }
+    try out.appendSlice(alloc, ",\"fieldTypes\":");
+    if (t.field_types.len == 0) {
+        try out.appendSlice(alloc, "null");
+    } else {
+        try out.append(alloc, '[');
+        for (t.field_types, 0..) |field, i| {
+            if (i > 0) try out.append(alloc, ',');
+            try out.appendSlice(alloc, "{\"name\":");
+            try appendJsonString(out, alloc, field.name);
+            try out.appendSlice(alloc, ",\"type\":");
+            if (field.type) |ft| {
+                try appendTypeJson(out, alloc, ft);
+            } else {
+                try out.appendSlice(alloc, "null");
+            }
+            try out.append(alloc, '}');
+        }
+        try out.append(alloc, ']');
+    }
+    try out.append(alloc, '}');
+}
+
+fn appendJsonStringArray(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    items: []const []const u8,
+) Error!void {
+    try out.append(alloc, '[');
+    for (items, 0..) |item, i| {
+        if (i > 0) try out.append(alloc, ',');
+        try appendJsonString(out, alloc, item);
+    }
+    try out.append(alloc, ']');
+}
+
+/// Minimal JSON string escaping (", \, control chars) — matches what Go
+/// emits for the identifier/timestamp/SQL-text strings that appear in specs.
+pub fn appendJsonString(out: *std.ArrayList(u8), alloc: std.mem.Allocator, s: []const u8) error{OutOfMemory}!void {
+    try out.append(alloc, '"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try out.appendSlice(alloc, "\\\""),
+            '\\' => try out.appendSlice(alloc, "\\\\"),
+            '\n' => try out.appendSlice(alloc, "\\n"),
+            '\r' => try out.appendSlice(alloc, "\\r"),
+            '\t' => try out.appendSlice(alloc, "\\t"),
+            else => {
+                if (c < 0x20) {
+                    try out.print(alloc, "\\u{x:0>4}", .{c});
+                } else {
+                    try out.append(alloc, c);
+                }
+            },
+        }
+    }
+    try out.append(alloc, '"');
+}
+
+/// json.Unmarshal into TableSpec: accepts the Go shape (missing fields,
+/// null-vs-[] slices, any field order). All returned memory is from `alloc`.
+pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*TableSpec {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, json_text, .{}) catch |err|
+        switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidType,
+    };
+    if (parsed != .object) return error.InvalidType;
+    const obj = parsed.object;
+
+    const table_spec = try alloc.create(TableSpec);
+    table_spec.* = .{};
+    if (getBool(obj, "isTemp")) |b| table_spec.is_temp = b;
+    if (getBool(obj, "isView")) |b| table_spec.is_view = b;
+    table_spec.name_path = try stringSliceField(alloc, obj, "namePath");
+    table_spec.primary_key = try stringSliceField(alloc, obj, "primaryKey");
+    if (obj.get("createMode")) |v| {
+        if (v == .integer) table_spec.create_mode = v.integer;
+    }
+    if (obj.get("query")) |v| {
+        if (v == .string) table_spec.query = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("updatedAt")) |v| {
+        if (v == .string) table_spec.updated_at = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("createdAt")) |v| {
+        if (v == .string) table_spec.created_at = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("columns")) |v| {
+        if (v == .array) {
+            const cols = try alloc.alloc(*ColumnSpec, v.array.items.len);
+            for (v.array.items, 0..) |item, i| {
+                cols[i] = try columnSpecFromValue(alloc, item);
+            }
+            table_spec.columns = cols;
+        }
+    }
+    return table_spec;
+}
+
+fn getBool(obj: std.json.ObjectMap, key: []const u8) ?bool {
+    const v = obj.get(key) orelse return null;
+    return if (v == .bool) v.bool else null;
+}
+
+fn stringSliceField(
+    alloc: std.mem.Allocator,
+    obj: std.json.ObjectMap,
+    key: []const u8,
+) Error![]const []const u8 {
+    const v = obj.get(key) orelse return &.{};
+    if (v != .array) return &.{};
+    const out = try alloc.alloc([]const u8, v.array.items.len);
+    for (v.array.items, 0..) |item, i| {
+        if (item != .string) return error.InvalidType;
+        out[i] = try alloc.dupe(u8, item.string);
+    }
+    return out;
+}
+
+fn columnSpecFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*ColumnSpec {
+    if (v != .object) return error.InvalidType;
+    const obj = v.object;
+    const col = try alloc.create(ColumnSpec);
+    const typ = try alloc.create(Type);
+    typ.* = .{};
+    col.* = .{ .type = typ };
+    if (obj.get("name")) |name| {
+        if (name == .string) col.name = try alloc.dupe(u8, name.string);
+    }
+    if (getBool(obj, "isNotNull")) |b| col.is_not_null = b;
+    if (obj.get("type")) |tv| {
+        if (tv == .object) col.type = try typeFromValue(alloc, tv);
+    }
+    return col;
+}
+
+fn typeFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*Type {
+    if (v != .object) return error.InvalidType;
+    const obj = v.object;
+    const t = try alloc.create(Type);
+    t.* = .{};
+    if (obj.get("name")) |name| {
+        if (name == .string) t.name = try alloc.dupe(u8, name.string);
+    }
+    if (obj.get("kind")) |kind| {
+        if (kind == .integer) t.kind = @intCast(kind.integer);
+    }
+    if (obj.get("signatureKind")) |sk| {
+        if (sk == .integer) t.signature_kind = @intCast(sk.integer);
+    }
+    if (obj.get("elementType")) |et| {
+        if (et == .object) t.element_type = try typeFromValue(alloc, et);
+    }
+    if (obj.get("fieldTypes")) |fts| {
+        if (fts == .array) {
+            const fields = try alloc.alloc(*NameWithType, fts.array.items.len);
+            for (fts.array.items, 0..) |item, i| {
+                if (item != .object) return error.InvalidType;
+                const nwt = try alloc.create(NameWithType);
+                nwt.* = .{};
+                if (item.object.get("name")) |name| {
+                    if (name == .string) nwt.name = try alloc.dupe(u8, name.string);
+                }
+                if (item.object.get("type")) |tv| {
+                    if (tv == .object) nwt.type = try typeFromValue(alloc, tv);
+                }
+                fields[i] = nwt;
+            }
+            t.field_types = fields;
+        }
+    }
+    return t;
+}
+
+/// Convenience constructor for a scalar Type of the given kind.
+pub fn newSimpleType(alloc: std.mem.Allocator, kind: pb.TypeKind) error{OutOfMemory}!*Type {
+    const t = try alloc.create(Type);
+    t.* = .{ .kind = @intFromEnum(kind) };
+    return t;
+}
+
 const testing = std.testing;
 
 test "newTypeFromProto builds scalar, array and struct types" {
@@ -175,4 +530,115 @@ test "newTypeFromProto builds scalar, array and struct types" {
     const st_t = try newTypeFromProto(alloc, &st_tp);
     try testing.expect(st_t.isStruct());
     try testing.expectEqualStrings("STRUCT<`a` INT64>", try st_t.formatType(alloc));
+}
+
+// Byte-for-byte what Go's json.Marshal produces for the equivalent spec
+// (struct tags in internal/spec.go; goccy/go-json preserves field order).
+const go_table_spec_json =
+    "{\"isTemp\":false,\"isView\":false,\"namePath\":[\"t1\"]," ++
+    "\"columns\":[" ++
+    "{\"name\":\"a\",\"type\":{\"name\":\"\",\"kind\":2,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"isNotNull\":false}," ++
+    "{\"name\":\"b\",\"type\":{\"name\":\"\",\"kind\":8,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"isNotNull\":true}," ++
+    "{\"name\":\"c\",\"type\":{\"name\":\"\",\"kind\":16,\"signatureKind\":0,\"elementType\":{\"name\":\"\",\"kind\":2,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"fieldTypes\":null},\"isNotNull\":false}" ++
+    "],\"primaryKey\":[\"a\"],\"createMode\":1,\"query\":\"\"," ++
+    "\"updatedAt\":\"2024-01-02T03:04:05Z\",\"createdAt\":\"2024-01-02T03:04:05Z\"}";
+
+fn makeGoShapeSpec(alloc: std.mem.Allocator) !*TableSpec {
+    const col_a = try alloc.create(ColumnSpec);
+    col_a.* = .{ .name = "a", .type = try newSimpleType(alloc, .TYPE_INT64) };
+    const col_b = try alloc.create(ColumnSpec);
+    col_b.* = .{ .name = "b", .type = try newSimpleType(alloc, .TYPE_STRING), .is_not_null = true };
+    const arr_type = try newSimpleType(alloc, .TYPE_ARRAY);
+    arr_type.element_type = try newSimpleType(alloc, .TYPE_INT64);
+    const col_c = try alloc.create(ColumnSpec);
+    col_c.* = .{ .name = "c", .type = arr_type };
+
+    const spec_ptr = try alloc.create(TableSpec);
+    spec_ptr.* = .{
+        .name_path = &.{"t1"},
+        .columns = try alloc.dupe(*ColumnSpec, &.{ col_a, col_b, col_c }),
+        .primary_key = &.{"a"},
+        .create_mode = create_mode_create_default,
+        .updated_at = "2024-01-02T03:04:05Z",
+        .created_at = "2024-01-02T03:04:05Z",
+    };
+    return spec_ptr;
+}
+
+test "TableSpec JSON matches Go marshaling byte-for-byte" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const spec_ptr = try makeGoShapeSpec(alloc);
+    try testing.expectEqualStrings(go_table_spec_json, try spec_ptr.toJson(alloc));
+}
+
+test "TableSpec JSON round-trips through the Go shape" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const decoded = try tableSpecFromJson(alloc, go_table_spec_json);
+    try testing.expectEqual(false, decoded.is_temp);
+    try testing.expectEqual(false, decoded.is_view);
+    try testing.expectEqual(@as(usize, 1), decoded.name_path.len);
+    try testing.expectEqualStrings("t1", decoded.name_path[0]);
+    try testing.expectEqual(@as(usize, 3), decoded.columns.len);
+    try testing.expectEqual(pb.TypeKind.TYPE_STRING, decoded.columns[1].type.typeKind());
+    try testing.expect(decoded.columns[1].is_not_null);
+    try testing.expect(decoded.columns[2].type.isArray());
+    try testing.expectEqual(
+        pb.TypeKind.TYPE_INT64,
+        decoded.columns[2].type.element_type.?.typeKind(),
+    );
+    try testing.expectEqual(create_mode_create_default, decoded.create_mode);
+    try testing.expectEqualStrings("2024-01-02T03:04:05Z", decoded.updated_at);
+
+    // Re-encoding reproduces the Go bytes exactly.
+    try testing.expectEqualStrings(go_table_spec_json, try decoded.toJson(alloc));
+}
+
+test "SQLiteSchema golden strings" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // With PRIMARY KEY: collation + WITHOUT ROWID.
+    const with_pk = try makeGoShapeSpec(alloc);
+    try testing.expectEqualStrings(
+        "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT," ++
+            "PRIMARY KEY (a COLLATE zetasqlite_collate)) WITHOUT ROWID",
+        try with_pk.sqliteSchema(alloc),
+    );
+
+    // Without PRIMARY KEY: Go's format string leaves a trailing space.
+    const no_pk = try makeGoShapeSpec(alloc);
+    no_pk.primary_key = &.{};
+    try testing.expectEqualStrings(
+        "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT) ",
+        try no_pk.sqliteSchema(alloc),
+    );
+
+    // IF NOT EXISTS mode.
+    no_pk.create_mode = create_mode_create_if_not_exists;
+    try testing.expectEqualStrings(
+        "CREATE TABLE IF NOT EXISTS `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT) ",
+        try no_pk.sqliteSchema(alloc),
+    );
+
+    // View.
+    const view = try alloc.create(TableSpec);
+    view.* = .{
+        .is_view = true,
+        .name_path = &.{ "ds", "v1" },
+        .create_mode = create_mode_create_or_replace,
+        .query = "SELECT 1",
+    };
+    try testing.expectEqualStrings("CREATE VIEW `ds_v1` AS SELECT 1", try view.sqliteSchema(alloc));
+
+    // CREATE TABLE AS SELECT (non-view spec with a query).
+    const ctas = try makeGoShapeSpec(alloc);
+    ctas.query = "SELECT 1 AS a";
+    try testing.expectEqualStrings("CREATE TABLE `t1` AS SELECT 1 AS a", try ctas.sqliteSchema(alloc));
 }
