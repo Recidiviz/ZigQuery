@@ -146,6 +146,110 @@ pub fn castValue(alloc: std.mem.Allocator, v: Value, to: TypeKind) ValueError!Va
 }
 
 // ----------------------------------------------------------------------
+// valueFromProto: port of encoder.go ValueFromZetaSQLValue + the
+// *FromLiteral helpers, reading the decoded ValueProto/TypeProto instead of
+// go-googlesql's Value accessors. Foundation kinds only; timestamp /
+// numeric / json / datetime / time / interval / enum are deferred.
+// ----------------------------------------------------------------------
+
+const pb = @import("../proto/resolved_ast.zig");
+
+/// Go ValueFromZetaSQLValue. A ValueProto with no oneof member set is the
+/// NULL literal (Go: v.IsNull() -> nil Value).
+pub fn valueFromProto(
+    alloc: std.mem.Allocator,
+    value_proto: *const pb.ValueProto,
+    type_proto: *const pb.TypeProto,
+) ValueError!Value {
+    const v = value_proto.value orelse return Value.@"null";
+    const kind = type_proto.type_kind orelse return error.Unimplemented;
+    switch (kind) {
+        // Go: intValueFromLiteral over the SQL literal; here the proto
+        // carries the native value. Uint64 beyond int64 range would have
+        // failed Go's ParseInt too.
+        .TYPE_INT32 => return .{ .int = switch (v) {
+            .int32_value => |x| @as(i64, x),
+            else => return error.CorruptData,
+        } },
+        .TYPE_INT64 => return .{ .int = switch (v) {
+            .int64_value => |x| x,
+            else => return error.CorruptData,
+        } },
+        .TYPE_UINT32 => return .{ .int = switch (v) {
+            .uint32_value => |x| @as(i64, x),
+            else => return error.CorruptData,
+        } },
+        .TYPE_UINT64 => return .{ .int = switch (v) {
+            .uint64_value => |x| std.math.cast(i64, x) orelse return error.FailedConversion,
+            else => return error.CorruptData,
+        } },
+        .TYPE_BOOL => return .{ .bool = switch (v) {
+            .bool_value => |x| x,
+            else => return error.CorruptData,
+        } },
+        .TYPE_FLOAT => return .{ .float = switch (v) {
+            .float_value => |x| @as(f64, x),
+            else => return error.CorruptData,
+        } },
+        .TYPE_DOUBLE => return .{ .float = switch (v) {
+            .double_value => |x| x,
+            else => return error.CorruptData,
+        } },
+        .TYPE_STRING => return .{ .string = switch (v) {
+            .string_value => |x| x,
+            else => return error.CorruptData,
+        } },
+        .TYPE_BYTES => return .{ .bytes = switch (v) {
+            .bytes_value => |x| x,
+            else => return error.CorruptData,
+        } },
+        // Go dateValueFromLiteral: civil days since the Unix epoch.
+        .TYPE_DATE => return .{ .date = switch (v) {
+            .date_value => |days| @as(i64, days),
+            else => return error.CorruptData,
+        } },
+        .TYPE_ARRAY => {
+            // Go arrayValueFromLiteral. NULL arrays were handled by the
+            // oneof-not-set case above; this is a present (possibly empty)
+            // array.
+            const arr = switch (v) {
+                .array_value => |x| x,
+                else => return error.CorruptData,
+            };
+            const arr_type = type_proto.array_type orelse return error.CorruptData;
+            const elem_type = arr_type.element_type orelse return error.CorruptData;
+            const values = try alloc.alloc(Value, arr.element.len);
+            for (arr.element, 0..) |elem, i| {
+                values[i] = try valueFromProto(alloc, elem, elem_type);
+            }
+            return value_mod.arrayValue(alloc, values);
+        },
+        .TYPE_STRUCT => {
+            // Go structValueFromLiteral: field names from the struct type.
+            const st = switch (v) {
+                .struct_value => |x| x,
+                else => return error.CorruptData,
+            };
+            const struct_type = type_proto.struct_type orelse return error.CorruptData;
+            if (struct_type.field.len != st.field.len) return error.CorruptData;
+            const keys = try alloc.alloc([]const u8, st.field.len);
+            const values = try alloc.alloc(Value, st.field.len);
+            for (st.field, 0..) |field, i| {
+                const sf = struct_type.field[i];
+                keys[i] = sf.field_name orelse "";
+                const field_type = sf.field_type orelse return error.CorruptData;
+                values[i] = try valueFromProto(alloc, field, field_type);
+            }
+            return value_mod.structValue(alloc, keys, values);
+        },
+        // Deferred kinds (timestamp, numeric, bignumeric, json, datetime,
+        // time, interval, enum, ...): Go supports them; this port defers
+        // them with their Value kinds.
+        else => return error.Unimplemented,
+    }
+}
+
+// ----------------------------------------------------------------------
 // Tests
 // ----------------------------------------------------------------------
 
@@ -276,4 +380,92 @@ test "castValue stub passes same-kind values through" {
     try value_mod.expectValueEqual(Value.@"null", try castValue(alloc, Value.@"null", .string));
     try testing.expectError(error.Unimplemented, castValue(alloc, Value{ .int = 5 }, .string));
     try testing.expectError(error.Unimplemented, castValue(alloc, Value{ .string = "1" }, .timestamp));
+}
+
+// ----------------------------------------------------------------------
+// valueFromProto tests: real analyzer round-trips.
+// ----------------------------------------------------------------------
+
+const analyzer_ffi = @import("../analyzer_ffi.zig");
+
+/// Analyzes `SELECT <literal>` and converts the first projected literal.
+fn literalValueOf(alloc: std.mem.Allocator, sql: [:0]const u8) !Value {
+    const analyzed = try analyzer_ffi.analyzeNextStatement(alloc, sql, 0, "{}");
+    const query = analyzed.node.node.?.resolved_statement_node.node.?.resolved_query_stmt_node;
+    const scan = query.query.?.node.?.resolved_project_scan_node;
+    const literal = scan.expr_list[0].expr.?.node.?.resolved_literal_node;
+    const vwt = literal.value.?;
+    return valueFromProto(alloc, vwt.value.?, vwt.@"type".?);
+}
+
+test "valueFromProto scalar literals" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    try value_mod.expectValueEqual(Value{ .int = 42 }, try literalValueOf(alloc, "SELECT 42"));
+    try value_mod.expectValueEqual(Value{ .bool = true }, try literalValueOf(alloc, "SELECT true"));
+    try value_mod.expectValueEqual(Value{ .float = 1.5 }, try literalValueOf(alloc, "SELECT 1.5"));
+    try value_mod.expectValueEqual(Value{ .string = "héllo" }, try literalValueOf(alloc, "SELECT 'héllo'"));
+    try value_mod.expectValueEqual(Value{ .bytes = "ab\x00" }, try literalValueOf(alloc, "SELECT b'ab\\x00'"));
+    // NULL literal: ValueProto with no oneof member set.
+    try value_mod.expectValueEqual(Value.@"null", try literalValueOf(alloc, "SELECT NULL"));
+}
+
+test "valueFromProto date literal" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const expected_days = try value_mod.parseDateDays("2023-01-15");
+    try value_mod.expectValueEqual(
+        Value{ .date = expected_days },
+        try literalValueOf(alloc, "SELECT DATE '2023-01-15'"),
+    );
+}
+
+test "valueFromProto array literal" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const v = try literalValueOf(alloc, "SELECT [1, 2, 3]");
+    const expected = try value_mod.arrayValue(alloc, &.{
+        Value{ .int = 1 }, Value{ .int = 2 }, Value{ .int = 3 },
+    });
+    try value_mod.expectValueEqual(expected, v);
+
+    // Empty array is a present array with no elements, not NULL.
+    const empty = try literalValueOf(alloc, "SELECT ARRAY<INT64>[]");
+    try testing.expect(empty == .array);
+    try testing.expectEqual(@as(usize, 0), empty.array.values.len);
+
+    // NULL array is NULL.
+    const null_array = try literalValueOf(alloc, "SELECT CAST(NULL AS ARRAY<INT64>)");
+    try value_mod.expectValueEqual(Value.@"null", null_array);
+}
+
+test "valueFromProto struct literal" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const v = try literalValueOf(alloc, "SELECT STRUCT(1 AS a, 'x' AS b)");
+    const expected = try value_mod.structValue(
+        alloc,
+        &.{ "a", "b" },
+        &.{ Value{ .int = 1 }, Value{ .string = "x" } },
+    );
+    try value_mod.expectValueEqual(expected, v);
+}
+
+test "valueFromProto defers non-foundation kinds" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    try testing.expectError(
+        error.Unimplemented,
+        literalValueOf(alloc, "SELECT TIMESTAMP '2023-01-15 00:00:00+00'"),
+    );
 }

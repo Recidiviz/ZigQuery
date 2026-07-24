@@ -11,6 +11,12 @@ pub const value = @import("internal/value.zig");
 pub const codec_binary = @import("internal/codec_binary.zig");
 pub const encoder = @import("internal/encoder.zig");
 pub const sqlbuilder = @import("internal/sqlbuilder/sqlbuilder.zig");
+pub const spec = @import("internal/spec.zig");
+pub const coordinator_types = @import("internal/coordinator/types_data.zig");
+pub const coordinator_interfaces = @import("internal/coordinator/types_interfaces.zig");
+pub const coordinator_context = @import("internal/coordinator/context.zig");
+pub const extractor = @import("internal/coordinator/extractor.zig");
+pub const coordinator = @import("internal/coordinator/coordinator.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

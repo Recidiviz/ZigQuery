@@ -1,0 +1,415 @@
+//! Faithful port of go-zetasqlite internal/coordinator_coordinator.go.
+//!
+//! Go holds transformer instances behind interfaces; the Zig port keeps the
+//! exact same direct-dispatch switches but calls the stateless `transform`
+//! functions in src/internal/transformer/*.zig. No singleton: the driver
+//! creates one QueryCoordinator per process (init is trivially cheap).
+
+const std = @import("std");
+const pb = @import("../../proto/resolved_ast.zig");
+const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const types_data = @import("types_data.zig");
+const context = @import("context.zig");
+const interfaces = @import("types_interfaces.zig");
+const extractor_mod = @import("extractor.zig");
+
+// Expression transformers.
+const literal = @import("../transformer/literal.zig");
+const function = @import("../transformer/function.zig");
+const cast = @import("../transformer/cast.zig");
+const column_ref = @import("../transformer/column_ref.zig");
+const subquery = @import("../transformer/subquery.zig");
+const parameter = @import("../transformer/parameter.zig");
+
+// Statement transformers.
+const stmt_query = @import("../transformer/stmt_query.zig");
+
+// Scan transformers.
+const scan_table = @import("../transformer/scan_table.zig");
+const scan_project = @import("../transformer/scan_project.zig");
+const scan_filter = @import("../transformer/scan_filter.zig");
+const scan_join = @import("../transformer/scan_join.zig");
+const scan_aggregate = @import("../transformer/scan_aggregate.zig");
+const scan_orderby = @import("../transformer/scan_orderby.zig");
+const scan_limit = @import("../transformer/scan_limit.zig");
+const scan_setop = @import("../transformer/scan_setop.zig");
+const scan_single_row = @import("../transformer/scan_single_row.zig");
+const scan_with = @import("../transformer/scan_with.zig");
+const scan_with_ref = @import("../transformer/scan_with_ref.zig");
+const scan_array = @import("../transformer/scan_array.zig");
+const scan_analytic = @import("../transformer/scan_analytic.zig");
+const scan_recursive = @import("../transformer/scan_recursive.zig");
+const scan_recursive_ref = @import("../transformer/scan_recursive_ref.zig");
+const with_entry = @import("../transformer/with_entry.zig");
+
+pub const Error = interfaces.Error;
+pub const NodeExtractor = extractor_mod.NodeExtractor;
+
+const ExpressionData = types_data.ExpressionData;
+const StatementData = types_data.StatementData;
+const ScanData = types_data.ScanData;
+const ColumnData = types_data.ColumnData;
+const TransformContext = context.TransformContext;
+
+/// Go QueryCoordinator: orchestrates the transformation by delegating to
+/// the appropriate transformers.
+pub const QueryCoordinator = struct {
+    alloc: std.mem.Allocator,
+    extractor: NodeExtractor = .{},
+
+    /// Go NewQueryCoordinator (transformer wiring is comptime here).
+    pub fn init(alloc: std.mem.Allocator) QueryCoordinator {
+        return .{ .alloc = alloc };
+    }
+
+    /// Go TransformStatementNode: extract pure data from the AST node, then
+    /// delegate. (Go's debug printing of AST/extracted JSON is handled by
+    /// the CLI driver in this port.)
+    pub fn transformStatementNode(
+        self: *QueryCoordinator,
+        node: *const pb.AnyResolvedNodeProto,
+        ctx: *TransformContext,
+    ) Error!sqlbuilder.SQLFragment {
+        const data = try self.extractor.ExtractStatementData(self.alloc, node, ctx);
+
+        const token = try ctx.fragmentContext().enterScope();
+        defer ctx.fragmentContext().exitScope(token);
+
+        return self.transformStatement(data, ctx);
+    }
+
+    /// Go TransformExpression: direct dispatch on the expression data type.
+    pub fn transformExpression(
+        self: *QueryCoordinator,
+        expr_data: ExpressionData,
+        ctx: *TransformContext,
+    ) Error!*sqlbuilder.SQLExpression {
+        switch (expr_data.type) {
+            .literal => return literal.transform(self, expr_data, ctx),
+            .function => return function.transform(self, expr_data, ctx),
+            .cast => return cast.transform(self, expr_data, ctx),
+            .column => return column_ref.transform(self, expr_data, ctx),
+            .subquery => return subquery.transform(self, expr_data, ctx),
+            .parameter => return parameter.transform(self, expr_data, ctx),
+            // Go: "unsupported expression data type: %v"
+            else => return error.UnsupportedNode,
+        }
+    }
+
+    /// Go TransformStatement: direct dispatch on the statement data type,
+    /// wrapped in its own fragment scope.
+    pub fn transformStatement(
+        self: *QueryCoordinator,
+        stmt_data: StatementData,
+        ctx: *TransformContext,
+    ) Error!sqlbuilder.SQLFragment {
+        const token = try ctx.fragmentContext().enterScope();
+        defer ctx.fragmentContext().exitScope(token);
+
+        switch (stmt_data.type) {
+            .select => return stmt_query.transform(self, stmt_data, ctx),
+            // DML transformer (insert/update/delete), create view, create
+            // table as select, drop and merge arrive with later tasks; the
+            // Go dispatch shape (including the CreateData sub-dispatch) is
+            // preserved here.
+            .insert, .update, .delete => return error.Unimplemented,
+            .create => {
+                if (stmt_data.create) |create_data| {
+                    switch (create_data.type) {
+                        .table => {
+                            if (create_data.table) |table| {
+                                if (table.as_select != null) return error.Unimplemented;
+                            }
+                            // Go: "unsupported CREATE TABLE statement"
+                            return error.UnsupportedNode;
+                        },
+                        .view => return error.Unimplemented,
+                    }
+                }
+                // Go: "unsupported create statement type"
+                return error.UnsupportedNode;
+            },
+            .drop, .merge => return error.Unimplemented,
+        }
+    }
+
+    /// Go TransformScan: direct dispatch, then the shared post-processing:
+    /// scope-scoped alias assignment, output-column validation and scope
+    /// registration.
+    pub fn transformScan(
+        self: *QueryCoordinator,
+        scan_data: ScanData,
+        ctx: *TransformContext,
+    ) Error!*sqlbuilder.FromItem {
+        const token = try ctx.fragmentContext().enterScope();
+        defer ctx.fragmentContext().exitScope(token);
+
+        var alias_base: []const u8 = undefined;
+        var from_item: *sqlbuilder.FromItem = undefined;
+        switch (scan_data.type) {
+            .table => {
+                alias_base = "table_scan";
+                from_item = try scan_table.transform(self, scan_data, ctx);
+            },
+            .join => {
+                alias_base = "join_scan";
+                from_item = try scan_join.transform(self, scan_data, ctx);
+            },
+            .filter => {
+                alias_base = "filter_scan";
+                from_item = try scan_filter.transform(self, scan_data, ctx);
+            },
+            .project => {
+                alias_base = "project_scan";
+                from_item = try scan_project.transform(self, scan_data, ctx);
+            },
+            .aggregate => {
+                alias_base = "aggregate_scan";
+                from_item = try scan_aggregate.transform(self, scan_data, ctx);
+            },
+            .order_by => {
+                alias_base = "order_by_scan";
+                from_item = try scan_orderby.transform(self, scan_data, ctx);
+            },
+            .limit => {
+                alias_base = "limit_scan";
+                from_item = try scan_limit.transform(self, scan_data, ctx);
+            },
+            .set_op => {
+                alias_base = "set_op_scan";
+                from_item = try scan_setop.transform(self, scan_data, ctx);
+            },
+            .single_row => {
+                alias_base = "single_row_scan";
+                from_item = try scan_single_row.transform(self, scan_data, ctx);
+            },
+            .with => {
+                alias_base = "with_scan";
+                from_item = try scan_with.transform(self, scan_data, ctx);
+            },
+            .with_ref => {
+                alias_base = "with_ref_scan";
+                from_item = try scan_with_ref.transform(self, scan_data, ctx);
+            },
+            // Go: "WithEntry scans should use TransformWithEntry method"
+            .with_entry => return error.UnsupportedNode,
+            .array => {
+                alias_base = "array_scan";
+                from_item = try scan_array.transform(self, scan_data, ctx);
+            },
+            .analytic => {
+                alias_base = "analytic_scan";
+                from_item = try scan_analytic.transform(self, scan_data, ctx);
+            },
+            .recursive => {
+                alias_base = "recursive_scan";
+                from_item = try scan_recursive.transform(self, scan_data, ctx);
+            },
+            .recursive_ref => {
+                alias_base = "recursive_ref_scan";
+                from_item = try scan_recursive_ref.transform(self, scan_data, ctx);
+            },
+        }
+
+        const alias = try std.fmt.allocPrint(self.alloc, "{s}_{s}", .{
+            alias_base,
+            ctx.fragmentContext().getID(),
+        });
+        from_item.alias = alias;
+
+        // Verify output column names against extracted data and add to scope.
+        try self.validateColumnData(from_item, scan_data.column_list);
+
+        // Add available column expressions.
+        for (scan_data.column_list) |column| {
+            const info = try self.alloc.create(context.ColumnInfo);
+            info.* = .{ .name = column.name, .id = column.id };
+            try ctx.fragmentContext().addAvailableColumn(column.id, info);
+        }
+
+        // Register scope mappings for output columns.
+        try ctx.fragmentContext().registerColumnScopeMapping(alias, scan_data.column_list);
+
+        return from_item;
+    }
+
+    /// Go TransformWithEntry.
+    pub fn transformWithEntry(
+        self: *QueryCoordinator,
+        scan_data: ScanData,
+        ctx: *TransformContext,
+    ) Error!*sqlbuilder.WithClause {
+        // Go: "expected WITH entry data, got type %v"
+        if (scan_data.type != .with_entry) return error.UnsupportedNode;
+
+        const token = try ctx.fragmentContext().enterScope();
+        defer ctx.fragmentContext().exitScope(token);
+
+        return with_entry.transform(self, scan_data, ctx);
+    }
+
+    /// Go TransformExpressionDataList (nil in -> nil out).
+    pub fn transformExpressionDataList(
+        self: *QueryCoordinator,
+        expr_data_list: ?[]const ExpressionData,
+        ctx: *TransformContext,
+    ) Error!?[]const *sqlbuilder.SQLExpression {
+        const list = expr_data_list orelse return null;
+        const result = try self.alloc.alloc(*sqlbuilder.SQLExpression, list.len);
+        for (list, 0..) |expr_data, i| {
+            result[i] = try self.transformExpression(expr_data, ctx);
+        }
+        return result;
+    }
+
+    /// Go TransformOptionalExpressionData.
+    pub fn transformOptionalExpressionData(
+        self: *QueryCoordinator,
+        expr_data: ?*const ExpressionData,
+        ctx: *TransformContext,
+    ) Error!?*sqlbuilder.SQLExpression {
+        const data = expr_data orelse return null;
+        return try self.transformExpression(data.*, ctx);
+    }
+
+    /// Go validateColumnData: validates that output columns in a
+    /// transformed scan's SelectList use id-based aliases and match the
+    /// ScanData.ColumnList. For SELECT * subqueries, recursively uses the
+    /// subquery's SelectList.
+    fn validateColumnData(
+        self: *QueryCoordinator,
+        from_item: ?*const sqlbuilder.FromItem,
+        expected_columns: []const *ColumnData,
+    ) Error!void {
+        const item = from_item orelse return;
+        if (expected_columns.len == 0) return;
+
+        var select_list: ?[]const *sqlbuilder.SelectListItem = null;
+        switch (item.type) {
+            .subquery => {
+                // Go: "subquery FromItem has nil Subquery"
+                const sub = item.subquery orelse return error.ValidationFailed;
+                select_list = try self.getSelectListRecursive(sub);
+            },
+            // Table scans don't have SelectLists to validate.
+            .table => return,
+            // For other types (joins, ...) we may not have a direct
+            // SelectList.
+            else => return,
+        }
+
+        // Go: "could not extract SelectList from FromItem"
+        const list = select_list orelse return error.ValidationFailed;
+
+        // Go: "SelectList length mismatch: got %d items, expected %d"
+        if (list.len != expected_columns.len) return error.ValidationFailed;
+
+        // Validate each SelectListItem alias against the expected id-based
+        // aliases (Go builds a set; the lists are small, scan linearly).
+        for (list) |sel_item| {
+            // Go: "SelectListItem at index %d has empty alias"
+            if (sel_item.alias.len == 0) return error.ValidationFailed;
+
+            var found = false;
+            for (expected_columns) |col| {
+                const expected_alias = try context.generateIDBasedAlias(self.alloc, col.name, col.id);
+                if (std.mem.eql(u8, sel_item.alias, expected_alias)) {
+                    found = true;
+                    break;
+                }
+            }
+            // Go: "... has unexpected alias '%s'"
+            if (!found) return error.ValidationFailed;
+        }
+    }
+
+    /// Go getSelectListRecursive: extracts the SelectList from a
+    /// SelectStatement, following SELECT * subqueries recursively.
+    fn getSelectListRecursive(
+        self: *QueryCoordinator,
+        stmt: *const sqlbuilder.SelectStatement,
+    ) Error!?[]const *sqlbuilder.SelectListItem {
+        if (stmt.set_operation) |set_op| {
+            return self.getSelectListRecursive(set_op.items[0]);
+        }
+
+        if (stmt.select_list.len == 0) return null;
+
+        // Check if this is a SELECT * query.
+        if (stmt.select_list.len == 1) {
+            const item = stmt.select_list[0];
+            if (item.is_star_expansion or item.expression.type == .star) {
+                // SELECT * - recurse into the FROM clause.
+                if (stmt.from_clause) |from| {
+                    if (from.type == .subquery) {
+                        if (from.subquery) |sub| return self.getSelectListRecursive(sub);
+                    }
+                    if (from.type == .join) {
+                        var items: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;
+                        const join = from.join orelse return error.ValidationFailed;
+                        const left_sub = (join.left orelse return error.ValidationFailed).subquery orelse
+                            return error.ValidationFailed;
+                        const right_sub = (join.right orelse return error.ValidationFailed).subquery orelse
+                            return error.ValidationFailed;
+                        if (try self.getSelectListRecursive(left_sub)) |left_items| {
+                            try items.appendSlice(self.alloc, left_items);
+                        }
+                        if (try self.getSelectListRecursive(right_sub)) |right_items| {
+                            try items.appendSlice(self.alloc, right_items);
+                        }
+                        return try items.toOwnedSlice(self.alloc);
+                    }
+                }
+            }
+        }
+
+        // Return the current SelectList.
+        return stmt.select_list;
+    }
+};
+
+// ----------------------------------------------------------------------
+// Tests
+// ----------------------------------------------------------------------
+
+const testing = std.testing;
+const analyzer_ffi = @import("../../analyzer_ffi.zig");
+
+test "transformStatementNode extracts then dispatches (stub transformers)" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const analyzed = try analyzer_ffi.analyzeNextStatement(alloc, "SELECT 1 AS x", 0, "{}");
+    const config = context.TransformConfig{};
+    const ctx = try TransformContext.init(alloc, &config);
+    var coordinator = QueryCoordinator.init(alloc);
+
+    // The query-statement transformer is still a stub: extraction must
+    // succeed and dispatch must reach it.
+    try testing.expectError(
+        error.Unimplemented,
+        coordinator.transformStatementNode(analyzed.node, ctx),
+    );
+    // Scope bookkeeping unwinds cleanly.
+    try testing.expectEqualStrings("0", ctx.fragmentContext().getID());
+}
+
+test "transformScan rejects WITH-entry data" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const config = context.TransformConfig{};
+    const ctx = try TransformContext.init(alloc, &config);
+    var coordinator = QueryCoordinator.init(alloc);
+
+    const scan_data = ScanData{ .type = .with_entry };
+    try testing.expectError(error.UnsupportedNode, coordinator.transformScan(scan_data, ctx));
+    try testing.expectError(error.UnsupportedNode, with_entry_via_scan(&coordinator, ctx));
+}
+
+fn with_entry_via_scan(coordinator: *QueryCoordinator, ctx: *TransformContext) Error!*sqlbuilder.WithClause {
+    // transformWithEntry with a non-with-entry payload is rejected too.
+    return coordinator.transformWithEntry(ScanData{ .type = .project }, ctx);
+}
