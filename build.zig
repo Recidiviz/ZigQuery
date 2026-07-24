@@ -1,0 +1,90 @@
+const std = @import("std");
+
+// zetasqlite-zig: GoogleSQL -> SQLite translator, a faithful Zig port of
+// Recidiviz/go-zetasqlite. The GoogleSQL analyzer is consumed as a Bazel-built
+// C-ABI dylib from the googlesql repo (see zig/BUILD there); SQLite comes from
+// the Homebrew keg (the macOS SDK stub lacks window-function support).
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const googlesql_root = b.option(
+        []const u8,
+        "googlesql-root",
+        "Path to the googlesql checkout providing bazel-bin/zig/libgooglesql_shim.dylib",
+    ) orelse "/Users/danhansen/workspace/googlesql";
+    const build_shim = b.option(
+        bool,
+        "build-shim",
+        "Run `bazel build -c opt //zig:libgooglesql_shim.dylib` in googlesql-root first",
+    ) orelse false;
+
+    const shim_dylib = b.fmt("{s}/bazel-bin/zig/libgooglesql_shim.dylib", .{googlesql_root});
+    const shim_dir = b.fmt("{s}/bazel-bin/zig", .{googlesql_root});
+
+    const sqlite_include = "/opt/homebrew/opt/sqlite/include";
+    const sqlite_lib = "/opt/homebrew/opt/sqlite/lib";
+
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    mod.addIncludePath(.{ .cwd_relative = sqlite_include });
+    mod.addLibraryPath(.{ .cwd_relative = sqlite_lib });
+    mod.linkSystemLibrary("sqlite3", .{});
+    mod.addObjectFile(.{ .cwd_relative = shim_dylib });
+    mod.addRPath(.{ .cwd_relative = shim_dir });
+
+    const maybe_bazel: ?*std.Build.Step.Run = if (build_shim) blk: {
+        const bazel = b.addSystemCommand(&.{
+            "bazel",                "build",
+            "-c",                   "opt",
+            "--jobs=HOST_CPUS*.5",  "--local_resources=cpu=HOST_CPUS*.5",
+            "//zig:libgooglesql_shim.dylib",
+        });
+        bazel.setCwd(.{ .cwd_relative = googlesql_root });
+        break :blk bazel;
+    } else null;
+
+    // CLI: zetasqlite-zig "SELECT ..." (debug flags: --ast --data --sql)
+    const exe = b.addExecutable(.{
+        .name = "zetasqlite-zig",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| exe.step.dependOn(&bz.step);
+    b.installArtifact(exe);
+
+    const run_cmd = b.addRunArtifact(exe);
+    if (b.args) |args| run_cmd.addArgs(args);
+    b.step("run", "Run the CLI").dependOn(&run_cmd.step);
+
+    // Unit tests over the library module.
+    const unit_tests = b.addTest(.{ .root_module = mod });
+    if (maybe_bazel) |bz| unit_tests.step.dependOn(&bz.step);
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    b.step("test", "Run unit tests").dependOn(&run_unit_tests.step);
+
+    // Conformance harness: replays testdata/corpus.json.
+    const corpus_exe = b.addExecutable(.{
+        .name = "corpus-runner",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/corpus_runner.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| corpus_exe.step.dependOn(&bz.step);
+    b.installArtifact(corpus_exe);
+    const run_corpus = b.addRunArtifact(corpus_exe);
+    run_corpus.setCwd(.{ .cwd_relative = b.build_root.path.? });
+    if (b.args) |args| run_corpus.addArgs(args);
+    b.step("corpus", "Run the conformance corpus").dependOn(&run_corpus.step);
+}
