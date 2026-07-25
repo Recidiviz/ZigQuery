@@ -80,6 +80,7 @@ const ftimestamp = @import("fn_timestamp.zig");
 const fintv = @import("fn_interval.zig");
 const fjson = @import("fn_json.zig");
 const hash = @import("fn_hash.zig");
+const fhll = @import("fn_hll.zig");
 
 pub const func_table = [_]FuncInfo{
     // arithmetic (Go: bindAdd/bindSub/bindMul/bindOpDiv + SAFE_* funcs)
@@ -120,6 +121,10 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "sha512", .min_args = 1, .handler = hash.sha512 },
     .{ .name = "farm_fingerprint", .min_args = 1, .handler = hash.farmFingerprint },
     .{ .name = "session_user", .handler = hash.sessionUser },
+
+    // HLL_COUNT.EXTRACT (Go bindHllCountExtract; the aggregate HLL_COUNT.*
+    // functions are registered in aggregate.zig).
+    .{ .name = "hll_count_extract", .min_args = 1, .handler = fhll.hllCountExtract },
 
     // debugging
     .{ .name = "error", .min_args = 1, .handler = misc.errorFn },

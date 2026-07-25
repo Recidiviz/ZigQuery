@@ -23,6 +23,7 @@ const bind = @import("bind.zig");
 const encoder = @import("../encoder.zig");
 const agg_opt = @import("aggregate_option.zig");
 const fns = @import("fn_aggregate.zig");
+const fhll = @import("fn_hll.zig");
 const register = @import("register.zig");
 
 const c = sqlite.c;
@@ -72,6 +73,12 @@ const agg_table = [_]AggEntry{
     .{ .name = "approx_quantiles", .Impl = fns.APPROX_QUANTILES },
     .{ .name = "approx_top_count", .Impl = fns.APPROX_TOP_COUNT },
     .{ .name = "approx_top_sum", .Impl = fns.APPROX_TOP_SUM },
+
+    // HLL_COUNT.* (Go aggregateFuncs; the EXTRACT half is a scalar and
+    // lives in bind.zig).
+    .{ .name = "hll_count_init", .Impl = fhll.HLL_COUNT_INIT },
+    .{ .name = "hll_count_merge", .Impl = fhll.HLL_COUNT_MERGE },
+    .{ .name = "hll_count_merge_partial", .Impl = fhll.HLL_COUNT_MERGE_PARTIAL },
 };
 
 /// Called from register.registerAll: aggregate UDFs + the option marker
@@ -302,6 +309,7 @@ const testing = std.testing;
 test {
     testing.refAllDecls(@import("aggregate_option.zig"));
     testing.refAllDecls(@import("fn_aggregate.zig"));
+    testing.refAllDecls(@import("fn_hll.zig"));
 }
 
 const TestEnv = struct {

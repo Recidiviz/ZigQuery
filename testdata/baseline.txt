@@ -189,6 +189,10 @@
 187	approx_top_sum with null
 188	approx_top_sum with null 2
 189	approx_top_sum with null 3
+190	hll_count.init
+191	hll_count.merge
+192	hll_count.merge_partial
+193	hll_count.extract
 194	null
 195	window total
 196	window subtotal
