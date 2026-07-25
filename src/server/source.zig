@@ -2,10 +2,15 @@
 //! loading in server/loader.go.
 //!
 //! The input file describes projects, their datasets, and each dataset's
-//! tables (schema plus optional rows):
+//! tables (schema plus optional rows). Two top-level shapes occur in the
+//! wild and both are accepted:
 //!
-//!   [{"id":"proj","datasets":[{"id":"ds","tables":[
-//!      {"id":"t","columns":[{"name":"a","type":"INTEGER"}],"data":[...]}]}]}]
+//!   {"projects":[{"id":"proj","datasets":[...]}]}   <- what real tooling emits
+//!   [{"id":"proj","datasets":[...]}]                <- a bare project list
+//!
+//! and a dataset's tables look like:
+//!
+//!   {"id":"t","columns":[{"name":"a","type":"INTEGER","mode":"NULLABLE"}]}
 //!
 //! Go's JSONSource does no validation at all — unlike YAMLSource, which is
 //! strict — so a malformed entry is skipped rather than fatal. That leniency
@@ -42,11 +47,15 @@ pub fn loadJson(
     const root = std.json.parseFromSliceLeaky(std.json.Value, arena, bytes, .{}) catch {
         return error.InvalidSourceJson;
     };
-    // The file is normally a list of projects, but a single project object is
-    // accepted too.
     const projects: []const std.json.Value = switch (root) {
         .array => |a| a.items,
         .object => blk: {
+            // The usual shape is a {"projects":[...]} wrapper; a bare project
+            // object is also accepted.
+            if (root.object.get("projects")) |ps| {
+                if (ps != .array) return error.InvalidSourceJson;
+                break :blk ps.array.items;
+            }
             const one = try arena.alloc(std.json.Value, 1);
             one[0] = root;
             break :blk one;
@@ -89,14 +98,22 @@ pub fn loadJson(
                     stats.failed_tables += 1;
                     continue;
                 };
-                db.exec(ddl, &.{}, .{}) catch {
-                    // Lenient, like Go's JSONSource: log and carry on.
-                    std.log.warn(
-                        "source table {s}.{s}.{s} failed to create: {s}",
-                        .{ project_id, dataset_id, table_id, db.lastError() },
-                    );
-                    stats.failed_tables += 1;
-                    continue;
+                // `.none` skips handing the analyzer the whole catalog. A
+                // CREATE TABLE with explicit columns references nothing, so
+                // this is safe — and it is the difference between O(1) and
+                // O(catalog) per table, i.e. seconds instead of minutes for a
+                // few thousand source tables. Anything that does need the
+                // catalog simply fails and is retried with it.
+                db.exec(ddl, &.{}, .{ .catalog_scope = .none }) catch {
+                    db.exec(ddl, &.{}, .{}) catch {
+                        // Lenient, like Go's JSONSource: log and carry on.
+                        std.log.warn(
+                            "source table {s}.{s}.{s} failed to create: {s}",
+                            .{ project_id, dataset_id, table_id, db.lastError() },
+                        );
+                        stats.failed_tables += 1;
+                        continue;
+                    };
                 };
 
                 var meta: std.ArrayList(u8) = .empty;
@@ -113,6 +130,10 @@ pub fn loadJson(
             }
         }
     }
+    // Loading nothing from a non-empty file means the shape was not
+    // understood. Silence here previously hid a wrapper object being skipped
+    // wholesale, which surfaced much later as "Table not found".
+    if (stats.projects == 0) return error.NoProjectsLoaded;
     return stats;
 }
 
@@ -248,4 +269,39 @@ test "malformed json is an error, not a crash" {
 
     try testing.expectError(error.InvalidSourceJson, loadInto(arena, db, "{not json"));
     try testing.expectError(error.InvalidSourceJson, loadInto(arena, db, "42"));
+}
+
+test "accepts the {\"projects\":[...]} wrapper that real tooling emits" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const stats = try loadInto(arena, db,
+        \\{"projects":[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","columns":[{"name":"a","type":"STRING","mode":"NULLABLE","fields":[]}]}
+        \\]}]}]}
+    );
+    try testing.expectEqual(@as(usize, 1), stats.projects);
+    try testing.expectEqual(@as(usize, 1), stats.tables);
+
+    var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+}
+
+test "a file that yields no projects is an error, not a silent no-op" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // An unrecognised wrapper must not quietly load nothing.
+    try testing.expectError(
+        error.NoProjectsLoaded,
+        loadInto(arena, db, "{\"somethingElse\":[]}"),
+    );
 }

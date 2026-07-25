@@ -82,6 +82,19 @@ pub const ParamMode = enum { named, positional };
 pub const QueryOptions = struct {
     /// Deterministic CURRENT_* time injection (go-zetasqlite WithCurrentTime).
     current_time_unix_micros: ?i64 = null,
+    /// How much of the catalog the analyzer is given.
+    ///
+    /// The catalog is re-rendered to JSON and re-parsed by the C++ analyzer on
+    /// every statement, so its cost is proportional to catalog size — bulk
+    /// loading N tables is O(N^2), and measurement puts ~90% of that in the
+    /// C++ re-parse rather than the Zig render.
+    ///
+    /// A statement that references no existing table (a CREATE TABLE with
+    /// explicit columns, say) does not need any of it. `.none` says so, and
+    /// makes such a statement O(1) instead of O(catalog). It is only ever a
+    /// hint: if the statement does reference something, analysis fails and
+    /// the caller can retry with `.full`.
+    catalog_scope: enum { full, none } = .full,
 };
 
 /// Connection-level SQLite configuration for Db.openWith. Defaults reproduce
@@ -479,7 +492,9 @@ pub const Db = struct {
         while (true) {
             // Re-rendered per statement: DDL/DML actions mutate the
             // catalog between statements of one script.
-            const catalog_json = db.catalog.catalogJson(arena) catch |err| switch (err) {
+            const catalog_json = if (opts.catalog_scope == .none)
+                try arena.dupeZ(u8, "{}")
+            else db.catalog.catalogJson(arena) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     db.setLastError(@errorName(err));

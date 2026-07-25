@@ -103,14 +103,20 @@ pub const Server = struct {
                 arena,
                 .limited(1 << 30),
             );
-            const stats = try source_mod.loadJson(
+            const stats = source_mod.loadJson(
                 arena,
                 s.db,
                 &s.repo,
                 s.endpoint,
                 @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
                 bytes,
-            );
+            ) catch |err| {
+                std.log.err(
+                    "--data-from-json {s} failed to load: {t}",
+                    .{ path, err },
+                );
+                return err;
+            };
             std.log.info(
                 "loaded {d} projects, {d} datasets, {d} tables ({d} failed) from {s}",
                 .{ stats.projects, stats.datasets, stats.tables, stats.failed_tables, path },

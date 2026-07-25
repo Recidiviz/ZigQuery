@@ -133,6 +133,19 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_bench.addArgs(args);
     b.step("bench", "Benchmark per-query cost vs catalog size").dependOn(&run_bench.step);
 
+    const loadbench_exe = b.addExecutable(.{
+        .name = "load-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/load_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| loadbench_exe.step.dependOn(&bz.step);
+    const run_loadbench = b.addRunArtifact(loadbench_exe);
+    b.step("load-bench", "Benchmark bulk CREATE TABLE cost").dependOn(&run_loadbench.step);
+
     // ---- bigquery-emulator server ----
     //
     // A separate module from the engine so `test` and `corpus` — the engine's

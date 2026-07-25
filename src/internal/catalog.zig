@@ -432,25 +432,51 @@ const Node = struct {
     fn_entries: std.ArrayList(FunctionEntry) = .empty,
     subs: std.ArrayList(*Node) = .empty,
 
+    // Lookup sidecars mirroring the three lists above. The lists stay
+    // authoritative because emission order is part of the output; these only
+    // answer "is it already here?".
+    //
+    // Without them, registering N tables costs O(N^2) string comparisons per
+    // render — and the catalog is re-rendered once per statement, so bulk
+    // loading a few thousand source tables became minutes of pure lookup.
+    // All of this is arena-allocated and discarded with the render.
+    entry_set: std.StringHashMapUnmanaged(void) = .empty,
+    fn_entry_set: std.StringHashMapUnmanaged(void) = .empty,
+    sub_map: std.StringHashMapUnmanaged(*Node) = .empty,
+
     fn findSub(n: *Node, name: []const u8) ?*Node {
-        for (n.subs.items) |sub| {
-            if (std.mem.eql(u8, sub.name, name)) return sub;
-        }
-        return null;
+        return n.sub_map.get(name);
+    }
+
+    fn addSub(n: *Node, alloc: std.mem.Allocator, sub: *Node) error{OutOfMemory}!void {
+        try n.subs.append(alloc, sub);
+        try n.sub_map.put(alloc, sub.name, sub);
     }
 
     fn hasEntry(n: *const Node, registered: []const u8) bool {
-        for (n.entries.items) |e| {
-            if (std.mem.eql(u8, e.registered, registered)) return true;
-        }
-        return false;
+        return n.entry_set.contains(registered);
+    }
+
+    fn addEntry(
+        n: *Node,
+        alloc: std.mem.Allocator,
+        e: TableEntry,
+    ) error{OutOfMemory}!void {
+        try n.entries.append(alloc, e);
+        try n.entry_set.put(alloc, e.registered, {});
     }
 
     fn hasFnEntry(n: *const Node, registered: []const u8) bool {
-        for (n.fn_entries.items) |e| {
-            if (std.mem.eql(u8, e.registered, registered)) return true;
-        }
-        return false;
+        return n.fn_entry_set.contains(registered);
+    }
+
+    fn addFnEntry(
+        n: *Node,
+        alloc: std.mem.Allocator,
+        e: FunctionEntry,
+    ) error{OutOfMemory}!void {
+        try n.fn_entries.append(alloc, e);
+        try n.fn_entry_set.put(alloc, e.registered, {});
     }
 };
 
@@ -467,7 +493,7 @@ fn addTableToNode(
     if (path.len == 0) return error.InvalidSpec; // Go: "table name is not found"
     if (path.len == 1) {
         if (!node.hasEntry(path[0])) {
-            try node.entries.append(alloc, .{
+            try node.addEntry(alloc, .{
                 .registered = path[0],
                 .canonical = canonical,
                 .table_spec = table_spec,
@@ -478,12 +504,12 @@ fn addTableToNode(
     const sub = node.findSub(path[0]) orelse blk: {
         const s = try alloc.create(Node);
         s.* = .{ .name = path[0] };
-        try node.subs.append(alloc, s);
+        try node.addSub(alloc, s);
         break :blk s;
     };
     const dotted = try std.mem.join(alloc, ".", path);
     if (!node.hasEntry(dotted)) {
-        try node.entries.append(alloc, .{
+        try node.addEntry(alloc, .{
             .registered = dotted,
             .canonical = canonical,
             .table_spec = table_spec,
@@ -506,14 +532,14 @@ fn addFunctionToNode(
     if (path.len == 0) return error.InvalidSpec; // Go: "function name is not found"
     if (path.len == 1) {
         if (!node.hasFnEntry(path[0])) {
-            try node.fn_entries.append(alloc, .{ .registered = path[0], .fn_spec = fn_spec });
+            try node.addFnEntry(alloc, .{ .registered = path[0], .fn_spec = fn_spec });
         }
         return;
     }
     const sub = node.findSub(path[0]) orelse blk: {
         const s = try alloc.create(Node);
         s.* = .{ .name = path[0] };
-        try node.subs.append(alloc, s);
+        try node.addSub(alloc, s);
         break :blk s;
     };
     try addFunctionToNode(alloc, node, path[1..], fn_spec);
