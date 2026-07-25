@@ -437,14 +437,66 @@ pub const Server = struct {
         table_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
-        const stored = try s.repo.findTable(arena, project_id, dataset_id, table_id) orelse {
-            return notFound(arena, try std.fmt.allocPrint(
-                arena,
-                "table {s} is not found",
-                .{table_id},
-            ));
-        };
-        return .{ .body = stored };
+        if (try s.repo.findTable(arena, project_id, dataset_id, table_id)) |stored| {
+            return .{ .body = stored };
+        }
+
+        // Not in the metadata store, which does not mean it does not exist:
+        // anything created by SQL rather than by tables.insert — a
+        // CREATE OR REPLACE VIEW run as a query job, a CTAS — lives in the
+        // engine catalog only. Go reconciles these eagerly via
+        // ChangedCatalog + syncCatalog (handler.go:2218-2320); here the
+        // metadata store is treated as a cache over the engine, which is the
+        // actual source of truth, and the row is filled in on first read.
+        if (try s.tableResourceFromEngine(arena, project_id, dataset_id, table_id)) |resource| {
+            try s.repo.addTable(project_id, dataset_id, table_id, resource);
+            return .{ .body = resource };
+        }
+
+        return notFound(arena, try std.fmt.allocPrint(
+            arena,
+            "table {s} is not found",
+            .{table_id},
+        ));
+    }
+
+    /// Builds a table resource for something the engine knows about but the
+    /// metadata store does not, deriving its schema from the engine. Returns
+    /// null when the engine does not have it either.
+    fn tableResourceFromEngine(
+        s: *Server,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        table_id: []const u8,
+    ) !?[]const u8 {
+        const probe = try std.fmt.allocPrint(
+            arena,
+            "SELECT * FROM `{s}.{s}.{s}` LIMIT 0",
+            .{ project_id, dataset_id, table_id },
+        );
+        var rows = s.db.query(probe, &.{}, .{}) catch return null;
+        defer rows.deinit();
+
+        var sbuf: std.ArrayList(u8) = .empty;
+        try schema_mod.writeSchema(arena, &sbuf, rows.columnTypes());
+        const schema_json = std.json.parseFromSliceLeaky(
+            std.json.Value,
+            arena,
+            sbuf.items,
+            .{},
+        ) catch null;
+
+        var out: std.ArrayList(u8) = .empty;
+        try tables_handler.writeTable(arena, &out, .{
+            .project_id = project_id,
+            .dataset_id = dataset_id,
+            .table_id = table_id,
+            .endpoint = s.endpoint,
+            .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
+            .schema = schema_json,
+        });
+        return out.items;
     }
 
     fn handleTablesList(
