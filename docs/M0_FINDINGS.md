@@ -143,3 +143,71 @@ Test count 288 → 296.
 
 One gotcha worth remembering: `StringHashMapUnmanaged` keys are `[]const u8`, so
 a `dupeZ` key is freed one byte short of its allocation. Use `dupe`.
+
+---
+
+# M1 findings — minimal end-to-end REST
+
+## The client does not use the endpoint the plan assumed
+
+`google.cloud.bigquery.Client.query()` does **not** call the `jobs.query`
+endpoint. It posts `jobs.insert`, polls `jobs.get` until
+`status.state == "DONE"`, then reads `getQueryResults`. Implementing only
+`jobs.query` left the Python client spinning in a retry loop.
+
+M1 therefore implements four endpoints, not two. The `bigquery#job` resource
+shape was captured from the running Go emulator rather than guessed.
+
+## Two more corrections found by observation
+
+- **`maxResults` is ignored entirely by `jobs.query`** — in the body *and* the
+  query string. The truncation (rows cut while `totalRows` still reports the
+  full count) lives only in `getQueryResults`. The plan had this backwards.
+- **`dryRun` does not suppress results**; the response still carries rows.
+
+## Verification, and its limit
+
+Passing:
+- 63 server unit tests, every response assertion backed by captured Go bytes.
+- All 17 golden cases byte-identical to the Go emulator **over the wire**,
+  error bodies included.
+- The real `google.cloud.bigquery` client (3.38.0): scalars, nulls, booleans,
+  floats, arrays, structs, aggregates, empty arrays — correct values and
+  correct Python types.
+
+Not yet runnable, and why:
+- **`extreme_values_test.py`** runs every query twice, once through the
+  Storage Arrow API. Storage is deferred by decision, so this suite cannot
+  pass before M6.
+- **`emulator_test.py` — the entire file.** `BigQueryEmulatorTestCase.tearDown`
+  calls `_wipe_emulator_data()`, which calls `list_datasets()` on *every*
+  test. So the whole suite needs the datasets surface no matter what an
+  individual test does. The plan's M1 line "`emulator_test.py -k 'simple or
+  select'`" was optimistic for that reason; those tests unlock in M2, not by
+  selecting a subset now.
+
+## Deferred within M1, deliberately
+
+**ChangedCatalog** was scheduled for M1 because `CREATE TABLE AS SELECT`
+needs it. It turns out not to: the engine applies DDL itself, and
+`ChangedCatalog` is only needed to mirror table metadata into the metadata
+store — which does not exist until M2. DDL through `jobs.insert` works today
+(there is a test for CREATE/INSERT/SELECT across requests). Moved to M2,
+where it has a consumer.
+
+**Discovery** serves a minimal document rather than the Go emulator's 535 KB
+one. The clients fetch it but drive requests from their compiled-in surface;
+the full document is worth copying in when the handler surface grows to match
+it.
+
+## Sharp edges in Zig 0.16 worth remembering
+
+- `std.http.Server.Request.readerExpectNone` documents *"Invalidates the
+  string memory inside Head"* — `head.target` must be copied out **before**
+  the body is read, or it dangles. This segfaults rather than misbehaving.
+- `std.http.Server` derives `max_head_len` from the connection reader's
+  buffer length, so that buffer sizes the request head limit.
+- `std.time.milliTimestamp` is gone; read `std.c.gettimeofday` as
+  `internal/catalog.zig` already does.
+- Mutually recursive JSON writers need explicit error sets
+  (`std.mem.Allocator.Error!void`), or inference deadlocks.
