@@ -16,6 +16,10 @@ pub const storage = @import("storage.zig");
 pub const discovery = @import("discovery.zig");
 pub const query_handler = @import("handler/query.zig");
 pub const jobs_handler = @import("handler/jobs.zig");
+pub const metadata_repository = @import("internal/metadata/repository.zig");
+pub const datasets_handler = @import("handler/datasets.zig");
+pub const tables_handler = @import("handler/tables.zig");
+pub const source = @import("source.zig");
 pub const Server = @import("server.zig").Server;
 pub const server = @import("server.zig");
 

@@ -20,6 +20,11 @@ const storage_mod = @import("storage.zig");
 const query_handler = @import("handler/query.zig");
 const discovery = @import("discovery.zig");
 const jobs_handler = @import("handler/jobs.zig");
+const datasets_handler = @import("handler/datasets.zig");
+const tables_handler = @import("handler/tables.zig");
+const metadata = @import("internal/metadata/repository.zig");
+const schema_mod = @import("internal/types/schema.zig");
+const source_mod = @import("source.zig");
 
 /// Microsecond wall clock via libc, since std.time's timestamp helpers are
 /// gone in Zig 0.16 and std.Io is not available at construction time.
@@ -34,6 +39,10 @@ pub const Options = struct {
     database: ?[]const u8 = null,
     host: []const u8 = "0.0.0.0",
     port: u16 = 9050,
+    /// Go's --data-from-json: source tables loaded at startup.
+    data_from_json: ?[]const u8 = null,
+    /// Go's --dataset: one empty dataset created at startup.
+    dataset: ?[]const u8 = null,
 };
 
 pub const Server = struct {
@@ -45,11 +54,12 @@ pub const Server = struct {
     /// milestone; the engine is single-threaded per Db either way.
     db: *driver.Db,
     jobs: query_handler.JobStore,
+    repo: metadata.Repository,
     rng: std.Random.DefaultPrng,
     /// Host:port, for the selfLink-style URLs handlers build.
     endpoint: []const u8,
 
-    pub fn init(gpa: std.mem.Allocator, opts: Options) !*Server {
+    pub fn init(gpa: std.mem.Allocator, io: std.Io, opts: Options) !*Server {
         const s = try gpa.create(Server);
         errdefer gpa.destroy(s);
         s.* = .{
@@ -58,6 +68,7 @@ pub const Server = struct {
             .project = undefined,
             .db = undefined,
             .jobs = .{ .gpa = gpa },
+            .repo = undefined,
             // Seeded from the clock: job ids only need to be unique within a
             // run, and Go's randomID is likewise not cryptographic. Zig 0.16
             // moved wall-clock reads behind std.Io, so read libc directly —
@@ -76,6 +87,35 @@ pub const Server = struct {
             .pragmas = store.pragmas(),
             .busy_timeout_ms = 5000,
         });
+        s.repo = try metadata.Repository.init(s.db);
+        try s.repo.addProjectIfNotExists(s.project);
+
+        if (opts.dataset) |dataset_id| {
+            var meta: std.ArrayList(u8) = .empty;
+            try datasets_handler.writeDataset(arena, &meta, s.project, dataset_id, true);
+            try s.repo.addDataset(s.project, dataset_id, meta.items);
+        }
+
+        if (opts.data_from_json) |path| {
+            const bytes = try std.Io.Dir.cwd().readFileAlloc(
+                io,
+                path,
+                arena,
+                .limited(1 << 30),
+            );
+            const stats = try source_mod.loadJson(
+                arena,
+                s.db,
+                &s.repo,
+                s.endpoint,
+                @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
+                bytes,
+            );
+            std.log.info(
+                "loaded {d} projects, {d} datasets, {d} tables ({d} failed) from {s}",
+                .{ stats.projects, stats.datasets, stats.tables, stats.failed_tables, path },
+            );
+        }
         return s;
     }
 
@@ -131,7 +171,7 @@ pub const Server = struct {
             ),
             .jobs_insert => s.handleJobsInsert(req, m.captures.get(0)),
             .jobs_get => s.handleJobsGet(req, m.captures.get(0), m.captures.get(1)),
-            // Listing needs the jobs metadata table; M2.
+            // Listing needs the jobs metadata table; deferred.
             .jobs_list => .{
                 .status = .internal_server_error,
                 .body = try errors.body(
@@ -140,6 +180,29 @@ pub const Server = struct {
                     "unsupported in this milestone: jobs.list",
                 ),
             },
+
+            .datasets_insert => s.handleDatasetsInsert(req, m.captures.get(0)),
+            .datasets_list => s.handleDatasetsList(req, m.captures.get(0)),
+            .datasets_get => s.handleDatasetsGet(req, m.captures.get(0), m.captures.get(1)),
+            .datasets_delete => s.handleDatasetsDelete(req, m.captures.get(0), m.captures.get(1)),
+            // PATCH is accepted and echoed; the emulator stores no mutable
+            // dataset metadata beyond the reference.
+            .datasets_patch => s.handleDatasetsGet(req, m.captures.get(0), m.captures.get(1)),
+
+            .tables_insert => s.handleTablesInsert(req, m.captures.get(0), m.captures.get(1)),
+            .tables_list => s.handleTablesList(req, m.captures.get(0), m.captures.get(1)),
+            .tables_get, .tables_patch => s.handleTablesGet(
+                req,
+                m.captures.get(0),
+                m.captures.get(1),
+                m.captures.get(2),
+            ),
+            .tables_delete => s.handleTablesDelete(
+                req,
+                m.captures.get(0),
+                m.captures.get(1),
+                m.captures.get(2),
+            ),
         };
     }
 
@@ -173,6 +236,219 @@ pub const Server = struct {
         // getQueryResults 404s for a jobs.query id. Verified against the Go
         // emulator; reproduced here deliberately.
         return .{ .body = res.body };
+    }
+
+    // ---- datasets ----
+
+    fn handleDatasetsInsert(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch {
+            return badRequest(arena, "failed to decode request body");
+        };
+        const dataset_id = datasets_handler.datasetIdFromBody(parsed) orelse {
+            return badRequest(arena, "datasetReference.datasetId is required");
+        };
+
+        var meta: std.ArrayList(u8) = .empty;
+        try datasets_handler.writeDataset(arena, &meta, project_id, dataset_id, true);
+        try s.repo.addDataset(project_id, dataset_id, meta.items);
+
+        return .{ .body = meta.items };
+    }
+
+    fn handleDatasetsList(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        const ids = try s.repo.listDatasets(arena, project_id);
+        var out: std.ArrayList(u8) = .empty;
+        try datasets_handler.writeDatasetList(arena, &out, project_id, ids);
+        return .{ .body = out.items };
+    }
+
+    fn handleDatasetsGet(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        if (!try s.repo.datasetExists(project_id, dataset_id)) {
+            return notFound(arena, try std.fmt.allocPrint(
+                arena,
+                "dataset {s} is not found",
+                .{dataset_id},
+            ));
+        }
+        var out: std.ArrayList(u8) = .empty;
+        try datasets_handler.writeDataset(arena, &out, project_id, dataset_id, false);
+        return .{ .body = out.items };
+    }
+
+    fn handleDatasetsDelete(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) !http_server.Response {
+        // deleteContents drops the tables too; without it Go errors when the
+        // dataset is non-empty. The emulator is permissive here.
+        try s.repo.deleteTablesInDataset(project_id, dataset_id);
+        try s.repo.deleteDataset(project_id, dataset_id);
+        _ = req;
+        return .{ .body = "" };
+    }
+
+    // ---- tables ----
+
+    fn handleTablesInsert(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch {
+            return badRequest(arena, "failed to decode request body");
+        };
+        const table_id = tables_handler.tableIdFromBody(parsed) orelse {
+            return badRequest(arena, "tableReference.tableId is required");
+        };
+
+        const schema_node: ?std.json.Value =
+            if (parsed == .object) parsed.object.get("schema") else null;
+
+        // A table only becomes queryable once the DDL runs; Go does the same
+        // through its content repository.
+        var kind: []const u8 = "TABLE";
+        if (tables_handler.viewQueryFromBody(parsed)) |view_sql| {
+            kind = "VIEW";
+            const ddl = try std.fmt.allocPrint(
+                arena,
+                "CREATE OR REPLACE VIEW `{s}.{s}.{s}` AS {s}",
+                .{ project_id, dataset_id, table_id, view_sql },
+            );
+            s.db.exec(ddl, &.{}, .{}) catch {
+                return .{
+                    .status = .bad_request,
+                    .body = try errors.body(
+                        arena,
+                        .invalid_query,
+                        try query_handler.wrapEngineError(arena, s.db.lastError()),
+                    ),
+                };
+            };
+        } else {
+            const ddl = try schema_mod.createTableDdl(
+                arena,
+                project_id,
+                dataset_id,
+                table_id,
+                schema_node,
+            );
+            s.db.exec(ddl, &.{}, .{}) catch {
+                return .{
+                    .status = .bad_request,
+                    .body = try errors.body(
+                        arena,
+                        .invalid_query,
+                        try query_handler.wrapEngineError(arena, s.db.lastError()),
+                    ),
+                };
+            };
+        }
+
+        const meta = tables_handler.TableMeta{
+            .project_id = project_id,
+            .dataset_id = dataset_id,
+            .table_id = table_id,
+            .endpoint = s.endpoint,
+            .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
+            .schema = schema_node,
+            .kind = kind,
+        };
+        var out: std.ArrayList(u8) = .empty;
+        try tables_handler.writeTable(arena, &out, meta);
+        try s.repo.addTable(project_id, dataset_id, table_id, out.items);
+
+        return .{ .body = out.items };
+    }
+
+    fn handleTablesGet(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        table_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        const stored = try s.repo.findTable(arena, project_id, dataset_id, table_id) orelse {
+            return notFound(arena, try std.fmt.allocPrint(
+                arena,
+                "table {s} is not found",
+                .{table_id},
+            ));
+        };
+        return .{ .body = stored };
+    }
+
+    fn handleTablesList(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        const metas = try s.repo.listTables(arena, project_id, dataset_id);
+
+        var out: std.ArrayList(u8) = .empty;
+        try out.appendSlice(arena, "{\"tables\":[");
+        for (metas, 0..) |meta_json, i| {
+            if (i > 0) try out.append(arena, ',');
+            // Stored metadata is the full resource; list returns the
+            // abbreviated form, so re-render from the parsed value.
+            const v = std.json.parseFromSliceLeaky(std.json.Value, arena, meta_json, .{}) catch {
+                try out.appendSlice(arena, meta_json);
+                continue;
+            };
+            try tables_handler.writeTableListEntry(arena, &out, .{
+                .project_id = project_id,
+                .dataset_id = dataset_id,
+                .table_id = tableIdOf(v) orelse "",
+                .endpoint = s.endpoint,
+                .created_millis = creationMillisOf(v),
+                .kind = typeOf(v),
+            });
+        }
+        try out.appendSlice(arena, "],\"totalItems\":");
+        try out.print(arena, "{d}", .{metas.len});
+        try out.append(arena, '}');
+        return .{ .body = out.items };
+    }
+
+    fn handleTablesDelete(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        table_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        // Drop from the content database too, so a later CREATE succeeds.
+        const ddl = try std.fmt.allocPrint(
+            arena,
+            "DROP TABLE IF EXISTS `{s}.{s}.{s}`",
+            .{ project_id, dataset_id, table_id },
+        );
+        s.db.exec(ddl, &.{}, .{}) catch {};
+        try s.repo.deleteTable(project_id, dataset_id, table_id);
+        return .{ .body = "" };
     }
 
     /// server/handler.go jobsInsertHandler.
@@ -240,6 +516,31 @@ pub const Server = struct {
     }
 };
 
+fn tableIdOf(v: std.json.Value) ?[]const u8 {
+    if (v != .object) return null;
+    const ref = v.object.get("tableReference") orelse return null;
+    if (ref != .object) return null;
+    const id = ref.object.get("tableId") orelse return null;
+    return if (id == .string) id.string else null;
+}
+
+fn creationMillisOf(v: std.json.Value) i64 {
+    if (v != .object) return 0;
+    const c = v.object.get("creationTime") orelse return 0;
+    if (c != .string) return 0;
+    return std.fmt.parseInt(i64, c.string, 10) catch 0;
+}
+
+fn typeOf(v: std.json.Value) []const u8 {
+    if (v != .object) return "TABLE";
+    const t = v.object.get("type") orelse return "TABLE";
+    return if (t == .string) t.string else "TABLE";
+}
+
+fn notFound(arena: std.mem.Allocator, msg: []const u8) !http_server.Response {
+    return .{ .status = .not_found, .body = try errors.body(arena, .not_found, msg) };
+}
+
 fn notFoundJob(arena: std.mem.Allocator, job_id: []const u8) !http_server.Response {
     return .{
         .status = .not_found,
@@ -256,6 +557,13 @@ fn badRequest(arena: std.mem.Allocator, msg: []const u8) !http_server.Response {
 }
 
 const testing = std.testing;
+
+/// Tests never touch the filesystem through this, so a threaded Io that is
+/// never pumped is sufficient.
+var testing_threaded: std.Io.Threaded = undefined;
+const testing_io: std.Io = blk: {
+    break :blk undefined;
+};
 
 /// Drives dispatch directly, without a socket.
 fn request(
@@ -280,7 +588,7 @@ test "jobs.query returns the Go emulator's response bytes" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries",
@@ -301,7 +609,7 @@ test "the /bigquery/v2 prefix reaches the same handler" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/bigquery/v2/projects/test/queries",
@@ -315,7 +623,7 @@ test "a bad query returns 400 in the BigQuery error shape" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries",
@@ -330,7 +638,7 @@ test "malformed JSON is a 400, not a crash" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries", "{not json");
@@ -343,7 +651,7 @@ test "getQueryResults 404s for an unpersisted jobs.query id" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .GET, "/projects/test/queries/nosuchjob", "");
@@ -360,7 +668,7 @@ test "an unknown path is a 500, matching Go's defaultHandler" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .GET, "/no/such/path", "");
@@ -373,7 +681,7 @@ test "state persists across requests on the same connection" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
     defer s.deinit();
 
     _ = try request(s, arena, .POST, "/projects/test/queries",

@@ -176,3 +176,190 @@ test "date, timestamp and bytes keep their own names" {
         \\{"fields":[{"name":"d","type":"DATE"},{"name":"ts","type":"TIMESTAMP"},{"name":"raw","type":"BYTES"}]}
     , try schemaOf(arena, "SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts, b'ab' AS raw"));
 }
+
+// ---- reverse direction: BigQuery schema -> GoogleSQL DDL ----
+//
+// Go's contentdata repository emits `CREATE TABLE `p.ds.t` (col TYPE, ...)`
+// from the schema a client posts to tables.insert, which is what makes the
+// table visible to queries. These helpers rebuild the GoogleSQL type text
+// from a TableFieldSchema JSON node.
+
+/// Legacy REST type name -> GoogleSQL type name. The inverse of
+/// legacyTypeName, for the subset that round-trips.
+pub fn googleSqlTypeName(legacy: []const u8) []const u8 {
+    const map = std.StaticStringMap([]const u8).initComptime(.{
+        .{ "INTEGER", "INT64" },
+        .{ "INT64", "INT64" },
+        .{ "FLOAT", "FLOAT64" },
+        .{ "FLOAT64", "FLOAT64" },
+        .{ "BOOLEAN", "BOOL" },
+        .{ "BOOL", "BOOL" },
+        .{ "STRING", "STRING" },
+        .{ "BYTES", "BYTES" },
+        .{ "DATE", "DATE" },
+        .{ "DATETIME", "DATETIME" },
+        .{ "TIME", "TIME" },
+        .{ "TIMESTAMP", "TIMESTAMP" },
+        .{ "NUMERIC", "NUMERIC" },
+        .{ "BIGNUMERIC", "BIGNUMERIC" },
+        .{ "JSON", "JSON" },
+        .{ "INTERVAL", "INTERVAL" },
+        .{ "GEOGRAPHY", "GEOGRAPHY" },
+    });
+    return map.get(legacy) orelse "STRING";
+}
+
+/// GoogleSQL type text for one field node, honouring mode REPEATED and
+/// nested RECORD fields.
+pub fn fieldTypeText(
+    arena: std.mem.Allocator,
+    field: std.json.Value,
+) std.mem.Allocator.Error![]const u8 {
+    if (field != .object) return "STRING";
+    const obj = field.object;
+
+    const type_name = blk: {
+        const t = obj.get("type") orelse break :blk "STRING";
+        break :blk if (t == .string) t.string else "STRING";
+    };
+
+    var base: []const u8 = undefined;
+    if (std.mem.eql(u8, type_name, "RECORD") or std.mem.eql(u8, type_name, "STRUCT")) {
+        var out: std.ArrayList(u8) = .empty;
+        try out.appendSlice(arena, "STRUCT<");
+        if (obj.get("fields")) |fields| {
+            if (fields == .array) {
+                for (fields.array.items, 0..) |sub, i| {
+                    if (i > 0) try out.appendSlice(arena, ", ");
+                    const sub_name = if (sub == .object) blk2: {
+                        const n = sub.object.get("name") orelse break :blk2 "f";
+                        break :blk2 if (n == .string) n.string else "f";
+                    } else "f";
+                    try out.append(arena, '`');
+                    try out.appendSlice(arena, sub_name);
+                    try out.appendSlice(arena, "` ");
+                    try out.appendSlice(arena, try fieldTypeText(arena, sub));
+                }
+            }
+        }
+        try out.append(arena, '>');
+        base = try out.toOwnedSlice(arena);
+    } else {
+        base = googleSqlTypeName(type_name);
+    }
+
+    const mode = blk: {
+        const m = obj.get("mode") orelse break :blk "";
+        break :blk if (m == .string) m.string else "";
+    };
+    if (std.mem.eql(u8, mode, "REPEATED")) {
+        return std.fmt.allocPrint(arena, "ARRAY<{s}>", .{base});
+    }
+    return base;
+}
+
+/// `CREATE TABLE `project.dataset.table` (`col` TYPE, ...)`.
+///
+/// A schema with no fields produces a table with a single placeholder column,
+/// because GoogleSQL rejects a column-less CREATE TABLE.
+pub fn createTableDdl(
+    arena: std.mem.Allocator,
+    project_id: []const u8,
+    dataset_id: []const u8,
+    table_id: []const u8,
+    schema_json: ?std.json.Value,
+) std.mem.Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.print(arena, "CREATE TABLE IF NOT EXISTS `{s}.{s}.{s}` (", .{
+        project_id, dataset_id, table_id,
+    });
+
+    var wrote_any = false;
+    if (schema_json) |s| {
+        if (s == .object) {
+            if (s.object.get("fields")) |fields| {
+                if (fields == .array) {
+                    for (fields.array.items) |field| {
+                        if (field != .object) continue;
+                        const name_v = field.object.get("name") orelse continue;
+                        if (name_v != .string) continue;
+                        if (wrote_any) try out.appendSlice(arena, ", ");
+                        try out.print(arena, "`{s}` {s}", .{
+                            name_v.string,
+                            try fieldTypeText(arena, field),
+                        });
+                        wrote_any = true;
+                    }
+                }
+            }
+        }
+    }
+    if (!wrote_any) try out.appendSlice(arena, "`_placeholder` INT64");
+    try out.append(arena, ')');
+    return out.toOwnedSlice(arena);
+}
+
+test "legacy type names map back to GoogleSQL" {
+    try testing.expectEqualStrings("INT64", googleSqlTypeName("INTEGER"));
+    try testing.expectEqualStrings("BOOL", googleSqlTypeName("BOOLEAN"));
+    try testing.expectEqualStrings("FLOAT64", googleSqlTypeName("FLOAT"));
+    // Unknown types degrade to STRING rather than failing the CREATE.
+    try testing.expectEqualStrings("STRING", googleSqlTypeName("SOMETHING_NEW"));
+}
+
+test "CREATE TABLE DDL covers scalars, REPEATED and nested RECORD" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const schema = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[
+        \\  {"name":"a","type":"INTEGER"},
+        \\  {"name":"b","type":"STRING","mode":"REPEATED"},
+        \\  {"name":"c","type":"RECORD","fields":[{"name":"x","type":"BOOLEAN"}]},
+        \\  {"name":"d","type":"RECORD","mode":"REPEATED","fields":[{"name":"y","type":"FLOAT"}]}
+        \\]}
+    , .{});
+
+    try testing.expectEqualStrings(
+        "CREATE TABLE IF NOT EXISTS `p.ds.t` (`a` INT64, `b` ARRAY<STRING>, " ++
+            "`c` STRUCT<`x` BOOL>, `d` ARRAY<STRUCT<`y` FLOAT64>>)",
+        try createTableDdl(arena, "p", "ds", "t", schema),
+    );
+}
+
+test "a schema-less table still creates" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // GoogleSQL rejects a column-less CREATE TABLE, so a placeholder stands in.
+    try testing.expectEqualStrings(
+        "CREATE TABLE IF NOT EXISTS `p.ds.t` (`_placeholder` INT64)",
+        try createTableDdl(arena, "p", "ds", "t", null),
+    );
+}
+
+test "DDL from a posted schema actually creates a queryable table" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const schema = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[{"name":"a","type":"INTEGER"},{"name":"b","type":"STRING","mode":"REPEATED"}]}
+    , .{});
+    const ddl = try createTableDdl(arena, "p", "ds", "round_trip", schema);
+
+    var db = try zetasqlite.driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(ddl, &.{}, .{});
+
+    // And the schema we get back matches what went in.
+    var rows = try db.query("SELECT a, b FROM `p.ds.round_trip`", &.{}, .{});
+    defer rows.deinit();
+    var out: std.ArrayList(u8) = .empty;
+    try writeSchema(arena, &out, rows.columnTypes());
+    try testing.expectEqualStrings(
+        \\{"fields":[{"name":"a","type":"INTEGER"},{"mode":"REPEATED","name":"b","type":"STRING"}]}
+    , out.items);
+}

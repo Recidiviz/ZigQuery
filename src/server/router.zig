@@ -41,6 +41,16 @@ pub const Route = struct {
         jobs_insert,
         jobs_get,
         jobs_list,
+        datasets_insert,
+        datasets_list,
+        datasets_get,
+        datasets_delete,
+        datasets_patch,
+        tables_insert,
+        tables_list,
+        tables_get,
+        tables_delete,
+        tables_patch,
     };
 
     id: Id,
@@ -58,6 +68,18 @@ pub const routes = [_]Route{
     .{ .id = .jobs_insert, .method = .POST, .pattern = "/projects/*/jobs" },
     .{ .id = .jobs_list, .method = .GET, .pattern = "/projects/*/jobs" },
     .{ .id = .jobs_get, .method = .GET, .pattern = "/projects/*/jobs/*" },
+
+    .{ .id = .datasets_insert, .method = .POST, .pattern = "/projects/*/datasets" },
+    .{ .id = .datasets_list, .method = .GET, .pattern = "/projects/*/datasets" },
+    .{ .id = .datasets_get, .method = .GET, .pattern = "/projects/*/datasets/*" },
+    .{ .id = .datasets_delete, .method = .DELETE, .pattern = "/projects/*/datasets/*" },
+    .{ .id = .datasets_patch, .method = .PATCH, .pattern = "/projects/*/datasets/*" },
+
+    .{ .id = .tables_insert, .method = .POST, .pattern = "/projects/*/datasets/*/tables" },
+    .{ .id = .tables_list, .method = .GET, .pattern = "/projects/*/datasets/*/tables" },
+    .{ .id = .tables_get, .method = .GET, .pattern = "/projects/*/datasets/*/tables/*" },
+    .{ .id = .tables_delete, .method = .DELETE, .pattern = "/projects/*/datasets/*/tables/*" },
+    .{ .id = .tables_patch, .method = .PATCH, .pattern = "/projects/*/datasets/*/tables/*" },
 };
 
 /// Go registers every handler twice: bare, and under `/bigquery/v2`

@@ -20,6 +20,9 @@ const Options = struct {
     grpc_port: u16 = default_grpc_port,
     log_level: []const u8 = "error",
     database: ?[]const u8 = null,
+    data_from_json: ?[]const u8 = null,
+    data_from_yaml: ?[]const u8 = null,
+    log_format: []const u8 = "console",
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -49,6 +52,12 @@ pub fn main(init: std.process.Init) !void {
             opts.log_level = v;
         } else if (flagValue(arg, "--database")) |v| {
             opts.database = v;
+        } else if (flagValue(arg, "--data-from-json")) |v| {
+            opts.data_from_json = v;
+        } else if (flagValue(arg, "--data-from-yaml")) |v| {
+            opts.data_from_yaml = v;
+        } else if (flagValue(arg, "--log-format")) |v| {
+            opts.log_format = v;
         } else {
             try err_out.print("unknown flag: {s}\n", .{arg});
             try err_out.flush();
@@ -66,11 +75,19 @@ pub fn main(init: std.process.Init) !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var app = try bqserver.Server.init(gpa, .{
+    if (opts.data_from_yaml != null) {
+        try err_out.print("--data-from-yaml is not supported yet; use --data-from-json\n", .{});
+        try err_out.flush();
+        std.process.exit(1);
+    }
+
+    var app = try bqserver.Server.init(gpa, io, .{
         .project = opts.project.?,
         .database = opts.database,
         .host = opts.host,
         .port = opts.port,
+        .data_from_json = opts.data_from_json,
+        .dataset = opts.dataset,
     });
     defer app.deinit();
 
