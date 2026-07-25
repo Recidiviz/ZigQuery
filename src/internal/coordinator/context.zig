@@ -17,6 +17,17 @@ pub const Error = interfaces.Error;
 pub const ColumnData = types_data.ColumnData;
 pub const ScanData = types_data.ScanData;
 
+const spec = @import("../spec.zig");
+
+/// One query-parameter occurrence collected during extraction (Go
+/// getParamsFromNode result: ResolvedParameter name + resolved type). The
+/// driver uses the types to cast bound values (Go EncodeNamedValues).
+pub const CollectedParam = struct {
+    /// "?" for positional, "@name" for named parameters.
+    identifier: []const u8 = "",
+    type: ?*spec.Type = null,
+};
+
 /// Go internal/types_config.go TransformConfig.
 pub const TransformConfig = struct {
     debug: bool = false,
@@ -278,6 +289,11 @@ pub const TransformContext = struct {
     scope: *ScopeManager,
     /// WITH query name -> position-based column mappings.
     with_mappings: *std.StringHashMap([]const []const u8),
+    /// Parameter occurrences collected during extraction, in traversal
+    /// order (Go getParamsFromNode; shared across context copies).
+    collected_params: *std.ArrayList(CollectedParam),
+    /// Allocator backing collected_params appends.
+    alloc: std.mem.Allocator,
     /// Current recursive CTE being defined.
     recursive_cte_name: []const u8 = "",
 
@@ -287,14 +303,37 @@ pub const TransformContext = struct {
     ) error{OutOfMemory}!*TransformContext {
         const mappings = try alloc.create(std.StringHashMap([]const []const u8));
         mappings.* = std.StringHashMap([]const []const u8).init(alloc);
+        const params = try alloc.create(std.ArrayList(CollectedParam));
+        params.* = .empty;
         const ctx = try alloc.create(TransformContext);
         ctx.* = .{
             .fragment_context = try FragmentContext.init(alloc),
             .config = config,
             .scope = try ScopeManager.init(alloc),
             .with_mappings = mappings,
+            .collected_params = params,
+            .alloc = alloc,
         };
         return ctx;
+    }
+
+    /// Records a parameter occurrence (Go getParamsFromNode ordering rules:
+    /// named parameters are deduplicated by identifier, every positional
+    /// "?" occurrence is kept).
+    pub fn addCollectedParameter(
+        self: *TransformContext,
+        identifier: []const u8,
+        param_type: ?*spec.Type,
+    ) error{OutOfMemory}!void {
+        if (identifier.len > 0 and identifier[0] == '@') {
+            for (self.collected_params.items) |p| {
+                if (std.mem.eql(u8, p.identifier, identifier)) return;
+            }
+        }
+        try self.collected_params.append(self.alloc, .{
+            .identifier = identifier,
+            .type = param_type,
+        });
     }
 
     pub fn fragmentContext(self: *const TransformContext) *FragmentContext {

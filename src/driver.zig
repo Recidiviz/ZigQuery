@@ -76,6 +76,9 @@ pub const Param = struct {
     value: Cell,
 };
 
+/// Parameter placeholder style of a query script (Go getParameterMode).
+pub const ParamMode = enum { named, positional };
+
 pub const QueryOptions = struct {
     /// Deterministic CURRENT_* time injection (go-zetasqlite WithCurrentTime).
     current_time_unix_micros: ?i64 = null,
@@ -93,6 +96,16 @@ pub const Db = struct {
     udf_state: *function.State,
     catalog: *catalog_mod.Catalog,
     last_error: ?[]u8 = null,
+    /// Parameter mode of the currently-running script (set per runStatements).
+    param_mode: ParamMode = .named,
+    /// Collects the canonical names of temp tables/views created during the
+    /// current script so they can be dropped once the query completes (Go's
+    /// StmtAction.Cleanup). Arena-backed by runStatements' arena.
+    temp_collector: ?*std.ArrayList([]const u8) = null,
+    /// Parameter occurrences of the most recently transformed statement
+    /// (identifier + resolved type). Arena-backed; used by bindParams to
+    /// cast values (Go EncodeNamedValues with getParamsFromNode results).
+    stmt_params: []const context_mod.CollectedParam = &.{},
 
     pub fn open(gpa: std.mem.Allocator, path: [:0]const u8) Error!*Db {
         const db = try gpa.create(Db);
@@ -160,6 +173,7 @@ pub const Db = struct {
             .stmt = prepared.stmt,
             .cols = prepared.columns,
             .names = names,
+            .temp_tables = prepared.temp_tables,
         };
     }
 
@@ -178,6 +192,8 @@ pub const Db = struct {
     const Prepared = struct {
         stmt: ?sqlite.Stmt = null,
         columns: []const OutputColumn = &.{},
+        /// Temp tables/views to drop when the returned Rows is deinited.
+        temp_tables: []const []const u8 = &.{},
     };
 
     /// The Analyze loop: analyzer -> per-kind statement action, mirroring
@@ -195,8 +211,36 @@ pub const Db = struct {
         opts: QueryOptions,
         mode: Mode,
     ) Error!?Prepared {
-        const sqlz = try arena.dupeZ(u8, sql);
+        // Go parseScript flattens BEGIN ... END script blocks before analysis
+        // (flattenBeginEndBlock); AnalyzeNextStatement can't parse script
+        // blocks, so blank out the block keywords at the text level (lengths
+        // preserved so analyzer error positions stay accurate).
+        const flattened_sql = try flattenBeginEndBlocks(arena, sql);
+        const sqlz = try arena.dupeZ(u8, flattened_sql);
         var offset: usize = 0;
+
+        // Go getParameterMode: scan the (literal-stripped) query for `?`
+        // (positional) vs `@name` (named); mixing is rejected.
+        db.param_mode = parameterMode(arena, sql) catch {
+            db.setLastError("named parameter and positional parameter cannot be used together");
+            return error.AnalyzeFailed;
+        };
+        const options_json: [:0]const u8 = switch (db.param_mode) {
+            .positional => "{\"parameter_mode\":\"positional\"}",
+            .named => "{}",
+        };
+
+        // Positional parameters are consumed statement-by-statement across a
+        // script (Go slices args by each statement's parameter count); named
+        // parameters apply to every statement.
+        var cur_args = args;
+
+        // Collect temp tables/views created during this script; dropped when
+        // the query's Rows is deinited (query mode) or right after the last
+        // statement (exec mode), mirroring Go's per-action Cleanup.
+        var temp_tables: std.ArrayList([]const u8) = .empty;
+        db.temp_collector = &temp_tables;
+        defer db.temp_collector = null;
 
         // Go Analyzer.Analyze: catalog sync before analysis.
         db.catalog.sync(&db.sqlite_db) catch |err| switch (err) {
@@ -217,7 +261,7 @@ pub const Db = struct {
                     return error.AnalyzeFailed;
                 },
             };
-            const analyzed = analyzer_ffi.analyzeNextStatement(arena, sqlz, offset, catalog_json) catch |err| {
+            const analyzed = analyzer_ffi.analyzeNextStatementOpts(arena, sqlz, offset, catalog_json, options_json) catch |err| {
                 switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => {
@@ -229,6 +273,14 @@ pub const Db = struct {
             offset = analyzed.resume_offset;
             const last = analyzed.at_end;
 
+            // Positional parameters consumed by this statement (Go
+            // action.Args() count); used to advance cur_args below.
+            var consumed: usize = 0;
+
+            // Parameter types are re-collected per statement by
+            // transformStatementFragment; clear any stale set first.
+            db.stmt_params = &.{};
+
             const stmt_node = statementNodeOf(analyzed.node) orelse return error.Unimplemented;
             switch (stmt_node) {
                 .resolved_query_stmt_node => |query_stmt| {
@@ -239,12 +291,13 @@ pub const Db = struct {
                         return error.ExecFailed;
                     };
                     errdefer stmt.finalize();
-                    try db.bindParams(arena, &stmt, args);
+                    consumed = try db.bindParams(arena, &stmt, cur_args);
 
                     if (last and mode == .query) {
                         return .{
                             .stmt = stmt,
                             .columns = try outputColumns(arena, query_stmt),
+                            .temp_tables = temp_tables.items,
                         };
                     }
 
@@ -263,7 +316,7 @@ pub const Db = struct {
                     }
                 },
                 .resolved_create_statement_node => |create_any| {
-                    try db.execCreateStatement(arena, analyzed.node, create_any, args, opts);
+                    consumed = try db.execCreateStatement(arena, analyzed.node, create_any, cur_args, opts);
                 },
                 // Go newDMLStmtAction: exec the formatted DML SQL.
                 .resolved_insert_stmt_node,
@@ -271,10 +324,24 @@ pub const Db = struct {
                 .resolved_delete_stmt_node,
                 => {
                     const formatted = try transformStatement(db, arena, analyzed.node, opts);
-                    try db.execSql(arena, formatted, args);
+                    consumed = try db.execSql(arena, formatted, cur_args);
                 },
                 .resolved_drop_stmt_node => |drop_stmt| {
-                    try db.execDropStatement(arena, analyzed.node, drop_stmt, args, opts);
+                    consumed = try db.execDropStatement(arena, analyzed.node, drop_stmt, cur_args, opts);
+                },
+                // Go MergeStmtAction: the transformer lowers MERGE to a list
+                // of plain statements (create merged temp table, one
+                // INSERT/UPDATE/DELETE per WHEN clause, drop temp table)
+                // executed in order without args.
+                .resolved_merge_stmt_node => {
+                    const fragment = try transformStatementFragment(db, arena, analyzed.node, opts);
+                    const compound = switch (fragment) {
+                        .compound => |c| c,
+                        else => return error.TransformFailed,
+                    };
+                    for (compound.getStatements()) |stmt_sql| {
+                        _ = try db.execSql(arena, stmt_sql, &.{});
+                    }
                 },
                 // Go newTruncateStmtAction: DELETE FROM `table`.
                 .resolved_truncate_stmt_node => |truncate_stmt| {
@@ -290,23 +357,54 @@ pub const Db = struct {
                 else => return error.Unimplemented,
             }
 
-            if (last) return if (mode == .query) Prepared{} else null;
+            // Advance past the positional args this statement consumed.
+            if (db.param_mode == .positional) cur_args = cur_args[consumed..];
+
+            if (last) {
+                switch (mode) {
+                    // Query mode: the last statement was not a query (empty
+                    // Prepared). Temp tables are dropped now since no Rows
+                    // will carry them.
+                    .query => {
+                        db.dropTempTables(arena, temp_tables.items);
+                        return Prepared{};
+                    },
+                    // Exec mode: everything ran; drop temp tables and finish.
+                    .exec => {
+                        db.dropTempTables(arena, temp_tables.items);
+                        return null;
+                    },
+                }
+            }
+        }
+    }
+
+    /// Drops the given temp tables/views and removes their catalog specs
+    /// (Go CreateTableStmtAction.Cleanup). Best-effort: errors are ignored
+    /// since cleanup runs after the query has already produced its result.
+    fn dropTempTables(db: *Db, arena: std.mem.Allocator, names: []const []const u8) void {
+        for (names) |name| {
+            const drop_sql = std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name}) catch continue;
+            _ = db.execSql(arena, drop_sql, &.{}) catch {};
+            db.catalog.deleteTableSpec(&db.sqlite_db, name) catch {};
         }
     }
 
     /// Prepares `sql_text`, binds `args`, and steps it to completion
-    /// (Go conn.ExecContext used by every non-query action).
-    fn execSql(db: *Db, arena: std.mem.Allocator, sql_text: []const u8, args: []const Param) Error!void {
+    /// (Go conn.ExecContext used by every non-query action). Returns the
+    /// number of positional args consumed (0 in named mode).
+    fn execSql(db: *Db, arena: std.mem.Allocator, sql_text: []const u8, args: []const Param) Error!usize {
         var stmt = db.sqlite_db.prepare(sql_text) catch {
             db.setLastError(db.sqlite_db.errmsg());
             return error.ExecFailed;
         };
         defer stmt.finalize();
-        try db.bindParams(arena, &stmt, args);
+        const consumed = try db.bindParams(arena, &stmt, args);
         while (stmt.step() catch {
             db.setLastError(db.sqlite_db.errmsg());
             return error.ExecFailed;
         }) {}
+        return consumed;
     }
 
     fn failCatalog(db: *Db, err: catalog_mod.Error) Error {
@@ -324,7 +422,7 @@ pub const Db = struct {
         create_any: *const pb.AnyResolvedCreateStatementProto,
         args: []const Param,
         opts: QueryOptions,
-    ) Error!void {
+    ) Error!usize {
         const create_node = create_any.node orelse return error.Unimplemented;
         switch (create_node) {
             .resolved_create_table_stmt_base_node => |base_any| {
@@ -343,7 +441,8 @@ pub const Db = struct {
                 const view_node = view_any.node orelse return error.Unimplemented;
                 switch (view_node) {
                     .resolved_create_view_stmt_node => |cv| {
-                        return db.execCreateView(arena, node, cv, opts);
+                        try db.execCreateView(arena, node, cv, opts);
+                        return 0;
                     },
                     else => return error.Unimplemented,
                 }
@@ -360,11 +459,11 @@ pub const Db = struct {
         arena: std.mem.Allocator,
         ct: *const pb.ResolvedCreateTableStmtProto,
         args: []const Param,
-    ) Error!void {
+    ) Error!usize {
         const base = ct.parent orelse return error.TransformFailed;
         const create = base.parent orelse return error.TransformFailed;
         const table_spec = try newTableSpecFromCreate(arena, create, base, "");
-        try db.execCreateTableAction(arena, table_spec, args);
+        return db.execCreateTableAction(arena, table_spec, args);
     }
 
     /// Go CreateTableStmtAction for CREATE TABLE AS SELECT: the transformer
@@ -378,7 +477,7 @@ pub const Db = struct {
         ctas: *const pb.ResolvedCreateTableAsSelectStmtProto,
         args: []const Param,
         opts: QueryOptions,
-    ) Error!void {
+    ) Error!usize {
         const fragment = try transformStatementFragment(db, arena, node, opts);
         const create_table_stmt = switch (fragment) {
             .create_table_statement => |c| c,
@@ -390,7 +489,7 @@ pub const Db = struct {
         const base = ctas.parent orelse return error.TransformFailed;
         const create = base.parent orelse return error.TransformFailed;
         const table_spec = try newTableSpecFromCreate(arena, create, base, query_str);
-        try db.execCreateTableAction(arena, table_spec, args);
+        return db.execCreateTableAction(arena, table_spec, args);
     }
 
     /// Shared CreateTableStmtAction.exec body: OR REPLACE drops first,
@@ -400,17 +499,26 @@ pub const Db = struct {
         arena: std.mem.Allocator,
         table_spec: *spec.TableSpec,
         args: []const Param,
-    ) Error!void {
+    ) Error!usize {
         const table_name = try table_spec.tableName(arena);
         if (table_spec.create_mode == spec.create_mode_create_or_replace) {
             const drop_sql = try std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{table_name});
-            try db.execSql(arena, drop_sql, &.{});
+            _ = try db.execSql(arena, drop_sql, &.{});
         }
         const schema = table_spec.sqliteSchema(arena) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.TransformFailed,
         };
-        try db.execSql(arena, schema, args);
+        const consumed = try db.execSql(arena, schema, args);
+
+        // Temp tables are dropped once the query completes (Go Cleanup);
+        // record them so a later statement/query can re-create the name.
+        if (table_spec.is_temp) {
+            if (db.temp_collector) |collector| {
+                collector.append(arena, table_name) catch {};
+            }
+        }
+
         // IF NOT EXISTS on an already-registered table keeps the existing
         // spec. Go's exec unconditionally upserts the JSON spec, but its
         // live engine catalog keeps the first registration
@@ -421,10 +529,11 @@ pub const Db = struct {
         if (table_spec.create_mode == spec.create_mode_create_if_not_exists and
             db.catalog.findTableSpec(table_name) != null)
         {
-            return;
+            return consumed;
         }
         db.catalog.addNewTableSpec(&db.sqlite_db, table_spec) catch |err|
             return db.failCatalog(err);
+        return consumed;
     }
 
     /// Go CreateViewStmtAction: exec the CREATE VIEW fragment SQL and
@@ -482,10 +591,10 @@ pub const Db = struct {
                 "DROP VIEW IF EXISTS `{s}`",
                 .{try table_spec.tableName(arena)},
             );
-            try db.execSql(arena, drop_sql, &.{});
+            _ = try db.execSql(arena, drop_sql, &.{});
         }
         const create_sql = fragment.toString(arena) catch return error.OutOfMemory;
-        try db.execSql(arena, create_sql, &.{});
+        _ = try db.execSql(arena, create_sql, &.{});
         db.catalog.addNewTableSpec(&db.sqlite_db, table_spec) catch |err|
             return db.failCatalog(err);
     }
@@ -499,7 +608,7 @@ pub const Db = struct {
         drop_stmt: *const pb.ResolvedDropStmtProto,
         args: []const Param,
         opts: QueryOptions,
-    ) Error!void {
+    ) Error!usize {
         const object_type = drop_stmt.object_type orelse "";
         if (!std.mem.eql(u8, object_type, "TABLE") and !std.mem.eql(u8, object_type, "VIEW")) {
             // Go: "currently unsupported DROP %s statement" (FUNCTION is a
@@ -507,11 +616,12 @@ pub const Db = struct {
             return error.Unimplemented;
         }
         const formatted = try transformStatement(db, arena, node, opts);
-        try db.execSql(arena, formatted, args);
+        const consumed = try db.execSql(arena, formatted, args);
 
         const name = try formatNamePath(arena, drop_stmt.name_path);
         db.catalog.deleteTableSpec(&db.sqlite_db, name) catch |err|
             return db.failCatalog(err);
+        return consumed;
     }
 
     /// Go newTruncateStmtAction + TruncateStmtAction.exec:
@@ -526,31 +636,100 @@ pub const Db = struct {
         const raw_name = table_ref.name orelse return error.TransformFailed;
         const name = try formatNamePath(arena, &.{raw_name});
         const sql_text = try std.fmt.allocPrint(arena, "DELETE FROM `{s}`", .{name});
-        try db.execSql(arena, sql_text, &.{});
+        _ = try db.execSql(arena, sql_text, &.{});
     }
 
+    /// Binds `args` to the prepared statement's placeholders (Go
+    /// getArgsFromParams + database/sql binding). Returns the number of
+    /// positional args this statement consumed (0 in named mode, where the
+    /// full arg set applies to every statement of the script).
     fn bindParams(
         db: *Db,
         arena: std.mem.Allocator,
         stmt: *sqlite.Stmt,
         args: []const Param,
-    ) Error!void {
-        if (args.len == 0) return;
-        const count: i32 = @intCast(sqlite.c.sqlite3_bind_parameter_count(stmt.handle));
-        var idx: i32 = 1;
+    ) Error!usize {
+        const count = stmt.bindParameterCount();
+        if (count <= 0) return 0;
+        const ucount: usize = @intCast(count);
+
+        // Go getArgsFromParams: fewer supplied values than placeholders.
+        if (args.len < ucount) {
+            db.setLastError("not enough query arguments");
+            return error.ExecFailed;
+        }
+
+        switch (db.param_mode) {
+            .positional => {
+                var idx: i32 = 1;
+                while (idx <= count) : (idx += 1) {
+                    const ord: usize = @intCast(idx - 1);
+                    const param_type = if (ord < db.stmt_params.len)
+                        db.stmt_params[ord].type
+                    else
+                        null;
+                    try db.bindCell(arena, stmt, idx, args[ord].value, param_type);
+                }
+                return ucount;
+            },
+            .named => {
+                var idx: i32 = 1;
+                while (idx <= count) : (idx += 1) {
+                    // SQLite reports the placeholder text, e.g. "@a"; a bare
+                    // "?" reports null and binds positionally.
+                    var value: Cell = undefined;
+                    var param_type: ?*spec.Type = null;
+                    if (stmt.bindParameterName(idx)) |pname| {
+                        value = findArgByName(args, pname[1..]) orelse {
+                            db.setLastError("not enough query arguments");
+                            return error.ExecFailed;
+                        };
+                        for (db.stmt_params) |p| {
+                            if (std.ascii.eqlIgnoreCase(p.identifier, pname)) {
+                                param_type = p.type;
+                                break;
+                            }
+                        }
+                    } else {
+                        value = args[@intCast(idx - 1)].value;
+                    }
+                    try db.bindCell(arena, stmt, idx, value, param_type);
+                }
+                return 0;
+            },
+        }
+    }
+
+    /// Case-insensitive lookup of a named arg (Go lowercases both sides).
+    fn findArgByName(args: []const Param, name: []const u8) ?Cell {
         for (args) |param| {
-            if (idx > count) break;
-            // Named parameters arrive with the parameter-transformer task.
-            if (param.name != null) return error.Unimplemented;
-            const v = valueFromCell(arena, param.value) catch |err| return db.failDecode(err);
-            const repr = encoder.EncodeValue(arena, v) catch |err| return db.failDecode(err);
-            switch (repr) {
-                .null => try stmt.bindNull(idx),
-                .int => |i| try stmt.bindInt64(idx, i),
-                .float => |f| try stmt.bindDouble(idx, f),
-                .text => |t| try stmt.bindText(idx, t),
-            }
-            idx += 1;
+            const n = param.name orelse continue;
+            if (std.ascii.eqlIgnoreCase(n, name)) return param.value;
+        }
+        return null;
+    }
+
+    /// Encodes and binds a single cell at 1-based `idx`, casting to the
+    /// parameter's resolved type first when known (Go EncodeGoValue =
+    /// ValueFromGoValue + CastValue + EncodeValue).
+    fn bindCell(
+        db: *Db,
+        arena: std.mem.Allocator,
+        stmt: *sqlite.Stmt,
+        idx: i32,
+        cell: Cell,
+        param_type: ?*const spec.Type,
+    ) Error!void {
+        var v = valueFromCell(arena, cell) catch |err| return db.failDecode(err);
+        if (param_type) |t| {
+            v = castParamValue(arena, v, t) catch |err| return db.failDecode(err);
+        }
+        const repr = encoder.EncodeValue(arena, v) catch |err| return db.failDecode(err);
+        switch (repr) {
+            .null => try stmt.bindNull(idx),
+            .int => |i| try stmt.bindInt64(idx, i),
+            .float => |f| try stmt.bindDouble(idx, f),
+            .text => |t| try stmt.bindText(idx, t),
         }
     }
 
@@ -560,6 +739,137 @@ pub const Db = struct {
         return error.DecodeFailed;
     }
 };
+
+/// Flattens BEGIN ... END script blocks by blanking the block keywords with
+/// spaces, leaving the inner statements as a plain statement list (Go's
+/// analyzer parses scripts with ParseNextScriptStatement and flattens
+/// ASTBeginEndBlock nodes; our shim's AnalyzeNextStatement cannot parse
+/// script blocks). `BEGIN TRANSACTION` / bare `BEGIN;` are left untouched.
+/// Byte length is preserved so analyzer error offsets stay meaningful.
+fn flattenBeginEndBlocks(arena: std.mem.Allocator, sql: []const u8) error{OutOfMemory}![]const u8 {
+    var out: ?[]u8 = null; // copy-on-write
+    var depth: usize = 0;
+    var at_stmt_start = true;
+    var quote: u8 = 0;
+    var in_line_comment = false;
+    var i: usize = 0;
+    while (i < sql.len) : (i += 1) {
+        const c = sql[i];
+        if (in_line_comment) {
+            if (c == '\n') in_line_comment = false;
+            continue;
+        }
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+            continue;
+        }
+        switch (c) {
+            '\'', '"', '`' => quote = c,
+            '-' => {
+                if (i + 1 < sql.len and sql[i + 1] == '-') {
+                    in_line_comment = true;
+                    i += 1;
+                }
+            },
+            ';' => at_stmt_start = true,
+            else => {
+                if (std.ascii.isWhitespace(c)) continue;
+                if (!at_stmt_start) continue;
+                at_stmt_start = false;
+
+                const rest = sql[i..];
+                if (startsWithKeyword(rest, "BEGIN")) {
+                    // Distinguish a block from BEGIN [TRANSACTION];.
+                    const after = std.mem.trimStart(u8, rest["BEGIN".len..], &std.ascii.whitespace);
+                    if (after.len == 0 or after[0] == ';' or
+                        startsWithKeyword(after, "TRANSACTION")) continue;
+                    if (out == null) out = try arena.dupe(u8, sql);
+                    @memset(out.?[i .. i + "BEGIN".len], ' ');
+                    depth += 1;
+                    i += "BEGIN".len - 1;
+                    at_stmt_start = true; // inner statements follow directly
+                } else if (depth > 0 and startsWithKeyword(rest, "END")) {
+                    @memset(out.?[i .. i + "END".len], ' ');
+                    // Blank the block terminator's own ';' too.
+                    var j = i + "END".len;
+                    while (j < sql.len and std.ascii.isWhitespace(sql[j])) : (j += 1) {}
+                    if (j < sql.len and sql[j] == ';') out.?[j] = ' ';
+                    depth -= 1;
+                    i = j;
+                    at_stmt_start = true;
+                }
+            },
+        }
+    }
+    return out orelse sql;
+}
+
+/// True when `s` begins with keyword `kw` (case-insensitive) at a word
+/// boundary.
+fn startsWithKeyword(s: []const u8, kw: []const u8) bool {
+    if (s.len < kw.len) return false;
+    if (!std.ascii.eqlIgnoreCase(s[0..kw.len], kw)) return false;
+    if (s.len == kw.len) return true;
+    const next = s[kw.len];
+    return !(std.ascii.isAlphanumeric(next) or next == '_');
+}
+
+/// Go getParameterMode: scans the literal-stripped query for unquoted `?`
+/// (positional) vs `@name` (named). Mixing the two is rejected; a query with
+/// neither defaults to named.
+fn parameterMode(arena: std.mem.Allocator, sql: []const u8) error{ OutOfMemory, MixedParameters }!ParamMode {
+    const stripped = try stripSQLLiterals(arena, sql);
+    const has_positional = std.mem.indexOfScalar(u8, stripped, '?') != null;
+    const has_named = hasNamedParam(stripped);
+    if (has_named and has_positional) return error.MixedParameters;
+    if (has_positional) return .positional;
+    return .named;
+}
+
+/// Go namedParamPattern `@\w+`: an '@' followed by at least one word char.
+fn hasNamedParam(s: []const u8) bool {
+    var i: usize = 0;
+    while (i < s.len) : (i += 1) {
+        if (s[i] == '@' and i + 1 < s.len) {
+            const c = s[i + 1];
+            if (std.ascii.isAlphanumeric(c) or c == '_') return true;
+        }
+    }
+    return false;
+}
+
+/// Go stripSQLLiterals: blanks out single/double/backtick-quoted spans and
+/// `--` line comments so parameter detection ignores `?`/`@` inside them.
+fn stripSQLLiterals(arena: std.mem.Allocator, q: []const u8) error{OutOfMemory}![]const u8 {
+    var b: std.ArrayList(u8) = .empty;
+    try b.ensureTotalCapacity(arena, q.len);
+    var quote: u8 = 0;
+    var in_line_comment = false;
+    var i: usize = 0;
+    while (i < q.len) : (i += 1) {
+        const c = q[i];
+        if (in_line_comment) {
+            if (c == '\n') {
+                in_line_comment = false;
+                try b.append(arena, c);
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '\'' or c == '"' or c == '`') {
+            quote = c;
+        } else if (c == '-' and i + 1 < q.len and q[i + 1] == '-') {
+            in_line_comment = true;
+            i += 1;
+        } else {
+            try b.append(arena, c);
+        }
+    }
+    return b.items;
+}
 
 /// Transforms one analyzed statement into its SQL fragment.
 fn transformStatementFragment(
@@ -574,7 +884,7 @@ fn transformStatementFragment(
     ctx.query_ctx.current_time_unix_micros = opts.current_time_unix_micros;
 
     var coordinator = coordinator_mod.QueryCoordinator.init(arena);
-    return coordinator.transformStatementNode(node, ctx) catch |err| switch (err) {
+    const fragment = coordinator.transformStatementNode(node, ctx) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Unimplemented => return error.Unimplemented,
         else => {
@@ -582,6 +892,11 @@ fn transformStatementFragment(
             return error.TransformFailed;
         },
     };
+    // Surface the parameter occurrences (with resolved types) to the driver
+    // so bindParams can cast bound values (Go getParamsFromNode +
+    // EncodeNamedValues).
+    if (db) |d| d.stmt_params = ctx.collected_params.items;
+    return fragment;
 }
 
 /// Transforms one analyzed statement into SQLite SQL text.
@@ -750,6 +1065,50 @@ fn outputColumns(
 }
 
 /// Cell -> Value for parameter binding (inverse of cellFromValue).
+/// Casts a bound parameter value to its resolved parameter type, mirroring
+/// the parts of Go CastValue that change the value shape: STRUCT types
+/// re-project the fields in declared order (missing fields become NULL) and
+/// ARRAY types cast every element. Scalar kinds pass through (the driver's
+/// cells already carry matching scalar types).
+fn castParamValue(
+    alloc: std.mem.Allocator,
+    v: value_mod.Value,
+    t: *const spec.Type,
+) !value_mod.Value {
+    if (v == .null) return v;
+    switch (t.typeKind()) {
+        .TYPE_STRUCT => {
+            if (v != .struct_) return v;
+            const sv = v.struct_;
+            const keys = try alloc.alloc([]const u8, t.field_types.len);
+            const values = try alloc.alloc(value_mod.Value, t.field_types.len);
+            for (t.field_types, 0..) |field, i| {
+                var key = field.name;
+                if (key.len == 0) {
+                    key = try std.fmt.allocPrint(alloc, "_field_{d}", .{i + 1});
+                }
+                keys[i] = key;
+                if (sv.fieldByName(key)) |fv| {
+                    values[i] = if (field.type) |ft| try castParamValue(alloc, fv, ft) else fv;
+                } else {
+                    values[i] = .null;
+                }
+            }
+            return value_mod.structValue(alloc, keys, values);
+        },
+        .TYPE_ARRAY => {
+            if (v != .array) return v;
+            const elem_type = t.element_type orelse return v;
+            const values = try alloc.alloc(value_mod.Value, v.array.values.len);
+            for (v.array.values, 0..) |elem, i| {
+                values[i] = try castParamValue(alloc, elem, elem_type);
+            }
+            return value_mod.arrayValue(alloc, values);
+        },
+        else => return v,
+    }
+}
+
 fn valueFromCell(alloc: std.mem.Allocator, cell: Cell) !value_mod.Value {
     switch (cell) {
         .null => return .null,
@@ -893,6 +1252,8 @@ pub const Rows = struct {
     stmt: ?sqlite.Stmt = null,
     cols: []const OutputColumn = &.{},
     names: []const []const u8 = &.{},
+    /// Temp tables to drop on deinit (Go StmtAction.Cleanup).
+    temp_tables: []const []const u8 = &.{},
 
     pub fn columns(r: *Rows) []const []const u8 {
         return r.names;
@@ -930,6 +1291,11 @@ pub const Rows = struct {
     pub fn deinit(r: *Rows) void {
         if (r.stmt) |*stmt| stmt.finalize();
         r.stmt = null;
+        // Drop temp tables created by this query (Go Cleanup) before the
+        // arena (which backs the name strings) is released.
+        if (r.temp_tables.len > 0) {
+            r.db.dropTempTables(r.arena.allocator(), r.temp_tables);
+        }
         r.arena.deinit();
     }
 };
@@ -1345,12 +1711,13 @@ test "CREATE TEMP TABLE registers in memory but is not persisted" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    try db.exec(
-        "CREATE TEMP TABLE tmp1 (a INT64); INSERT INTO tmp1 (a) VALUES (9)",
+    // Temp tables live only within one query script (Go Cleanup), so create,
+    // populate and read within a single script.
+    var rows = try db.query(
+        "CREATE TEMP TABLE tmp1 (a INT64); INSERT INTO tmp1 (a) VALUES (9); SELECT a FROM tmp1",
         &.{},
         .{},
     );
-    var rows = try db.query("SELECT a FROM tmp1", &.{}, .{});
     defer rows.deinit();
     try testing.expectEqual(Cell{ .int = 9 }, (try rows.next()).?[0]);
 
@@ -1437,15 +1804,41 @@ test "CREATE TEMP TABLE AS SELECT (Go newTableAsSelectSpec temp path)" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    try db.exec(
-        "CREATE TEMP TABLE tmp_ctas AS SELECT 'Kylie' AS FirstName UNION ALL SELECT 'Nick'",
+    // Temp tables live for the duration of a single query script and are
+    // dropped when its Rows is closed (Go StmtAction.Cleanup), so the CREATE
+    // and the SELECT share one script here.
+    var rows = try db.query(
+        "CREATE TEMP TABLE tmp_ctas AS SELECT 'Kylie' AS FirstName UNION ALL SELECT 'Nick'; " ++
+            "SELECT FirstName FROM tmp_ctas ORDER BY FirstName",
         &.{},
         .{},
     );
-    var rows = try db.query("SELECT FirstName FROM tmp_ctas ORDER BY FirstName", &.{}, .{});
     defer rows.deinit();
     try testing.expectEqualStrings("Kylie", (try rows.next()).?[0].string);
     try testing.expectEqualStrings("Nick", (try rows.next()).?[0].string);
+}
+
+test "temp table is dropped after its query script completes" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Go drops temp tables at Rows.Close; re-creating the same name in a
+    // later script must therefore succeed rather than collide.
+    {
+        var rows = try db.query(
+            "CREATE TEMP TABLE reused (a INT64); SELECT * FROM reused",
+            &.{},
+            .{},
+        );
+        rows.deinit();
+    }
+    var rows = try db.query(
+        "CREATE TEMP TABLE reused (a INT64); INSERT INTO reused (a) VALUES (7); SELECT a FROM reused",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 7 }, (try rows.next()).?[0]);
 }
 
 test "CREATE VIEW resolves through the catalog and reflects base rows" {
@@ -1564,4 +1957,92 @@ test "catalog persists across driver connections to the same file" {
         const row = (try rows.next()).?;
         try testing.expectEqualStrings("hello", row[0].string);
     }
+}
+
+test "positional parameters bind in order" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query("SELECT ? + ?", &.{
+        .{ .value = .{ .int = 1 } },
+        .{ .value = .{ .int = 2 } },
+    }, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 3 }, (try rows.next()).?[0]);
+}
+
+test "positional parameters consumed across a multi-statement script" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Corpus 723: first ? feeds the CTAS, the remaining two feed the SELECT.
+    var rows = try db.query(
+        "CREATE TEMP TABLE t1 AS SELECT ? c1;\nSELECT c1 * ? * ? FROM t1;",
+        &.{
+            .{ .value = .{ .int = 1 } },
+            .{ .value = .{ .int = 2 } },
+            .{ .value = .{ .int = 3 } },
+        },
+        .{},
+    );
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 6 }, (try rows.next()).?[0]);
+}
+
+test "named parameters bind by name (order independent)" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query("SELECT @a + @b", &.{
+        .{ .name = "b", .value = .{ .int = 2 } },
+        .{ .name = "a", .value = .{ .int = 1 } },
+    }, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 3 }, (try rows.next()).?[0]);
+}
+
+test "missing named parameter reports not enough query arguments" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try testing.expectError(error.ExecFailed, db.query("SELECT @a + @b", &.{
+        .{ .name = "a", .value = .{ .int = 1 } },
+    }, .{}));
+    try testing.expectEqualStrings("not enough query arguments", db.lastError());
+}
+
+test "mixing named and positional parameters is rejected" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT ? + @a", &.{
+        .{ .value = .{ .int = 1 } },
+        .{ .name = "a", .value = .{ .int = 2 } },
+    }, .{}));
+}
+
+test "struct parameter is cast to the declared parameter type" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Corpus 741: an empty struct value gains the declared field as NULL.
+    var rows = try db.query(
+        "CREATE TABLE conductors (conductor STRUCT<length FLOAT64>);\n" ++
+            "INSERT INTO conductors (conductor) VALUES (?);\n" ++
+            "SELECT conductor.length FROM conductors;",
+        &.{.{ .value = .{ .struct_ = &.{} } }},
+        .{},
+    );
+    defer rows.deinit();
+    try testing.expectEqual(Cell.null, (try rows.next()).?[0]);
+}
+
+test "BEGIN..END block is flattened before analysis" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query("\nBEGIN\n  SELECT 1;\nEND;", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 1 }, (try rows.next()).?[0]);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }

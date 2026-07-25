@@ -504,6 +504,291 @@ pub const STRING_AGG = struct {
 };
 
 // ----------------------------------------------------------------------
+// Statistical aggregates (Go CORR / COVAR / STDDEV / VAR). These mirror the
+// gonum/stat maths used by the window variants (see fn_window.zig stat).
+// ----------------------------------------------------------------------
+
+fn statMean(x: []const f64) f64 {
+    var sum: f64 = 0;
+    for (x) |v| sum += v;
+    return sum / @as(f64, @floatFromInt(x.len));
+}
+
+fn statVariance(x: []const f64, population: bool) f64 {
+    const m = statMean(x);
+    var ss: f64 = 0;
+    var comp: f64 = 0;
+    for (x) |v| {
+        const d = v - m;
+        ss += d * d;
+        comp += d;
+    }
+    const n: f64 = @floatFromInt(x.len);
+    const denom: f64 = if (population) n else n - 1;
+    return (ss - comp * comp / n) / denom;
+}
+
+fn statCovariance(x: []const f64, y: []const f64) f64 {
+    const mx = statMean(x);
+    const my = statMean(y);
+    var ss: f64 = 0;
+    var xcomp: f64 = 0;
+    var ycomp: f64 = 0;
+    for (x, y) |xv, yv| {
+        const xd = xv - mx;
+        const yd = yv - my;
+        ss += xd * yd;
+        xcomp += xd;
+        ycomp += yd;
+    }
+    const n: f64 = @floatFromInt(x.len);
+    return (ss - xcomp * ycomp / n) / (n - 1);
+}
+
+fn statCorrelation(x: []const f64, y: []const f64) f64 {
+    const mx = statMean(x);
+    const my = statMean(y);
+    var sxx: f64 = 0;
+    var syy: f64 = 0;
+    var sxy: f64 = 0;
+    var xcomp: f64 = 0;
+    var ycomp: f64 = 0;
+    for (x, y) |xv, yv| {
+        const xd = xv - mx;
+        const yd = yv - my;
+        sxx += xd * xd;
+        syy += yd * yd;
+        sxy += xd * yd;
+        xcomp += xd;
+        ycomp += yd;
+    }
+    const n: f64 = @floatFromInt(x.len);
+    sxx -= xcomp * xcomp / n;
+    syy -= ycomp * ycomp / n;
+    sxy -= xcomp * ycomp / n;
+    return sxy / @sqrt(sxx * syy);
+}
+
+/// Shared two-column collector for CORR / COVAR_POP / COVAR_SAMP.
+const PairStat = struct {
+    x: std.ArrayList(f64) = .empty,
+    y: std.ArrayList(f64) = .empty,
+
+    fn stepPair(f: *PairStat, alloc: std.mem.Allocator, values: []const Value) Error!void {
+        if (values.len < 2) return bind.fail("statistical aggregate: must provide both x and y values", .{}, error.UnsupportedOperation);
+        if (values[0] == .@"null" or values[1] == .@"null") return;
+        try f.x.append(alloc, try values[0].toFloat64());
+        try f.y.append(alloc, try values[1].toFloat64());
+    }
+};
+
+pub const CORR = struct {
+    inner: PairStat = .{},
+    pub fn step(f: *CORR, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+        try f.inner.stepPair(alloc, values);
+    }
+    pub fn done(f: *CORR, _: std.mem.Allocator) Error!Value {
+        if (f.inner.x.items.len == 0) return .@"null";
+        return .{ .float = statCorrelation(f.inner.x.items, f.inner.y.items) };
+    }
+};
+
+pub const COVAR_POP = struct {
+    inner: PairStat = .{},
+    pub fn step(f: *COVAR_POP, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+        try f.inner.stepPair(alloc, values);
+    }
+    pub fn done(f: *COVAR_POP, _: std.mem.Allocator) Error!Value {
+        if (f.inner.x.items.len == 0) return .@"null";
+        return .{ .float = statCovariance(f.inner.x.items, f.inner.y.items) };
+    }
+};
+
+pub const COVAR_SAMP = struct {
+    inner: PairStat = .{},
+    pub fn step(f: *COVAR_SAMP, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+        try f.inner.stepPair(alloc, values);
+    }
+    pub fn done(f: *COVAR_SAMP, _: std.mem.Allocator) Error!Value {
+        if (f.inner.x.items.len == 0) return .@"null";
+        return .{ .float = statCovariance(f.inner.x.items, f.inner.y.items) };
+    }
+};
+
+/// Single-column variance/stddev family. `population` divides by n; otherwise
+/// n-1 (Go: STDDEV/VARIANCE alias the *_SAMP variants).
+fn VarStat(comptime is_stddev: bool, comptime population: bool) type {
+    return struct {
+        v: std.ArrayList(f64) = .empty,
+        pub fn step(f: *@This(), alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+            if (values.len < 1) return bind.fail("statistical aggregate: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+            if (values[0] == .@"null") return;
+            try f.v.append(alloc, try values[0].toFloat64());
+        }
+        pub fn done(f: *@This(), _: std.mem.Allocator) Error!Value {
+            if (f.v.items.len == 0) return .@"null";
+            const variance = statVariance(f.v.items, population);
+            return .{ .float = if (is_stddev) @sqrt(variance) else variance };
+        }
+    };
+}
+
+pub const STDDEV_POP = VarStat(true, true);
+pub const STDDEV_SAMP = VarStat(true, false);
+pub const STDDEV = STDDEV_SAMP;
+pub const VAR_POP = VarStat(false, true);
+pub const VAR_SAMP = VarStat(false, false);
+pub const VARIANCE = VAR_SAMP;
+
+// ----------------------------------------------------------------------
+// Approximate aggregates (Go APPROX_*). These are exact implementations over
+// the aggregate framework (not real sketches).
+// ----------------------------------------------------------------------
+
+pub const APPROX_COUNT_DISTINCT = struct {
+    seen: std.StringHashMapUnmanaged(void) = .empty,
+
+    pub fn step(f: *APPROX_COUNT_DISTINCT, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+        if (values.len < 1) return bind.fail("APPROX_COUNT_DISTINCT: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (values[0] == .@"null") return;
+        const key = try values[0].toString(alloc);
+        _ = try f.seen.getOrPut(alloc, key);
+    }
+    pub fn done(f: *APPROX_COUNT_DISTINCT, _: std.mem.Allocator) Error!Value {
+        return .{ .int = @intCast(f.seen.count()) };
+    }
+};
+
+pub const APPROX_QUANTILES = struct {
+    once: bool = false,
+    num: i64 = 0,
+    values: std.ArrayList(Value) = .empty,
+
+    pub fn step(f: *APPROX_QUANTILES, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+        if (values.len < 2) return bind.fail("APPROX_QUANTILES: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (!f.once) {
+            f.once = true;
+            f.num = try values[1].toInt64();
+        }
+        try f.values.append(alloc, values[0]);
+    }
+    pub fn done(f: *APPROX_QUANTILES, alloc: std.mem.Allocator) Error!Value {
+        const items = f.values.items;
+        if (items.len == 0) return .@"null";
+        if (f.num == 0) return value_mod.arrayValue(alloc, &.{items[0]});
+        if (f.num == 1) return value_mod.arrayValue(alloc, &.{ items[0], items[items.len - 1] });
+
+        const ratio = @as(f64, 100) / @as(f64, @floatFromInt(f.num));
+        const length: f64 = @floatFromInt(items.len);
+        var quantiles: std.ArrayList(Value) = .empty;
+        var i: f64 = 0;
+        while (i < 100) : (i += ratio) {
+            const f_idx = length * (i / 100);
+            var idx: i64 = @intFromFloat(f_idx);
+            if (@as(f64, @floatFromInt(idx)) < f_idx) idx += 1;
+            if (idx > 0) {
+                try quantiles.append(alloc, items[@intCast(idx - 1)]);
+            } else {
+                try quantiles.append(alloc, items[@intCast(idx)]);
+            }
+        }
+        try quantiles.append(alloc, items[items.len - 1]);
+        return value_mod.arrayValue(alloc, quantiles.items);
+    }
+};
+
+/// Shared insertion-ordered value->accumulator map for APPROX_TOP_COUNT/SUM.
+const TopEntry = struct { key: Value, acc: Value, idx: usize };
+
+fn topKey(alloc: std.mem.Allocator, v: Value) Error![]const u8 {
+    if (v == .@"null") return "\x00null";
+    // Prefix non-null keys so they cannot collide with the null sentinel.
+    return std.fmt.allocPrint(alloc, "v{s}", .{try v.toString(alloc)});
+}
+
+fn topLessThan(_: void, a: TopEntry, b: TopEntry) bool {
+    // Descending by accumulator; NULL accumulators sort last; ties keep
+    // insertion order via idx.
+    if (a.acc == .@"null" and b.acc == .@"null") return a.idx < b.idx;
+    if (a.acc == .@"null") return false;
+    if (b.acc == .@"null") return true;
+    if (a.acc.gt(b.acc) catch false) return true;
+    if (b.acc.gt(a.acc) catch false) return false;
+    return a.idx < b.idx;
+}
+
+pub const APPROX_TOP_COUNT = struct {
+    once: bool = false,
+    num: i64 = 0,
+    map: std.StringHashMapUnmanaged(usize) = .empty,
+    entries: std.ArrayList(TopEntry) = .empty,
+
+    pub fn step(f: *APPROX_TOP_COUNT, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+        if (values.len < 2) return bind.fail("APPROX_TOP_COUNT: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (!f.once) {
+            f.once = true;
+            f.num = try values[1].toInt64();
+        }
+        const key = try topKey(alloc, values[0]);
+        const gop = try f.map.getOrPut(alloc, key);
+        if (gop.found_existing) {
+            const e = &f.entries.items[gop.value_ptr.*];
+            e.acc = .{ .int = (try e.acc.toInt64()) + 1 };
+        } else {
+            gop.value_ptr.* = f.entries.items.len;
+            try f.entries.append(alloc, .{ .key = values[0], .acc = .{ .int = 1 }, .idx = f.entries.items.len });
+        }
+    }
+    pub fn done(f: *APPROX_TOP_COUNT, alloc: std.mem.Allocator) Error!Value {
+        return topDone(alloc, f.entries.items, f.num, "count", "APPROX_TOP_COUNT");
+    }
+};
+
+pub const APPROX_TOP_SUM = struct {
+    once: bool = false,
+    num: i64 = 0,
+    map: std.StringHashMapUnmanaged(usize) = .empty,
+    entries: std.ArrayList(TopEntry) = .empty,
+
+    pub fn step(f: *APPROX_TOP_SUM, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+        if (values.len < 3) return bind.fail("APPROX_TOP_SUM: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
+        if (!f.once) {
+            f.once = true;
+            f.num = try values[2].toInt64();
+        }
+        const weight = values[1];
+        const key = try topKey(alloc, values[0]);
+        const gop = try f.map.getOrPut(alloc, key);
+        if (gop.found_existing) {
+            const e = &f.entries.items[gop.value_ptr.*];
+            if (weight != .@"null") {
+                e.acc = if (e.acc == .@"null") weight else try e.acc.add(alloc, weight);
+            }
+        } else {
+            gop.value_ptr.* = f.entries.items.len;
+            try f.entries.append(alloc, .{ .key = values[0], .acc = weight, .idx = f.entries.items.len });
+        }
+    }
+    pub fn done(f: *APPROX_TOP_SUM, alloc: std.mem.Allocator) Error!Value {
+        return topDone(alloc, f.entries.items, f.num, "sum", "APPROX_TOP_SUM");
+    }
+};
+
+fn topDone(alloc: std.mem.Allocator, entries: []TopEntry, num: i64, comptime acc_key: []const u8, comptime name: []const u8) Error!Value {
+    if (entries.len == 0) return .@"null";
+    if (@as(i64, @intCast(entries.len)) < num) {
+        return bind.fail(name ++ ": required number is larger than number of input values", .{}, error.UnsupportedOperation);
+    }
+    std.mem.sort(TopEntry, entries, {}, topLessThan);
+    const take: usize = @intCast(num);
+    const out = try alloc.alloc(Value, take);
+    for (entries[0..take], 0..) |e, i| {
+        out[i] = try value_mod.structValue(alloc, &.{ "value", acc_key }, &.{ e.key, e.acc });
+    }
+    return value_mod.arrayValue(alloc, out);
+}
+
+// ----------------------------------------------------------------------
 // Tests (impl-level; SQL-level coverage lives in aggregate.zig)
 // ----------------------------------------------------------------------
 

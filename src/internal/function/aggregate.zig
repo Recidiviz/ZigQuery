@@ -55,6 +55,23 @@ const agg_table = [_]AggEntry{
     .{ .name = "min", .Impl = fns.MIN },
     .{ .name = "string_agg", .Impl = fns.STRING_AGG },
     .{ .name = "sum", .Impl = fns.SUM },
+
+    // statistical aggregate functions (Go aggregateFuncs)
+    .{ .name = "corr", .Impl = fns.CORR },
+    .{ .name = "covar_pop", .Impl = fns.COVAR_POP },
+    .{ .name = "covar_samp", .Impl = fns.COVAR_SAMP },
+    .{ .name = "stddev_pop", .Impl = fns.STDDEV_POP },
+    .{ .name = "stddev_samp", .Impl = fns.STDDEV_SAMP },
+    .{ .name = "stddev", .Impl = fns.STDDEV },
+    .{ .name = "var_pop", .Impl = fns.VAR_POP },
+    .{ .name = "var_samp", .Impl = fns.VAR_SAMP },
+    .{ .name = "variance", .Impl = fns.VARIANCE },
+
+    // approximate aggregate functions (Go aggregateFuncs)
+    .{ .name = "approx_count_distinct", .Impl = fns.APPROX_COUNT_DISTINCT },
+    .{ .name = "approx_quantiles", .Impl = fns.APPROX_QUANTILES },
+    .{ .name = "approx_top_count", .Impl = fns.APPROX_TOP_COUNT },
+    .{ .name = "approx_top_sum", .Impl = fns.APPROX_TOP_SUM },
 };
 
 /// Called from register.registerAll: aggregate UDFs + the option marker

@@ -219,6 +219,24 @@ pub const Stmt = struct {
         if (rc != c.SQLITE_OK) return error.SQLite;
     }
 
+    /// Number of SQL parameter placeholders in the prepared statement.
+    pub fn bindParameterCount(s: *Stmt) i32 {
+        return @intCast(c.sqlite3_bind_parameter_count(s.handle));
+    }
+
+    /// 1-based index of the named parameter `name` (e.g. "@a"), or 0 if none.
+    pub fn bindParameterIndex(s: *Stmt, name: [:0]const u8) i32 {
+        return @intCast(c.sqlite3_bind_parameter_index(s.handle, name.ptr));
+    }
+
+    /// Placeholder text of the 1-based parameter `index` (e.g. "@a"), or null
+    /// for a nameless "?" placeholder.
+    pub fn bindParameterName(s: *Stmt, index: i32) ?[]const u8 {
+        const p = c.sqlite3_bind_parameter_name(s.handle, @intCast(index));
+        if (p == null) return null;
+        return std.mem.sliceTo(p, 0);
+    }
+
     pub fn columnCount(s: *Stmt) i32 {
         return @intCast(c.sqlite3_column_count(s.handle));
     }

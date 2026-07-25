@@ -39,6 +39,10 @@ pub const WindowMode = enum {
     /// newWindowAggregatorWithoutArguments: no option parsing, the generic step
     /// buffers IntValue(1) and the generic inverse removes IntValue(1).
     no_args,
+    /// newTupleItemWindowAggregator (corr/covar_*): requires two arguments,
+    /// buffers the pair as a 2-element ArrayValue [x, y] (NULL x or y skipped),
+    /// and inverse removes the oldest NULL (never matches a buffered array).
+    tuple,
 };
 
 // ----------------------------------------------------------------------
@@ -456,30 +460,268 @@ pub const WINDOW_ROW_NUMBER = struct {
 };
 
 // ----------------------------------------------------------------------
-// Deferred: statistical + percentile functions. Registered so the names
-// resolve, but Done() raises a clear unimplemented error.
+// Statistical window functions (Go WINDOW_CORR / COVAR / STDDEV / VAR).
+//
+// The maths mirror gonum/stat (which go-zetasqlite delegates to): a two-pass
+// compensated mean/variance/covariance/correlation. All of these require at
+// least two buffered values (Go: len(values) < 2 -> NULL).
 // ----------------------------------------------------------------------
 
-fn Unimplemented(comptime name: []const u8) type {
-    return struct {
-        pub const window_mode: WindowMode = .single;
-        pub fn done(_: *@This(), _: std.mem.Allocator, _: *WindowFuncAggregatedStatus) Error!Value {
-            return bind.fail("zetasqlite_window_" ++ name ++ ": unimplemented", .{}, error.Unimplemented);
+const stat = struct {
+    fn mean(x: []const f64) f64 {
+        var sum: f64 = 0;
+        for (x) |v| sum += v;
+        return sum / @as(f64, @floatFromInt(x.len));
+    }
+
+    /// gonum MeanVariance (unweighted, sample): (ss - comp^2/n) / (n-1).
+    /// `population` divides by n instead of n-1.
+    fn variance(x: []const f64, population: bool) f64 {
+        const m = mean(x);
+        var ss: f64 = 0;
+        var comp: f64 = 0;
+        for (x) |v| {
+            const d = v - m;
+            ss += d * d;
+            comp += d;
         }
-    };
+        const n: f64 = @floatFromInt(x.len);
+        const denom: f64 = if (population) n else n - 1;
+        return (ss - comp * comp / n) / denom;
+    }
+
+    /// gonum Covariance (unweighted, sample): (ss - xcomp*ycomp/n) / (n-1).
+    fn covariance(x: []const f64, y: []const f64) f64 {
+        const mx = mean(x);
+        const my = mean(y);
+        var ss: f64 = 0;
+        var xcomp: f64 = 0;
+        var ycomp: f64 = 0;
+        for (x, y) |xv, yv| {
+            const xd = xv - mx;
+            const yd = yv - my;
+            ss += xd * yd;
+            xcomp += xd;
+            ycomp += yd;
+        }
+        const n: f64 = @floatFromInt(x.len);
+        return (ss - xcomp * ycomp / n) / (n - 1);
+    }
+
+    /// gonum Correlation: two-pass compensated Pearson correlation.
+    fn correlation(x: []const f64, y: []const f64) f64 {
+        const mx = mean(x);
+        const my = mean(y);
+        var sxx: f64 = 0;
+        var syy: f64 = 0;
+        var sxy: f64 = 0;
+        var xcomp: f64 = 0;
+        var ycomp: f64 = 0;
+        for (x, y) |xv, yv| {
+            const xd = xv - mx;
+            const yd = yv - my;
+            sxx += xd * xd;
+            syy += yd * yd;
+            sxy += xd * yd;
+            xcomp += xd;
+            ycomp += yd;
+        }
+        const n: f64 = @floatFromInt(x.len);
+        sxx -= xcomp * xcomp / n;
+        syy -= ycomp * ycomp / n;
+        sxy -= xcomp * ycomp / n;
+        return sxy / @sqrt(sxx * syy);
+    }
+};
+
+/// Reads the buffered pairs (each a 2-element array) into two float slices.
+/// Returns null-signal via len 0 when fewer than two pairs exist.
+fn tupleFloats(alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus, comptime what: []const u8) Error!?struct { x: []f64, y: []f64 } {
+    const values = try agg.relevantValues(alloc);
+    if (values.len < 2) return null;
+    var xs: std.ArrayList(f64) = .empty;
+    var ys: std.ArrayList(f64) = .empty;
+    for (values) |value| {
+        const arr = try value.toArray();
+        if (arr.values.len != 2) return bind.fail("invalid " ++ what ++ " arguments", .{}, error.UnsupportedOperation);
+        try xs.append(alloc, try arr.values[0].toFloat64());
+        try ys.append(alloc, try arr.values[1].toFloat64());
+    }
+    if (xs.items.len == 0) return null;
+    return .{ .x = xs.items, .y = ys.items };
 }
 
-pub const WINDOW_CORR = Unimplemented("corr");
-pub const WINDOW_COVAR_POP = Unimplemented("covar_pop");
-pub const WINDOW_COVAR_SAMP = Unimplemented("covar_samp");
-pub const WINDOW_STDDEV_POP = Unimplemented("stddev_pop");
-pub const WINDOW_STDDEV_SAMP = Unimplemented("stddev_samp");
-pub const WINDOW_STDDEV = Unimplemented("stddev");
-pub const WINDOW_VAR_POP = Unimplemented("var_pop");
-pub const WINDOW_VAR_SAMP = Unimplemented("var_samp");
-pub const WINDOW_VARIANCE = Unimplemented("variance");
-pub const WINDOW_PERCENTILE_CONT = Unimplemented("percentile_cont");
-pub const WINDOW_PERCENTILE_DISC = Unimplemented("percentile_disc");
+/// Reads the buffered scalars into a float slice (>=2 required, Go quirk).
+fn scalarFloats(alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!?[]f64 {
+    const values = try agg.relevantValues(alloc);
+    if (values.len < 2) return null;
+    var xs: std.ArrayList(f64) = .empty;
+    for (values) |value| try xs.append(alloc, try value.toFloat64());
+    if (xs.items.len == 0) return null;
+    return xs.items;
+}
+
+pub const WINDOW_CORR = struct {
+    pub const window_mode: WindowMode = .tuple;
+    pub fn done(_: *WINDOW_CORR, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        const pair = (try tupleFloats(alloc, agg, "corr")) orelse return .@"null";
+        return .{ .float = stat.correlation(pair.x, pair.y) };
+    }
+};
+
+pub const WINDOW_COVAR_POP = struct {
+    pub const window_mode: WindowMode = .tuple;
+    pub fn done(_: *WINDOW_COVAR_POP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        // Go quirk (goccy/go-zetasqlite#168): uses sample covariance too.
+        const pair = (try tupleFloats(alloc, agg, "covar_pop")) orelse return .@"null";
+        return .{ .float = stat.covariance(pair.x, pair.y) };
+    }
+};
+
+pub const WINDOW_COVAR_SAMP = struct {
+    pub const window_mode: WindowMode = .tuple;
+    pub fn done(_: *WINDOW_COVAR_SAMP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        const pair = (try tupleFloats(alloc, agg, "covar_samp")) orelse return .@"null";
+        return .{ .float = stat.covariance(pair.x, pair.y) };
+    }
+};
+
+pub const WINDOW_STDDEV_POP = struct {
+    pub const window_mode: WindowMode = .single;
+    pub fn done(_: *WINDOW_STDDEV_POP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        const xs = (try scalarFloats(alloc, agg)) orelse return .@"null";
+        return .{ .float = @sqrt(stat.variance(xs, true)) };
+    }
+};
+
+pub const WINDOW_STDDEV_SAMP = struct {
+    pub const window_mode: WindowMode = .single;
+    pub fn done(_: *WINDOW_STDDEV_SAMP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        const xs = (try scalarFloats(alloc, agg)) orelse return .@"null";
+        return .{ .float = @sqrt(stat.variance(xs, false)) };
+    }
+};
+
+/// Go: type WINDOW_STDDEV = WINDOW_STDDEV_SAMP.
+pub const WINDOW_STDDEV = WINDOW_STDDEV_SAMP;
+
+pub const WINDOW_VAR_POP = struct {
+    pub const window_mode: WindowMode = .single;
+    pub fn done(_: *WINDOW_VAR_POP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        const xs = (try scalarFloats(alloc, agg)) orelse return .@"null";
+        return .{ .float = stat.variance(xs, true) };
+    }
+};
+
+pub const WINDOW_VAR_SAMP = struct {
+    pub const window_mode: WindowMode = .single;
+    pub fn done(_: *WINDOW_VAR_SAMP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        const xs = (try scalarFloats(alloc, agg)) orelse return .@"null";
+        return .{ .float = stat.variance(xs, false) };
+    }
+};
+
+/// Go: type WINDOW_VARIANCE = WINDOW_VAR_SAMP.
+pub const WINDOW_VARIANCE = WINDOW_VAR_SAMP;
+
+// ----------------------------------------------------------------------
+// PERCENTILE_CONT / PERCENTILE_DISC (Go WINDOW_PERCENTILE_*).
+// ----------------------------------------------------------------------
+
+pub const WINDOW_PERCENTILE_CONT = struct {
+    pub const window_mode: WindowMode = .single;
+    percentile: Value = .@"null",
+
+    pub fn parseArguments(f: *WINDOW_PERCENTILE_CONT, _: std.mem.Allocator, args: []const Value) Error!void {
+        if (args.len < 2) return bind.fail("PERCENTILE_CONT: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+        f.percentile = args[1];
+    }
+
+    pub fn done(f: *WINDOW_PERCENTILE_CONT, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        if (try f.percentile.lt(.{ .int = 0 })) {
+            return bind.fail("PERCENTILE_CONT: percentile value must be greater than zero", .{}, error.UnsupportedOperation);
+        }
+        if (try f.percentile.gt(.{ .int = 1 })) {
+            return bind.fail("PERCENTILE_CONT: percentile value must be less than one", .{}, error.UnsupportedOperation);
+        }
+        const values = try agg.relevantValues(alloc);
+        if (values.len == 0) return .@"null";
+
+        var non_null: std.ArrayList(i64) = .empty;
+        var filtered: std.ArrayList(Value) = .empty;
+        for (values) |value| {
+            if (value == .@"null") continue;
+            try non_null.append(alloc, try value.toInt64());
+            try filtered.append(alloc, value);
+        }
+        if (filtered.items.len == 0) return .@"null";
+
+        const percentile = try f.percentile.toFloat64();
+        std.mem.sort(i64, non_null.items, {}, std.sort.asc(i64));
+
+        const len_f: f64 = @floatFromInt(non_null.items.len);
+        const row_number = 1 + percentile * (len_f - 1);
+        const floor_row = @floor(row_number);
+        const ceil_row = @ceil(row_number);
+        const floor_value: f64 = @floatFromInt(non_null.items[@intFromFloat(floor_row - 1)]);
+        const ceil_value: f64 = @floatFromInt(non_null.items[@intFromFloat(ceil_row - 1)]);
+
+        // Compute max/min of the filtered set (Go loops; NULLs already gone).
+        var max_value = filtered.items[0];
+        var min_value = filtered.items[0];
+        for (filtered.items) |value| {
+            if (try value.gt(max_value)) max_value = value;
+            if (try value.lt(min_value)) min_value = value;
+        }
+        if (try max_value.eq(.{ .int = 0 })) return .{ .float = 0 };
+
+        if (ceil_row == floor_row and ceil_row == row_number) {
+            return .{ .float = floor_value };
+        }
+        // ceil * (row - floor) + floor * (ceil - row)
+        return .{ .float = ceil_value * (row_number - floor_row) + floor_value * (ceil_row - row_number) };
+    }
+};
+
+pub const WINDOW_PERCENTILE_DISC = struct {
+    pub const window_mode: WindowMode = .single;
+    percentile: Value = .@"null",
+
+    pub fn parseArguments(f: *WINDOW_PERCENTILE_DISC, _: std.mem.Allocator, args: []const Value) Error!void {
+        if (args.len < 2) return bind.fail("PERCENTILE_DISC: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+        f.percentile = args[1];
+    }
+
+    pub fn done(f: *WINDOW_PERCENTILE_DISC, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+        if (try f.percentile.lt(.{ .int = 0 })) {
+            return bind.fail("PERCENTILE_DISC: percentile value must be greater than zero", .{}, error.UnsupportedOperation);
+        }
+        if (try f.percentile.gt(.{ .int = 1 })) {
+            return bind.fail("PERCENTILE_DISC: percentile value must be less than one", .{}, error.UnsupportedOperation);
+        }
+        const values = try agg.relevantValues(alloc);
+        if (values.len == 0) return .@"null";
+
+        // Go sort.Slice: NULLs sort first, then ascending order.
+        std.mem.sort(Value, values, {}, discLessThan);
+
+        const len: i64 = @intCast(values.len);
+        const pick_point = try f.percentile.mul(alloc, .{ .int = len });
+        if (try pick_point.eq(.{ .int = 0 })) return values[0];
+        const f_idx = try pick_point.toFloat64();
+        var idx: i64 = @intFromFloat(f_idx);
+        if (@as(f64, @floatFromInt(idx)) < f_idx) idx += 1;
+        idx -= 1;
+        if (idx > 0) return values[@intCast(idx)];
+        return .@"null";
+    }
+};
+
+fn discLessThan(_: void, a: Value, b: Value) bool {
+    if (a == .@"null") return true;
+    if (b == .@"null") return false;
+    return a.lt(b) catch false;
+}
 
 // ----------------------------------------------------------------------
 // Impl-level tests (SQL-level coverage lives in window.zig)

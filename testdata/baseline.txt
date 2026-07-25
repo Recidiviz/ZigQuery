@@ -656,3 +656,62 @@
 618	parse_numeric
 619	parse_bignumeric
 620	cast numeric and bignumeric to string
+178	approx_count_distinct
+179	approx_quantiles
+180	approx_quantiles 2
+181	approx_quantiles with distinct
+182	approx_quantiles with null
+183	approx_quantiles with respect nulls
+184	approx_top_count
+185	approx_top_count with null
+186	approx_top_sum
+187	approx_top_sum with null
+188	approx_top_sum with null 2
+189	approx_top_sum with null 3
+211	percentile_cont
+212	percentile_cont_non_zero_min_sorted
+213	percentile_cont_non_zero_min_unsorted
+214	percentile_disc single
+215	percentile_disc
+216	percentile_disc with respect nulls
+231	corr window
+232	covar_pop window
+233	covar_samp window
+234	stddev_pop window
+235	stddev window
+236	stddev_samp window
+237	var_pop window
+238	variance window
+239	var_samp window
+337	farm_fingerprint
+338	md5
+339	sha1
+340	sha256
+341	sha512
+622	session_user
+36	recursive cte
+37	recursive cte 2
+38	recursive cte 3
+39	recursive cte 4
+40	recursive cte 5
+41	recursive cte 6
+42	recursive cte 7
+43	recursive cte integration
+44	recursive cte integration 2
+625	begin-end
+716	single statement with named params
+717	not enough named params given
+719	single statement with positional params
+722	simple binding
+723	multiple statements with positional params
+726	merge two tables with empty source
+727	merge two tables with non-empty source
+728	merge two tables where target table name is substring of source table name
+729	merge two tables where source table is evaluated using a SELECT expression
+730	merge two tables deleting matched rows
+731	merge two tables omitting INSERT column list and using ROW
+737	recursive cte with star expression
+738	recursive cte with list expression in WHERE
+739	recursive cte with unary expression
+740	recursive cte with complex list and star in join
+741	struct field integration

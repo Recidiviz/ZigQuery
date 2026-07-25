@@ -28,19 +28,33 @@ pub fn transform(
     const with_scan_data = data.with_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
-    // Recursive CTEs arrive with the recursive-scan task (see file comment).
-    if (with_scan_data.recursive) return error.Unimplemented;
-
     // Process all WITH entries to create CTE definitions.
     var with_clauses: std.ArrayList(*sqlbuilder.WithClause) = .empty;
     for (with_scan_data.with_entry_list) |entry_data| {
+        // If this is a recursive CTE, set the CTE name in context before
+        // transforming so the recursive reference can resolve it.
+        if (with_scan_data.recursive) {
+            ctx.setRecursiveCTEName(entry_data.with_query_name);
+        }
+
         // Transform each WITH entry to a WithClause.
         const entry_scan_data = types_data.ScanData{
             .type = .with_entry,
             .with_entry_scan = entry_data,
         };
         const with_clause = try coord.transformWithEntry(entry_scan_data, ctx);
+
+        // Mark the WITH clause as recursive if needed.
+        if (with_scan_data.recursive) {
+            with_clause.recursive = true;
+        }
+
         try with_clauses.append(alloc, with_clause);
+
+        // Clear the recursive CTE name after processing.
+        if (with_scan_data.recursive) {
+            ctx.setRecursiveCTEName("");
+        }
     }
 
     // Transform the main query that uses the CTEs.
@@ -97,16 +111,19 @@ test "chained WITH entries referencing earlier CTEs" {
     try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
 }
 
-test "recursive WITH is unimplemented in the foundation" {
+test "recursive WITH counts up" {
     var db = try driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    try testing.expectError(
-        error.Unimplemented,
-        db.query(
-            "WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT n FROM r",
-            &.{},
-            .{},
-        ),
+    var rows = try db.query(
+        "WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT n FROM r ORDER BY n",
+        &.{},
+        .{},
     );
+    defer rows.deinit();
+
+    try testing.expectEqual(driver.Cell{ .int = 1 }, (try rows.next()).?[0]);
+    try testing.expectEqual(driver.Cell{ .int = 2 }, (try rows.next()).?[0]);
+    try testing.expectEqual(driver.Cell{ .int = 3 }, (try rows.next()).?[0]);
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
 }

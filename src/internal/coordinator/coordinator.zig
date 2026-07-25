@@ -27,6 +27,7 @@ const stmt_dml = @import("../transformer/stmt_dml.zig");
 const stmt_create_table_as_select = @import("../transformer/stmt_create_table_as_select.zig");
 const stmt_create_view = @import("../transformer/stmt_create_view.zig");
 const stmt_drop = @import("../transformer/stmt_drop.zig");
+const stmt_merge = @import("../transformer/stmt_merge.zig");
 
 // Scan transformers.
 const scan_table = @import("../transformer/scan_table.zig");
@@ -134,8 +135,7 @@ pub const QueryCoordinator = struct {
                 return error.UnsupportedNode;
             },
             .drop => return stmt_drop.transform(self, stmt_data, ctx),
-            // MERGE transformer arrives with a later task.
-            .merge => return error.Unimplemented,
+            .merge => return stmt_merge.transform(self, stmt_data, ctx),
         }
     }
 

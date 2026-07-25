@@ -43,6 +43,20 @@ pub fn analyzeNextStatement(
     resume_offset: usize,
     catalog_json: [:0]const u8,
 ) AnalyzeError!Analyzed {
+    return analyzeNextStatementOpts(arena, sql, resume_offset, catalog_json, "{}");
+}
+
+/// Like analyzeNextStatement but forwards `options_json` to the shim.
+/// options_json selects the parameter mode:
+/// `{"parameter_mode":"positional"}` for positional (`?`) parameters;
+/// anything else keeps named (`@name`) mode.
+pub fn analyzeNextStatementOpts(
+    arena: std.mem.Allocator,
+    sql: [:0]const u8,
+    resume_offset: usize,
+    catalog_json: [:0]const u8,
+    options_json: [:0]const u8,
+) AnalyzeError!Analyzed {
     var offset = resume_offset;
     var out_proto: ?[*]u8 = null;
     var out_len: usize = 0;
@@ -53,7 +67,7 @@ pub fn analyzeNextStatement(
         sql.ptr,
         &offset,
         catalog_json.ptr,
-        "{}",
+        options_json.ptr,
         &out_proto,
         &out_len,
         &out_is_end,

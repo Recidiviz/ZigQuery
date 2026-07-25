@@ -79,6 +79,7 @@ const ftime = @import("fn_time.zig");
 const ftimestamp = @import("fn_timestamp.zig");
 const fintv = @import("fn_interval.zig");
 const fjson = @import("fn_json.zig");
+const hash = @import("fn_hash.zig");
 
 pub const func_table = [_]FuncInfo{
     // arithmetic (Go: bindAdd/bindSub/bindMul/bindOpDiv + SAFE_* funcs)
@@ -111,6 +112,14 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "safe_negate", .min_args = 1, .handler = math.safeNegate },
     .{ .name = "is_distinct_from", .min_args = 2, .handler = cmp.isDistinctFrom },
     .{ .name = "is_not_distinct_from", .min_args = 2, .handler = cmp.isNotDistinctFrom },
+
+    // hash functions (Go function_hash.go) + SESSION_USER (function_security.go)
+    .{ .name = "md5", .min_args = 1, .handler = hash.md5 },
+    .{ .name = "sha1", .min_args = 1, .handler = hash.sha1 },
+    .{ .name = "sha256", .min_args = 1, .handler = hash.sha256 },
+    .{ .name = "sha512", .min_args = 1, .handler = hash.sha512 },
+    .{ .name = "farm_fingerprint", .min_args = 1, .handler = hash.farmFingerprint },
+    .{ .name = "session_user", .handler = hash.sessionUser },
 
     // debugging
     .{ .name = "error", .min_args = 1, .handler = misc.errorFn },

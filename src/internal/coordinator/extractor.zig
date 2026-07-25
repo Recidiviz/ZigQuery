@@ -520,8 +520,7 @@ pub const NodeExtractor = struct {
             .resolved_delete_stmt_node => |n| return self.extractDeleteStatementData(alloc, n, ctx),
             .resolved_drop_stmt_node => |n| return extractDropStatementData(alloc, n),
             .resolved_drop_function_stmt_node => |n| return extractDropFunctionStatementData(alloc, n),
-            // Merge: deferred (Go extractMergeStatementData; MERGE milestone).
-            .resolved_merge_stmt_node => return error.Unimplemented,
+            .resolved_merge_stmt_node => |n| return self.extractMergeStatementData(alloc, n, ctx),
             else => return error.UnsupportedNode,
         }
     }
@@ -746,6 +745,120 @@ pub const NodeExtractor = struct {
         return .{ .type = .delete, .delete = delete_data };
     }
 
+    /// Go extractMergeStatementData.
+    fn extractMergeStatementData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedMergeStmtProto,
+        ctx: *TransformContext,
+    ) Error!StatementData {
+        const table_scan_node = node.table_scan orelse return error.InvalidAST;
+        // Go getTableName: the resolved table's registered name.
+        const target_table_name = (table_scan_node.table orelse return error.InvalidAST).name orelse
+            return error.InvalidAST;
+
+        // Extract target table scan data.
+        const target_scan = try alloc.create(ScanData);
+        target_scan.* = try extractTableScanData(alloc, table_scan_node);
+
+        // Extract source scan data.
+        const from_scan = node.from_scan orelse return error.InvalidAST;
+        const source_scan = try alloc.create(ScanData);
+        source_scan.* = try self.ExtractScanData(alloc, from_scan, ctx);
+
+        // Extract merge expression (typically an equality condition).
+        const merge_expr_node = node.merge_expr orelse return error.InvalidAST;
+        const merge_expr_data = try self.ExtractExpressionData(alloc, merge_expr_node, ctx);
+
+        // Extract WHEN clauses.
+        var when_clauses: std.ArrayList(*types_data.MergeWhenClauseData) = .empty;
+        for (node.when_clause_list) |when| {
+            const when_data = try alloc.create(types_data.MergeWhenClauseData);
+            when_data.* = .{
+                .match_type = when.match_type orelse .MATCHED,
+                .action_type = when.action_type orelse .INSERT,
+            };
+
+            // Extract condition if present.
+            if (when.match_expr) |match_expr| {
+                const condition = try alloc.create(ExpressionData);
+                condition.* = try self.ExtractExpressionData(alloc, match_expr, ctx);
+                when_data.condition = condition;
+            }
+
+            switch (when_data.action_type) {
+                .INSERT => {
+                    // Extract INSERT columns.
+                    const columns = try alloc.alloc(*ColumnData, when.insert_column_list.len);
+                    for (when.insert_column_list, 0..) |col, i| {
+                        const column_data = try alloc.create(ColumnData);
+                        column_data.* = .{
+                            .id = col.column_id orelse 0,
+                            .name = col.name orelse "",
+                        };
+                        columns[i] = column_data;
+                    }
+                    when_data.insert_columns = columns;
+
+                    // Extract INSERT values.
+                    if (when.insert_row) |insert_row| {
+                        const values = try alloc.alloc(ExpressionData, insert_row.value_list.len);
+                        for (insert_row.value_list, 0..) |dml_value, i| {
+                            // Go ExtractExpressionData's DMLValue case
+                            // (unwrap .Value()).
+                            const value_expr = dml_value.value orelse return error.InvalidAST;
+                            values[i] = try self.ExtractExpressionData(alloc, value_expr, ctx);
+                        }
+                        when_data.insert_values = values;
+                    }
+                },
+                .UPDATE => {
+                    // Extract UPDATE SET items.
+                    const set_items = try alloc.alloc(*types_data.SetItemData, when.update_item_list.len);
+                    for (when.update_item_list, 0..) |item, i| {
+                        // Extract target column name (only ColumnRef targets,
+                        // like the Go original).
+                        var column_name: []const u8 = "";
+                        if (item.target) |target| {
+                            if (target.node) |target_node| {
+                                switch (target_node) {
+                                    .resolved_column_ref_node => |ref| {
+                                        if (ref.column) |col| column_name = col.name orelse "";
+                                    },
+                                    else => {},
+                                }
+                            }
+                        }
+
+                        const set_value = item.set_value orelse return error.InvalidAST;
+                        const value_expr = set_value.value orelse return error.InvalidAST;
+                        const set_item = try alloc.create(types_data.SetItemData);
+                        set_item.* = .{
+                            .column = column_name,
+                            .value = try self.ExtractExpressionData(alloc, value_expr, ctx),
+                        };
+                        set_items[i] = set_item;
+                    }
+                    when_data.set_items = set_items;
+                },
+                // DELETE action has no additional data to extract.
+                else => {},
+            }
+
+            try when_clauses.append(alloc, when_data);
+        }
+
+        const merge_data = try alloc.create(types_data.MergeData);
+        merge_data.* = .{
+            .target_table = target_table_name,
+            .target_scan = target_scan,
+            .source_scan = source_scan,
+            .merge_expr = merge_expr_data,
+            .when_clauses = try when_clauses.toOwnedSlice(alloc),
+        };
+        return .{ .type = .merge, .merge = merge_data };
+    }
+
     /// Go extractCreateTableAsSelectStatementData.
     fn extractCreateTableAsSelectStatementData(
         self: *const NodeExtractor,
@@ -855,9 +968,8 @@ pub const NodeExtractor = struct {
             .resolved_array_scan_node => |n| return self.extractArrayScanData(alloc, n, ctx),
             .resolved_table_scan_node => |n| return extractTableScanData(alloc, n),
             .resolved_analytic_scan_node => |n| return self.extractAnalyticScanData(alloc, n, ctx),
-            // Deferred foundation gaps:
-            .resolved_recursive_scan_node => return error.Unimplemented,
-            .resolved_recursive_ref_scan_node => return error.Unimplemented,
+            .resolved_recursive_scan_node => |n| return self.extractRecursiveScanData(alloc, n, ctx),
+            .resolved_recursive_ref_scan_node => |n| return self.extractRecursiveRefScanData(alloc, n, ctx),
             else => return error.UnsupportedNode, // Go: "unsupported scan node type"
         }
     }
@@ -1238,6 +1350,93 @@ pub const NodeExtractor = struct {
         };
     }
 
+    /// Go extractRecursiveScanData.
+    fn extractRecursiveScanData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedRecursiveScanProto,
+        ctx: *TransformContext,
+    ) Error!ScanData {
+        // Map the operation type.
+        const op_type: []const u8 = switch (node.op_type orelse .UNION_ALL) {
+            .UNION_ALL => "UNION ALL",
+            .UNION_DISTINCT => "UNION",
+            // Go: "unsupported recursive scan operation type"
+            else => return error.Unimplemented,
+        };
+
+        var non_recursive_term = StatementData{};
+        if (node.non_recursive_term) |item| {
+            non_recursive_term = try self.extractSetOperationItemAsSelect(alloc, item, ctx);
+        }
+
+        var recursive_term = StatementData{};
+        if (node.recursive_term) |item| {
+            recursive_term = try self.extractSetOperationItemAsSelect(alloc, item, ctx);
+        }
+
+        const parent = node.parent orelse return error.InvalidAST;
+        const recursive = try alloc.create(types_data.RecursiveScanData);
+        recursive.* = .{
+            .op_type = op_type,
+            .non_recursive_term = non_recursive_term,
+            .recursive_term = recursive_term,
+        };
+        return .{
+            .type = .recursive,
+            .column_list = try extractColumnDataList(alloc, parent.column_list),
+            .recursive_scan = recursive,
+        };
+    }
+
+    /// Go extractSetOperationItemAsSelect: extracts a SetOperationItem's scan
+    /// and output columns into a SELECT StatementData.
+    fn extractSetOperationItemAsSelect(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        item: *const pb.ResolvedSetOperationItemProto,
+        ctx: *TransformContext,
+    ) Error!StatementData {
+        const item_scan = item.scan orelse return error.InvalidAST;
+        const scan_data = try self.ExtractScanData(alloc, item_scan, ctx);
+
+        const select_items = try alloc.alloc(*types_data.SelectItemData, item.output_column_list.len);
+        for (item.output_column_list, 0..) |col, i| {
+            const select_item = try alloc.create(types_data.SelectItemData);
+            select_item.* = .{
+                .expression = try newColumnExpressionData(alloc, col),
+                .alias = col.name orelse "",
+            };
+            select_items[i] = select_item;
+        }
+
+        const from_clause = try alloc.create(ScanData);
+        from_clause.* = scan_data;
+        const select = try alloc.create(types_data.SelectData);
+        select.* = .{ .select_list = select_items, .from_clause = from_clause };
+        return .{ .type = .select, .select = select };
+    }
+
+    /// Go extractRecursiveRefScanData.
+    fn extractRecursiveRefScanData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedRecursiveRefScanProto,
+        ctx: *TransformContext,
+    ) Error!ScanData {
+        _ = self;
+        _ = ctx;
+        const parent = node.parent orelse return error.InvalidAST;
+        const column_data = try extractColumnDataList(alloc, parent.column_list);
+        const recursive_ref = try alloc.create(types_data.RecursiveRefScanData);
+        recursive_ref.* = .{ .column_list = column_data };
+        return .{
+            .type = .recursive_ref,
+            .column_list = column_data,
+            .recursive_ref_scan = recursive_ref,
+        };
+    }
+
     fn extractArrayScanData(
         self: *const NodeExtractor,
         alloc: std.mem.Allocator,
@@ -1429,10 +1628,8 @@ pub const NodeExtractor = struct {
                 return .{ .type = .literal, .literal = literal };
             },
             .resolved_get_json_field_node => |n| return self.extractGetJsonFieldData(alloc, n, ctx),
-            // Parameter / ArgumentRef / analytic: deferred to later tasks.
-            .resolved_parameter_node,
-            .resolved_argument_ref_node,
-            => return error.Unimplemented,
+            .resolved_parameter_node => |n| return extractParameterData(alloc, n, ctx),
+            .resolved_argument_ref_node => |n| return extractArgumentRefData(alloc, n),
             else => return error.UnsupportedNode, // Go: "unsupported expression node type"
         }
     }
@@ -1456,6 +1653,46 @@ pub const NodeExtractor = struct {
             .type_name = @tagName(type_proto.type_kind orelse .TYPE_UNKNOWN),
         };
         return .{ .type = .literal, .literal = literal };
+    }
+
+    /// Go extractParameterData: positional parameters (empty name) render as
+    /// "?"; named parameters render as "@name". Each occurrence is also
+    /// recorded on the context with its resolved type so the driver can cast
+    /// bound values (Go getParamsFromNode + EncodeNamedValues).
+    fn extractParameterData(
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedParameterProto,
+        ctx: *TransformContext,
+    ) Error!ExpressionData {
+        const name = node.name orelse "";
+        var identifier: []const u8 = undefined;
+        if (name.len == 0) {
+            identifier = "?"; // Positional parameter.
+        } else {
+            identifier = try std.fmt.allocPrint(alloc, "@{s}", .{name}); // Named.
+        }
+
+        var param_type: ?*spec.Type = null;
+        if (node.parent) |parent| {
+            if (parent.type) |tp| param_type = try spec.newTypeFromProto(alloc, tp);
+        }
+        try ctx.addCollectedParameter(identifier, param_type);
+
+        const param = try alloc.create(types_data.ParameterData);
+        param.* = .{ .identifier = identifier };
+        return .{ .type = .parameter, .parameter = param };
+    }
+
+    /// Go extractArgumentRefData: a table/function argument reference renders
+    /// as a named "@name" parameter.
+    fn extractArgumentRefData(
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedArgumentRefProto,
+    ) Error!ExpressionData {
+        const name = node.name orelse "";
+        const param = try alloc.create(types_data.ParameterData);
+        param.* = .{ .identifier = try std.fmt.allocPrint(alloc, "@{s}", .{name}) };
+        return .{ .type = .parameter, .parameter = param };
     }
 
     /// Go extractFunctionCallData.

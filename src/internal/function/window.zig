@@ -213,6 +213,18 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                         try group.agg.step(alloc, parsed.values[0]);
                     }
                 },
+                // Go newTupleItemWindowAggregator: pack [x, y] (skip if either NULL).
+                .tuple => {
+                    const parsed = try agg_opt.parseAggregateOptions(alloc, args);
+                    group.agg.opt = parsed.opt.*;
+                    if (parsed.values.len < 2) {
+                        return bind.fail("must provide both x and y values", .{}, error.UnsupportedOperation);
+                    }
+                    const x = parsed.values[0];
+                    const y = parsed.values[1];
+                    if (x == .@"null" or y == .@"null") return;
+                    try group.agg.step(alloc, try value_mod.arrayValue(alloc, &.{ x, y }));
+                },
             }
         }
 
@@ -239,6 +251,9 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 .single => {
                     if (args.len >= 1) try group.agg.inverse(args[0]);
                 },
+                // Go newTupleItemWindowAggregator inverse removes the oldest NULL
+                // (never matches a buffered [x, y] array): a no-op in practice.
+                .tuple => try group.agg.inverse(.@"null"),
             }
         }
 
@@ -535,22 +550,38 @@ test "partition boundary resets buffered aggregates" {
     try env.expectInts(&.{ 1, 2, 1, 2, 3 }, "SELECT zetasqlite_window_count(v) OVER (PARTITION BY p ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
 }
 
-test "deferred statistical window functions raise a clear error" {
+test "statistical window functions (stddev / var / corr)" {
     var env = try TestEnv.init();
     defer env.deinit();
     try env.exec("CREATE TABLE t(v)");
-    try env.exec("INSERT INTO t VALUES (1),(2),(3)");
+    try env.exec("INSERT INTO t VALUES (10),(14),(18)");
 
-    var stmt = try env.db.prepare("SELECT zetasqlite_window_stddev(v) OVER (ORDER BY v) FROM t");
-    defer stmt.finalize();
-    var failed = false;
-    while (true) {
-        const has_row = stmt.step() catch {
-            failed = true;
-            break;
-        };
-        if (!has_row) break;
-    }
-    try testing.expect(failed);
-    try testing.expect(std.mem.indexOf(u8, env.db.errmsg(), "unimplemented") != null);
+    // STDDEV_POP over the whole partition -> sqrt(32/3) = 3.2659863...
+    try env.expectFloats(&.{ 3.265986323710904, 3.265986323710904, 3.265986323710904 }, "SELECT zetasqlite_window_stddev_pop(v) OVER () FROM t");
+    // STDDEV_SAMP (== STDDEV) -> sqrt(32/2) = 4.
+    try env.expectFloats(&.{ 4, 4, 4 }, "SELECT zetasqlite_window_stddev(v) OVER () FROM t");
+    // VAR_POP -> 32/3, VAR_SAMP -> 16.
+    try env.expectFloats(&.{ 10.666666666666666, 10.666666666666666, 10.666666666666666 }, "SELECT zetasqlite_window_var_pop(v) OVER () FROM t");
+    try env.expectFloats(&.{ 16, 16, 16 }, "SELECT zetasqlite_window_var_samp(v) OVER () FROM t");
+
+    // A single value yields NULL (Go: len(values) < 2).
+    try env.exec("CREATE TABLE one(v)");
+    try env.exec("INSERT INTO one VALUES (5)");
+    const got = try env.column("SELECT zetasqlite_window_stddev(v) OVER () FROM one");
+    try testing.expectEqual(@as(usize, 1), got.len);
+    try testing.expect(got[0] == .@"null");
+}
+
+test "corr window over packed [x, y] pairs" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.exec("CREATE TABLE t(y, x)");
+    try env.exec("INSERT INTO t VALUES (1.0,5.0),(3.0,9.0),(4.0,7.0)");
+
+    // The tuple aggregator packs (y, x) into a 2-element array per row; CORR is
+    // symmetric so the result is Pearson's r ~= 0.6546536707079772.
+    try env.expectFloats(
+        &.{ 0.6546536707079772, 0.6546536707079772, 0.6546536707079772 },
+        "SELECT zetasqlite_window_corr(y, x) OVER () FROM t",
+    );
 }
