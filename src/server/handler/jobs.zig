@@ -160,3 +160,132 @@ test "the job resource parses and reports DONE" {
     try testing.expectEqualStrings("DONE", v.object.get("status").?.object.get("state").?.string);
     try testing.expectEqualStrings("bigquery#job", v.object.get("kind").?.string);
 }
+
+// ---- query jobs that write to a destination table ----
+//
+// View materialization posts a jobs.insert whose configuration.query carries
+// a destinationTable and a writeDisposition. Go runs the query and writes the
+// result into that table; without this a materialized view silently produces
+// nothing and every downstream view fails to resolve it.
+
+pub const Destination = struct {
+    project_id: []const u8,
+    dataset_id: []const u8,
+    table_id: []const u8,
+    /// WRITE_TRUNCATE | WRITE_APPEND | WRITE_EMPTY. Absent means WRITE_EMPTY.
+    write_disposition: []const u8 = "WRITE_EMPTY",
+};
+
+/// `configuration.query.destinationTable`, when present.
+pub fn destinationFromJobConfig(root: std.json.Value) ?Destination {
+    if (root != .object) return null;
+    const cfg = root.object.get("configuration") orelse return null;
+    if (cfg != .object) return null;
+    const q = cfg.object.get("query") orelse return null;
+    if (q != .object) return null;
+    const dst = q.object.get("destinationTable") orelse return null;
+    if (dst != .object) return null;
+
+    const p = strOf(dst, "projectId") orelse return null;
+    const d = strOf(dst, "datasetId") orelse return null;
+    const t = strOf(dst, "tableId") orelse return null;
+
+    return .{
+        .project_id = p,
+        .dataset_id = d,
+        .table_id = t,
+        .write_disposition = strOf(q, "writeDisposition") orelse "WRITE_EMPTY",
+    };
+}
+
+fn strOf(v: std.json.Value, name: []const u8) ?[]const u8 {
+    if (v != .object) return null;
+    const f = v.object.get(name) orelse return null;
+    return if (f == .string) f.string else null;
+}
+
+/// DDL that materializes `sql` into the destination, honouring the write
+/// disposition.
+pub fn materializeDdl(
+    arena: std.mem.Allocator,
+    dst: Destination,
+    sql: []const u8,
+) std.mem.Allocator.Error![]const u8 {
+    const path = try std.fmt.allocPrint(arena, "`{s}.{s}.{s}`", .{
+        dst.project_id, dst.dataset_id, dst.table_id,
+    });
+    if (std.mem.eql(u8, dst.write_disposition, "WRITE_APPEND")) {
+        return std.fmt.allocPrint(arena, "INSERT INTO {s} {s}", .{ path, sql });
+    }
+    // WRITE_TRUNCATE replaces the table outright; WRITE_EMPTY only differs
+    // when the table already has rows, which the emulator does not enforce.
+    return std.fmt.allocPrint(arena, "CREATE OR REPLACE TABLE {s} AS {s}", .{ path, sql });
+}
+
+test "reads a destination table and write disposition" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"configuration":{"query":{"query":"SELECT 1",
+        \\  "destinationTable":{"projectId":"p","datasetId":"d","tableId":"t"},
+        \\  "writeDisposition":"WRITE_TRUNCATE"}}}
+    , .{});
+    const dst = destinationFromJobConfig(v).?;
+    try testing.expectEqualStrings("p", dst.project_id);
+    try testing.expectEqualStrings("d", dst.dataset_id);
+    try testing.expectEqualStrings("t", dst.table_id);
+    try testing.expectEqualStrings("WRITE_TRUNCATE", dst.write_disposition);
+}
+
+test "a query job without a destination has none" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"configuration":{"query":{"query":"SELECT 1"}}}
+    , .{});
+    try testing.expectEqual(@as(?Destination, null), destinationFromJobConfig(v));
+}
+
+test "write disposition selects the DDL form" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const base = Destination{ .project_id = "p", .dataset_id = "d", .table_id = "t" };
+    try testing.expectEqualStrings(
+        "CREATE OR REPLACE TABLE `p.d.t` AS SELECT 1 AS a",
+        try materializeDdl(arena, base, "SELECT 1 AS a"),
+    );
+
+    var append = base;
+    append.write_disposition = "WRITE_APPEND";
+    try testing.expectEqualStrings(
+        "INSERT INTO `p.d.t` SELECT 1 AS a",
+        try materializeDdl(arena, append, "SELECT 1 AS a"),
+    );
+}
+
+test "materialization actually creates a queryable table" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const dst = Destination{
+        .project_id = "p",
+        .dataset_id = "d",
+        .table_id = "mat",
+        .write_disposition = "WRITE_TRUNCATE",
+    };
+    try db.exec(try materializeDdl(arena, dst, "SELECT 7 AS x"), &.{}, .{});
+
+    var rows = try db.query("SELECT x FROM `p.d.mat`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 7), (try rows.next()).?[0].int);
+}

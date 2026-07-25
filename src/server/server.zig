@@ -185,9 +185,7 @@ pub const Server = struct {
             .datasets_list => s.handleDatasetsList(req, m.captures.get(0)),
             .datasets_get => s.handleDatasetsGet(req, m.captures.get(0), m.captures.get(1)),
             .datasets_delete => s.handleDatasetsDelete(req, m.captures.get(0), m.captures.get(1)),
-            // PATCH is accepted and echoed; the emulator stores no mutable
-            // dataset metadata beyond the reference.
-            .datasets_patch => s.handleDatasetsGet(req, m.captures.get(0), m.captures.get(1)),
+            .datasets_patch => s.handleDatasetsPatch(req, m.captures.get(0), m.captures.get(1)),
 
             .tables_insert => s.handleTablesInsert(req, m.captures.get(0), m.captures.get(1)),
             .tables_list => s.handleTablesList(req, m.captures.get(0), m.captures.get(1)),
@@ -288,6 +286,51 @@ pub const Server = struct {
         }
         var out: std.ArrayList(u8) = .empty;
         try datasets_handler.writeDataset(arena, &out, project_id, dataset_id, false);
+        return .{ .body = out.items };
+    }
+
+    /// server/handler.go datasetsPatchHandler.
+    ///
+    /// Clients patch datasets to set things like defaultTableExpirationMs.
+    /// The posted body is stored and echoed back with the reference filled
+    /// in, so a field the emulator does not otherwise model still round-trips.
+    fn handleDatasetsPatch(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        if (!try s.repo.datasetExists(project_id, dataset_id)) {
+            return notFound(arena, try std.fmt.allocPrint(
+                arena,
+                "dataset {s} is not found",
+                .{dataset_id},
+            ));
+        }
+
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch
+            std.json.Value{ .null = {} };
+
+        var out: std.ArrayList(u8) = .empty;
+        if (parsed == .object and parsed.object.count() > 0) {
+            // Re-emit the patch with datasetReference/id guaranteed present.
+            var merged = try std.json.ObjectMap.init(arena, &.{}, &.{});
+            var it = parsed.object.iterator();
+            while (it.next()) |kv| try merged.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+
+            var ref = try std.json.ObjectMap.init(arena, &.{}, &.{});
+            try ref.put(arena, "datasetId", .{ .string = dataset_id });
+            try ref.put(arena, "projectId", .{ .string = project_id });
+            try merged.put(arena, "datasetReference", .{ .object = ref });
+            try merged.put(arena, "id", .{ .string = dataset_id });
+
+            try tables_handler.writeJsonValue(arena, &out, .{ .object = merged });
+        } else {
+            try datasets_handler.writeDataset(arena, &out, project_id, dataset_id, true);
+        }
+
+        try s.repo.addDataset(project_id, dataset_id, out.items);
         return .{ .body = out.items };
     }
 
@@ -471,7 +514,35 @@ pub const Server = struct {
         };
 
         const job_id = try query_handler.randomId(arena, &s.rng);
-        const res = try query_handler.runQuery(arena, s.db, project_id, job_id, sql);
+
+        // A query job may carry a destination table: this is how view
+        // materialization writes results. Run the DDL form instead of the
+        // bare SELECT, then record the resulting table's metadata.
+        const res = if (jobs_handler.destinationFromJobConfig(parsed)) |dst| blk: {
+            const ddl = try jobs_handler.materializeDdl(arena, dst, sql);
+            s.db.exec(ddl, &.{}, .{}) catch {
+                return .{
+                    .status = .bad_request,
+                    .body = try errors.body(
+                        arena,
+                        .invalid_query,
+                        try query_handler.wrapEngineError(arena, s.db.lastError()),
+                    ),
+                };
+            };
+            try s.recordMaterializedTable(arena, dst);
+            // Materialization returns no rows of its own.
+            break :blk try query_handler.runQuery(
+                arena,
+                s.db,
+                project_id,
+                job_id,
+                try std.fmt.allocPrint(arena, "SELECT * FROM `{s}.{s}.{s}` LIMIT 0", .{
+                    dst.project_id, dst.dataset_id, dst.table_id,
+                }),
+            );
+        } else try query_handler.runQuery(arena, s.db, project_id, job_id, sql);
+
         if (!res.ok) {
             return .{ .status = .bad_request, .body = res.body };
         }
@@ -488,6 +559,56 @@ pub const Server = struct {
 
         try s.jobs.put(project_id, job_id, res.body, resource.items);
         return .{ .body = resource.items };
+    }
+
+    /// Registers a table produced by a materialization job, deriving its
+    /// schema from the table the DDL just created.
+    fn recordMaterializedTable(
+        s: *Server,
+        arena: std.mem.Allocator,
+        dst: jobs_handler.Destination,
+    ) !void {
+        const probe = try std.fmt.allocPrint(
+            arena,
+            "SELECT * FROM `{s}.{s}.{s}` LIMIT 0",
+            .{ dst.project_id, dst.dataset_id, dst.table_id },
+        );
+        var schema_json: ?std.json.Value = null;
+        if (s.db.query(probe, &.{}, .{})) |r| {
+            var rows = r;
+            defer rows.deinit();
+            var sbuf: std.ArrayList(u8) = .empty;
+            try schema_mod.writeSchema(arena, &sbuf, rows.columnTypes());
+            schema_json = std.json.parseFromSliceLeaky(
+                std.json.Value,
+                arena,
+                sbuf.items,
+                .{},
+            ) catch null;
+        } else |_| {}
+
+        var meta: std.ArrayList(u8) = .empty;
+        try tables_handler.writeTable(arena, &meta, .{
+            .project_id = dst.project_id,
+            .dataset_id = dst.dataset_id,
+            .table_id = dst.table_id,
+            .endpoint = s.endpoint,
+            .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
+            .schema = schema_json,
+        });
+        // The destination dataset may not have been created explicitly.
+        if (!try s.repo.datasetExists(dst.project_id, dst.dataset_id)) {
+            var ds_meta: std.ArrayList(u8) = .empty;
+            try datasets_handler.writeDataset(
+                arena,
+                &ds_meta,
+                dst.project_id,
+                dst.dataset_id,
+                true,
+            );
+            try s.repo.addDataset(dst.project_id, dst.dataset_id, ds_meta.items);
+        }
+        try s.repo.addTable(dst.project_id, dst.dataset_id, dst.table_id, meta.items);
     }
 
     /// server/handler.go jobsGetHandler.

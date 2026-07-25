@@ -92,6 +92,13 @@ pub const Server = struct {
     io: std.Io,
     listener: std.Io.net.Server,
     handler: Handler,
+    /// Serializes handler invocations.
+    ///
+    /// Connections are served on their own threads (see `serve`), but the
+    /// engine behind the handler is single-threaded per Db and the server
+    /// currently holds one. Accepting concurrently while dispatching serially
+    /// is what removes the deadlock without requiring a connection pool.
+    handler_mutex: std.Io.Mutex = .init,
 
     pub fn listen(
         gpa: std.mem.Allocator,
@@ -110,27 +117,55 @@ pub const Server = struct {
         s.listener.deinit(s.io);
     }
 
-    /// Accepts and serves connections until the listening socket is shut
-    /// down. Single-threaded: one connection is served to completion before
-    /// the next is accepted.
+    /// Accepts connections and serves each on its own thread.
     ///
-    /// This is M1's deliberate shape — it matches the Go server's observable
-    /// behaviour exactly, since its global mutex made it serial anyway — and
-    /// is replaced by a worker pool once the engine is confirmed safe to
-    /// drive concurrently.
+    /// A thread per connection is required, not an optimisation: HTTP
+    /// keep-alive means a client holds its connections open, and the Google
+    /// client libraries pool several. Serving one connection to completion
+    /// before accepting the next therefore deadlocks — the server sits in the
+    /// keep-alive read on connection 1 while the client waits on connections
+    /// it has opened but which are never accepted.
+    ///
+    /// Request handling is still serialized by `handler_mutex`, because the
+    /// engine is single-threaded per Db. Concurrency here buys liveness, not
+    /// throughput; throughput comes with the connection pool.
     pub fn serve(s: *Server) !void {
         while (true) {
-            var stream = s.listener.accept(s.io) catch |err| switch (err) {
+            const stream = s.listener.accept(s.io) catch |err| switch (err) {
                 // shutdown() on the listening socket is the documented
                 // cancellation mechanism.
                 error.SocketNotListening, error.Canceled => return,
                 error.ConnectionAborted, error.BlockedByFirewall => continue,
                 else => return err,
             };
-            s.serveConnection(&stream) catch {};
-            stream.close(s.io);
+
+            const conn = s.gpa.create(Connection) catch {
+                var s2 = stream;
+                s2.close(s.io);
+                continue;
+            };
+            conn.* = .{ .server = s, .stream = stream };
+
+            const thread = std.Thread.spawn(.{}, Connection.run, .{conn}) catch {
+                // Out of threads: serve it inline rather than dropping it.
+                conn.run();
+                continue;
+            };
+            thread.detach();
         }
     }
+
+    const Connection = struct {
+        server: *Server,
+        stream: std.Io.net.Stream,
+
+        fn run(c: *Connection) void {
+            const s = c.server;
+            s.serveConnection(&c.stream) catch {};
+            c.stream.close(s.io);
+            s.gpa.destroy(c);
+        }
+    };
 
     fn serveConnection(s: *Server, stream: *std.Io.net.Stream) !void {
         const read_buf = try s.gpa.alloc(u8, head_buffer_len);
@@ -197,7 +232,11 @@ pub const Server = struct {
             .arena = arena,
         };
 
-        const res = try s.handler.func(s.handler.ctx, &req);
+        const res = blk: {
+            s.handler_mutex.lockUncancelable(s.io);
+            defer s.handler_mutex.unlock(s.io);
+            break :blk try s.handler.func(s.handler.ctx, &req);
+        };
 
         try request.respond(res.body, .{
             .status = res.status,
