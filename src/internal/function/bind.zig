@@ -22,6 +22,10 @@ pub const FuncInfo = struct {
     handler: Handler,
     /// Go FuncInfo.SafeFunc: replaces handler for the safe_ variant.
     safe_handler: ?Handler = null,
+    /// False for functions whose result may vary between calls with the same
+    /// arguments. Such functions must not carry SQLITE_DETERMINISTIC, or
+    /// SQLite evaluates them once per query rather than once per row.
+    deterministic: bool = true,
 };
 
 // ----------------------------------------------------------------------
@@ -203,7 +207,8 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "format", .min_args = 1, .handler = fmtfn.format },
 
     // net.* functions
-    .{ .name = "generate_uuid", .handler = net.generateUuid },
+    // Volatile: BigQuery returns a distinct UUID per row.
+    .{ .name = "generate_uuid", .handler = net.generateUuid, .deterministic = false },
     .{ .name = "net_host", .min_args = 1, .handler = net.netHost },
     .{ .name = "net_ip_from_string", .min_args = 1, .handler = net.netIpFromString },
     .{ .name = "net_ip_net_mask", .min_args = 2, .handler = net.netIpNetMask },

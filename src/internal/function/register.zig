@@ -47,12 +47,12 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
                 invoke(info, true, ctx, argc, argv);
             }
         };
-        try db.createScalarFunction("zetasqlite_" ++ info.name, -1, state, Tramp.normal);
-        try db.createScalarFunction("zetasqlite_safe_" ++ info.name, -1, state, Tramp.safe);
+        try db.createScalarFunction("zetasqlite_" ++ info.name, -1, state, Tramp.normal, info.deterministic);
+        try db.createScalarFunction("zetasqlite_safe_" ++ info.name, -1, state, Tramp.safe, info.deterministic);
     }
 
-    try db.createScalarFunction("zetasqlite_decode_array", -1, state, decodeArrayTramp);
-    try db.createScalarFunction("zetasqlite_group_by", -1, state, groupByTramp);
+    try db.createScalarFunction("zetasqlite_decode_array", -1, state, decodeArrayTramp, true);
+    try db.createScalarFunction("zetasqlite_group_by", -1, state, groupByTramp, true);
     try db.createCollation("zetasqlite_collate", state, collateCmp);
 
     // Aggregate UDFs + option marker functions (Go: aggregateFuncs plus the

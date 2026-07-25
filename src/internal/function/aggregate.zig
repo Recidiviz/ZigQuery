@@ -103,8 +103,8 @@ pub fn registerAggregates(db: *sqlite.Db, state: *State) !void {
                 invokeOption(info, ctx, argc, argv);
             }
         };
-        try db.createScalarFunction("zetasqlite_" ++ info.name, -1, state, Tramp.scalar);
-        try db.createScalarFunction("zetasqlite_safe_" ++ info.name, -1, state, Tramp.scalar);
+        try db.createScalarFunction("zetasqlite_" ++ info.name, -1, state, Tramp.scalar, true);
+        try db.createScalarFunction("zetasqlite_safe_" ++ info.name, -1, state, Tramp.scalar, true);
     }
 }
 

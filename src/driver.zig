@@ -84,8 +84,25 @@ pub const QueryOptions = struct {
     current_time_unix_micros: ?i64 = null,
 };
 
+/// Connection-level SQLite configuration for Db.openWith. Defaults reproduce
+/// plain Db.open exactly: no pragmas, no busy timeout.
+pub const OpenOptions = struct {
+    /// Applied in order, before UDF registration and the initial catalog
+    /// sync. Each must be a complete statement, e.g.
+    /// "PRAGMA journal_mode = WAL".
+    pragmas: []const [:0]const u8 = &.{},
+    /// sqlite3_busy_timeout in milliseconds.
+    busy_timeout_ms: ?i32 = null,
+};
+
 /// One output column of a QueryStmt (Go ColumnSpec: name + spec Type).
-const OutputColumn = struct {
+///
+/// Public so servers can derive a result schema. Go reaches the same data
+/// through Rows.ColumnTypeDatabaseTypeName, which is literally
+/// `json.Marshal(internal.Type)` (go-zetasqlite internal/rows.go:38-41) that
+/// the caller immediately unmarshals again (column.go:11); handing back the
+/// `*spec.Type` skips that round trip.
+pub const OutputColumn = struct {
     name: []const u8,
     type: *spec.Type,
 };
@@ -111,8 +128,22 @@ pub const Db = struct {
     /// (identifier + resolved type). Arena-backed; used by bindParams to
     /// cast values (Go EncodeNamedValues with getParamsFromNode results).
     stmt_params: []const context_mod.CollectedParam = &.{},
+    /// Prepared-statement cache for the raw SQLite path, keyed by SQL text
+    /// (Go's per-connection ManagedConnection.stmts). gpa-owned keys.
+    raw_cache: std.StringHashMapUnmanaged(*RawStmt) = .empty,
 
     pub fn open(gpa: std.mem.Allocator, path: [:0]const u8) Error!*Db {
+        return openWith(gpa, path, .{});
+    }
+
+    /// open() with connection-level SQLite configuration. Go applies the
+    /// equivalent through the DSN (`&_pragma=journal_mode(WAL)` etc. in
+    /// bigquery-emulator server.go); the C API has no DSN pragma syntax, so
+    /// they run as statements instead.
+    ///
+    /// Pragmas are applied before UDF registration and the catalog sync
+    /// because journal_mode=WAL must precede the first write to the file.
+    pub fn openWith(gpa: std.mem.Allocator, path: [:0]const u8, opts: OpenOptions) Error!*Db {
         const db = try gpa.create(Db);
         errdefer gpa.destroy(db);
         db.* = .{
@@ -122,6 +153,13 @@ pub const Db = struct {
             .catalog = undefined,
         };
         errdefer db.sqlite_db.close();
+        if (opts.busy_timeout_ms) |ms| db.sqlite_db.busyTimeout(ms);
+        for (opts.pragmas) |pragma| {
+            db.sqlite_db.exec(pragma) catch {
+                db.setLastSqliteError();
+                return error.ExecFailed;
+            };
+        }
         // zetasqlite_* UDFs + collation (Go: RegisterFunctions in driver init).
         db.udf_state = function.registerAll(&db.sqlite_db, gpa) catch
             return error.ExecFailed;
@@ -137,6 +175,9 @@ pub const Db = struct {
 
     pub fn close(db: *Db) void {
         db.clearLastError();
+        // Before sqlite_db.close(): sqlite3_close_v2 leaves the handle a
+        // zombie until every statement is finalized.
+        db.deinitRawCache();
         db.catalog.deinit();
         db.sqlite_db.close();
         db.udf_state.deinit();
@@ -217,6 +258,144 @@ pub const Db = struct {
         var arena_state = std.heap.ArenaAllocator.init(db.gpa);
         defer arena_state.deinit();
         _ = try db.runStatements(arena_state.allocator(), sql, args, opts, .exec);
+    }
+
+    // ---- Raw SQLite passthrough (Go zetasqlite.WithQueryFormattingDisabled) ----
+    //
+    // bigquery-emulator's metadata tables (projects/datasets/tables/jobs/...)
+    // are plain SQLite, not GoogleSQL: Go prepares all 22 of them under
+    // WithQueryFormattingDisabled (internal/connection/manager.go
+    // PrepareQueries). These entry points are that path — no analyzer, no
+    // transform, no catalog. They are invisible to the GoogleSQL catalog, so
+    // a table created here cannot be reached by query()/exec().
+    //
+    // Statements are cached per Db, which is what Go's per-connection
+    // `stmts map[string]*sql.Stmt` achieves. Go needs txConnMap/txMu to route
+    // a *sql.Tx back to the connection owning its prepared statement; here a
+    // statement never leaves its Db, so no such bookkeeping exists.
+
+    /// Bindable value for the raw path. Distinct from Cell: no GoogleSQL
+    /// types, since nothing here is analyzed or encoded.
+    pub const RawValue = union(enum) {
+        null,
+        int: i64,
+        float: f64,
+        text: []const u8,
+        blob: []const u8,
+    };
+
+    /// `name` binds by `@name`/`:name` (Go's sql.Named); null binds
+    /// positionally in argument order.
+    pub const RawArg = struct {
+        name: ?[:0]const u8 = null,
+        value: RawValue,
+    };
+
+    /// Run a raw SQLite statement producing no rows.
+    pub fn rawExec(db: *Db, sql: [:0]const u8, args: []const RawArg) Error!void {
+        var rows = try db.rawQuery(sql, args);
+        defer rows.deinit();
+        while (try rows.next()) |_| {}
+    }
+
+    /// Run a raw SQLite query. The returned RawRows borrows SQLite's own row
+    /// buffer, so each row is valid only until the next next() call — copy
+    /// anything that must outlive it.
+    pub fn rawQuery(db: *Db, sql: [:0]const u8, args: []const RawArg) Error!RawRows {
+        const entry = try db.acquireRawStmt(sql);
+        errdefer db.releaseRawStmt(entry);
+
+        var stmt = entry.stmt;
+        stmt.reset();
+        stmt.clearBindings();
+
+        for (args, 0..) |arg, i| {
+            const idx: i32 = if (arg.name) |n| blk: {
+                const found = stmt.bindParameterIndex(n);
+                if (found == 0) {
+                    db.setLastError("unknown named parameter");
+                    return error.ExecFailed;
+                }
+                break :blk found;
+            } else @intCast(i + 1);
+            db.bindRawValue(&stmt, idx, arg.value) catch {
+                db.setLastSqliteError();
+                return error.ExecFailed;
+            };
+        }
+
+        const ncols: usize = @intCast(stmt.columnCount());
+        const scratch = try db.gpa.alloc(RawValue, ncols);
+        return .{ .db = db, .entry = entry, .scratch = scratch };
+    }
+
+    fn bindRawValue(db: *Db, stmt: *sqlite.Stmt, idx: i32, v: RawValue) sqlite.Error!void {
+        _ = db;
+        return switch (v) {
+            .null => stmt.bindNull(idx),
+            .int => |x| stmt.bindInt64(idx, x),
+            .float => |x| stmt.bindDouble(idx, x),
+            .text => |x| stmt.bindText(idx, x),
+            .blob => |x| stmt.bindBlob(idx, x),
+        };
+    }
+
+    /// Cached prepared statement plus a reentrancy guard: a second concurrent
+    /// rawQuery on the same SQL gets its own uncached statement rather than
+    /// silently resetting one that an open RawRows is still stepping.
+    const RawStmt = struct {
+        stmt: sqlite.Stmt,
+        in_use: bool = false,
+        cached: bool = true,
+    };
+
+    fn acquireRawStmt(db: *Db, sql: [:0]const u8) Error!*RawStmt {
+        if (db.raw_cache.get(sql)) |entry| {
+            if (!entry.in_use) {
+                entry.in_use = true;
+                return entry;
+            }
+            // Re-entrant use: prepare a throwaway statement.
+            return db.newRawStmt(sql, false);
+        }
+        const entry = try db.newRawStmt(sql, true);
+        // dupe, not dupeZ: the map key type is []const u8, so a sentinel-
+        // terminated allocation would be freed one byte short.
+        const key = try db.gpa.dupe(u8, sql);
+        errdefer db.gpa.free(key);
+        try db.raw_cache.put(db.gpa, key, entry);
+        return entry;
+    }
+
+    fn newRawStmt(db: *Db, sql: [:0]const u8, cached: bool) Error!*RawStmt {
+        const stmt = db.sqlite_db.prepare(sql) catch {
+            db.setLastSqliteError();
+            return error.ExecFailed;
+        };
+        const entry = try db.gpa.create(RawStmt);
+        entry.* = .{ .stmt = stmt, .in_use = true, .cached = cached };
+        return entry;
+    }
+
+    fn releaseRawStmt(db: *Db, entry: *RawStmt) void {
+        if (entry.cached) {
+            entry.stmt.reset();
+            entry.stmt.clearBindings();
+            entry.in_use = false;
+            return;
+        }
+        entry.stmt.finalize();
+        db.gpa.destroy(entry);
+    }
+
+    fn deinitRawCache(db: *Db) void {
+        var it = db.raw_cache.iterator();
+        while (it.next()) |kv| {
+            kv.value_ptr.*.stmt.finalize();
+            db.gpa.destroy(kv.value_ptr.*);
+            db.gpa.free(kv.key_ptr.*);
+        }
+        db.raw_cache.deinit(db.gpa);
     }
 
     const Mode = enum { query, exec };
@@ -1453,6 +1632,51 @@ fn cellFromValue(
     }
 }
 
+/// Result of Db.rawQuery. Unlike Rows there is no arena: values borrow
+/// SQLite's row buffer directly and are invalidated by the next next().
+pub const RawRows = struct {
+    db: *Db,
+    entry: *Db.RawStmt,
+    /// Reused row buffer, gpa-owned, one slot per column.
+    scratch: []Db.RawValue,
+    done: bool = false,
+
+    /// Next row, or null when exhausted. Slices in the returned row point
+    /// into SQLite's storage — copy before calling next() again.
+    pub fn next(r: *RawRows) Error!?[]const Db.RawValue {
+        if (r.done) return null;
+        const has_row = r.entry.stmt.step() catch {
+            r.done = true;
+            r.db.setLastSqliteError();
+            return error.ExecFailed;
+        };
+        if (!has_row) {
+            r.done = true;
+            return null;
+        }
+        for (r.scratch, 0..) |*slot, i| {
+            const col: i32 = @intCast(i);
+            slot.* = switch (r.entry.stmt.columnType(col)) {
+                .integer => .{ .int = r.entry.stmt.columnInt64(col) },
+                .float => .{ .float = r.entry.stmt.columnDouble(col) },
+                .text => .{ .text = r.entry.stmt.columnText(col) },
+                .blob => .{ .blob = r.entry.stmt.columnBlob(col) },
+                .null => .null,
+            };
+        }
+        return r.scratch;
+    }
+
+    pub fn columnCount(r: *RawRows) usize {
+        return r.scratch.len;
+    }
+
+    pub fn deinit(r: *RawRows) void {
+        r.db.gpa.free(r.scratch);
+        r.db.releaseRawStmt(r.entry);
+    }
+};
+
 pub const Rows = struct {
     arena: std.heap.ArenaAllocator,
     db: *Db,
@@ -1468,6 +1692,16 @@ pub const Rows = struct {
 
     pub fn columns(r: *Rows) []const []const u8 {
         return r.names;
+    }
+
+    /// Output columns with their resolved types (Go
+    /// Rows.ColumnTypeDatabaseTypeName, minus the JSON round trip — see
+    /// OutputColumn). Parallel to columns(); valid until deinit().
+    ///
+    /// Empty for statements that produce no result set (DDL/DML), matching
+    /// columns().
+    pub fn columnTypes(r: *Rows) []const OutputColumn {
+        return r.cols;
     }
 
     /// Next row of decoded cells, or null when exhausted. Cells are valid
@@ -2110,6 +2344,224 @@ test "dotted CREATE and DML resolve through recursive catalog paths" {
     var rows = try db.query("SELECT name FROM ds.t WHERE id = 1", &.{}, .{});
     defer rows.deinit();
     try testing.expectEqualStrings("x", (try rows.next()).?[0].string);
+}
+
+test "columnTypes exposes resolved output column types" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        "SELECT 1 AS i, 'a' AS s, [1, 2] AS arr, STRUCT(1 AS f) AS st",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    const cols = rows.columnTypes();
+    try testing.expectEqual(@as(usize, 4), cols.len);
+    try testing.expectEqualStrings("i", cols[0].name);
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, cols[0].type.typeKind());
+    try testing.expectEqual(pb.TypeKind.TYPE_STRING, cols[1].type.typeKind());
+    try testing.expect(cols[2].type.isArray());
+    try testing.expectEqual(
+        pb.TypeKind.TYPE_INT64,
+        cols[2].type.element_type.?.typeKind(),
+    );
+    try testing.expect(cols[3].type.isStruct());
+    try testing.expectEqualStrings("f", cols[3].type.field_types[0].name);
+
+    // Names stay in lockstep with columns().
+    try testing.expectEqual(rows.columns().len, cols.len);
+}
+
+test "columnTypes is empty for a non-query statement" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query("CREATE TABLE ct_empty (a INT64)", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(usize, 0), rows.columnTypes().len);
+}
+
+test "openWith applies pragmas and leaves open() behaviour unchanged" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena_state.allocator(),
+        ".zig-cache/tmp/{s}/pragmas.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    var db = try Db.openWith(testing.allocator, db_path, .{
+        .pragmas = &.{ "PRAGMA journal_mode = WAL", "PRAGMA synchronous = NORMAL" },
+        .busy_timeout_ms = 5000,
+    });
+    defer db.close();
+
+    var rows = try db.rawQuery("PRAGMA journal_mode", &.{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("wal", (try rows.next()).?[0].text);
+}
+
+test "rawQuery round-trips values and stays invisible to the analyzer" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.rawExec("CREATE TABLE raw_t (a INTEGER, b TEXT, c REAL, d BLOB)", &.{});
+    try db.rawExec(
+        "INSERT INTO raw_t VALUES (@a, @b, @c, @d)",
+        &.{
+            .{ .name = "@a", .value = .{ .int = 7 } },
+            .{ .name = "@b", .value = .{ .text = "hi" } },
+            .{ .name = "@c", .value = .{ .float = 1.5 } },
+            .{ .name = "@d", .value = .{ .blob = "\x00\x01" } },
+        },
+    );
+
+    {
+        var rows = try db.rawQuery("SELECT a, b, c, d FROM raw_t", &.{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqual(@as(i64, 7), row[0].int);
+        try testing.expectEqualStrings("hi", row[1].text);
+        try testing.expectEqual(@as(f64, 1.5), row[2].float);
+        try testing.expectEqualSlices(u8, "\x00\x01", row[3].blob);
+        try testing.expectEqual(@as(?[]const Db.RawValue, null), try rows.next());
+    }
+
+    // The raw path bypasses the catalog entirely, so the GoogleSQL side must
+    // not resolve the table (Go: WithQueryFormattingDisabled statements never
+    // reach the analyzer).
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT a FROM raw_t", &.{}, .{}));
+}
+
+test "rawQuery binds positionally and caches prepared statements" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.rawExec("CREATE TABLE raw_p (a INTEGER)", &.{});
+    try db.rawExec("INSERT INTO raw_p VALUES (?)", &.{.{ .value = .{ .int = 1 } }});
+    try db.rawExec("INSERT INTO raw_p VALUES (?)", &.{.{ .value = .{ .int = 2 } }});
+
+    var rows = try db.rawQuery("SELECT a FROM raw_p ORDER BY a", &.{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+    try testing.expectEqual(@as(i64, 2), (try rows.next()).?[0].int);
+
+    // Both INSERTs share one cached statement; CREATE and SELECT add one each.
+    try testing.expectEqual(@as(u32, 3), db.raw_cache.count());
+}
+
+test "rawQuery re-entrant on the same SQL does not disturb an open cursor" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.rawExec("CREATE TABLE raw_r (a INTEGER)", &.{});
+    try db.rawExec("INSERT INTO raw_r VALUES (1), (2)", &.{});
+
+    var outer = try db.rawQuery("SELECT a FROM raw_r ORDER BY a", &.{});
+    defer outer.deinit();
+    try testing.expectEqual(@as(i64, 1), (try outer.next()).?[0].int);
+
+    {
+        // Same SQL while `outer` is mid-iteration: must get its own statement
+        // rather than resetting the one `outer` is stepping.
+        var inner = try db.rawQuery("SELECT a FROM raw_r ORDER BY a", &.{});
+        defer inner.deinit();
+        try testing.expectEqual(@as(i64, 1), (try inner.next()).?[0].int);
+    }
+
+    // `outer` resumes where it left off.
+    try testing.expectEqual(@as(i64, 2), (try outer.next()).?[0].int);
+}
+
+test "memdb VFS shares one database across connections" {
+    // Pool prerequisite: `:memory:` is per-connection, and shared-cache mode
+    // raises SQLITE_LOCKED, which busy_timeout does not retry. memdb gives a
+    // genuinely shared in-memory DB with normal locking.
+    var a = try Db.open(testing.allocator, "file:/zetasqlite_memdb_test?vfs=memdb");
+    defer a.close();
+    try a.exec("CREATE TABLE shared_t (x INT64); INSERT INTO shared_t (x) VALUES (42)", &.{}, .{});
+
+    var b = try Db.open(testing.allocator, "file:/zetasqlite_memdb_test?vfs=memdb");
+    defer b.close();
+    var rows = try b.query("SELECT x FROM shared_t", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 42 }, (try rows.next()).?[0]);
+}
+
+test "GENERATE_UUID yields a distinct value per row" {
+    // Every scalar UDF used to be registered SQLITE_DETERMINISTIC, which lets
+    // SQLite hoist a constant-argument call out of the row loop and evaluate
+    // it once per query — so this returned one UUID repeated N times. The
+    // corpus never caught it because it only asserts LENGTH().
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        "SELECT GENERATE_UUID() FROM UNNEST([1, 2, 3, 4, 5])",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    var seen = std.StringHashMap(void).init(testing.allocator);
+    defer seen.deinit();
+    var n: usize = 0;
+    while (try rows.next()) |row| : (n += 1) {
+        try testing.expectEqual(@as(usize, 36), row[0].string.len);
+        try testing.expect(!seen.contains(row[0].string));
+        try seen.put(row[0].string, {});
+    }
+    try testing.expectEqual(@as(usize, 5), n);
+}
+
+test "incremental catalog sync can permanently skip another connection's DDL" {
+    // R4. Catalog.sync stamps last_synced_at with wall-clock time taken
+    // *before* it reads, and selects rows WHERE updatedAt >= cursor. A commit
+    // stamped before that cursor but made visible after the read is therefore
+    // never loaded. Under one connection this cannot happen; under a pool it
+    // can, because a writer stamps updatedAt before its (~0.5 ms) analyzer
+    // round trip.
+    //
+    // Rather than race two threads, this reproduces the same end state
+    // deterministically: back-date a catalog row behind a cursor that has
+    // already advanced past it.
+    const dsn = "file:/zetasqlite_cursor_test?vfs=memdb";
+
+    var writer = try Db.open(testing.allocator, dsn);
+    defer writer.close();
+    var reader = try Db.open(testing.allocator, dsn);
+    defer reader.close();
+
+    // reader syncs, advancing its cursor past everything committed so far.
+    try reader.exec("CREATE TABLE cursor_seen (a INT64)", &.{}, .{});
+
+    // writer commits DDL on the shared database...
+    try writer.exec("CREATE TABLE cursor_lost (a INT64)", &.{}, .{});
+    // ...whose updatedAt predates the reader's cursor (the lost-commit case).
+    try reader.rawExec(
+        "UPDATE zetasqlite_catalog SET updatedAt = '1999-01-01 00:00:00.000000+00:00' " ++
+            "WHERE name LIKE '%cursor_lost%'",
+        &.{},
+    );
+
+    // The row exists on disk but the reader's incremental sync skips it.
+    try testing.expectError(
+        error.AnalyzeFailed,
+        reader.query("SELECT a FROM cursor_lost", &.{}, .{}),
+    );
+
+    // Dropping the cursor forces a full reload, which recovers it. This is
+    // what the server's pool does when another connection reports DDL.
+    reader.catalog.invalidateSyncCursor();
+    var rows = try reader.query("SELECT a FROM cursor_lost", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
 
 test "created tables persist across connections to the same file" {

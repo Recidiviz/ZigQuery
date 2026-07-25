@@ -71,6 +71,15 @@ pub const Db = struct {
         }
     }
 
+    /// sqlite3_busy_timeout. Go's driver never sets one (the emulator
+    /// serialized every request instead); a connection pool needs it so a
+    /// writer blocking on WAL retries rather than failing immediately.
+    /// Note this retries SQLITE_BUSY only — it does not retry SQLITE_LOCKED,
+    /// which is what shared-cache mode produces.
+    pub fn busyTimeout(db: *Db, ms: i32) void {
+        _ = c.sqlite3_busy_timeout(db.handle, ms);
+    }
+
     pub fn prepare(db: *Db, sql: []const u8) Error!Stmt {
         var stmt: ?*c.sqlite3_stmt = null;
         const rc = c.sqlite3_prepare_v2(
@@ -98,19 +107,28 @@ pub const Db = struct {
         b: ?*const anyopaque,
     ) callconv(.c) c_int;
 
-    /// Registers a deterministic scalar UDF. n_args = -1 for variadic.
+    /// Registers a scalar UDF. n_args = -1 for variadic.
+    ///
+    /// `deterministic` must be false for any function whose value may differ
+    /// between calls with identical arguments. SQLITE_DETERMINISTIC lets
+    /// SQLite hoist a constant-argument call out of the row loop and evaluate
+    /// it once per query, which for e.g. GENERATE_UUID() would yield the same
+    /// value for every row instead of one per row.
     pub fn createScalarFunction(
         db: *Db,
         name: [:0]const u8,
         n_args: i32,
         userdata: ?*anyopaque,
         func: *const ScalarFn,
+        deterministic: bool,
     ) Error!void {
+        const flags: c_int = c.SQLITE_UTF8 |
+            @as(c_int, if (deterministic) c.SQLITE_DETERMINISTIC else 0);
         const rc = c.sqlite3_create_function_v2(
             db.handle,
             name.ptr,
             @intCast(n_args),
-            c.SQLITE_UTF8 | c.SQLITE_DETERMINISTIC,
+            flags,
             userdata,
             func,
             null,
@@ -195,6 +213,12 @@ pub const Stmt = struct {
 
     pub fn reset(s: *Stmt) void {
         _ = c.sqlite3_reset(s.handle);
+    }
+
+    /// Drops previously bound values so a cached statement cannot inherit a
+    /// stale binding when the next caller supplies fewer arguments.
+    pub fn clearBindings(s: *Stmt) void {
+        _ = c.sqlite3_clear_bindings(s.handle);
     }
 
     /// Returns true while a row is available; false when done.
@@ -422,7 +446,7 @@ test "open, query, scalar UDF, aggregate, collation" {
     }
 
     // Scalar UDF.
-    try db.createScalarFunction("test_echo", 1, null, testEcho);
+    try db.createScalarFunction("test_echo", 1, null, testEcho, true);
     {
         var stmt = try db.prepare("SELECT test_echo('hello')");
         defer stmt.finalize();

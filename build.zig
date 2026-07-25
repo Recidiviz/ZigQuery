@@ -90,4 +90,46 @@ pub fn build(b: *std.Build) void {
     run_corpus.setCwd(.{ .cwd_relative = b.build_root.path.? });
     if (b.args) |args| run_corpus.addArgs(args);
     b.step("corpus", "Run the conformance corpus").dependOn(&run_corpus.step);
+
+    // Concurrency gating experiment: is the analyzer stack safe to drive from
+    // several threads, one Db each? Not part of `test` — it is a deliberate
+    // experiment, run on demand.
+    const tsan = b.option(
+        bool,
+        "tsan",
+        "Build the concurrency experiment with ThreadSanitizer (Zig side only; " ++
+            "the C++ shim needs its own `bazel build --features=tsan` to be covered)",
+    ) orelse false;
+    const threads_exe = b.addExecutable(.{
+        .name = "analyzer-threads",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/analyzer_threads.zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = tsan,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| threads_exe.step.dependOn(&bz.step);
+    b.installArtifact(threads_exe);
+    const run_threads = b.addRunArtifact(threads_exe);
+    if (b.args) |args| run_threads.addArgs(args);
+    b.step("analyzer-threads", "Run the concurrency gating experiment").dependOn(&run_threads.step);
+
+    // Per-query cost vs catalog size: the baseline the server's caching work
+    // has to beat.
+    const bench_exe = b.addExecutable(.{
+        .name = "bench-engine",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/bench_engine.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| bench_exe.step.dependOn(&bz.step);
+    b.installArtifact(bench_exe);
+    const run_bench = b.addRunArtifact(bench_exe);
+    if (b.args) |args| run_bench.addArgs(args);
+    b.step("bench", "Benchmark per-query cost vs catalog size").dependOn(&run_bench.step);
 }

@@ -109,6 +109,21 @@ pub const Catalog = struct {
     /// stored timestamp, so the first sync loads everything).
     last_synced_at: []const u8 = "",
 
+    /// Discards the incremental sync cursor so the next sync() reloads every
+    /// row.
+    ///
+    /// The cursor is wall-clock based and sync() stamps it *before* reading,
+    /// so it can permanently skip a commit whose updatedAt was stamped
+    /// earlier but which became visible later — and a writer stamps
+    /// updatedAt before its analyzer round trip, making that window
+    /// milliseconds wide rather than instantaneous. Harmless while one
+    /// connection owns the database (go-zetasqlite's assumption, and
+    /// bigquery-emulator's global request mutex). A connection pool must
+    /// call this whenever another connection may have committed DDL.
+    pub fn invalidateSyncCursor(c: *Catalog) void {
+        c.last_synced_at = "";
+    }
+
     pub fn init(gpa: std.mem.Allocator) error{OutOfMemory}!*Catalog {
         const c = try gpa.create(Catalog);
         c.* = .{
