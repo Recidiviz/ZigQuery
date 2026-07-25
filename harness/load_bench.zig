@@ -23,7 +23,7 @@ pub fn main(init: std.process.Init) !void {
         var sql: [256]u8 = undefined;
         while (i < n) : (i += 1) {
             const s = try std.fmt.bufPrint(&sql, "CREATE TABLE `p.d.t{d}` (a INT64, b STRING, c FLOAT64)", .{i});
-            try db.exec(s, &.{}, .{ .catalog_scope = .none });
+            try db.exec(s, &.{}, .{});
         }
         const total_ms = ms(t0, init.io);
 

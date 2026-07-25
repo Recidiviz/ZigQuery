@@ -144,6 +144,19 @@ pub const Db = struct {
     /// Prepared-statement cache for the raw SQLite path, keyed by SQL text
     /// (Go's per-connection ManagedConnection.stmts). gpa-owned keys.
     raw_cache: std.StringHashMapUnmanaged(*RawStmt) = .empty,
+    /// Persistent analyzer catalog. Without it, every statement re-parses the
+    /// whole catalog JSON and rebuilds the builtin function set in C++, which
+    /// makes analysis cost O(catalog) instead of O(statement).
+    ///
+    /// Per-Db and unsynchronized, like the rest of Db.
+    catalog_handle: ?*analyzer_ffi.CatalogHandle = null,
+    /// How much of the catalog has been pushed to `catalog_handle`.
+    pushed_tables: usize = 0,
+    pushed_functions: usize = 0,
+    /// Catalog rebuild generation the handle reflects. Removals and in-place
+    /// replacements cannot be expressed as a delta, so a change here forces a
+    /// rebuild.
+    handle_generation: u64 = 0,
 
     pub fn open(gpa: std.mem.Allocator, path: [:0]const u8) Error!*Db {
         return openWith(gpa, path, .{});
@@ -183,10 +196,12 @@ pub const Db = struct {
         db.catalog = try catalog_mod.Catalog.init(gpa);
         errdefer db.catalog.deinit();
         db.catalog.sync(&db.sqlite_db) catch return error.ExecFailed;
+        db.catalog_handle = analyzer_ffi.catalogCreate(gpa) catch null;
         return db;
     }
 
     pub fn close(db: *Db) void {
+        if (db.catalog_handle) |h| analyzer_ffi.catalogDestroy(h);
         db.clearLastError();
         // Before sqlite_db.close(): sqlite3_close_v2 leaves the handle a
         // zombie until every statement is finalized.
@@ -411,6 +426,46 @@ pub const Db = struct {
         db.raw_cache.deinit(db.gpa);
     }
 
+    /// Returns a catalog handle that is up to date with `db.catalog`, or null
+    /// if the persistent path cannot be used and the caller should fall back
+    /// to the stateless one.
+    ///
+    /// The returned pointer must be used instead of any handle captured
+    /// earlier: a catalog removal cannot be expressed as a delta (the
+    /// analyzer catalog has no "forget this" operation), so it forces a
+    /// rebuild that destroys the previous handle.
+    fn syncedCatalogHandle(
+        db: *Db,
+        arena: std.mem.Allocator,
+    ) ?*analyzer_ffi.CatalogHandle {
+        var handle = db.catalog_handle orelse return null;
+
+        if (db.catalog.rebuild_generation != db.handle_generation) {
+            analyzer_ffi.catalogDestroy(handle);
+            db.catalog_handle = null;
+            handle = analyzer_ffi.catalogCreate(db.gpa) catch return null;
+            db.catalog_handle = handle;
+            db.handle_generation = db.catalog.rebuild_generation;
+            db.pushed_tables = 0;
+            db.pushed_functions = 0;
+        }
+
+        const n_tables = db.catalog.tables.items.len;
+        const n_funcs = db.catalog.functions.items.len;
+        if (db.pushed_tables == n_tables and db.pushed_functions == n_funcs) return handle;
+
+        const delta = db.catalog.catalogJsonFrom(
+            arena,
+            db.pushed_tables,
+            db.pushed_functions,
+        ) catch return null;
+        analyzer_ffi.catalogAddTables(db.gpa, handle, delta) catch return null;
+
+        db.pushed_tables = n_tables;
+        db.pushed_functions = n_funcs;
+        return handle;
+    }
+
     const Mode = enum { query, exec };
 
     /// Result of running a statement script. A null `stmt` mirrors Go's
@@ -492,6 +547,29 @@ pub const Db = struct {
         while (true) {
             // Re-rendered per statement: DDL/DML actions mutate the
             // catalog between statements of one script.
+            const analyzed = blk: {
+            // Re-read the handle from `db` *after* syncing: a catalog
+            // removal forces a rebuild, which destroys the old handle. Using
+            // the pointer captured before the sync is a use-after-free.
+            if (opts.catalog_scope == .full) if (db.syncedCatalogHandle(arena)) |handle| {
+                {
+                    const analyzed_h = analyzer_ffi.analyzeNextStatementWithCatalog(
+                        arena,
+                        handle,
+                        sqlz,
+                        offset,
+                        options_json,
+                    ) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => {
+                            db.setLastError(analyzer_ffi.last_error);
+                            return error.AnalyzeFailed;
+                        },
+                    };
+                    break :blk analyzed_h;
+                }
+            };
+
             const catalog_json = if (opts.catalog_scope == .none)
                 try arena.dupeZ(u8, "{}")
             else db.catalog.catalogJson(arena) catch |err| switch (err) {
@@ -501,7 +579,7 @@ pub const Db = struct {
                     return error.AnalyzeFailed;
                 },
             };
-            const analyzed = analyzer_ffi.analyzeNextStatementOpts(arena, sqlz, offset, catalog_json, options_json) catch |err| {
+            break :blk analyzer_ffi.analyzeNextStatementOpts(arena, sqlz, offset, catalog_json, options_json) catch |err| {
                 switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => {
@@ -509,6 +587,7 @@ pub const Db = struct {
                         return error.AnalyzeFailed;
                     },
                 }
+            };
             };
             offset = analyzed.resume_offset;
             const last = analyzed.at_end;

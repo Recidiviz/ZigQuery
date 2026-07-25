@@ -141,3 +141,117 @@ test "multi-statement resume" {
     const expr = scan.expr_list[0].expr.?.node.?.resolved_literal_node;
     try std.testing.expectEqual(@as(i64, 2), expr.value.?.value.?.value.?.int64_value);
 }
+
+// ---- persistent catalog handle ----
+//
+// The stateless entry point above rebuilds a TypeFactory, a SimpleCatalog and
+// the whole builtin function set on every call, so analysis costs O(catalog)
+// per statement. A handle keeps all three alive across calls and takes table
+// additions as deltas.
+//
+// A handle is mutable, unsynchronized state: one per connection, used from
+// one thread at a time. The stateless path remains available and reentrant.
+
+extern fn GoogleSQL_CatalogCreate(out_error: *?[*:0]u8) ?*anyopaque;
+extern fn GoogleSQL_CatalogDestroy(handle: ?*anyopaque) void;
+extern fn GoogleSQL_CatalogAddTables(
+    handle: ?*anyopaque,
+    catalog_json: [*:0]const u8,
+    out_error: *?[*:0]u8,
+) c_int;
+extern fn GoogleSQL_AnalyzeNextStatementWithCatalog(
+    handle: ?*anyopaque,
+    sql: [*:0]const u8,
+    resume_offset: *usize,
+    options_json: [*:0]const u8,
+    out_proto: *?[*]u8,
+    out_len: *usize,
+    out_is_end: *c_int,
+    out_error: *?[*:0]u8,
+) c_int;
+
+pub const CatalogHandle = opaque {};
+
+/// Creates a catalog handle preloaded with the builtin functions.
+pub fn catalogCreate(gpa: std.mem.Allocator) AnalyzeError!*CatalogHandle {
+    var err: ?[*:0]u8 = null;
+    const h = GoogleSQL_CatalogCreate(&err) orelse {
+        setLastErrorFromC(gpa, err);
+        return error.AnalyzeFailed;
+    };
+    return @ptrCast(h);
+}
+
+pub fn catalogDestroy(handle: *CatalogHandle) void {
+    GoogleSQL_CatalogDestroy(@ptrCast(handle));
+}
+
+/// Merges a SimpleCatalogProto (protobuf JSON) into the handle. Entries
+/// already present are ignored, so this accepts a delta or the whole catalog.
+pub fn catalogAddTables(
+    gpa: std.mem.Allocator,
+    handle: *CatalogHandle,
+    catalog_json: [:0]const u8,
+) AnalyzeError!void {
+    var err: ?[*:0]u8 = null;
+    if (GoogleSQL_CatalogAddTables(@ptrCast(handle), catalog_json.ptr, &err) != 0) {
+        setLastErrorFromC(gpa, err);
+        return error.AnalyzeFailed;
+    }
+}
+
+/// analyzeNextStatementOpts against a handle's persistent catalog.
+pub fn analyzeNextStatementWithCatalog(
+    arena: std.mem.Allocator,
+    handle: *CatalogHandle,
+    sql: [:0]const u8,
+    resume_offset: usize,
+    options_json: [:0]const u8,
+) AnalyzeError!Analyzed {
+    var offset = resume_offset;
+    var out_proto: ?[*]u8 = null;
+    var out_len: usize = 0;
+    var out_is_end: c_int = 0;
+    var err: ?[*:0]u8 = null;
+
+    if (GoogleSQL_AnalyzeNextStatementWithCatalog(
+        @ptrCast(handle),
+        sql.ptr,
+        &offset,
+        options_json.ptr,
+        &out_proto,
+        &out_len,
+        &out_is_end,
+        &err,
+    ) != 0) {
+        setLastErrorArena(arena, err);
+        return error.AnalyzeFailed;
+    }
+
+    const raw = out_proto orelse return error.AnalyzeFailed;
+    defer GoogleSQL_Free(raw);
+    // Copy before decoding: the decoded tree borrows slices from this buffer.
+    const owned = try arena.dupe(u8, raw[0..out_len]);
+    const node = try pb.AnyResolvedNodeProto.decode(arena, owned);
+
+    return .{ .node = node, .at_end = out_is_end != 0, .resume_offset = offset };
+}
+
+/// Copies a C error string into `last_error` using a long-lived allocator.
+fn setLastErrorFromC(gpa: std.mem.Allocator, err: ?[*:0]u8) void {
+    if (err) |e| {
+        defer GoogleSQL_Free(e);
+        last_error = gpa.dupe(u8, std.mem.sliceTo(e, 0)) catch "analyzer error";
+    } else {
+        last_error = "analyzer error";
+    }
+}
+
+fn setLastErrorArena(arena: std.mem.Allocator, err: ?[*:0]u8) void {
+    if (err) |e| {
+        defer GoogleSQL_Free(e);
+        last_error = arena.dupe(u8, std.mem.sliceTo(e, 0)) catch "analyzer error";
+    } else {
+        last_error = "analyzer error";
+    }
+}

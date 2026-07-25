@@ -98,22 +98,16 @@ pub fn loadJson(
                     stats.failed_tables += 1;
                     continue;
                 };
-                // `.none` skips handing the analyzer the whole catalog. A
-                // CREATE TABLE with explicit columns references nothing, so
-                // this is safe — and it is the difference between O(1) and
-                // O(catalog) per table, i.e. seconds instead of minutes for a
-                // few thousand source tables. Anything that does need the
-                // catalog simply fails and is retried with it.
-                db.exec(ddl, &.{}, .{ .catalog_scope = .none }) catch {
-                    db.exec(ddl, &.{}, .{}) catch {
-                        // Lenient, like Go's JSONSource: log and carry on.
-                        std.log.warn(
-                            "source table {s}.{s}.{s} failed to create: {s}",
-                            .{ project_id, dataset_id, table_id, db.lastError() },
-                        );
-                        stats.failed_tables += 1;
-                        continue;
-                    };
+                // The default path is now O(1) in catalog size thanks to the
+                // analyzer's persistent catalog, so no scope hint is needed.
+                db.exec(ddl, &.{}, .{}) catch {
+                    // Lenient, like Go's JSONSource: log and carry on.
+                    std.log.warn(
+                        "source table {s}.{s}.{s} failed to create: {s}",
+                        .{ project_id, dataset_id, table_id, db.lastError() },
+                    );
+                    stats.failed_tables += 1;
+                    continue;
                 };
 
                 var meta: std.ArrayList(u8) = .empty;

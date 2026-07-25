@@ -105,9 +105,26 @@ pub const Catalog = struct {
     functions: std.ArrayList(*spec.FunctionSpec),
     /// Canonical function name -> index into `functions` (Go: c.funcMap).
     func_map: std.StringHashMap(usize),
+    /// Hash of the spec JSON each table was last loaded from.
+    ///
+    /// sync() is incremental by timestamp, so the row a statement just wrote
+    /// is re-read by the next statement's sync. Re-registering an identical
+    /// spec would otherwise count as a replacement and force consumers to
+    /// rebuild — every statement, defeating incremental catalog updates
+    /// entirely.
+    table_json_hash: std.StringHashMap(u64),
     /// Timestamp string of the last sync ("" = never; sorts before any
     /// stored timestamp, so the first sync loads everything).
     last_synced_at: []const u8 = "",
+    /// Bumped by any change that is NOT a pure append.
+    ///
+    /// Appends can be pushed to a persistent analyzer catalog as a delta, but
+    /// removals and in-place replacements cannot: that catalog has no "forget
+    /// this" or "redefine this" operation, and a merge that skips entries
+    /// already present would silently keep the stale definition. A consumer
+    /// compares this against the generation it last saw and rebuilds from
+    /// scratch when it differs.
+    rebuild_generation: u64 = 0,
 
     /// Discards the incremental sync cursor so the next sync() reloads every
     /// row.
@@ -133,6 +150,7 @@ pub const Catalog = struct {
             .table_map = std.StringHashMap(usize).init(gpa),
             .functions = .empty,
             .func_map = std.StringHashMap(usize).init(gpa),
+            .table_json_hash = std.StringHashMap(u64).init(gpa),
         };
         errdefer c.deinit();
         // Go NewCatalog: seed MISSING_FUNCTIONS (memory only, never
@@ -151,6 +169,7 @@ pub const Catalog = struct {
         c.table_map.deinit();
         c.functions.deinit(c.gpa);
         c.func_map.deinit();
+        c.table_json_hash.deinit();
         c.arena_state.deinit();
         c.gpa.destroy(c);
     }
@@ -194,6 +213,18 @@ pub const Catalog = struct {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return error.InvalidSpec,
             };
+
+        // sync() re-reads whatever the previous statement wrote, so most
+        // loads are of a spec already held verbatim. Treating those as
+        // replacements would force a rebuild on every statement.
+        const arena = c.arena_state.allocator();
+        const table_name = try table_spec.tableName(arena);
+        const hash = std.hash.Wyhash.hash(0, spec_json);
+        if (c.table_json_hash.get(table_name)) |prev| {
+            if (prev == hash and c.table_map.contains(table_name)) return;
+        }
+        try c.table_json_hash.put(table_name, hash);
+
         try c.addTableSpecToMemory(table_spec);
     }
 
@@ -211,6 +242,10 @@ pub const Catalog = struct {
             else => return error.InvalidSpec,
         };
         try c.addTableSpecToMemory(owned);
+        // Record the hash of exactly what gets persisted, so the next
+        // statement's incremental sync recognises the row it reads back as
+        // the spec already held and does not treat it as a replacement.
+        try c.table_json_hash.put(try owned.tableName(arena), std.hash.Wyhash.hash(0, encoded));
         if (!owned.is_temp) {
             try c.saveTableSpec(db, owned, encoded);
         }
@@ -236,6 +271,7 @@ pub const Catalog = struct {
 
     /// Go DeleteTableSpec: remove from memory and from the persisted table.
     pub fn deleteTableSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
+        c.rebuild_generation +%= 1;
         const entry = c.table_map.fetchRemove(name) orelse return error.TableNotFound;
         _ = c.tables.orderedRemove(entry.value);
         // Reindex the map entries that shifted down.
@@ -310,6 +346,7 @@ pub const Catalog = struct {
     /// Go DeleteFunctionSpec: remove from memory and the persisted table.
     /// (Go: "failed to find function spec from map by %s".)
     pub fn deleteFunctionSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
+        c.rebuild_generation +%= 1;
         const entry = c.func_map.fetchRemove(name) orelse return error.TableNotFound;
         _ = c.functions.orderedRemove(entry.value);
         var it = c.func_map.valueIterator();
@@ -373,6 +410,9 @@ pub const Catalog = struct {
         const arena = c.arena_state.allocator();
         const table_name = try table_spec.tableName(arena);
         if (c.table_map.get(table_name)) |idx| {
+            // Replacement in place: the entry count does not change, so this
+            // is invisible to an append-only delta. Force a rebuild.
+            c.rebuild_generation +%= 1;
             c.tables.items[idx] = table_spec;
             return;
         }
@@ -388,17 +428,40 @@ pub const Catalog = struct {
     /// analyzer shim. Returns "{}" (builtins only) when neither tables nor
     /// functions are registered. All memory comes from `alloc`.
     pub fn catalogJson(c: *const Catalog, alloc: std.mem.Allocator) error{ OutOfMemory, InvalidSpec }![:0]u8 {
-        if (c.tables.items.len == 0 and c.functions.items.len == 0)
+        return c.catalogJsonFrom(alloc, 0, 0);
+    }
+
+    /// Renders only the entries added at or after the given indices.
+    ///
+    /// The result is a well-formed SimpleCatalogProto containing just those
+    /// entries, so it can be merged into a catalog that already holds the
+    /// earlier ones instead of re-sending everything.
+    pub fn catalogJsonFrom(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        table_start: usize,
+        fn_start: usize,
+    ) error{ OutOfMemory, InvalidSpec }![:0]u8 {
+        const tables = if (table_start < c.tables.items.len)
+            c.tables.items[table_start..]
+        else
+            &[_]*spec.TableSpec{};
+        const funcs = if (fn_start < c.functions.items.len)
+            c.functions.items[fn_start..]
+        else
+            &[_]*spec.FunctionSpec{};
+
+        if (tables.len == 0 and funcs.len == 0)
             return alloc.dupeZ(u8, "{}");
 
         var root = Node{ .name = catalog_name };
-        for (c.tables.items) |table_spec| {
+        for (tables) |table_spec| {
             const canonical = try table_spec.tableName(alloc);
             try addTableToNode(alloc, &root, table_spec.name_path, table_spec, canonical);
         }
         // Go addFunctionSpecRecursive: functions register under their LEAF
         // name at the root and inside every sub-catalog along the path.
-        for (c.functions.items) |fs| {
+        for (funcs) |fs| {
             try addFunctionToNode(alloc, &root, fs.name_path, fs);
         }
 
