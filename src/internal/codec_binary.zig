@@ -76,6 +76,8 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
         },
         .string => |s| try appendBinaryString(buf, alloc, bin_tag_string, s),
         .bytes => |b| try appendBinaryString(buf, alloc, bin_tag_bytes, b),
+        // Go stores JsonValue as a length-prefixed raw JSON string (tag 0x08).
+        .json => |s| try appendBinaryString(buf, alloc, bin_tag_json, s),
         .date => |days| {
             // Go stores the DateValue.ToString() form ("YYYY-MM-DD").
             var tmp: [32]u8 = undefined;
@@ -182,10 +184,11 @@ const BinReader = struct {
             bin_tag_time => return Value{ .time = try value_mod.parseTimeMicros(try r.lenBytes()) },
             bin_tag_timestamp => return Value{ .timestamp = @bitCast(try r.fixed64()) },
             bin_tag_interval => return Value{ .interval = try value_mod.parseIntervalValue(try r.lenBytes()) },
+            // Go: JsonValue(string(b)) — the raw JSON string.
+            bin_tag_json => return Value{ .json = try alloc.dupe(u8, try r.lenBytes()) },
             // Deferred kinds: consume nothing further, surface Unimplemented.
             bin_tag_numeric,
             bin_tag_bignumeric,
-            bin_tag_json,
             => return error.Unimplemented,
             bin_tag_array => {
                 const n = try r.uvarint();
@@ -379,6 +382,17 @@ test "binary codec rejects truncated and corrupt input" {
     try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_int, 0x01 })); // truncated fixed64
     try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_string, 0x05, 'a' })); // truncated bytes
     try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{0x7f})); // unknown tag
-    // Deferred kinds decode to Unimplemented, not corruption.
-    try testing.expectError(error.Unimplemented, decodeBinaryValue(alloc, &.{ bin_tag_json, 0x02, '{', '}' }));
+    // Remaining deferred kinds decode to Unimplemented, not corruption.
+    try testing.expectError(error.Unimplemented, decodeBinaryValue(alloc, &.{ bin_tag_numeric, 0x01, '1' }));
+}
+
+test "binary codec json round trip" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const cases = [_][]const u8{ "null", "\"purple\"", "{\"a\":1,\"b\":[2,3]}", "9.8" };
+    for (cases) |raw| {
+        const rt = try roundTrip(alloc, Value{ .json = raw });
+        try testing.expectEqualStrings(raw, rt.json);
+    }
 }

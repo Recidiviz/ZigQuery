@@ -75,6 +75,8 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
             return Value{ .string = try v.toString(alloc) };
         },
         .TYPE_BYTES => return Value{ .bytes = try v.toBytes(alloc) },
+        // Go CastValue: JsonValue(v.ToJSON()).
+        .TYPE_JSON => return Value{ .json = try v.toJson(alloc) },
         // Go CastValue: DATE(v.ToTime()) — the civil date of the instant.
         .TYPE_DATE => switch (v) {
             .date => return v,

@@ -800,6 +800,9 @@ fn cellFromValue(
         // Value.toString does the same for .date.
         .TYPE_STRING => return .{ .string = try v.toString(alloc) },
         .TYPE_BYTES => return .{ .bytes = try v.toBytes(alloc) },
+        // Go rows.go: JSON columns are scanned as their raw JSON string
+        // (ToApiString) through database/sql, i.e. a plain string cell.
+        .TYPE_JSON => return .{ .string = try v.toApiString(alloc) },
         .TYPE_DATE => switch (v) {
             .date => |days| {
                 var buf: [16]u8 = undefined;

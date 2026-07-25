@@ -23,6 +23,23 @@ pub fn string(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len != 1 and args.len != 2)
         return bind.fail("STRING: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
+    // Go bindString: a JSON argument yields fmt.Sprint(json.Interface()) — the
+    // bare scalar text for a JSON string/number/bool.
+    {
+        const inner0 = if (args[0] == .safe) args[0].safe.* else args[0];
+        if (inner0 == .json) {
+            const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, inner0.json, .{ .parse_numbers = false }) catch
+                return bind.fail("STRING: invalid json", .{}, error.FailedConversion);
+            const s: []const u8 = switch (parsed) {
+                .string => |x| x,
+                .number_string => |x| x,
+                .bool => |b| if (b) "true" else "false",
+                .null => "null",
+                else => inner0.json,
+            };
+            return Value{ .string = try alloc.dupe(u8, s) };
+        }
+    }
     const bt = try tu.broken(args[0]);
     var off: i64 = 0;
     if (args.len == 2) off = try tu.zoneOffsetSeconds(try fd.partStr(args[1]), bt.civ);

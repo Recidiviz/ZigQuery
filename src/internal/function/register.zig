@@ -230,6 +230,8 @@ fn groupByImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqli
         .float => |f| sqlite.resultDouble(ctx, f),
         .string => |s| sqlite.resultText(ctx, s),
         .bytes => |b| sqlite.resultBlob(ctx, b),
+        // JSON group key: the raw JSON text (distinct raw strings group together).
+        .json => |s| sqlite.resultText(ctx, s),
         .date => |days| {
             var buf: [32]u8 = undefined;
             sqlite.resultText(ctx, value_mod.formatDateDays(&buf, days));

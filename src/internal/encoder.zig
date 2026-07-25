@@ -139,6 +139,7 @@ pub fn castValue(alloc: std.mem.Allocator, v: Value, to: TypeKind) ValueError!Va
         .date => inner == .date,
         .array => inner == .array,
         .struct_ => inner == .struct_,
+        .json => inner == .json,
         else => false,
     };
     if (same) return v;
@@ -382,7 +383,13 @@ pub fn valueFromProto(
             const name = datePartName(idx) orelse return error.Unimplemented;
             return .{ .string = name };
         },
-        // Deferred kinds (numeric, bignumeric, json, ...): Go supports them;
+        // Go jsonValueFromLiteral: the analyzer hands us the normalized JSON
+        // string (zetasql sorts object keys when normalizing JSON literals).
+        .TYPE_JSON => return .{ .json = switch (v) {
+            .json_value => |s| s,
+            else => return error.CorruptData,
+        } },
+        // Deferred kinds (numeric, bignumeric, ...): Go supports them;
         // this port defers them with their Value kinds.
         else => return error.Unimplemented,
     }

@@ -1,4 +1,8 @@
 # Baseline: cases that must pass (idx<TAB>name). Regressions fail the build.
+0	distinct union
+1	with scan union all
+2	with scan union distinct
+3	having with union all
 4	unary plus operator
 5	unary minus operator
 6	bit not operator
@@ -27,7 +31,10 @@
 29	like operator3
 30	like operator4
 31	not like operator
+32	between operator
+33	not between operator
 34	in operator
+35	in operator with function
 45	not in operator
 46	is null operator
 47	is not null operator
@@ -56,6 +63,8 @@
 70	or operator with null and true
 71	or operator with null and false
 72	or operator with null and null
+73	exists
+74	not exists
 75	is distinct from with 1 and 2
 76	is distinct from with 1 and null
 77	is not distinct from with 1 and 1
@@ -64,6 +73,8 @@
 80	is distinct from with 1 and 1
 81	is not distinct from with 1 and 2
 82	is not distinct from with 1 and null
+83	case-when
+84	case-when with compare
 85	coalesce
 86	coalesce with null
 87	coalesce with all nulls
@@ -79,103 +90,15 @@
 97	nullif null
 98	rounding
 99	rounding precision
-102	struct with bool
-108	date operator
-177	safe sum
-194	null
-247	array formatting
-263	array_concat function
-281	array_length function
-282	array_length null
-334	safe cast for invalid cast
-335	cast string to int64
-359	contains_substr nil
-378	left with string value
-380	length
-385	lower
-430	substr
-442	upper
-489	parse date exceeding month maximum
-490	parse date beneath month minimum
-491	parse date exceeding day maximum
-492	parse date beneath day minimum
-493	parse date exceeding day of year maximum
-494	parse date beneath day of year minimum
-501	parse date with %F no day field
-502	parse date with %F no month field
-503	parse date with %F separator but no month
-506	parse date ( the year element is in different locations )
-508	parse date ( one of the year elements is missing )
-540	parse datetime ( the year element is in different locations )
-541	parse datetime ( one of the year elements is missing )
-551	parse_time with %R without minute element
-552	parse_time with %R without separator
-563	parse time ( the seconds element is in different locations )
-564	parse time ( one of the seconds elements is missing )
-566	minimum / maximum date value
-601	parse timestamp ( the year element is in different locations )
-602	parse timestamp ( one of the year elements is missing )
-707	net_ip_net_mask with invalid output bytes
-708	net_ip_net_mask with invalid prefix length
-711	net_ip_trunc with invalid ip address
-712	net_ip_trunc with invalid length
-720	not enough positional params given
-724	function call with many arguments - under limit
-725	function call with many arguments - above limit
-1	with scan union all
-2	with scan union distinct
-32	between operator
-33	not between operator
-73	exists
-74	not exists
-83	case-when
-84	case-when with compare
 100	with clause
 101	field access operator
+102	struct with bool
 103	array index access operator
 104	array boundary indexing test
 107	out of range error
-249	unnest with offset
-251	unnest struct with offset and filter
-253	unnest simple struct inline
-255	unnest struct with nested arrays
-256	unnest struct with cross join
-258	array scan left outer join
-259	array scan inner join
-264	array_first function
-266	array_last function
-283	array length comparison
-311	null array scan
-318	order by
-319	order by with nulls last
-320	order by desc
-321	order by nulls first
-322	inner join with using
-323	left join
-324	right join
-325	full join
-329	subselect qualifier
-333	safe cast
-415	right string
-455	UNPIVOT
-627	except
-628	except
-629	replace
-630	replace
-693	subquery expr with scalar type at SELECT
-694	subquery expr with scalar type at WHERE
-696	subquery expr with scalar type at function call
-698	subquery expr with in type
-699	subquery expr with exists type
-700	subquery with
-701	nested with
-702	join nested with
-703	nested with 2
-736	ProjectScan with order by column does not output ordered column
-0	distinct union
-3	having with union all
-35	in operator with function
+108	date operator
 109	any_value
+110	any_value with window
 111	any_value with having max
 112	any_value with having min
 113	any_value having max with struct
@@ -191,9 +114,11 @@
 125	array_agg with ignore nulls
 126	array_agg with ignore nulls and struct
 127	array_agg with abs
+128	array_agg with window
 129	array_concat_agg
 132	avg
 133	avg with distinct
+134	avg with window
 135	bit_and
 136	bit_or
 137	bit_xor
@@ -202,16 +127,26 @@
 140	count star and distinct
 141	count with null
 142	count with if
+143	count with window
 144	countif
 145	countif with null
+146	countif with window
 147	logical_and
 148	logical_and null
 149	logical_or
 150	logical_or null
+151	logical_and default
+152	logical_and no rows
+153	logical_and with window
+154	logical_or window default
+155	logical_or window no rows
+156	logical_or with window
 157	max from int group
 158	max from date group
+159	max window from date group
 160	min from int group
 161	min from date group
+162	min window from date group
 163	string_agg
 164	string_agg with length 0
 165	string_agg with null
@@ -220,14 +155,67 @@
 168	string_agg with order by
 169	string_agg with limit
 170	string_agg with distinct and order by and limit
+171	string_agg with window
 172	sum
 173	sum with distinct
+174	sum with window
+175	sum with window and distinct
 176	sum null
+177	safe sum
+194	null
+195	window total
+196	window subtotal
+197	window cumulative
+198	window cumulative omit current row
+199	window offset
+200	window avg
+201	window first_value
+202	window last_value
+203	window last_value with offset
+204	window last_value with named window
+205	nth_value
+206	lead
+207	lead with offset
+208	lead with default
+209	window order by
+210	window order by handles nil
+217	window range
+218	date type
+219	date to json
+220	date struct to json
+221	window rank
+222	rank with same order
+223	window dense_rank
+225	window dense_rank with group
+226	percent_rank
+227	cume_dist
+228	ntile
+229	window row_number
+230	row_number nest
+240	window lag
+241	window partitions are distinct from each other
+242	lag with option
+243	window lag with offset
+244	window lag with offset and default value
+247	array formatting
+248	make_array
+249	unnest with offset
+250	unnest struct
+251	unnest struct with offset and filter
 252	unnest struct array with aggregation
+253	unnest simple struct inline
+254	unnest struct with multiple tables
+255	unnest struct with nested arrays
+256	unnest struct with cross join
 257	array function
+258	array scan left outer join
+259	array scan inner join
 260	array function with struct
 261	array function with multiple array
 262	array function with other column
+263	array_concat function
+264	array_first function
+266	array_last function
 268	array_slice basic
 269	array_slice negative indices
 270	array_slice start from beginning
@@ -241,77 +229,9 @@
 278	array_slice empty array
 279	array_slice mixed negative positive
 280	array_slice single element
-314	group by
-317	group by having
-336	cast string to int64 - leading zeros
-454	PIVOT
-695	subquery expr with scalar type at HAVING
-697	subquery expr with array type
-742	group by struct values basic
-743	group by struct values with aggregation
-744	group by array values basic
-745	group by array values with aggregation
-250	unnest struct
-254	unnest struct with multiple tables
-721	limit offset test
-732	simple truncate
-733	simple drop
-110	any_value with window
-128	array_agg with window
-134	avg with window
-146	countif with window
-151	logical_and default
-152	logical_and no rows
-153	logical_and with window
-154	logical_or window default
-155	logical_or window no rows
-156	logical_or with window
-159	max window from date group
-162	min window from date group
-171	string_agg with window
-195	window total
-196	window subtotal
-197	window cumulative
-198	window cumulative omit current row
-199	window offset
-200	window avg
-201	window first_value
-202	window last_value
-203	window last_value with offset
-204	window last_value with named window
-209	window order by
-210	window order by handles nil
-217	window range
-222	rank with same order
-223	window dense_rank
-229	window row_number
-230	row_number nest
-241	window partitions are distinct from each other
-242	lag with option
-326	qualify
-327	qualify without group by / where / having
-328	qualify group
-330	qualify direct
-225	window dense_rank with group
-240	window lag
-243	window lag with offset
-244	window lag with offset and default value
-534	datetime literal
-567	minimum / maximum timestamp value uses microsecond precision and range
-575	timestamp to string
-143	count with window
-174	sum with window
-175	sum with window and distinct
-205	nth_value
-206	lead
-207	lead with offset
-208	lead with default
-218	date type
-221	window rank
-226	percent_rank
-227	cume_dist
-228	ntile
-248	make_array
+281	array_length function
+282	array_length null
+283	array length comparison
 295	generate_date_array function
 296	generate_date_array nil
 297	generate_date_array function with step
@@ -328,7 +248,34 @@
 308	generate_timestamp_array function over step
 309	generate_timestamp_array function with null
 310	generate_timestamp_array function with variable
+311	null array scan
+314	group by
+317	group by having
+318	order by
+319	order by with nulls last
+320	order by desc
+321	order by nulls first
+322	inner join with using
+323	left join
+324	right join
+325	full join
+326	qualify
+327	qualify without group by / where / having
+328	qualify group
+329	subselect qualifier
+330	qualify direct
+333	safe cast
+334	safe cast for invalid cast
+335	cast string to int64
+336	cast string to int64 - leading zeros
+359	contains_substr nil
+378	left with string value
+380	length
+385	lower
+415	right string
+430	substr
 431	substring
+442	upper
 443	least greatest between string
 444	least greatest between integer
 445	least greatest date
@@ -340,6 +287,8 @@
 451	timestamp_trunc with quarter
 452	datetime_trunc with day weekday
 453	datetime_trunc isoyear
+454	PIVOT
+455	UNPIVOT
 456	date_sub
 457	current_date
 458	base date is epoch
@@ -373,15 +322,26 @@
 486	last_day with year
 487	last_day with week(sunday)
 488	last_day with week(monday)
+489	parse date exceeding month maximum
+490	parse date beneath month minimum
+491	parse date exceeding day maximum
+492	parse date beneath day minimum
+493	parse date exceeding day of year maximum
+494	parse date beneath day of year minimum
 495	parse date with single-digit month %m
 496	parse_date with %y
 497	parse date with %A %b %e %Y
 498	parse date with %Y%m%d
 499	parse date with %e
 500	parse date with %e - leading space allows multiple digits
+501	parse date with %F no day field
+502	parse date with %F no month field
+503	parse date with %F separator but no month
 504	parse date with %F
 505	parse date with %x
+506	parse date ( the year element is in different locations )
 507	safe parse date ( the year element is in different locations )
+508	parse date ( one of the year elements is missing )
 509	unix_date
 510	current_datetime
 511	datetime
@@ -407,10 +367,14 @@
 531	format_datetime with %E3S
 532	format_datetime with %E*S
 533	format_datetime with %E4Y
+534	datetime literal
+535	datetime to json
 536	cast datetime as string
 537	cast date as datetime
 538	parse datetime
 539	parse datetime with %c
+540	parse datetime ( the year element is in different locations )
+541	parse datetime ( one of the year elements is missing )
 542	parse datetime %F respectfully consuming digits
 543	current_time
 544	time
@@ -420,22 +384,31 @@
 548	time_diff
 549	time_trunc
 550	parse_time with %R
+551	parse_time with %R without minute element
+552	parse_time with %R without separator
 553	format_time with %k %l
 554	format_time with %R
 555	format_time with %E3S
 556	format_time with %E*S
 557	cast time as string
+558	time to json string
 559	cast time with timezone as string
 560	cast time from datetime as string
 561	parse time with %I:%M:%S
 562	parse time with %T
+563	parse time ( the seconds element is in different locations )
+564	parse time ( one of the seconds elements is missing )
 565	current_timestamp
+566	minimum / maximum date value
+567	minimum / maximum timestamp value uses microsecond precision and range
 568	string
 569	timestamp
 570	timestamp with zone
 571	timestamp in zone
 572	timestamp from datetime
 573	timestamp from date
+574	timestamp to json
+575	timestamp to string
 576	timestamp_add
 577	timestamp_sub
 578	timestamp_diff
@@ -458,9 +431,11 @@
 595	parse timestamp with %k
 596	parse_timestamp with %D
 597	parse timestamp with %p
-598	parse timestamp with extra whitespace 
+598	parse timestamp with extra whitespace
 599	parse timestamp with %Y-%m-%d %H:%M:%S%Ez
 600	parse timestamp with %Y-%m-%d %H:%M:%E*S%Ez
+601	parse timestamp ( the year element is in different locations )
+602	parse timestamp ( one of the year elements is missing )
 603	timestamp_seconds
 604	timestamp_millis
 605	timestamp_micros
@@ -475,4 +450,96 @@
 614	justify_days
 615	justify_hours
 616	justify_interval
+627	except
+628	except
+629	replace
+630	replace
+631	json value subscript operator
+632	json_extract
+633	json_extract for format
+634	json_extract with array
+635	json_extract for name
+636	json_extract with escape
+637	json_extract and null
+638	json_query
+639	json_query for format
+640	json_query with array
+641	json_query for name
+642	json_query with escape
+643	json_query and null
+644	json_extract_scalar with number
+645	json_extract_scalar with string
+646	json_extract_scalar with array
+647	json_extract_scalar with escape
+648	json_value with number
+649	json_value with string
+650	json_value with array
+651	json_value with escape
+652	json_value with null
+653	json_extract_array
+654	json_extract_array with integer
+655	json_extract_array with integer cast
+656	json_extract_array format
+657	json_extract_array filter
+658	json_extract_array with escape
+659	json_extract_array with null
+660	json_extract_array with empty array
+661	json_query_array
+662	json_query_array with integer
+663	json_query_array with integer cast
+664	json_query_array format
+665	json_query_array filter
+666	json_query_array with escape
+667	json_query_array with null
+668	json_query_array with empty array
+669	json_extract_string_array
+670	json_extract_string_array with root only
+671	json_extract_string_array with integer cast
+672	json_extract_string_array with escape
+673	json_extract_string_array with null
+674	json_extract_string_array with empty array
+675	json_value_array
+676	json_value_array with root only
+677	json_value_array with integer cast
+678	json_value_array with escape
+679	json_value_array with null
+680	json_value_array with empty array
+681	parse_json
+682	to_json
+683	to_json with struct
+684	to_json_string
+685	to_json_string_null
+686	compare_arrays_with_json_null_only
+687	compare_arrays_with_json_mixed
+688	json_string
+689	json_bool
+690	json_int64
+691	json_float64
+692	json_type
+693	subquery expr with scalar type at SELECT
+694	subquery expr with scalar type at WHERE
+695	subquery expr with scalar type at HAVING
+696	subquery expr with scalar type at function call
+697	subquery expr with array type
+698	subquery expr with in type
+699	subquery expr with exists type
+700	subquery with
+701	nested with
+702	join nested with
+703	nested with 2
+707	net_ip_net_mask with invalid output bytes
+708	net_ip_net_mask with invalid prefix length
+711	net_ip_trunc with invalid ip address
+712	net_ip_trunc with invalid length
+720	not enough positional params given
+721	limit offset test
+724	function call with many arguments - under limit
+725	function call with many arguments - above limit
+732	simple truncate
+733	simple drop
 735	with ref scan maps column aliases correctly
+736	ProjectScan with order by column does not output ordered column
+742	group by struct values basic
+743	group by struct values with aggregation
+744	group by array values basic
+745	group by array values with aggregation

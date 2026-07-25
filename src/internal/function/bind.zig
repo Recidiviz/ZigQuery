@@ -75,6 +75,7 @@ const fdatetime = @import("fn_datetime.zig");
 const ftime = @import("fn_time.zig");
 const ftimestamp = @import("fn_timestamp.zig");
 const fintv = @import("fn_interval.zig");
+const fjson = @import("fn_json.zig");
 
 pub const func_table = [_]FuncInfo{
     // arithmetic (Go: bindAdd/bindSub/bindMul/bindOpDiv + SAFE_* funcs)
@@ -203,6 +204,26 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "unix_millis", .min_args = 1, .handler = ftimestamp.unixMillis },
     .{ .name = "unix_micros", .min_args = 1, .handler = ftimestamp.unixMicros },
     .{ .name = "generate_timestamp_array", .min_args = 4, .handler = ftimestamp.generateTimestampArray },
+
+    // json family (Go function_json.go / function_bind.go)
+    .{ .name = "get_json_field", .min_args = 2, .handler = fjson.getJsonField },
+    .{ .name = "subscript", .min_args = 2, .handler = fjson.subscript },
+    .{ .name = "json_extract", .min_args = 2, .handler = fjson.jsonExtract },
+    .{ .name = "json_extract_scalar", .min_args = 2, .handler = fjson.jsonExtractScalar },
+    .{ .name = "json_extract_array", .min_args = 2, .handler = fjson.jsonExtractArray },
+    .{ .name = "json_extract_string_array", .min_args = 2, .handler = fjson.jsonExtractStringArray },
+    .{ .name = "json_query", .min_args = 2, .handler = fjson.jsonQuery },
+    .{ .name = "json_value", .min_args = 2, .handler = fjson.jsonValue },
+    .{ .name = "json_query_array", .min_args = 2, .handler = fjson.jsonQueryArray },
+    .{ .name = "json_value_array", .min_args = 2, .handler = fjson.jsonValueArray },
+    .{ .name = "parse_json", .min_args = 1, .handler = fjson.parseJsonFn },
+    .{ .name = "to_json", .min_args = 1, .handler = fjson.toJson },
+    .{ .name = "to_json_string", .min_args = 1, .handler = fjson.toJsonString },
+    .{ .name = "json_type", .min_args = 1, .handler = fjson.jsonType },
+    .{ .name = "bool", .min_args = 1, .handler = fjson.jsonBool },
+    .{ .name = "int64", .min_args = 1, .handler = fjson.jsonInt64 },
+    .{ .name = "float64", .min_args = 1, .handler = fjson.jsonFloat64 },
+    .{ .name = "double", .min_args = 2, .handler = fjson.jsonDouble },
 
     // interval family (Go function_interval.go)
     .{ .name = "interval", .min_args = 2, .handler = fintv.interval },

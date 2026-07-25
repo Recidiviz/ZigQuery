@@ -1428,11 +1428,10 @@ pub const NodeExtractor = struct {
                 literal.* = .{};
                 return .{ .type = .literal, .literal = literal };
             },
-            // Parameter / ArgumentRef / GetJsonField / analytic: deferred
-            // to later tasks.
+            .resolved_get_json_field_node => |n| return self.extractGetJsonFieldData(alloc, n, ctx),
+            // Parameter / ArgumentRef / analytic: deferred to later tasks.
             .resolved_parameter_node,
             .resolved_argument_ref_node,
-            .resolved_get_json_field_node,
             => return error.Unimplemented,
             else => return error.UnsupportedNode, // Go: "unsupported expression node type"
         }
@@ -1819,6 +1818,27 @@ pub const NodeExtractor = struct {
         args[0] = expr_data;
         args[1] = .{ .type = .literal, .literal = idx_literal };
         return types_data.newFunctionCallExpressionData(alloc, "zetasqlite_get_struct_field", args);
+    }
+
+    /// Go extractGetJsonFieldData: JSON field access lowers to
+    /// zetasqlite_get_json_field(expr, "<field_name>").
+    fn extractGetJsonFieldData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedGetJsonFieldProto,
+        ctx: *TransformContext,
+    ) Error!ExpressionData {
+        const expr = node.expr orelse return error.InvalidAST;
+        const expr_data = try self.ExtractExpressionData(alloc, expr, ctx);
+
+        const field_name = node.field_name orelse return error.InvalidAST;
+        const name_literal = try alloc.create(types_data.LiteralData);
+        name_literal.* = .{ .value = .{ .string = field_name }, .type_name = "STRING" };
+
+        const args = try alloc.alloc(ExpressionData, 2);
+        args[0] = expr_data;
+        args[1] = .{ .type = .literal, .literal = name_literal };
+        return types_data.newFunctionCallExpressionData(alloc, "zetasqlite_get_json_field", args);
     }
 
     /// Go extractMakeStructData: becomes zetasqlite_make_struct(name1,

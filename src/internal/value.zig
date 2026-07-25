@@ -88,6 +88,9 @@ pub const Value = union(enum) {
     bool: bool,
     string: []const u8,
     bytes: []const u8,
+    /// JSON value (Go JsonValue): a raw JSON string payload. ToString/ToJSON
+    /// return it verbatim; ToInt64/ToFloat64/ToBool parse the scalar text.
+    json: []const u8,
     /// Civil days since the Unix epoch (Go stores a midnight-UTC time.Time;
     /// observable behavior is identical: ToInt64 => days*86400 (unix
     /// seconds), ToString => "YYYY-MM-DD").
@@ -151,6 +154,7 @@ pub const Value = union(enum) {
                 else => return fail("failed to use add operator for datetime", error.UnsupportedOperation),
             },
             .time => return fail("add operation is unsupported for time", error.UnsupportedOperation),
+            .json => return fail("add operation is unsupported for json", error.UnsupportedOperation),
             .interval => return fail("unsupported add operator for interval value", error.UnsupportedOperation),
             .array => return fail("add operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("add operation is unsupported for struct", error.UnsupportedOperation),
@@ -188,6 +192,7 @@ pub const Value = union(enum) {
                 else => return Value{ .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000) },
             },
             .time => return fail("sub operation is unsupported for time", error.UnsupportedOperation),
+            .json => return fail("sub operation is unsupported for json", error.UnsupportedOperation),
             .interval => return fail("unsupported sub operator for interval value", error.UnsupportedOperation),
             .array => return fail("sub operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("sub operation is unsupported for struct", error.UnsupportedOperation),
@@ -306,6 +311,8 @@ pub const Value = union(enum) {
                 const o = timeMicrosForCompare(v) catch return fail("failed to convert to time", error.FailedConversion);
                 return applyOrder(op, std.math.order(time_base_micros +% m, o));
             },
+            // Go: every comparison operator errors for JsonValue.
+            .json => return fail("comparison operation is unsupported for json", error.UnsupportedOperation),
             // Go: every comparison operator errors for IntervalValue.
             .interval => return fail("unsupported comparison operator for interval value", error.UnsupportedOperation),
             .array => |arr| {
@@ -379,6 +386,9 @@ pub const Value = union(enum) {
             .timestamp => |m| return @divFloor(m, second_micros),
             .datetime => |m| return @divFloor(m, second_micros),
             .time => |m| return @divFloor(time_base_micros +% m, second_micros),
+            // Go JsonValue.ToInt64: strconv.ParseInt(string, 0, 64) (base 0).
+            .json => |s| return std.fmt.parseInt(i64, s, 0) catch
+                fail("failed to convert json to int64", error.FailedConversion),
             .interval => return fail("unsupported int64 cast for interval value", error.FailedConversion),
             .array => return fail("failed to convert int64 from array", error.FailedConversion),
             .struct_ => return fail("failed to convert int64 from struct", error.FailedConversion),
@@ -407,6 +417,9 @@ pub const Value = union(enum) {
             .timestamp => |m| return @floatFromInt(@divFloor(m, second_micros)),
             .datetime => |m| return @floatFromInt(@divFloor(m, second_micros)),
             .time => |m| return @floatFromInt(@divFloor(time_base_micros +% m, second_micros)),
+            // Go JsonValue.ToFloat64: strconv.ParseFloat(string, 64).
+            .json => |s| return std.fmt.parseFloat(f64, s) catch
+                fail("failed to convert json to float64", error.FailedConversion),
             .interval => return fail("unsupported float64 cast for interval value", error.FailedConversion),
             .array => return fail("failed to convert float64 from array", error.FailedConversion),
             .struct_ => return fail("failed to convert float64 from struct", error.FailedConversion),
@@ -443,6 +456,9 @@ pub const Value = union(enum) {
             .timestamp => return fail("failed to convert timestamp to bool type", error.FailedConversion),
             .datetime => return fail("failed to convert datetime to bool type", error.FailedConversion),
             .time => return fail("failed to convert time to bool type", error.FailedConversion),
+            // Go JsonValue.ToBool: strconv.ParseBool(string).
+            .json => |s| return parseGoBool(s) orelse
+                fail("failed to parse bool from json", error.FailedConversion),
             .interval => return fail("unsupported bool cast for interval value", error.FailedConversion),
             .array => return fail("failed to convert bool from array", error.FailedConversion),
             .struct_ => return fail("failed to convert bool from struct", error.FailedConversion),
@@ -461,6 +477,8 @@ pub const Value = union(enum) {
             .bool => |b| return alloc.dupe(u8, if (b) "true" else "false"),
             .string => |s| return alloc.dupe(u8, s),
             .bytes => |b| return alloc.dupe(u8, b),
+            // Go JsonValue.ToString: the raw JSON string verbatim.
+            .json => |s| return alloc.dupe(u8, s),
             .date => |days| {
                 var buf: [32]u8 = undefined;
                 return alloc.dupe(u8, formatDateDays(&buf, days));
@@ -534,10 +552,73 @@ pub const Value = union(enum) {
         _ = self;
         return fail("ToTime is deferred", error.Unimplemented);
     }
+    /// Go ToJSON per value kind: the JSON serialization used by TO_JSON /
+    /// TO_JSON_STRING and by struct/array element rendering. Scalars stringify;
+    /// strings/bytes/date/time kinds are strconv.Quote'd; struct/array recurse
+    /// with preserved key order; json passes through verbatim.
     pub fn toJson(self: Value, alloc: std.mem.Allocator) ValueError![]u8 {
-        _ = self;
-        _ = alloc;
-        return fail("ToJSON is deferred", error.Unimplemented);
+        switch (self) {
+            .@"null" => return alloc.dupe(u8, "null"),
+            .int => |i| return std.fmt.allocPrint(alloc, "{d}", .{i}),
+            .float => |f| {
+                var buf: [32]u8 = undefined;
+                return alloc.dupe(u8, formatFloatGo(&buf, f));
+            },
+            .bool => |b| return alloc.dupe(u8, if (b) "true" else "false"),
+            .string => |s| return quoteJsonString(alloc, s),
+            .bytes => |b| return quoteJsonString(alloc, b),
+            .json => |s| return alloc.dupe(u8, s),
+            .date => |days| {
+                var buf: [32]u8 = undefined;
+                return quoteJsonString(alloc, formatDateDays(&buf, days));
+            },
+            .datetime => |m| {
+                var buf: [40]u8 = undefined;
+                return quoteJsonString(alloc, formatDatetimeApi(&buf, m));
+            },
+            .time => |m| {
+                var buf: [24]u8 = undefined;
+                return quoteJsonString(alloc, formatTimeString(&buf, m));
+            },
+            // Go TimestampValue.ToJSON: UTC "2006-01-02T15:04:05.999999Z".
+            .timestamp => |m| {
+                var buf: [40]u8 = undefined;
+                return quoteJsonString(alloc, formatTimestampJson(&buf, m));
+            },
+            .interval => |iv| {
+                var buf: [96]u8 = undefined;
+                return quoteJsonString(alloc, formatInterval(&buf, iv));
+            },
+            // Go ArrayValue.ToString: "[elem,elem,...]", nil -> "null".
+            .array => |arr| {
+                var out: std.ArrayList(u8) = .empty;
+                try out.append(alloc, '[');
+                for (arr.values, 0..) |elem, i| {
+                    if (i > 0) try out.append(alloc, ',');
+                    const ej = try elem.toJson(alloc);
+                    try out.appendSlice(alloc, ej);
+                }
+                try out.append(alloc, ']');
+                return out.items;
+            },
+            // Go StructValue.ToString: {"key":val,...} in field order.
+            .struct_ => |st| {
+                var out: std.ArrayList(u8) = .empty;
+                try out.append(alloc, '{');
+                for (st.values, 0..) |elem, i| {
+                    if (i > 0) try out.append(alloc, ',');
+                    const key: []const u8 = if (i < st.keys.len) st.keys[i] else "";
+                    const kq = try quoteJsonString(alloc, key);
+                    try out.appendSlice(alloc, kq);
+                    try out.append(alloc, ':');
+                    const ej = try elem.toJson(alloc);
+                    try out.appendSlice(alloc, ej);
+                }
+                try out.append(alloc, '}');
+                return out.items;
+            },
+            .safe => |p| return p.toJson(alloc),
+        }
     }
     pub fn toRat(self: Value) ValueError!void {
         _ = self;
@@ -572,6 +653,8 @@ pub const Value = union(enum) {
                 var buf: [96]u8 = undefined;
                 return alloc.dupe(u8, formatInterval(&buf, iv));
             },
+            // Go JsonValue.ToApiString == ToString: the raw JSON string.
+            .json => |s| return alloc.dupe(u8, s),
             .safe => |p| return p.toApiString(alloc) catch alloc.dupe(u8, ""),
             else => return fail("ToApiString is deferred for this kind", error.Unimplemented),
         }
@@ -595,6 +678,7 @@ fn coerceToStringForCmp(v: Value, buf: []u8) ValueError![]const u8 {
         .@"null" => return error.NullValue,
         .string => |s| return s,
         .bytes => |b| return b,
+        .json => |s| return s,
         .int => |i| return std.fmt.bufPrint(buf, "{d}", .{i}) catch unreachable,
         .float => |f| return formatFloatGo(buf, f),
         .bool => |b| return if (b) "true" else "false",
@@ -880,6 +964,45 @@ pub fn formatTimeString(buf: []u8, micros: i64) []const u8 {
     var w = (std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}:{d:0>2}", .{ d.hour, d.minute, d.second }) catch unreachable).len;
     w += writeFracMicros(buf[w..], d.micro);
     return buf[0..w];
+}
+
+/// TimestampValue.ToJSON: UTC "2006-01-02T15:04:05.999999Z" (T separator,
+/// trailing-zero-trimmed fractional seconds, Z suffix). `buf` needs >= 40 bytes.
+pub fn formatTimestampJson(buf: []u8, micros: i64) []const u8 {
+    const d = decomposeMicros(micros);
+    var w = writeCivilPrefix(buf, d, 'T');
+    w += writeFracMicros(buf[w..], d.micro);
+    buf[w] = 'Z';
+    return buf[0 .. w + 1];
+}
+
+/// strconv.Quote-equivalent for JSON string literals: wrap in double quotes,
+/// escaping `"`, `\`, and the standard C0 control characters. ASCII-printable
+/// content (all the corpus exercises) is byte-identical to Go's strconv.Quote
+/// and to json.Marshal.
+pub fn quoteJsonString(alloc: std.mem.Allocator, s: []const u8) ValueError![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.append(alloc, '"');
+    for (s) |ch| {
+        switch (ch) {
+            '"' => try out.appendSlice(alloc, "\\\""),
+            '\\' => try out.appendSlice(alloc, "\\\\"),
+            '\n' => try out.appendSlice(alloc, "\\n"),
+            '\r' => try out.appendSlice(alloc, "\\r"),
+            '\t' => try out.appendSlice(alloc, "\\t"),
+            0x08 => try out.appendSlice(alloc, "\\b"),
+            0x0c => try out.appendSlice(alloc, "\\f"),
+            else => {
+                if (ch < 0x20) {
+                    try out.print(alloc, "\\u{x:0>4}", .{ch});
+                } else {
+                    try out.append(alloc, ch);
+                }
+            },
+        }
+    }
+    try out.append(alloc, '"');
+    return out.items;
 }
 
 fn i32Abs(x: i32) i32 {
@@ -1361,6 +1484,7 @@ pub fn expectValueEqual(expected: Value, actual: Value) !void {
         .bool => |b| try std.testing.expectEqual(b, actual.bool),
         .string => |s| try std.testing.expectEqualStrings(s, actual.string),
         .bytes => |b| try std.testing.expectEqualSlices(u8, b, actual.bytes),
+        .json => |s| try std.testing.expectEqualStrings(s, actual.json),
         .date => |d| try std.testing.expectEqual(d, actual.date),
         .timestamp => |m| try std.testing.expectEqual(m, actual.timestamp),
         .datetime => |m| try std.testing.expectEqual(m, actual.datetime),
