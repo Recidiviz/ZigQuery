@@ -132,4 +132,40 @@ pub fn build(b: *std.Build) void {
     const run_bench = b.addRunArtifact(bench_exe);
     if (b.args) |args| run_bench.addArgs(args);
     b.step("bench", "Benchmark per-query cost vs catalog size").dependOn(&run_bench.step);
+
+    // ---- bigquery-emulator server ----
+    //
+    // A separate module from the engine so `test` and `corpus` — the engine's
+    // regression gates — are unaffected by server work.
+    const server_mod = b.createModule(.{
+        .root_source_file = b.path("src/server/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+    });
+
+    const server_exe = b.addExecutable(.{
+        .name = "bigquery-emulator",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/server/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "bqserver", .module = server_mod },
+                .{ .name = "zetasqlite", .module = mod },
+            },
+        }),
+    });
+    if (maybe_bazel) |bz| server_exe.step.dependOn(&bz.step);
+    b.installArtifact(server_exe);
+
+    const run_server = b.addRunArtifact(server_exe);
+    if (b.args) |args| run_server.addArgs(args);
+    b.step("server", "Run the emulator").dependOn(&run_server.step);
+
+    const server_tests = b.addTest(.{ .root_module = server_mod });
+    if (maybe_bazel) |bz| server_tests.step.dependOn(&bz.step);
+    const run_server_tests = b.addRunArtifact(server_tests);
+    b.step("test-server", "Run server unit tests").dependOn(&run_server_tests.step);
 }
