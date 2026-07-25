@@ -15,11 +15,17 @@
 //! reports back through the resolved AST) and `nameInCatalog`=the name it
 //! resolves under.
 //!
+//! Function specs (`kind = 'function'`) follow the same pattern: persisted
+//! rows are Go-compatible JSON, and the in-memory side renders
+//! SimpleCatalogProto `customFunction` entries (FunctionProto: namePath /
+//! mode / signature with argument kinds+types) instead of Go's live
+//! SimpleCatalog registration. Go's MISSING_FUNCTIONS seeding is mirrored
+//! for the entries that are NOT already builtins in the shim's newer
+//! GoogleSQL (contains_substr, min_by, max_by; array_slice / array_first /
+//! array_last are builtins now — Go pre-filters those the same way).
+//!
 //! Deferred (vs Go):
-//! - FunctionSpec rows (`kind = 'function'`): tolerated during sync but not
-//!   registered (CREATE FUNCTION milestone).
 //! - Wildcard tables (Gap G): not ported.
-//! - MISSING_FUNCTIONS seeding: function milestone.
 
 const std = @import("std");
 const sqlite = @import("../sqlite.zig");
@@ -95,6 +101,10 @@ pub const Catalog = struct {
     tables: std.ArrayList(*spec.TableSpec),
     /// Canonical table name -> index into `tables` (Go: c.tableMap).
     table_map: std.StringHashMap(usize),
+    /// Insertion-ordered function specs (Go: c.functions).
+    functions: std.ArrayList(*spec.FunctionSpec),
+    /// Canonical function name -> index into `functions` (Go: c.funcMap).
+    func_map: std.StringHashMap(usize),
     /// Timestamp string of the last sync ("" = never; sorts before any
     /// stored timestamp, so the first sync loads everything).
     last_synced_at: []const u8 = "",
@@ -106,13 +116,26 @@ pub const Catalog = struct {
             .arena_state = std.heap.ArenaAllocator.init(gpa),
             .tables = .empty,
             .table_map = std.StringHashMap(usize).init(gpa),
+            .functions = .empty,
+            .func_map = std.StringHashMap(usize).init(gpa),
         };
+        errdefer c.deinit();
+        // Go NewCatalog: seed MISSING_FUNCTIONS (memory only, never
+        // persisted; Go's addFunctionSpec skips saveFunctionSpec here).
+        for (try missingFunctions(c.arena_state.allocator())) |fs| {
+            c.addFunctionSpecToMemory(fs) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => unreachable, // in-memory registration only OOMs
+            };
+        }
         return c;
     }
 
     pub fn deinit(c: *Catalog) void {
         c.tables.deinit(c.gpa);
         c.table_map.deinit();
+        c.functions.deinit(c.gpa);
+        c.func_map.deinit();
         c.arena_state.deinit();
         c.gpa.destroy(c);
     }
@@ -141,8 +164,8 @@ pub const Catalog = struct {
                 const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
                 try c.loadTableSpec(spec_json);
             } else if (std.mem.eql(u8, kind, function_spec_kind)) {
-                // Deferred: CREATE FUNCTION milestone.
-                continue;
+                const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
+                try c.loadFunctionSpec(spec_json);
             } else {
                 return error.InvalidSpec; // Go: "unknown catalog spec kind %s"
             }
@@ -222,6 +245,110 @@ pub const Catalog = struct {
         return c.tables.items[idx];
     }
 
+    // ------------------------------------------------------------------
+    // Function specs (Go loadFunctionSpec / AddNewFunctionSpec /
+    // DeleteFunctionSpec / saveFunctionSpec)
+    // ------------------------------------------------------------------
+
+    fn loadFunctionSpec(c: *Catalog, spec_json: []const u8) Error!void {
+        const fs = spec.functionSpecFromJson(c.arena_state.allocator(), spec_json) catch |err|
+            switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.InvalidSpec,
+            };
+        try c.addFunctionSpecToMemory(fs);
+    }
+
+    /// Go AddNewFunctionSpec: in-memory registration plus (unless
+    /// temporary) the persisted upsert. Deep-copies via canonical JSON so
+    /// callers may pass short-lived memory.
+    pub fn addNewFunctionSpec(c: *Catalog, db: *sqlite.Db, fs: *const spec.FunctionSpec) Error!void {
+        const arena = c.arena_state.allocator();
+        const encoded = fs.toJson(arena) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        const owned = spec.functionSpecFromJson(arena, encoded) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        try c.addFunctionSpecToMemory(owned);
+        if (!owned.is_temp) {
+            try c.saveFunctionSpec(db, owned, encoded);
+        }
+    }
+
+    /// Go saveFunctionSpec: the shared catalog upsert with kind='function'.
+    fn saveFunctionSpec(c: *Catalog, db: *sqlite.Db, fs: *const spec.FunctionSpec, encoded: []const u8) Error!void {
+        const arena = c.arena_state.allocator();
+        const now = try nowTimestamps(arena);
+        var stmt = try db.prepare(upsert_catalog_query);
+        defer stmt.finalize();
+        try stmt.bindText(1, try fs.funcName(arena));
+        try stmt.bindText(2, function_spec_kind);
+        try stmt.bindText(3, encoded);
+        try stmt.bindText(4, now.sql);
+        try stmt.bindText(5, now.sql);
+        _ = try stmt.step();
+    }
+
+    /// Go DeleteFunctionSpec: remove from memory and the persisted table.
+    /// (Go: "failed to find function spec from map by %s".)
+    pub fn deleteFunctionSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
+        const entry = c.func_map.fetchRemove(name) orelse return error.TableNotFound;
+        _ = c.functions.orderedRemove(entry.value);
+        var it = c.func_map.valueIterator();
+        while (it.next()) |idx| {
+            if (idx.* > entry.value) idx.* -= 1;
+        }
+
+        var stmt = try db.prepare(delete_catalog_query);
+        defer stmt.finalize();
+        try stmt.bindText(1, name);
+        _ = try stmt.step();
+    }
+
+    pub fn findFunctionSpec(c: *const Catalog, name: []const u8) ?*spec.FunctionSpec {
+        const idx = c.func_map.get(name) orelse return null;
+        return c.functions.items[idx];
+    }
+
+    /// Go analyzer.go's per-statement funcMap build (catalog.getFunctions
+    /// keyed by FuncName). The seeded MISSING_FUNCTIONS (contains_substr,
+    /// min_by, max_by) are excluded: they carry no body and are lowered by
+    /// the extractor / runtime UDFs instead, so routing them through
+    /// CallSQL would shadow those paths. Every user-created spec is
+    /// included — including "js" ones, whose bodyless CallSQL raises a
+    /// clear Unimplemented rather than emitting a call to a function
+    /// SQLite never defined. Allocated from `alloc` (per-statement arena).
+    pub fn funcMap(c: *const Catalog, alloc: std.mem.Allocator) error{OutOfMemory}!*spec.FuncMap {
+        const map = try alloc.create(spec.FuncMap);
+        map.* = spec.FuncMap.init(alloc);
+        for (c.functions.items) |fs| {
+            if (fs.body == null and std.mem.eql(u8, fs.language, "SQL")) continue;
+            try map.put(try fs.funcName(alloc), fs);
+        }
+        return map;
+    }
+
+    /// Number of registered function specs (seeded builtins included).
+    pub fn functionCount(c: *const Catalog) usize {
+        return c.functions.items.len;
+    }
+
+    /// Go addFunctionSpec's in-memory half (duplicate name replaces the
+    /// stored spec, same deliberate deviation as addTableSpecToMemory).
+    fn addFunctionSpecToMemory(c: *Catalog, fs: *spec.FunctionSpec) Error!void {
+        const arena = c.arena_state.allocator();
+        const name = try fs.funcName(arena);
+        if (c.func_map.get(name)) |idx| {
+            c.functions.items[idx] = fs;
+            return;
+        }
+        try c.functions.append(c.gpa, fs);
+        try c.func_map.put(name, c.functions.items.len - 1);
+    }
+
     /// Go addTableSpec's in-memory half. On a duplicate canonical name the
     /// stored spec is replaced (Go only swaps the map entry and leaves the
     /// engine catalog with the first registration; since this port
@@ -243,15 +370,21 @@ pub const Catalog = struct {
     // ------------------------------------------------------------------
 
     /// Renders the catalog as SimpleCatalogProto protobuf-JSON for the
-    /// analyzer shim. Returns "{}" (builtins only) when no tables are
-    /// registered. All memory comes from `alloc`.
+    /// analyzer shim. Returns "{}" (builtins only) when neither tables nor
+    /// functions are registered. All memory comes from `alloc`.
     pub fn catalogJson(c: *const Catalog, alloc: std.mem.Allocator) error{ OutOfMemory, InvalidSpec }![:0]u8 {
-        if (c.tables.items.len == 0) return alloc.dupeZ(u8, "{}");
+        if (c.tables.items.len == 0 and c.functions.items.len == 0)
+            return alloc.dupeZ(u8, "{}");
 
         var root = Node{ .name = catalog_name };
         for (c.tables.items) |table_spec| {
             const canonical = try table_spec.tableName(alloc);
             try addTableToNode(alloc, &root, table_spec.name_path, table_spec, canonical);
+        }
+        // Go addFunctionSpecRecursive: functions register under their LEAF
+        // name at the root and inside every sub-catalog along the path.
+        for (c.functions.items) |fs| {
+            try addFunctionToNode(alloc, &root, fs.name_path, fs);
         }
 
         var out: std.ArrayList(u8) = .empty;
@@ -270,10 +403,18 @@ const TableEntry = struct {
     table_spec: *const spec.TableSpec,
 };
 
+/// One function registration point: FunctionProto rendered with
+/// namePath=[registered] (the leaf name at this catalog level).
+const FunctionEntry = struct {
+    registered: []const u8,
+    fn_spec: *const spec.FunctionSpec,
+};
+
 /// In-flight SimpleCatalogProto tree node.
 const Node = struct {
     name: []const u8,
     entries: std.ArrayList(TableEntry) = .empty,
+    fn_entries: std.ArrayList(FunctionEntry) = .empty,
     subs: std.ArrayList(*Node) = .empty,
 
     fn findSub(n: *Node, name: []const u8) ?*Node {
@@ -285,6 +426,13 @@ const Node = struct {
 
     fn hasEntry(n: *const Node, registered: []const u8) bool {
         for (n.entries.items) |e| {
+            if (std.mem.eql(u8, e.registered, registered)) return true;
+        }
+        return false;
+    }
+
+    fn hasFnEntry(n: *const Node, registered: []const u8) bool {
+        for (n.fn_entries.items) |e| {
             if (std.mem.eql(u8, e.registered, registered)) return true;
         }
         return false;
@@ -330,6 +478,33 @@ fn addTableToNode(
     try addTableToNode(alloc, sub, path[1..], table_spec, canonical);
 }
 
+/// Go addFunctionSpecRecursive: for a path [a, b, c] the function is
+/// registered under its leaf name "c" at the current level AND inside the
+/// sub-catalog chain a -> b (each level also re-registers at the root,
+/// exactly like Go's double recursion).
+fn addFunctionToNode(
+    alloc: std.mem.Allocator,
+    node: *Node,
+    path: []const []const u8,
+    fn_spec: *const spec.FunctionSpec,
+) error{ OutOfMemory, InvalidSpec }!void {
+    if (path.len == 0) return error.InvalidSpec; // Go: "function name is not found"
+    if (path.len == 1) {
+        if (!node.hasFnEntry(path[0])) {
+            try node.fn_entries.append(alloc, .{ .registered = path[0], .fn_spec = fn_spec });
+        }
+        return;
+    }
+    const sub = node.findSub(path[0]) orelse blk: {
+        const s = try alloc.create(Node);
+        s.* = .{ .name = path[0] };
+        try node.subs.append(alloc, s);
+        break :blk s;
+    };
+    try addFunctionToNode(alloc, node, path[1..], fn_spec);
+    try addFunctionToNode(alloc, sub, path[1..], fn_spec);
+}
+
 fn appendNodeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, node: *const Node) error{ OutOfMemory, InvalidSpec }!void {
     try out.appendSlice(alloc, "{\"name\":");
     try spec.appendJsonString(out, alloc, node.name);
@@ -338,6 +513,14 @@ fn appendNodeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, node: *cons
         for (node.entries.items, 0..) |entry, i| {
             if (i > 0) try out.append(alloc, ',');
             try appendTableJson(out, alloc, entry);
+        }
+        try out.append(alloc, ']');
+    }
+    if (node.fn_entries.items.len > 0) {
+        try out.appendSlice(alloc, ",\"customFunction\":[");
+        for (node.fn_entries.items, 0..) |entry, i| {
+            if (i > 0) try out.append(alloc, ',');
+            try appendFunctionJson(out, alloc, entry);
         }
         try out.append(alloc, ']');
     }
@@ -350,6 +533,116 @@ fn appendNodeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, node: *cons
         try out.append(alloc, ']');
     }
     try out.append(alloc, '}');
+}
+
+/// FunctionProto protobuf-JSON (googlesql/proto/function.proto): namePath,
+/// group "", mode SCALAR/AGGREGATE, one FunctionSignatureProto whose
+/// argument/returnType are FunctionArgumentTypeProto entries — templated
+/// arguments carry `kind` (SignatureArgumentKind name), fixed arguments
+/// carry `type` (TypeProto). Mirrors Go createFunction's
+/// NewFunctionArgumentType3/4 + NewFunctionSignature3 + NewFunction.
+fn appendFunctionJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, entry: FunctionEntry) error{ OutOfMemory, InvalidSpec }!void {
+    const fs = entry.fn_spec;
+    try out.appendSlice(alloc, "{\"namePath\":[");
+    try spec.appendJsonString(out, alloc, entry.registered);
+    try out.appendSlice(alloc, "],\"group\":\"\",\"mode\":");
+    try out.appendSlice(alloc, if (fs.is_aggregate) "\"AGGREGATE\"" else "\"SCALAR\"");
+    try out.appendSlice(alloc, ",\"signature\":[{\"argument\":[");
+    for (fs.args, 0..) |arg, i| {
+        if (i > 0) try out.append(alloc, ',');
+        const t = arg.type orelse return error.InvalidSpec;
+        try appendFunctionArgumentTypeJson(out, alloc, t);
+    }
+    try out.appendSlice(alloc, "],\"returnType\":");
+    const ret = fs.return_type orelse return error.InvalidSpec;
+    try appendFunctionArgumentTypeJson(out, alloc, ret);
+    try out.appendSlice(alloc, ",\"contextId\":\"-1\"}]}");
+}
+
+/// FunctionArgumentTypeProto JSON: Go NewFunctionArgumentType4(kind, 1) for
+/// templated kinds, NewFunctionArgumentType3(type, 1) for fixed types
+/// (numOccurrences 1 in both).
+fn appendFunctionArgumentTypeJson(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    t: *const spec.Type,
+) error{ OutOfMemory, InvalidSpec }!void {
+    if (spec.isTemplatedSignatureKind(t.signature_kind)) {
+        const kind: pb.SignatureArgumentKind = @enumFromInt(t.signature_kind);
+        const kind_name = std.enums.tagName(pb.SignatureArgumentKind, kind) orelse
+            return error.InvalidSpec;
+        try out.appendSlice(alloc, "{\"kind\":\"");
+        try out.appendSlice(alloc, kind_name);
+        try out.appendSlice(alloc, "\",\"numOccurrences\":1}");
+        return;
+    }
+    try out.appendSlice(alloc, "{\"kind\":\"ARG_TYPE_FIXED\",\"type\":");
+    try appendTypeProtoJson(out, alloc, t);
+    try out.appendSlice(alloc, ",\"numOccurrences\":1}");
+}
+
+/// Go catalog.go MISSING_FUNCTIONS, minus the entries that are engine
+/// builtins in the shim's GoogleSQL revision (array_slice, array_first,
+/// array_last) — Go pre-filters those against `builtins` at registration.
+fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.FunctionSpec {
+    const arg_arbitrary: i32 = @intFromEnum(pb.SignatureArgumentKind.ARG_KIND_EXPR_ARBITRARY);
+    const arg_any_1: i32 = @intFromEnum(pb.SignatureArgumentKind.ARG_KIND_EXPR_ANY_1);
+    const arg_any_2: i32 = @intFromEnum(pb.SignatureArgumentKind.ARG_KIND_EXPR_ANY_2);
+
+    const out = try alloc.alloc(*spec.FunctionSpec, 3);
+
+    // contains_substr(expression ARBITRARY, search_value_literal STRING) -> BOOL
+    {
+        const expr_t = try alloc.create(spec.Type);
+        expr_t.* = .{ .name = "expression", .kind = @intFromEnum(pb.TypeKind.TYPE_STRING), .signature_kind = arg_arbitrary };
+        const search_t = try alloc.create(spec.Type);
+        search_t.* = .{ .name = "search_value_literal", .kind = @intFromEnum(pb.TypeKind.TYPE_STRING) };
+        const ret_t = try alloc.create(spec.Type);
+        ret_t.* = .{ .name = "BOOL", .kind = @intFromEnum(pb.TypeKind.TYPE_BOOL) };
+        const args = try alloc.alloc(*spec.NameWithType, 2);
+        const a0 = try alloc.create(spec.NameWithType);
+        a0.* = .{ .name = "expression", .type = expr_t };
+        const a1 = try alloc.create(spec.NameWithType);
+        a1.* = .{ .name = "search_value_literal", .type = search_t };
+        args[0] = a0;
+        args[1] = a1;
+        const fs = try alloc.create(spec.FunctionSpec);
+        fs.* = .{
+            .name_path = &.{"contains_substr"},
+            .language = "SQL",
+            .args = args,
+            .return_type = ret_t,
+        };
+        out[0] = fs;
+    }
+
+    // min_by / max_by (x ANY_1, y ANY_2) -> ANY_1, aggregate.
+    for ([_][]const u8{ "min_by", "max_by" }, 1..) |name, i| {
+        const x_t = try alloc.create(spec.Type);
+        x_t.* = .{ .name = "x", .signature_kind = arg_any_1 };
+        const y_t = try alloc.create(spec.Type);
+        y_t.* = .{ .name = "y", .signature_kind = arg_any_2 };
+        const ret_t = try alloc.create(spec.Type);
+        ret_t.* = .{ .signature_kind = arg_any_1 };
+        const args = try alloc.alloc(*spec.NameWithType, 2);
+        const a0 = try alloc.create(spec.NameWithType);
+        a0.* = .{ .name = "x", .type = x_t };
+        const a1 = try alloc.create(spec.NameWithType);
+        a1.* = .{ .name = "y", .type = y_t };
+        args[0] = a0;
+        args[1] = a1;
+        const fs = try alloc.create(spec.FunctionSpec);
+        fs.* = .{
+            .name_path = try alloc.dupe([]const u8, &.{name}),
+            .language = "SQL",
+            .is_aggregate = true,
+            .args = args,
+            .return_type = ret_t,
+        };
+        out[i] = fs;
+    }
+
+    return out;
 }
 
 fn appendTableJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, entry: TableEntry) error{ OutOfMemory, InvalidSpec }!void {
@@ -602,10 +895,110 @@ test "catalogJson: analyzer resolves bare and dotted table names" {
         analyzer_ffi.analyzeNextStatement(alloc, "SELECT 1 FROM missing_table", 0, catalog_json),
     );
 
-    // Empty catalog renders the shim's builtins-only sentinel.
-    var empty = try Catalog.init(testing.allocator);
-    defer empty.deinit();
-    try testing.expectEqualStrings("{}", try empty.catalogJson(alloc));
+    // A fresh catalog carries only the seeded MISSING_FUNCTIONS (no "{}"
+    // sentinel anymore: contains_substr/min_by/max_by are always present).
+    var fresh = try Catalog.init(testing.allocator);
+    defer fresh.deinit();
+    const fresh_json = try fresh.catalogJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, fresh_json, "\"customFunction\"") != null);
+    try testing.expect(std.mem.indexOf(u8, fresh_json, "contains_substr") != null);
+}
+
+test "catalogJson: seeded MISSING_FUNCTIONS resolve through the analyzer" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c = try Catalog.init(testing.allocator);
+    defer c.deinit();
+    const catalog_json = try c.catalogJson(alloc);
+
+    // contains_substr: scalar, ARBITRARY expression + STRING literal.
+    _ = try analyzer_ffi.analyzeNextStatement(
+        alloc,
+        "SELECT CONTAINS_SUBSTR('the blue house', 'Blue')",
+        0,
+        catalog_json,
+    );
+    // Struct-typed first argument also resolves (ARG_TYPE_ARBITRARY).
+    _ = try analyzer_ffi.analyzeNextStatement(
+        alloc,
+        "SELECT CONTAINS_SUBSTR((23, 35, 41), '35')",
+        0,
+        catalog_json,
+    );
+    // min_by/max_by: aggregate mode with templated ANY_1/ANY_2 args.
+    _ = try analyzer_ffi.analyzeNextStatement(
+        alloc,
+        "SELECT MIN_BY(x, y) FROM (SELECT 1 AS x, 2 AS y)",
+        0,
+        catalog_json,
+    );
+    _ = try analyzer_ffi.analyzeNextStatement(
+        alloc,
+        "SELECT MAX_BY(x, y) FROM (SELECT 1 AS x, 2 AS y)",
+        0,
+        catalog_json,
+    );
+}
+
+test "catalogJson: user-defined SQL function resolves through the analyzer" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c = try Catalog.init(testing.allocator);
+    defer c.deinit();
+    try c.createCatalogTablesIfNotExist(&db);
+
+    // CREATE FUNCTION Add(x INT64, y INT64) AS (x + y) equivalent spec.
+    const x_t = try spec.newSimpleType(alloc, .TYPE_INT64);
+    const y_t = try spec.newSimpleType(alloc, .TYPE_INT64);
+    const args = try alloc.alloc(*spec.NameWithType, 2);
+    const a0 = try alloc.create(spec.NameWithType);
+    a0.* = .{ .name = "x", .type = x_t };
+    const a1 = try alloc.create(spec.NameWithType);
+    a1.* = .{ .name = "y", .type = y_t };
+    args[0] = a0;
+    args[1] = a1;
+    const fs = try alloc.create(spec.FunctionSpec);
+    fs.* = .{
+        .name_path = &.{"myadd"},
+        .language = "SQL",
+        .args = args,
+        .return_type = try spec.newSimpleType(alloc, .TYPE_INT64),
+        .body = "zetasqlite_add(@x, @y)",
+        .updated_at = "2024-01-02T03:04:05Z",
+        .created_at = "2024-01-02T03:04:05Z",
+    };
+    try c.addNewFunctionSpec(&db, fs);
+
+    const catalog_json = try c.catalogJson(alloc);
+    _ = try analyzer_ffi.analyzeNextStatement(alloc, "SELECT myadd(1, 2)", 0, catalog_json);
+
+    // Persisted row round-trips through a fresh catalog's sync.
+    var c2 = try Catalog.init(testing.allocator);
+    defer c2.deinit();
+    try c2.sync(&db);
+    const found = c2.findFunctionSpec("myadd") orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("zetasqlite_add(@x, @y)", found.body.?);
+    try testing.expectEqual(@as(usize, 2), found.args.len);
+
+    // CallSQL substitution: @x/@y replaced, wrapped in "( ... )".
+    const call = try found.callSQL(alloc, &.{ "1", "2" });
+    try testing.expectEqualStrings("( zetasqlite_add(1, 2) )", call);
+
+    // Delete removes memory + persisted row; analysis then fails.
+    try c2.deleteFunctionSpec(&db, "myadd");
+    try testing.expectEqual(@as(?*spec.FunctionSpec, null), c2.findFunctionSpec("myadd"));
+    const catalog_json2 = try c2.catalogJson(alloc);
+    try testing.expectError(
+        error.AnalyzeFailed,
+        analyzer_ffi.analyzeNextStatement(alloc, "SELECT myadd(1, 2)", 0, catalog_json2),
+    );
 }
 
 /// Walks stmt -> query -> (project scan ->) table scan and returns the

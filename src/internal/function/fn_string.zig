@@ -1017,6 +1017,46 @@ pub fn normalizeAndCasefold(alloc: std.mem.Allocator, args: []const Value) Error
     return Value{ .string = out };
 }
 
+/// Go function_string.go CONTAINS_SUBSTR(value, search): NFKC-normalize and
+/// casefold both operands, then test containment.
+fn containsSubstrScalar(alloc: std.mem.Allocator, value: []const u8, search: []const u8) Error!Value {
+    const nv = try normalizeAndCasefold(alloc, &.{ Value{ .string = value }, Value{ .string = "NFKC" } });
+    const ns = try normalizeAndCasefold(alloc, &.{ Value{ .string = search }, Value{ .string = "NFKC" } });
+    const norm_value = try nv.toString(alloc);
+    const norm_search = try ns.toString(alloc);
+    return Value{ .bool = std.mem.indexOf(u8, norm_value, norm_search) != null };
+}
+
+/// Go function_bind.go bindContainsSubstr: tri-state NULL semantics plus
+/// struct field-by-field recursion (true if any field contains the substr,
+/// null if a field is null and none matched, otherwise false).
+pub fn containsSubstr(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    // A null search literal is an error (distinct from a null expression,
+    // which yields NULL below).
+    if (args[1] == .@"null") {
+        return bind.failMsg("CONTAINS_SUBSTR: search literal must be not null", error.UnsupportedOperation);
+    }
+    if (bind.existsNull(args)) return null_v;
+
+    if (args[0] == .struct_) {
+        var null_exists = false;
+        for (args[0].struct_.values) |field| {
+            if (field == .@"null") {
+                null_exists = true;
+                continue;
+            }
+            const result = try containsSubstr(alloc, &.{ field, args[1] });
+            if (result == .bool and result.bool) return Value{ .bool = true };
+        }
+        if (null_exists) return null_v;
+        return Value{ .bool = false };
+    }
+
+    const value = try args[0].toString(alloc);
+    const search = try args[1].toString(alloc);
+    return containsSubstrScalar(alloc, value, search);
+}
+
 // Base32 / Base64 / Hex encodings --------------------------------------
 
 const base32_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";

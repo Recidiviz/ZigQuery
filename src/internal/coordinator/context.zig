@@ -296,6 +296,16 @@ pub const TransformContext = struct {
     alloc: std.mem.Allocator,
     /// Current recursive CTE being defined.
     recursive_cte_name: []const u8 = "",
+    /// User-defined FunctionSpec lookup for CallSQL inlining (Go
+    /// withFuncMap / funcMapFromContext). Set by the driver before
+    /// transforming; null means no UDFs are registered.
+    func_map: ?*const spec.FuncMap = null,
+
+    /// Go funcMapFromContext: the UDF spec for `name`, or null.
+    pub fn findFunctionSpec(self: *const TransformContext, name: []const u8) ?*spec.FunctionSpec {
+        const map = self.func_map orelse return null;
+        return map.get(name);
+    }
 
     pub fn init(
         alloc: std.mem.Allocator,

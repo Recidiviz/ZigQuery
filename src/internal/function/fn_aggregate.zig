@@ -29,25 +29,42 @@ pub const OrderedValue = struct {
 
 /// Go sortAggregatedValues: in-place sort by the per-row ORDER BY keys.
 /// Comparison errors are swallowed exactly like Go's `_ =` discards.
+///
+/// Go uses sort.Slice (pdqsort), which is plain insertion sort for slices
+/// shorter than 12 elements. The comparator is intentionally NOT a strict
+/// weak order — Go returns isAsc for a nil (NULL) i-key even when the j-key
+/// is also nil, so two NULL keys compare "less" in both directions — which
+/// violates std.mem.sort's precondition. Insertion sort is well-defined for
+/// any comparator and reproduces Go's observable order (e.g.
+/// ARRAY_CONCAT_AGG with a NULL ORDER BY key reverses the NULL-keyed run;
+/// corpus case "array_concat_agg with null in order by").
 pub fn sortAggregatedValues(values: []*OrderedValue, opt: ?*const AggregatorOption) void {
     // Go: if opt != nil && len(opt.OrderBy) == 0 { return values }
     if (opt) |o| {
         if (o.order_by.len == 0) return;
     }
     if (values.len == 0) return;
-    std.mem.sort(*OrderedValue, values, values, orderedLessThan);
+    var i: usize = 1;
+    while (i < values.len) : (i += 1) {
+        var j: usize = i;
+        while (j > 0 and orderedLessThan(values, values[j], values[j - 1])) : (j -= 1) {
+            std.mem.swap(*OrderedValue, &values[j], &values[j - 1]);
+        }
+    }
 }
 
 fn orderedLessThan(all: []*OrderedValue, i_val: *OrderedValue, j_val: *OrderedValue) bool {
-    // Go indexes values[0].OrderBy for both the loop bound and isAsc.
+    // Go indexes values[0].OrderBy for both the loop bound and isAsc — read
+    // live through the closed-over slice, so swaps made mid-sort change
+    // which element is values[0]. Passing the slice preserves that.
     for (all[0].order_by, 0..) |first_order, k| {
         if (k >= i_val.order_by.len or k >= j_val.order_by.len) break;
         const iv = i_val.order_by[k].value;
         const jv = j_val.order_by[k].value;
         const is_asc = first_order.is_asc;
-        // Go returns isAsc whenever iV is nil; Zig's std sort asserts a
-        // strict weak order, so NULL/NULL must be a tie instead.
-        if (iv == .@"null" and jv == .@"null") continue;
+        // Go: iV == nil => isAsc, jV == nil => !isAsc. NULL-vs-NULL is NOT a
+        // tie: ascending sorts call it "less" both ways, which makes the
+        // insertion sort bubble NULL-keyed runs into reverse input order.
         if (iv == .@"null") return is_asc;
         if (jv == .@"null") return !is_asc;
         if (iv.eq(jv) catch false) continue; // break tie with subsequent fields

@@ -40,6 +40,30 @@ pub const Db = struct {
         return std.mem.sliceTo(c.sqlite3_errmsg(db.handle), 0);
     }
 
+    /// Most recent primary result code (Go: the `rc` modernc threads into
+    /// errstrForDB).
+    pub fn errcode(db: *Db) i32 {
+        return @intCast(c.sqlite3_errcode(db.handle));
+    }
+
+    /// Port of modernc.org/sqlite's errstrForDB — the shape every error from
+    /// Go's driver carries, and therefore the shape go-zetasqlite surfaces to
+    /// callers (e.g. "SQL logic error: <udf message> (1)").
+    ///
+    ///   pStr := sqlite3_errstr(rc); msg := sqlite3_errmsg(db)
+    ///   msg == pStr -> "%s (%v)%s"   else -> "%s: %s (%v)%s"
+    ///   %s tail is " (SQLITE_BUSY)" when rc == SQLITE_BUSY, else empty.
+    pub fn errorText(db: *Db, alloc: std.mem.Allocator) error{OutOfMemory}![]u8 {
+        const rc = db.errcode();
+        const str = std.mem.sliceTo(c.sqlite3_errstr(rc), 0);
+        const msg = db.errmsg();
+        const busy: []const u8 = if (rc == c.SQLITE_BUSY) " (SQLITE_BUSY)" else "";
+        if (std.mem.eql(u8, msg, str)) {
+            return std.fmt.allocPrint(alloc, "{s} ({d}){s}", .{ str, rc, busy });
+        }
+        return std.fmt.allocPrint(alloc, "{s}: {s} ({d}){s}", .{ str, msg, rc, busy });
+    }
+
     /// Executes SQL that produces no result rows (DDL, DML).
     pub fn exec(db: *Db, sql: [:0]const u8) Error!void {
         if (c.sqlite3_exec(db.handle, sql.ptr, null, null, null) != c.SQLITE_OK) {

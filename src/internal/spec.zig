@@ -503,6 +503,165 @@ pub fn newSimpleType(alloc: std.mem.Allocator, kind: pb.TypeKind) error{OutOfMem
     return t;
 }
 
+/// Go isTemplatedSignatureKind, translated to the proto SignatureArgumentKind
+/// values this port stores in `Type.signature_kind`: ARG_KIND_EXPR_FIXED is
+/// the 0 value, so any nonzero kind denotes a templated argument.
+pub fn isTemplatedSignatureKind(k: i32) bool {
+    return k != 0;
+}
+
+// ----------------------------------------------------------------------
+// FunctionSpec (Go spec.go FunctionSpec) — SQL/JS user-defined functions
+// plus the catalog-seeded MISSING_FUNCTIONS (contains_substr, min_by,
+// max_by). The persisted JSON keeps the Go field order and tags for
+// args/return/type so a go-zetasqlite catalog round-trips; `body` deviates
+// (Go stores a *SQLExpression object, this port stores the already-rendered
+// SQL string, since the two SQLExpression trees are not byte-compatible).
+// ----------------------------------------------------------------------
+
+/// Name -> spec map threaded into the transformer for CallSQL rewriting
+/// (Go Catalog.funcMap / funcMapFromContext).
+pub const FuncMap = std.StringHashMap(*FunctionSpec);
+
+pub const FunctionSpec = struct {
+    is_temp: bool = false,
+    /// Go NamePath (json "name").
+    name_path: []const []const u8 = &.{},
+    language: []const u8 = "",
+    args: []const *NameWithType = &.{},
+    /// Go Return (json "return").
+    return_type: ?*Type = null,
+    /// Rendered SQL body with @argname placeholders (json "body"); null for
+    /// catalog-seeded builtins and JS functions.
+    body: ?[]const u8 = null,
+    code: []const u8 = "",
+    is_aggregate: bool = false,
+    updated_at: []const u8 = "",
+    created_at: []const u8 = "",
+
+    /// Go FunctionSpec.FuncName: formatPath(NamePath) ("_"-joined).
+    pub fn funcName(self: *const FunctionSpec, alloc: std.mem.Allocator) error{OutOfMemory}![]u8 {
+        return formatPath(alloc, self.name_path);
+    }
+
+    /// Go FunctionSpec.CallSQL for a SQL-body function: substitute each
+    /// "@argname" with the transformed argument SQL, then wrap "( body )".
+    /// Bodyless specs are JS functions (Go inlines a zetasqlite_eval_javascript
+    /// call evaluated by goja, which this port excludes) or templated SQL
+    /// functions (Go's analyzeTemplatedFunctionWithRuntimeArgument); both
+    /// report Unimplemented rather than emitting an undefined call.
+    pub fn callSQL(
+        self: *const FunctionSpec,
+        alloc: std.mem.Allocator,
+        arg_sql: []const []const u8,
+    ) Error![]const u8 {
+        const body = self.body orelse return error.Unimplemented;
+        var cur: []const u8 = body;
+        for (self.args, 0..) |arg, i| {
+            if (i >= arg_sql.len) break;
+            const ref = try std.fmt.allocPrint(alloc, "@{s}", .{arg.name});
+            cur = try std.mem.replaceOwned(u8, alloc, cur, ref, arg_sql[i]);
+        }
+        return std.fmt.allocPrint(alloc, "( {s} )", .{cur});
+    }
+
+    /// json.Marshal(*FunctionSpec): Go field order/tags for the portable
+    /// fields; body is a plain string (see the deviation note above).
+    pub fn toJson(self: *const FunctionSpec, alloc: std.mem.Allocator) Error![]u8 {
+        var out: std.ArrayList(u8) = .empty;
+        try out.appendSlice(alloc, "{\"isTemp\":");
+        try out.appendSlice(alloc, if (self.is_temp) "true" else "false");
+        try out.appendSlice(alloc, ",\"name\":");
+        try appendJsonStringArray(&out, alloc, self.name_path);
+        try out.appendSlice(alloc, ",\"language\":");
+        try appendJsonString(&out, alloc, self.language);
+        try out.appendSlice(alloc, ",\"args\":");
+        if (self.args.len == 0) {
+            try out.appendSlice(alloc, "null");
+        } else {
+            try out.append(alloc, '[');
+            for (self.args, 0..) |arg, i| {
+                if (i > 0) try out.append(alloc, ',');
+                try out.appendSlice(alloc, "{\"name\":");
+                try appendJsonString(&out, alloc, arg.name);
+                try out.appendSlice(alloc, ",\"type\":");
+                if (arg.type) |t| try appendTypeJson(&out, alloc, t) else try out.appendSlice(alloc, "null");
+                try out.append(alloc, '}');
+            }
+            try out.append(alloc, ']');
+        }
+        try out.appendSlice(alloc, ",\"return\":");
+        if (self.return_type) |t| try appendTypeJson(&out, alloc, t) else try out.appendSlice(alloc, "null");
+        try out.appendSlice(alloc, ",\"body\":");
+        if (self.body) |b| try appendJsonString(&out, alloc, b) else try out.appendSlice(alloc, "null");
+        try out.appendSlice(alloc, ",\"code\":");
+        try appendJsonString(&out, alloc, self.code);
+        try out.appendSlice(alloc, ",\"isAggregate\":");
+        try out.appendSlice(alloc, if (self.is_aggregate) "true" else "false");
+        try out.appendSlice(alloc, ",\"updatedAt\":");
+        try appendJsonString(&out, alloc, self.updated_at);
+        try out.appendSlice(alloc, ",\"createdAt\":");
+        try appendJsonString(&out, alloc, self.created_at);
+        try out.append(alloc, '}');
+        return out.toOwnedSlice(alloc);
+    }
+};
+
+/// json.Unmarshal into FunctionSpec (accepts the shape toJson produces; a
+/// go-zetasqlite object with an object-valued "body" leaves body null).
+pub fn functionSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*FunctionSpec {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, json_text, .{}) catch |err|
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidType,
+        };
+    if (parsed != .object) return error.InvalidType;
+    const obj = parsed.object;
+
+    const fs = try alloc.create(FunctionSpec);
+    fs.* = .{};
+    if (getBool(obj, "isTemp")) |b| fs.is_temp = b;
+    fs.name_path = try stringSliceField(alloc, obj, "name");
+    if (obj.get("language")) |v| {
+        if (v == .string) fs.language = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("code")) |v| {
+        if (v == .string) fs.code = try alloc.dupe(u8, v.string);
+    }
+    if (getBool(obj, "isAggregate")) |b| fs.is_aggregate = b;
+    if (obj.get("body")) |v| {
+        if (v == .string) fs.body = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("return")) |v| {
+        if (v == .object) fs.return_type = try typeFromValue(alloc, v);
+    }
+    if (obj.get("updatedAt")) |v| {
+        if (v == .string) fs.updated_at = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("createdAt")) |v| {
+        if (v == .string) fs.created_at = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("args")) |v| {
+        if (v == .array) {
+            const args = try alloc.alloc(*NameWithType, v.array.items.len);
+            for (v.array.items, 0..) |item, i| {
+                if (item != .object) return error.InvalidType;
+                const nwt = try alloc.create(NameWithType);
+                nwt.* = .{};
+                if (item.object.get("name")) |name| {
+                    if (name == .string) nwt.name = try alloc.dupe(u8, name.string);
+                }
+                if (item.object.get("type")) |tv| {
+                    if (tv == .object) nwt.type = try typeFromValue(alloc, tv);
+                }
+                args[i] = nwt;
+            }
+            fs.args = args;
+        }
+    }
+    return fs;
+}
+
 const testing = std.testing;
 
 test "newTypeFromProto builds scalar, array and struct types" {

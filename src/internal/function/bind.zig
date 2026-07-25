@@ -179,6 +179,7 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "safe_convert_bytes_to_string", .min_args = 1, .handler = str.safeConvertBytesToString },
     .{ .name = "normalize", .min_args = 1, .handler = str.normalize },
     .{ .name = "normalize_and_casefold", .min_args = 1, .handler = str.normalizeAndCasefold },
+    .{ .name = "contains_substr", .min_args = 2, .handler = str.containsSubstr },
     .{ .name = "to_base32", .min_args = 1, .handler = str.toBase32 },
     .{ .name = "from_base32", .min_args = 1, .handler = str.fromBase32 },
     .{ .name = "to_base64", .min_args = 1, .handler = str.toBase64 },

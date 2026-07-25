@@ -102,6 +102,11 @@ pub const Db = struct {
     /// current script so they can be dropped once the query completes (Go's
     /// StmtAction.Cleanup). Arena-backed by runStatements' arena.
     temp_collector: ?*std.ArrayList([]const u8) = null,
+    /// Same for CREATE TEMP FUNCTION names (Go
+    /// CreateFunctionStmtAction.Cleanup deletes the temp spec after the
+    /// query). Dropped when runStatements returns: UDF calls are inlined at
+    /// transform time, so nothing outlives the script.
+    temp_func_collector: ?*std.ArrayList([]const u8) = null,
     /// Parameter occurrences of the most recently transformed statement
     /// (identifier + resolved type). Arena-backed; used by bindParams to
     /// cast values (Go EncodeNamedValues with getParamsFromNode results).
@@ -154,6 +159,17 @@ pub const Db = struct {
         db.last_error = null;
     }
 
+    /// Records the current SQLite error in modernc's errstrForDB shape, which
+    /// is what Go's driver hands back (e.g. "SQL logic error: <msg> (1)").
+    fn setLastSqliteError(db: *Db) void {
+        const text = db.sqlite_db.errorText(db.gpa) catch {
+            db.setLastError(db.sqlite_db.errmsg());
+            return;
+        };
+        defer db.gpa.free(text);
+        db.setLastError(text);
+    }
+
     /// Mirrors Go QueryContext: run the statement pipeline, returning Rows
     /// over the last statement.
     pub fn query(db: *Db, sql: []const u8, args: []const Param, opts: QueryOptions) Error!Rows {
@@ -167,7 +183,7 @@ pub const Db = struct {
         const names = try arena.alloc([]const u8, prepared.columns.len);
         for (prepared.columns, 0..) |col, i| names[i] = col.name;
 
-        return .{
+        var rows: Rows = .{
             .arena = arena_state,
             .db = db,
             .stmt = prepared.stmt,
@@ -175,6 +191,25 @@ pub const Db = struct {
             .names = names,
             .temp_tables = prepared.temp_tables,
         };
+
+        // modernc.org/sqlite's (*stmt).Query steps once before handing back
+        // rows, so a failure on the FIRST row surfaces from Query rather than
+        // from iteration (go-zetasqlite then wraps it "failed to query %s").
+        // Later rows fail during iteration instead. Reproduce that timing by
+        // taking the first step here and letting next() consume its result.
+        if (rows.stmt) |*stmt| {
+            rows.first_has_row = stmt.step() catch {
+                db.setLastSqliteError();
+                stmt.finalize();
+                rows.stmt = null;
+                // Go's action Cleanup still runs for a failed query; the
+                // arena backing these names is released by the errdefer.
+                if (rows.temp_tables.len > 0) db.dropTempTables(arena, rows.temp_tables);
+                return error.ExecFailed;
+            };
+            rows.first_step_done = true;
+        }
+        return rows;
     }
 
     /// Mirrors Go ExecContext: run every statement to completion.
@@ -241,6 +276,17 @@ pub const Db = struct {
         var temp_tables: std.ArrayList([]const u8) = .empty;
         db.temp_collector = &temp_tables;
         defer db.temp_collector = null;
+
+        // Temp functions live only until the script finishes (their calls
+        // are inlined into the generated SQL at transform time), so they
+        // are removed on every exit path, unlike temp tables which must
+        // survive while Rows is iterated.
+        var temp_functions: std.ArrayList([]const u8) = .empty;
+        db.temp_func_collector = &temp_functions;
+        defer db.temp_func_collector = null;
+        defer for (temp_functions.items) |name| {
+            db.catalog.deleteFunctionSpec(&db.sqlite_db, name) catch {};
+        };
 
         // Go Analyzer.Analyze: catalog sync before analysis.
         db.catalog.sync(&db.sqlite_db) catch |err| switch (err) {
@@ -329,6 +375,19 @@ pub const Db = struct {
                 .resolved_drop_stmt_node => |drop_stmt| {
                     consumed = try db.execDropStatement(arena, analyzed.node, drop_stmt, cur_args, opts);
                 },
+                // Go newDropFunctionStmtAction -> DropStmtAction with
+                // objectType "FUNCTION": delete the catalog spec only (no
+                // SQLite object exists for a UDF).
+                .resolved_drop_function_stmt_node => |drop_fn| {
+                    const name = try formatNamePath(arena, drop_fn.name_path);
+                    db.catalog.deleteFunctionSpec(&db.sqlite_db, name) catch |err| {
+                        // DROP FUNCTION IF EXISTS on a missing function is
+                        // a no-op; otherwise Go errors out.
+                        if (err == error.TableNotFound and (drop_fn.is_if_exists orelse false)) {
+                            // no-op
+                        } else return db.failCatalog(err);
+                    };
+                },
                 // Go MergeStmtAction: the transformer lowers MERGE to a list
                 // of plain statements (create merged temp table, one
                 // INSERT/UPDATE/DELETE per WHEN clause, drop temp table)
@@ -413,8 +472,8 @@ pub const Db = struct {
         return error.ExecFailed;
     }
 
-    /// Go newStmtAction's CREATE dispatch: table / table-as-select / view;
-    /// CREATE FUNCTION belongs to the UDF milestone.
+    /// Go newStmtAction's CREATE dispatch: table / table-as-select / view /
+    /// function.
     fn execCreateStatement(
         db: *Db,
         arena: std.mem.Allocator,
@@ -447,9 +506,136 @@ pub const Db = struct {
                     else => return error.Unimplemented,
                 }
             },
-            // CREATE FUNCTION: JS/SQL UDF milestone.
+            .resolved_create_function_stmt_node => |cf| {
+                try db.execCreateFunction(arena, cf, opts);
+                return 0;
+            },
             else => return error.Unimplemented,
         }
+    }
+
+    /// Go CreateFunctionStmtAction: build the FunctionSpec (spec.go
+    /// newFunctionSpec) and register it with the catalog (persisted unless
+    /// TEMP). No SQLite DDL is emitted — calls are inlined at transform
+    /// time via FunctionSpec.CallSQL.
+    fn execCreateFunction(
+        db: *Db,
+        arena: std.mem.Allocator,
+        cf: *const pb.ResolvedCreateFunctionStmtProto,
+        opts: QueryOptions,
+    ) Error!void {
+        const fn_spec = try db.newFunctionSpec(arena, cf, opts);
+        db.catalog.addNewFunctionSpec(&db.sqlite_db, fn_spec) catch |err|
+            return db.failCatalog(err);
+        if (fn_spec.is_temp) {
+            if (db.temp_func_collector) |collector| {
+                collector.append(arena, try fn_spec.funcName(arena)) catch {};
+            }
+        }
+    }
+
+    /// Go spec.go newFunctionSpec: signature arguments (name + type or
+    /// templated kind), language/code, return type, and — for SQL bodies —
+    /// the function expression transformed to SQLite text with the
+    /// arguments left as "@name" parameter references (extractArgumentRefData
+    /// renders a ResolvedArgumentRef as "@name", which CallSQL substitutes).
+    fn newFunctionSpec(
+        db: *Db,
+        arena: std.mem.Allocator,
+        cf: *const pb.ResolvedCreateFunctionStmtProto,
+        opts: QueryOptions,
+    ) Error!*spec.FunctionSpec {
+        const create = cf.parent orelse return error.TransformFailed;
+
+        // Arguments: prefer the signature's per-argument names/types; the
+        // resolved AST also carries argument_name_list in declaration order.
+        const sig = cf.signature orelse return error.TransformFailed;
+        const args = try arena.alloc(*spec.NameWithType, sig.argument.len);
+        for (sig.argument, 0..) |arg, i| {
+            const nwt = try arena.create(spec.NameWithType);
+            nwt.* = .{};
+            if (arg.options) |o| {
+                if (o.argument_name) |n| nwt.name = n;
+            }
+            if (nwt.name.len == 0 and i < cf.argument_name_list.len) {
+                nwt.name = cf.argument_name_list[i];
+            }
+            nwt.type = try functionArgumentSpecType(arena, arg);
+            args[i] = nwt;
+        }
+
+        const language = cf.language orelse "";
+        const code = cf.code orelse "";
+
+        // The SQL body: transform the resolved function expression on its
+        // own (Go newFunctionSpec: ExtractExpressionData + TransformExpression
+        // against a fresh transform context).
+        var body: ?[]const u8 = null;
+        if (cf.function_expression) |expr| {
+            // JS functions carry no resolved expression; a SQL function
+            // always does. Templated SQL functions (untyped arguments) also
+            // resolve to null here and stay unimplemented, like Go's
+            // analyzeTemplatedFunctionWithRuntimeArgument path (excluded).
+            body = try transformFunctionBody(db, arena, expr, opts);
+        }
+
+        const return_type: ?*spec.Type = if (cf.return_type) |rt|
+            spec.newTypeFromProto(arena, rt) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.TransformFailed,
+            }
+        else
+            null;
+
+        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        const fn_spec = try arena.create(spec.FunctionSpec);
+        fn_spec.* = .{
+            .is_temp = (create.create_scope orelse .CREATE_DEFAULT_SCOPE) == .CREATE_TEMP,
+            .name_path = try normalizePath(arena, create.name_path),
+            .language = language,
+            .args = args,
+            .return_type = return_type,
+            .body = body,
+            .code = code,
+            .is_aggregate = cf.is_aggregate orelse false,
+            .updated_at = now.rfc3339,
+            .created_at = now.rfc3339,
+        };
+        return fn_spec;
+    }
+
+    /// Transforms a CREATE FUNCTION body expression into SQLite SQL text.
+    fn transformFunctionBody(
+        db: *Db,
+        arena: std.mem.Allocator,
+        expr: *pb.AnyResolvedExprProto,
+        opts: QueryOptions,
+    ) Error![]const u8 {
+        const config = try arena.create(context_mod.TransformConfig);
+        config.* = context_mod.defaultTransformConfig();
+        const ctx = try context_mod.TransformContext.init(arena, config);
+        ctx.query_ctx.current_time_unix_micros = opts.current_time_unix_micros;
+        ctx.func_map = try db.catalog.funcMap(arena);
+
+        var coordinator = coordinator_mod.QueryCoordinator.init(arena);
+        var extractor = coordinator_mod.NodeExtractor{};
+        const data = extractor.ExtractExpressionData(arena, expr, ctx) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Unimplemented => return error.Unimplemented,
+            else => {
+                db.setLastError(@errorName(err));
+                return error.TransformFailed;
+            },
+        };
+        const sql_expr = coordinator.transformExpression(data, ctx) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Unimplemented => return error.Unimplemented,
+            else => {
+                db.setLastError(@errorName(err));
+                return error.TransformFailed;
+            },
+        };
+        return sql_expr.toString(arena) catch return error.OutOfMemory;
     }
 
     /// Go CreateTableStmtAction for a plain CREATE TABLE (spec built by
@@ -882,6 +1068,10 @@ fn transformStatementFragment(
     config.* = context_mod.defaultTransformConfig();
     const ctx = try context_mod.TransformContext.init(arena, config);
     ctx.query_ctx.current_time_unix_micros = opts.current_time_unix_micros;
+    // Go analyzer.go: withFuncMap(ctx, catalog.getFunctions(namePath)) before
+    // transforming, so the function transformer can inline UDF bodies
+    // (transformer_function.go funcMapFromContext -> spec.CallSQL).
+    if (db) |d| ctx.func_map = try d.catalog.funcMap(arena);
 
     var coordinator = coordinator_mod.QueryCoordinator.init(arena);
     const fragment = coordinator.transformStatementNode(node, ctx) catch |err| switch (err) {
@@ -907,7 +1097,9 @@ fn transformStatement(
     opts: QueryOptions,
 ) Error![]const u8 {
     const fragment = try transformStatementFragment(db, arena, node, opts);
-    return fragment.toString(arena);
+    const s = try fragment.toString(arena);
+    if (std.c.getenv("DUMP_SQL") != null) std.debug.print("SQL>>> {s}\n", .{s});
+    return s;
 }
 
 /// Unwraps an analyzed node down to its statement-kind union.
@@ -952,6 +1144,23 @@ fn goCreateMode(mode: ?pb.ResolvedCreateStatementEnums_CreateMode) i64 {
         .CREATE_IF_NOT_EXISTS => spec.create_mode_create_if_not_exists,
         else => spec.create_mode_unspecified,
     };
+}
+
+/// Go spec.go newTypeFromFunctionArgumentType: a templated argument keeps
+/// only its SignatureArgumentKind; a fixed one carries the concrete type.
+fn functionArgumentSpecType(
+    arena: std.mem.Allocator,
+    arg: *const pb.FunctionArgumentTypeProto,
+) Error!*spec.Type {
+    if (arg.type) |tp| {
+        return spec.newTypeFromProto(arena, tp) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.TransformFailed,
+        };
+    }
+    const t = try arena.create(spec.Type);
+    t.* = .{ .signature_kind = @intFromEnum(arg.kind orelse .ARG_KIND_EXPR_FIXED) };
+    return t;
 }
 
 /// Go spec.go newColumnsFromDef: ColumnSpecs from the resolved column
@@ -1254,6 +1463,10 @@ pub const Rows = struct {
     names: []const []const u8 = &.{},
     /// Temp tables to drop on deinit (Go StmtAction.Cleanup).
     temp_tables: []const []const u8 = &.{},
+    /// query() already took the first step (modernc steps eagerly); the next
+    /// next() call consumes its outcome instead of stepping again.
+    first_step_done: bool = false,
+    first_has_row: bool = false,
 
     pub fn columns(r: *Rows) []const []const u8 {
         return r.names;
@@ -1263,8 +1476,13 @@ pub const Rows = struct {
     /// until deinit() (per-query arena).
     pub fn next(r: *Rows) Error!?[]const Cell {
         var stmt = r.stmt orelse return null;
-        const has_row = stmt.step() catch {
-            r.db.setLastError(r.db.sqlite_db.errmsg());
+        const has_row = if (r.first_step_done) blk: {
+            r.first_step_done = false;
+            break :blk r.first_has_row;
+        } else stmt.step() catch {
+            // Mid-iteration failures carry modernc's wrapped text verbatim
+            // (go-zetasqlite does not re-wrap the iteration path).
+            r.db.setLastSqliteError();
             return error.ExecFailed;
         };
         if (!has_row) return null;
@@ -2045,4 +2263,276 @@ test "BEGIN..END block is flattened before analysis" {
     defer rows.deinit();
     try testing.expectEqual(Cell{ .int = 1 }, (try rows.next()).?[0]);
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+// ----------------------------------------------------------------------
+// CREATE / DROP FUNCTION (Go CreateFunctionStmtAction / DropStmtAction)
+// ----------------------------------------------------------------------
+
+test "CREATE FUNCTION then use it in a SELECT" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE FUNCTION myadd(x INT64, y INT64) AS (x + y)", &.{}, .{});
+
+    var rows = try db.query("SELECT myadd(3, 4)", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 7 }, (try rows.next()).?[0]);
+}
+
+test "CREATE FUNCTION persists across connections to the same file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena,
+        ".zig-cache/tmp/{s}/udf_e2e.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try db.exec("CREATE FUNCTION triple(x INT64) AS (x * 3)", &.{}, .{});
+    }
+    // A fresh connection loads the function spec via Catalog.sync.
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        var rows = try db.query("SELECT triple(5)", &.{}, .{});
+        defer rows.deinit();
+        try testing.expectEqual(Cell{ .int = 15 }, (try rows.next()).?[0]);
+    }
+}
+
+test "CREATE TEMP FUNCTION is connection-local and script-scoped" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena,
+        ".zig-cache/tmp/{s}/udf_temp.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        // Usable within the same script (corpus case 626).
+        var rows = try db.query(
+            "CREATE TEMP FUNCTION Add(x INT64, y INT64) AS (x + y);\nSELECT Add(3, 4);\n",
+            &.{},
+            .{},
+        );
+        defer rows.deinit();
+        try testing.expectEqual(Cell{ .int = 7 }, (try rows.next()).?[0]);
+    }
+    // Never persisted: a fresh connection cannot resolve it.
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try testing.expectError(
+            error.AnalyzeFailed,
+            db.query("SELECT Add(1, 2)", &.{}, .{}),
+        );
+        var stmt = try db.sqlite_db.prepare(
+            "SELECT COUNT(*) FROM zetasqlite_catalog WHERE kind = 'function'",
+        );
+        defer stmt.finalize();
+        try testing.expect(try stmt.step());
+        try testing.expectEqual(@as(i64, 0), stmt.columnInt64(0));
+    }
+}
+
+test "DROP FUNCTION removes the spec so later analysis fails" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE FUNCTION dbl(x INT64) AS (x * 2)", &.{}, .{});
+    {
+        var rows = try db.query("SELECT dbl(21)", &.{}, .{});
+        defer rows.deinit();
+        try testing.expectEqual(Cell{ .int = 42 }, (try rows.next()).?[0]);
+    }
+
+    try db.exec("DROP FUNCTION dbl", &.{}, .{});
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT dbl(21)", &.{}, .{}));
+
+    // The persisted catalog row is gone too.
+    var stmt = try db.sqlite_db.prepare(
+        "SELECT COUNT(*) FROM zetasqlite_catalog WHERE kind = 'function'",
+    );
+    defer stmt.finalize();
+    try testing.expect(try stmt.step());
+    try testing.expectEqual(@as(i64, 0), stmt.columnInt64(0));
+}
+
+test "corpus 105/106: CREATE FUNCTION over ARRAY<STRUCT<..>> then call it" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        \\CREATE FUNCTION customfunc(
+        \\  arr ARRAY<STRUCT<name STRING, val INT64>>
+        \\) AS (
+        \\  (SELECT SUM(IF(elem.name = "foo",elem.val,null)) FROM UNNEST(arr) AS elem)
+        \\)
+    , &.{}, .{});
+
+    var rows = try db.query(
+        \\SELECT customfunc([
+        \\  STRUCT<name STRING, val INT64>("foo", 10),
+        \\  STRUCT<name STRING, val INT64>("bar", 40),
+        \\  STRUCT<name STRING, val INT64>("foo", 20)
+        \\])
+    , &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 30 }, (try rows.next()).?[0]);
+}
+
+test "CONTAINS_SUBSTR truth table including tri-state NULL semantics" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const Case = struct { sql: []const u8, want: Cell };
+    for ([_]Case{
+        // Case-insensitive containment.
+        .{ .sql = "SELECT CONTAINS_SUBSTR('the blue house', 'Blue house')", .want = .{ .bool = true } },
+        .{ .sql = "SELECT CONTAINS_SUBSTR('the red house', 'blue')", .want = .{ .bool = false } },
+        // NFKC normalization: U+2168 (ROMAN NUMERAL NINE) folds to "ix".
+        .{ .sql = "SELECT CONTAINS_SUBSTR('\u{2168}', 'IX')", .want = .{ .bool = true } },
+        // Struct: true when ANY field contains the substring.
+        .{ .sql = "SELECT CONTAINS_SUBSTR((23, 35, 41), '35')", .want = .{ .bool = true } },
+        // Recursion through a nested array field.
+        .{ .sql = "SELECT CONTAINS_SUBSTR(('abc', ['def', 'ghi', 'jkl'], 'mno'), 'jk')", .want = .{ .bool = true } },
+        // Tri-state: a match wins over a NULL field...
+        .{ .sql = "SELECT CONTAINS_SUBSTR((23, NULL, 41), '41')", .want = .{ .bool = true } },
+        // ...but with no match a NULL field makes the result NULL.
+        .{ .sql = "SELECT CONTAINS_SUBSTR((23, NULL, 41), '35')", .want = .null },
+        // A NULL expression (not a struct) is NULL.
+        .{ .sql = "SELECT CONTAINS_SUBSTR(CAST(NULL AS STRING), 'x')", .want = .null },
+    }) |case| {
+        var rows = try db.query(case.sql, &.{}, .{});
+        defer rows.deinit();
+        const got = (try rows.next()).?[0];
+        switch (case.want) {
+            .bool => |b| try testing.expectEqual(b, got.bool),
+            .null => try testing.expectEqual(Cell.null, got),
+            else => unreachable,
+        }
+    }
+
+    // A NULL search literal is an error, not NULL (Go bindContainsSubstr).
+    {
+        var rows = db.query("SELECT CONTAINS_SUBSTR('hello', NULL)", &.{}, .{}) catch {
+            return; // analyze/prepare-time failure is also acceptable
+        };
+        defer rows.deinit();
+        try testing.expectError(error.ExecFailed, rows.next());
+        try testing.expect(std.mem.indexOf(
+            u8,
+            db.lastError(),
+            "search literal must be not null",
+        ) != null);
+    }
+}
+
+test "MIN_BY / MAX_BY aggregate over groups with ties" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // MIN_BY(x, y) returns the x of the row with the smallest y.
+    {
+        var rows = try db.query(
+            \\WITH t AS (
+            \\  SELECT 'a' AS name, 1 AS score
+            \\  UNION ALL SELECT 'b', 3
+            \\  UNION ALL SELECT 'c', 2
+            \\)
+            \\SELECT MIN_BY(name, score), MAX_BY(name, score) FROM t
+        , &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqualStrings("a", row[0].string);
+        try testing.expectEqualStrings("b", row[1].string);
+    }
+
+    // Ties on the ordering key: one of the tied rows is returned (the
+    // first seen, matching ANY_VALUE ... HAVING MIN/MAX semantics).
+    {
+        var rows = try db.query(
+            \\WITH t AS (
+            \\  SELECT 'x' AS name, 5 AS score
+            \\  UNION ALL SELECT 'y', 5
+            \\)
+            \\SELECT MIN_BY(name, score) FROM t
+        , &.{}, .{});
+        defer rows.deinit();
+        const got = (try rows.next()).?[0].string;
+        try testing.expect(std.mem.eql(u8, got, "x") or std.mem.eql(u8, got, "y"));
+    }
+}
+
+test "JS-language function is persisted and analyzable but not executable" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        \\CREATE FUNCTION jsf(x INT64) RETURNS INT64 LANGUAGE js AS """return x+1;"""
+    , &.{}, .{});
+
+    // Persisted with its language and code (Go newFunctionSpec).
+    const fs = db.catalog.findFunctionSpec("jsf") orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("js", fs.language);
+    try testing.expect(std.mem.indexOf(u8, fs.code, "return x+1;") != null);
+    try testing.expectEqual(@as(?[]const u8, null), fs.body);
+
+    // Analysis resolves the call (the catalog seeds it), but there is no
+    // inlinable body, so execution reports Unimplemented rather than
+    // emitting a call to a function SQLite never defined (goja excluded).
+    try testing.expectError(error.Unimplemented, db.query("SELECT jsf(1)", &.{}, .{}));
+}
+
+test "Go error-message shapes: modernc wrapper + StringValue.ToTime text" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // First-row failure surfaces from query() (modernc steps eagerly), and
+    // carries Go's StringValue.ToTime message.
+    {
+        const err = db.query(
+            \\WITH toks AS (SELECT "20100317" AS dt) SELECT CAST(dt AS DATETIME) FROM toks
+        , &.{}, .{});
+        try testing.expectError(error.ExecFailed, err);
+        try testing.expectEqualStrings(
+            "SQL logic error: failed to convert 20100317 to time.Time type (1)",
+            db.lastError(),
+        );
+    }
+
+    // Later-row failure surfaces from iteration in modernc's errstrForDB
+    // shape: "SQL logic error: <msg> (1)".
+    {
+        var rows = try db.query(
+            \\SELECT CASE WHEN value = 'baz' THEN ERROR('Found unexpected value: baz')
+            \\ ELSE 'ok' END AS v
+            \\FROM (SELECT 'foo' AS value UNION ALL SELECT 'bar' UNION ALL SELECT 'baz')
+        , &.{}, .{});
+        defer rows.deinit();
+        _ = try rows.next();
+        _ = try rows.next();
+        try testing.expectError(error.ExecFailed, rows.next());
+        try testing.expectEqualStrings(
+            "SQL logic error: Found unexpected value: baz (1)",
+            db.lastError(),
+        );
+    }
 }

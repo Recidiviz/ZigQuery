@@ -189,9 +189,18 @@ pub fn transform(
         return optimizeFunctionToSQL(alloc, function.name, args.items);
     }
 
-    // Go consults funcMapFromContext here for user-defined FunctionSpec
-    // CallSQL rewriting; no UDFs exist yet in this port, so the map is
-    // always empty and the default path below applies.
+    // Go funcMapFromContext: user-defined FunctionSpec -> CallSQL inlining
+    // (the stored SQL body with each @argname replaced by the rendered
+    // argument SQL, wrapped in parens). JS-language / templated functions
+    // have no stored body and surface error.Unimplemented (goja excluded).
+    if (ctx.findFunctionSpec(function.name)) |fn_spec| {
+        const arg_sql = try alloc.alloc([]const u8, args.items.len);
+        for (args.items, 0..) |arg_expr, i| {
+            arg_sql[i] = try arg_expr.toString(alloc);
+        }
+        const call_sql = try fn_spec.callSQL(alloc, arg_sql);
+        return sqlbuilder.newLiteralExpression(alloc, call_sql);
+    }
 
     // Default function call transformation.
     const call = try alloc.create(sqlbuilder.FunctionCall);

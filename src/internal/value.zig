@@ -24,12 +24,25 @@ pub const ValueError = error{
     OutOfMemory,
 };
 
-/// Optional diagnostic for the most recent error on this thread. Always a
-/// static string (never allocated). Mirrors the Go error messages loosely.
+/// Optional diagnostic for the most recent error on this thread. Either a
+/// static string or a slice of `diag_buf` below. Mirrors the Go messages.
 pub threadlocal var diagnostic: ?[]const u8 = null;
+
+/// Backing store for diagnostics that interpolate runtime values (Go's
+/// fmt.Errorf with a %v/%s verb), e.g. StringValue.ToTime's
+/// "failed to convert %s to time.Time type". Same approach as bind.zig's
+/// message buffer: threadlocal and overwritten by each failure.
+threadlocal var diag_buf: [256]u8 = undefined;
 
 fn fail(comptime msg: []const u8, err: ValueError) ValueError {
     diagnostic = msg;
+    return err;
+}
+
+/// fail() for messages carrying runtime values; falls back to the format
+/// string itself if the rendering would overflow the buffer.
+fn failFmt(comptime fmt: []const u8, args: anytype, err: ValueError) ValueError {
+    diagnostic = std.fmt.bufPrint(&diag_buf, fmt, args) catch fmt;
     return err;
 }
 
@@ -897,9 +910,11 @@ pub const Value = union(enum) {
             },
             // Go NumericValue.ToString: trimmed FloatString(9|38).
             .numeric => |n| return n.toText(alloc),
-            // Array/Struct ToString renders elements via ToJSON (deferred).
-            .array => return fail("array ToString requires ToJSON (deferred)", error.Unimplemented),
-            .struct_ => return fail("struct ToString requires ToJSON (deferred)", error.Unimplemented),
+            // Go ArrayValue.ToString / StructValue.ToString render each
+            // element via ToJSON and are byte-identical to ToJSON itself
+            // (ArrayValue.ToJSON/StructValue.ToJSON just call ToString), so
+            // delegate to toJson to get the same "[..]" / "{..}" rendering.
+            .array, .struct_ => return self.toJson(alloc),
             .safe => |p| return p.toString(alloc) catch alloc.dupe(u8, ""),
         }
     }
@@ -1717,7 +1732,12 @@ fn parseAnyTimeMicros(s: []const u8) ValueError!i64 {
     if (isDateString(s)) return (try parseDateDays(s)) *% 86400 *% second_micros;
     if (isDatetimeString(s)) return parseDatetimeMicros(s);
     if (isTimePrefixString(s)) return time_base_micros +% (try parseTimeMicros(s));
-    return parseTimestampMicros(s) catch error.FailedConversion;
+    // Go's isTimestamp() is "parseTimestamp succeeds"; when every shape test
+    // fails StringValue.ToTime reports the string itself rather than letting
+    // the inner parser's message escape:
+    //   fmt.Errorf("failed to convert %s to time.Time type", sv)
+    return parseTimestampMicros(s) catch
+        failFmt("failed to convert {s} to time.Time type", .{s}, error.FailedConversion);
 }
 
 // -- Parsers (Go value.go parse* functions) ---------------------------------

@@ -13,6 +13,7 @@
 //! Exit status: nonzero when any baseline case regressed.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
 
@@ -26,12 +27,17 @@ const CaseResult = struct {
     idx: usize,
     outcome: Outcome,
     detail: []const u8 = "",
+    ms: f64 = 0,
 };
 
 pub fn main(init: std.process.Init) !void {
+    // Leak checking in Debug; allocation speed in release (per-case timings
+    // would otherwise be dominated by DebugAllocator bookkeeping).
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
+    defer if (builtin.mode == .Debug) {
+        _ = gpa_state.deinit();
+    };
+    const gpa = if (builtin.mode == .Debug) gpa_state.allocator() else std.heap.smp_allocator;
 
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -59,13 +65,16 @@ pub fn main(init: std.process.Init) !void {
         const case = case_val.object;
         const name = case.get("name").?.string;
         const idx: usize = @intCast(case.get("idx").?.integer);
+        const t0 = std.Io.Clock.awake.now(init.io);
         const result = runCase(arena, db, case, fixed_now_micros);
+        const elapsed_ns = t0.durationTo(std.Io.Clock.awake.now(init.io)).nanoseconds;
         counts.set(result.outcome, counts.get(result.outcome) + 1);
         try results.append(arena, .{
             .name = name,
             .idx = idx,
             .outcome = result.outcome,
             .detail = result.detail,
+            .ms = @as(f64, @floatFromInt(@as(i64, @intCast(elapsed_ns)))) / 1_000_000.0,
         });
     }
 
@@ -133,6 +142,32 @@ pub fn main(init: std.process.Init) !void {
             }
         }
     }
+    // Timing report: aggregates plus the slowest 20 cases (or all, if
+    // ZETASQLITE_TIMING_ALL is set), sorted slowest-first. Skips are
+    // excluded, matching query_test.go (t.Skip fires before its timer).
+    var timings: std.ArrayList(CaseResult) = .empty;
+    var total_ms: f64 = 0;
+    for (results.items) |r| {
+        if (r.outcome == .skip) continue;
+        total_ms += r.ms;
+        try timings.append(arena, r);
+    }
+    std.mem.sort(CaseResult, timings.items, {}, struct {
+        fn slower(_: void, a: CaseResult, b: CaseResult) bool {
+            return a.ms > b.ms;
+        }
+    }.slower);
+    const show_all = init.environ_map.get("ZETASQLITE_TIMING_ALL") != null;
+    const shown = if (show_all) timings.items.len else @min(timings.items.len, 20);
+    const label: []const u8 = if (show_all) "all" else "slowest";
+    try out.print("\n--- per-case timing: zetasqlite-zig (shared db) ---\n", .{});
+    try out.print("total: {d:.1} ms over {d} cases\n", .{ total_ms, timings.items.len });
+    try out.print("{s} {d} cases (set ZETASQLITE_TIMING_ALL=1 for all):\n", .{ label, shown });
+    try out.print("  {s:>9}  {s}\n", .{ "query_ms", "case" });
+    for (timings.items[0..shown]) |r| {
+        try out.print("  {d:>9.3}  {s}\n", .{ r.ms, r.name });
+    }
+
     try out.flush();
     if (regressions > 0) std.process.exit(1);
 }

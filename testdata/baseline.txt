@@ -35,6 +35,15 @@
 33	not between operator
 34	in operator
 35	in operator with function
+36	recursive cte
+37	recursive cte 2
+38	recursive cte 3
+39	recursive cte 4
+40	recursive cte 5
+41	recursive cte 6
+42	recursive cte 7
+43	recursive cte integration
+44	recursive cte integration 2
 45	not in operator
 46	is null operator
 47	is not null operator
@@ -95,6 +104,8 @@
 102	struct with bool
 103	array index access operator
 104	array boundary indexing test
+105	create function
+106	use function
 107	out of range error
 108	date operator
 109	any_value
@@ -105,6 +116,8 @@
 114	any_value having min with struct
 115	any_value having max and min together
 116	any_value having max with different expression
+117	min_by basic
+118	max_by basic
 119	array_agg
 120	array_agg with distinct
 121	array_agg with limit
@@ -116,6 +129,7 @@
 127	array_agg with abs
 128	array_agg with window
 129	array_concat_agg
+130	array_concat_agg with null in order by
 131	array_concat_agg with format
 132	avg
 133	avg with distinct
@@ -163,6 +177,18 @@
 175	sum with window and distinct
 176	sum null
 177	safe sum
+178	approx_count_distinct
+179	approx_quantiles
+180	approx_quantiles 2
+181	approx_quantiles with distinct
+182	approx_quantiles with null
+183	approx_quantiles with respect nulls
+184	approx_top_count
+185	approx_top_count with null
+186	approx_top_sum
+187	approx_top_sum with null
+188	approx_top_sum with null 2
+189	approx_top_sum with null 3
 194	null
 195	window total
 196	window subtotal
@@ -180,6 +206,12 @@
 208	lead with default
 209	window order by
 210	window order by handles nil
+211	percentile_cont
+212	percentile_cont_non_zero_min_sorted
+213	percentile_cont_non_zero_min_unsorted
+214	percentile_disc single
+215	percentile_disc
+216	percentile_disc with respect nulls
 217	window range
 218	date type
 219	date to json
@@ -193,6 +225,15 @@
 228	ntile
 229	window row_number
 230	row_number nest
+231	corr window
+232	covar_pop window
+233	covar_samp window
+234	stddev_pop window
+235	stddev window
+236	stddev_samp window
+237	var_pop window
+238	variance window
+239	var_samp window
 240	window lag
 241	window partitions are distinct from each other
 242	lag with option
@@ -218,7 +259,9 @@
 262	array function with other column
 263	array_concat function
 264	array_first function
+265	array_first function empty
 266	array_last function
+267	array_last function empty
 268	array_slice basic
 269	array_slice negative indices
 270	array_slice start from beginning
@@ -266,6 +309,8 @@
 312	array_reverse function
 313	array_reverse null
 314	group by
+315	group by rollup with one column
+316	group by rollup with two columns
 317	group by having
 318	order by
 319	order by with nulls last
@@ -280,10 +325,17 @@
 328	qualify group
 329	subselect qualifier
 330	qualify direct
+331	invalid cast
+332	cast integer to datetime
 333	safe cast
 334	safe cast for invalid cast
 335	cast string to int64
 336	cast string to int64 - leading zeros
+337	farm_fingerprint
+338	md5
+339	sha1
+340	sha256
+341	sha512
 342	ascii
 343	byte_length
 344	byte_length null
@@ -294,7 +346,17 @@
 349	code_points_to_bytes
 350	code_points_to_string
 351	concat
+352	contains_substr true
+353	contains_substr false
+354	contains_substr normalize
+355	contains_substr struct_field
+356	contains_substr recursive
+357	contains_substr struct with null
+358	contains_substr struct with null2
 359	contains_substr nil
+360	contains_substr for table all rows
+361	contains_substr for table specified rows
+362	contains_substr for table except
 363	ends_with
 364	format %d
 365	format |%10d|
@@ -549,8 +611,16 @@
 614	justify_days
 615	justify_hours
 616	justify_interval
+617	cast numeric and bignumeric
+618	parse_numeric
+619	parse_bignumeric
+620	cast numeric and bignumeric to string
 621	bytes_formatting
+622	session_user
 623	generate_uuid
+624	error
+625	begin-end
+626	create temp function
 627	except
 628	except
 629	replace
@@ -640,78 +710,34 @@
 713	net_ipv4_from_int64
 714	net_ipv4_to_int64
 715	net_safe_if_from_string
-720	not enough positional params given
-721	limit offset test
-724	function call with many arguments - under limit
-725	function call with many arguments - above limit
-732	simple truncate
-733	simple drop
-735	with ref scan maps column aliases correctly
-736	ProjectScan with order by column does not output ordered column
-742	group by struct values basic
-743	group by struct values with aggregation
-744	group by array values basic
-745	group by array values with aggregation
-617	cast numeric and bignumeric
-618	parse_numeric
-619	parse_bignumeric
-620	cast numeric and bignumeric to string
-178	approx_count_distinct
-179	approx_quantiles
-180	approx_quantiles 2
-181	approx_quantiles with distinct
-182	approx_quantiles with null
-183	approx_quantiles with respect nulls
-184	approx_top_count
-185	approx_top_count with null
-186	approx_top_sum
-187	approx_top_sum with null
-188	approx_top_sum with null 2
-189	approx_top_sum with null 3
-211	percentile_cont
-212	percentile_cont_non_zero_min_sorted
-213	percentile_cont_non_zero_min_unsorted
-214	percentile_disc single
-215	percentile_disc
-216	percentile_disc with respect nulls
-231	corr window
-232	covar_pop window
-233	covar_samp window
-234	stddev_pop window
-235	stddev window
-236	stddev_samp window
-237	var_pop window
-238	variance window
-239	var_samp window
-337	farm_fingerprint
-338	md5
-339	sha1
-340	sha256
-341	sha512
-622	session_user
-36	recursive cte
-37	recursive cte 2
-38	recursive cte 3
-39	recursive cte 4
-40	recursive cte 5
-41	recursive cte 6
-42	recursive cte 7
-43	recursive cte integration
-44	recursive cte integration 2
-625	begin-end
 716	single statement with named params
 717	not enough named params given
 719	single statement with positional params
+720	not enough positional params given
+721	limit offset test
 722	simple binding
 723	multiple statements with positional params
+724	function call with many arguments - under limit
+725	function call with many arguments - above limit
 726	merge two tables with empty source
 727	merge two tables with non-empty source
 728	merge two tables where target table name is substring of source table name
 729	merge two tables where source table is evaluated using a SELECT expression
 730	merge two tables deleting matched rows
 731	merge two tables omitting INSERT column list and using ROW
+732	simple truncate
+733	simple drop
+734	simple drop function
+735	with ref scan maps column aliases correctly
+736	ProjectScan with order by column does not output ordered column
 737	recursive cte with star expression
 738	recursive cte with list expression in WHERE
 739	recursive cte with unary expression
 740	recursive cte with complex list and star in join
 741	struct field integration
+742	group by struct values basic
+743	group by struct values with aggregation
+744	group by array values basic
+745	group by array values with aggregation
+746	group by nested struct with arrays
+747	group by array of structs

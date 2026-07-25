@@ -182,6 +182,15 @@ fn builtinGroupOf(raw_name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Go fn.FullName(false): strips the "<group>:" prefix regardless of group.
+/// Catalog-registered UDFs carry an empty group, so FunctionRefProto.name is
+/// ":customfunc" — the colon must go or the SQL is unparseable.
+fn stripFunctionGroup(raw_name: []const u8) []const u8 {
+    if (builtinGroupOf(raw_name)) |rest| return rest;
+    if (std.mem.indexOfScalar(u8, raw_name, ':')) |i| return raw_name[i + 1 ..];
+    return raw_name;
+}
+
 /// Go getZetasqliteFuncName. `fcb` carries the FunctionRefProto name
 /// (e.g. "GoogleSQL:$add"); Go's fn.FullName(false) /
 /// fn.IsGoogleSQLBuiltin() map to stripping / detecting the builtin group
@@ -193,9 +202,8 @@ fn getZetasqliteFuncName(
 ) Error![]const u8 {
     const raw_name = (fcb.function orelse return error.InvalidAST).name orelse
         return error.InvalidAST;
-    const stripped = builtinGroupOf(raw_name);
-    const is_builtin = stripped != null;
-    const full_name = stripped orelse raw_name;
+    const is_builtin = builtinGroupOf(raw_name) != null;
+    const full_name = stripFunctionGroup(raw_name);
 
     // funcName := strings.ReplaceAll(fullName, ".", "_")
     const func_name = try replaceDots(alloc, full_name);
@@ -1116,9 +1124,6 @@ pub const NodeExtractor = struct {
         const input_scan = base.input_scan orelse return error.InvalidAST;
         const input_scan_data = try self.ExtractScanData(alloc, input_scan, ctx);
 
-        // Grouping sets (GROUP BY GROUPING SETS/ROLLUP/CUBE): deferred.
-        if (base.grouping_set_list.len > 0) return error.Unimplemented;
-
         var aggregate_list: std.ArrayList(*types_data.ComputedColumnData) = .empty;
         for (base.aggregate_list) |agg_any| {
             const cc = try computedColumnOf(agg_any);
@@ -1130,13 +1135,43 @@ pub const NodeExtractor = struct {
             try group_by_list.append(alloc, try self.extractComputedColumnData(alloc, group_by, ctx));
         }
 
+        // Grouping sets (GROUP BY GROUPING SETS/ROLLUP/CUBE). Go's
+        // extractAggregateScanData iterates GroupingSetList and casts each to
+        // *ResolvedGroupingSet, reading GroupByColumnList (a list of column
+        // refs into the group_by_list columns). Each becomes a GroupingSetData
+        // whose GroupByColumns carry the referenced column (empty for the
+        // grand-total set).
+        var grouping_sets: std.ArrayList(*types_data.GroupingSetData) = .empty;
+        for (base.grouping_set_list) |grouping_set_base| {
+            const gs_node = grouping_set_base.node orelse return error.InvalidAST;
+            const grouping_set = switch (gs_node) {
+                .resolved_grouping_set_node => |gs| gs,
+                // Go: "unsupported grouping set node type: %T" (only the
+                // analyzer-expanded ResolvedGroupingSet form is handled).
+                else => return error.UnsupportedNode,
+            };
+            var grouping_set_items: std.ArrayList(*types_data.ComputedColumnData) = .empty;
+            for (grouping_set.group_by_column_list) |group_by_col| {
+                const column = group_by_col.column orelse return error.InvalidAST;
+                const item = try alloc.create(types_data.ComputedColumnData);
+                item.* = .{
+                    .column = try extractColumnData(alloc, column),
+                    .expression = try newColumnExpressionData(alloc, column),
+                };
+                try grouping_set_items.append(alloc, item);
+            }
+            const gs_data = try alloc.create(types_data.GroupingSetData);
+            gs_data.* = .{ .group_by_columns = try grouping_set_items.toOwnedSlice(alloc) };
+            try grouping_sets.append(alloc, gs_data);
+        }
+
         const parent = base.parent orelse return error.InvalidAST;
         const aggregate = try alloc.create(types_data.AggregateScanData);
         aggregate.* = .{
             .input_scan = input_scan_data,
             .group_by_list = try group_by_list.toOwnedSlice(alloc),
             .aggregate_list = try aggregate_list.toOwnedSlice(alloc),
-            .grouping_sets = &.{},
+            .grouping_sets = try grouping_sets.toOwnedSlice(alloc),
         };
         return .{
             .type = .aggregate,
@@ -1705,10 +1740,10 @@ pub const NodeExtractor = struct {
     ) Error!ExpressionData {
         const raw_name = (node.function orelse return error.InvalidAST).name orelse
             return error.InvalidAST;
-        const stripped = builtinGroupOf(raw_name);
-        const is_builtin = stripped != null;
-        // Go: fn.FullName(false).
-        const original_func_name = stripped orelse raw_name;
+        const is_builtin = builtinGroupOf(raw_name) != null;
+        // Go: fn.FullName(false) — strips any "<group>:" prefix (UDFs carry
+        // an empty group, i.e. ":name").
+        const original_func_name = stripFunctionGroup(raw_name);
 
         const func_name = try getZetasqliteFuncName(alloc, node, is_window_func);
 
