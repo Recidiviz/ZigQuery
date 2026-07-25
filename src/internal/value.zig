@@ -1,9 +1,8 @@
-//! Faithful port of go-zetasqlite internal/value.go (foundation scope).
+//! Faithful port of go-zetasqlite internal/value.go.
 //!
-//! Value kinds ported: Null, Int, Float, Bool, String, Bytes, Date, Array,
-//! Struct, and the SafeValue wrapper. Numeric/BigNumeric, Json, Datetime,
-//! Time, Timestamp and Interval are deferred (error.Unimplemented); their
-//! binary codec tags exist in codec_binary.zig so the format is complete.
+//! All value kinds are ported: Null, Int, Float, Bool, String, Bytes, Json,
+//! Date, Datetime, Time, Timestamp, Interval, Numeric/BigNumeric, Array,
+//! Struct, and the SafeValue wrapper.
 //!
 //! Go represents SQL NULL as a nil Value interface; here it is the `.null`
 //! variant. Where Go would panic on a nil method call, we return
@@ -81,6 +80,372 @@ pub const StructValue = struct {
 var empty_array_storage = ArrayValue{ .values = &[0]Value{} };
 var empty_struct_storage = StructValue{ .keys = &[0][]const u8{}, .values = &[0]Value{} };
 
+// ----------------------------------------------------------------------
+// NUMERIC / BIGNUMERIC (Go NumericValue: {*big.Rat, isBigNumeric}).
+// Zig 0.16 has no std.math.big.Rational, so Rat reimplements the math/big.Rat
+// subset go-zetasqlite exercises on top of std.math.big.int.Managed.
+// ----------------------------------------------------------------------
+
+const big_int = std.math.big.int;
+
+/// Arbitrary-precision rational mirroring Go's big.Rat invariants: the
+/// denominator is always positive and the fraction is kept gcd-reduced
+/// (zero is 0/1). Operations are non-mutating and allocate from `alloc`;
+/// like the rest of the value tree they are arena-friendly (temporary
+/// big-int limbs are not individually freed).
+pub const Rat = struct {
+    num: big_int.Managed,
+    den: big_int.Managed,
+
+    pub fn initInt(alloc: std.mem.Allocator, v: i64) ValueError!Rat {
+        return .{
+            .num = big_int.Managed.initSet(alloc, v) catch return error.OutOfMemory,
+            .den = big_int.Managed.initSet(alloc, 1) catch return error.OutOfMemory,
+        };
+    }
+
+    /// Go big.Rat.SetString subset: "[+-]digits[.digits][eE[+-]digits]" or
+    /// the fraction form "[+-]digits/digits". The whole string must match.
+    pub fn setString(alloc: std.mem.Allocator, s: []const u8) ValueError!Rat {
+        if (s.len == 0) return error.FailedConversion;
+        if (std.mem.indexOfScalar(u8, s, '/')) |slash| {
+            const num_part = s[0..slash];
+            const den_part = s[slash + 1 ..];
+            var r = Rat{
+                .num = try signedIntFromDecimal(alloc, num_part),
+                .den = try unsignedIntFromDecimal(alloc, den_part),
+            };
+            if (r.den.eqlZero()) return error.FailedConversion; // Go: SetString fails on /0
+            try r.normalize(alloc);
+            return r;
+        }
+        var rest = s;
+        var negative = false;
+        if (rest[0] == '+' or rest[0] == '-') {
+            negative = rest[0] == '-';
+            rest = rest[1..];
+        }
+        // Mantissa: digits with at most one '.', at least one digit total.
+        var digits_buf: std.ArrayList(u8) = .empty;
+        defer digits_buf.deinit(alloc);
+        var frac_digits: usize = 0;
+        var seen_dot = false;
+        var seen_digit = false;
+        var i: usize = 0;
+        while (i < rest.len) : (i += 1) {
+            const c = rest[i];
+            if (c == '.') {
+                if (seen_dot) return error.FailedConversion;
+                seen_dot = true;
+            } else if (std.ascii.isDigit(c)) {
+                seen_digit = true;
+                digits_buf.append(alloc, c) catch return error.OutOfMemory;
+                if (seen_dot) frac_digits += 1;
+            } else if (c == 'e' or c == 'E') {
+                break;
+            } else {
+                return error.FailedConversion;
+            }
+        }
+        if (!seen_digit) return error.FailedConversion;
+        var exp10: i64 = 0;
+        if (i < rest.len) {
+            // Exponent part ("e" is at rest[i]).
+            exp10 = std.fmt.parseInt(i64, rest[i + 1 ..], 10) catch
+                return error.FailedConversion;
+            if (exp10 > 1 << 20 or exp10 < -(1 << 20)) return error.FailedConversion;
+        }
+        var num = try mustManaged(alloc);
+        if (digits_buf.items.len > 0) {
+            num.setString(10, digits_buf.items) catch return error.FailedConversion;
+        }
+        if (negative and !num.eqlZero()) num.negate();
+        const scale: i64 = exp10 - @as(i64, @intCast(frac_digits));
+        var r = Rat{ .num = num, .den = try powTen(alloc, 0) };
+        if (scale > 0) {
+            const p = try powTen(alloc, @intCast(scale));
+            var scaled = try mustManaged(alloc);
+            scaled.mul(&r.num, &p) catch return error.OutOfMemory;
+            r.num = scaled;
+        } else if (scale < 0) {
+            r.den = try powTen(alloc, @intCast(-scale));
+        }
+        try r.normalize(alloc);
+        return r;
+    }
+
+    /// Go big.Rat.SetFloat64: the exact binary expansion of a finite f64.
+    pub fn setFloat64(alloc: std.mem.Allocator, f: f64) ValueError!Rat {
+        if (!std.math.isFinite(f)) return error.FailedConversion; // Go returns nil
+        const bits: u64 = @bitCast(f);
+        const negative = (bits >> 63) != 0;
+        const biased: i32 = @intCast((bits >> 52) & 0x7FF);
+        const frac: u64 = bits & ((@as(u64, 1) << 52) - 1);
+        var mant: u64 = undefined;
+        var exp2: i32 = undefined;
+        if (biased == 0) {
+            mant = frac; // subnormal
+            exp2 = -1074;
+        } else {
+            mant = frac | (@as(u64, 1) << 52);
+            exp2 = biased - 1075;
+        }
+        if (mant == 0) return initInt(alloc, 0);
+        var num = big_int.Managed.initSet(alloc, mant) catch return error.OutOfMemory;
+        var den = big_int.Managed.initSet(alloc, 1) catch return error.OutOfMemory;
+        if (exp2 >= 0) {
+            num.shiftLeft(&num, @intCast(exp2)) catch return error.OutOfMemory;
+        } else {
+            den.shiftLeft(&den, @intCast(-exp2)) catch return error.OutOfMemory;
+        }
+        if (negative) num.negate();
+        var r = Rat{ .num = num, .den = den };
+        try r.normalize(alloc);
+        return r;
+    }
+
+    /// Rat from a little-endian two's-complement integer scaled by 10^scale
+    /// (googlesql's NUMERIC/BIGNUMERIC proto serialization).
+    pub fn fromScaledTwosComplement(
+        alloc: std.mem.Allocator,
+        bytes: []const u8,
+        scale: usize,
+    ) ValueError!Rat {
+        var num = try mustManaged(alloc);
+        if (bytes.len > 0) {
+            num.ensureTwosCompCapacity(bytes.len * 8) catch return error.OutOfMemory;
+            var m = num.toMutable();
+            m.readTwosComplement(bytes, bytes.len * 8, .little, .signed);
+            num.setMetadata(m.positive, m.len);
+        }
+        var r = Rat{ .num = num, .den = try powTen(alloc, scale) };
+        try r.normalize(alloc);
+        return r;
+    }
+
+    pub fn isZero(self: Rat) bool {
+        return self.num.eqlZero();
+    }
+
+    fn isNegative(self: Rat) bool {
+        return !self.num.isPositive() and !self.num.eqlZero();
+    }
+
+    /// Reduce to lowest terms with a positive denominator (Go's invariant).
+    fn normalize(self: *Rat, alloc: std.mem.Allocator) ValueError!void {
+        if (self.den.eqlZero()) return fail("division by zero", error.DivideByZero);
+        if (!self.den.isPositive()) {
+            self.den.negate();
+            if (!self.num.eqlZero()) self.num.negate();
+        }
+        if (self.num.eqlZero()) {
+            self.num.set(0) catch return error.OutOfMemory;
+            self.den.set(1) catch return error.OutOfMemory;
+            return;
+        }
+        var g = try mustManaged(alloc);
+        g.gcd(&self.num, &self.den) catch return error.OutOfMemory;
+        if (g.toConst().orderAgainstScalar(1) == .gt) {
+            var q = try mustManaged(alloc);
+            var rem = try mustManaged(alloc);
+            q.divTrunc(&rem, &self.num, &g) catch return error.OutOfMemory;
+            self.num.swap(&q);
+            q.divTrunc(&rem, &self.den, &g) catch return error.OutOfMemory;
+            self.den.swap(&q);
+        }
+    }
+
+    pub fn add(a: Rat, alloc: std.mem.Allocator, b: Rat) ValueError!Rat {
+        return a.addSub(alloc, b, false);
+    }
+
+    pub fn sub(a: Rat, alloc: std.mem.Allocator, b: Rat) ValueError!Rat {
+        return a.addSub(alloc, b, true);
+    }
+
+    fn addSub(a: Rat, alloc: std.mem.Allocator, b: Rat, subtract: bool) ValueError!Rat {
+        var t1 = try mustManaged(alloc);
+        t1.mul(&a.num, &b.den) catch return error.OutOfMemory;
+        var t2 = try mustManaged(alloc);
+        t2.mul(&b.num, &a.den) catch return error.OutOfMemory;
+        var n = try mustManaged(alloc);
+        if (subtract) {
+            n.sub(&t1, &t2) catch return error.OutOfMemory;
+        } else {
+            n.add(&t1, &t2) catch return error.OutOfMemory;
+        }
+        var d = try mustManaged(alloc);
+        d.mul(&a.den, &b.den) catch return error.OutOfMemory;
+        var r = Rat{ .num = n, .den = d };
+        try r.normalize(alloc);
+        return r;
+    }
+
+    pub fn mul(a: Rat, alloc: std.mem.Allocator, b: Rat) ValueError!Rat {
+        var n = try mustManaged(alloc);
+        n.mul(&a.num, &b.num) catch return error.OutOfMemory;
+        var d = try mustManaged(alloc);
+        d.mul(&a.den, &b.den) catch return error.OutOfMemory;
+        var r = Rat{ .num = n, .den = d };
+        try r.normalize(alloc);
+        return r;
+    }
+
+    /// Go NumericValue.Div reaches big.Rat.Inv, which panics on a zero
+    /// divisor with "division by zero"; surface that as DivideByZero.
+    pub fn div(a: Rat, alloc: std.mem.Allocator, b: Rat) ValueError!Rat {
+        if (b.isZero()) return fail("division by zero", error.DivideByZero);
+        var n = try mustManaged(alloc);
+        n.mul(&a.num, &b.den) catch return error.OutOfMemory;
+        var d = try mustManaged(alloc);
+        d.mul(&a.den, &b.num) catch return error.OutOfMemory;
+        var r = Rat{ .num = n, .den = d };
+        try r.normalize(alloc);
+        return r;
+    }
+
+    /// Go big.Rat.Cmp: order of a/b vs c/d via a*d <=> c*b (denominators
+    /// are positive by invariant).
+    pub fn cmp(a: Rat, alloc: std.mem.Allocator, b: Rat) ValueError!std.math.Order {
+        var l = try mustManaged(alloc);
+        l.mul(&a.num, &b.den) catch return error.OutOfMemory;
+        var r = try mustManaged(alloc);
+        r.mul(&b.num, &a.den) catch return error.OutOfMemory;
+        return l.order(r);
+    }
+
+    /// Go big.Rat.Num().Int64(): the *numerator* projected onto int64 (low
+    /// word of the magnitude, sign applied) — a Go quirk kept bug-for-bug.
+    pub fn numLowInt64(self: Rat) i64 {
+        const low: u64 = if (self.num.len() > 0) self.num.limbs[0] else 0;
+        const v: i64 = @bitCast(low);
+        return if (self.num.isPositive()) v else -%v;
+    }
+
+    /// Go big.Rat.Float64 (approximately: correctly-rounded operands, one
+    /// f64 division; at most 1 ulp off Go for extreme magnitudes).
+    pub fn toFloat64(self: Rat) f64 {
+        const n = self.num.toFloat(f64, .nearest_even)[0];
+        const d = self.den.toFloat(f64, .nearest_even)[0];
+        return n / d;
+    }
+
+    /// Go big.Rat.RatString / MarshalText: "n/d" when den != 1, else "n"
+    /// (this is the binary-codec payload, so the format must match exactly).
+    pub fn ratString(self: Rat, alloc: std.mem.Allocator) ValueError![]u8 {
+        const ns = self.num.toString(alloc, 10, .lower) catch return error.OutOfMemory;
+        if (self.den.toConst().orderAgainstScalar(1) == .eq) return ns;
+        defer alloc.free(ns);
+        const ds = self.den.toString(alloc, 10, .lower) catch return error.OutOfMemory;
+        defer alloc.free(ds);
+        return std.fmt.allocPrint(alloc, "{s}/{s}", .{ ns, ds }) catch return error.OutOfMemory;
+    }
+
+    /// Go big.Rat.FloatString(prec): decimal form with exactly `prec` digits
+    /// after the point; the last digit is rounded to nearest, halves away
+    /// from zero. A negative value always renders its '-' (even "-0.000...").
+    pub fn floatString(self: Rat, alloc: std.mem.Allocator, prec: usize) ValueError![]u8 {
+        var absn = self.num.cloneWithDifferentAllocator(alloc) catch return error.OutOfMemory;
+        absn.abs();
+        var q = try mustManaged(alloc);
+        var rem = try mustManaged(alloc);
+        q.divTrunc(&rem, &absn, &self.den) catch return error.OutOfMemory;
+
+        const p10 = try powTen(alloc, prec);
+        var scaled = try mustManaged(alloc);
+        scaled.mul(&rem, &p10) catch return error.OutOfMemory;
+        var fd = try mustManaged(alloc);
+        var rem2 = try mustManaged(alloc);
+        fd.divTrunc(&rem2, &scaled, &self.den) catch return error.OutOfMemory;
+        // Round half away from zero: 2*rem2 >= den -> bump the last digit.
+        var twice = try mustManaged(alloc);
+        twice.add(&rem2, &rem2) catch return error.OutOfMemory;
+        if (twice.order(self.den) != .lt) {
+            fd.addScalar(&fd, 1) catch return error.OutOfMemory;
+            if (fd.order(p10) != .lt) {
+                fd.set(0) catch return error.OutOfMemory;
+                q.addScalar(&q, 1) catch return error.OutOfMemory;
+            }
+        }
+
+        const q_str = q.toString(alloc, 10, .lower) catch return error.OutOfMemory;
+        defer alloc.free(q_str);
+        const fd_str = fd.toString(alloc, 10, .lower) catch return error.OutOfMemory;
+        defer alloc.free(fd_str);
+
+        const sign_len: usize = if (self.isNegative()) 1 else 0;
+        const frac_len: usize = if (prec > 0) 1 + prec else 0;
+        const out = alloc.alloc(u8, sign_len + q_str.len + frac_len) catch return error.OutOfMemory;
+        var w: usize = 0;
+        if (sign_len == 1) {
+            out[0] = '-';
+            w = 1;
+        }
+        @memcpy(out[w .. w + q_str.len], q_str);
+        w += q_str.len;
+        if (prec > 0) {
+            out[w] = '.';
+            w += 1;
+            const pad = prec - fd_str.len;
+            @memset(out[w .. w + pad], '0');
+            w += pad;
+            @memcpy(out[w .. w + fd_str.len], fd_str);
+        }
+        return out;
+    }
+};
+
+fn mustManaged(alloc: std.mem.Allocator) ValueError!big_int.Managed {
+    return big_int.Managed.init(alloc) catch error.OutOfMemory;
+}
+
+fn powTen(alloc: std.mem.Allocator, e: usize) ValueError!big_int.Managed {
+    if (e == 0) return big_int.Managed.initSet(alloc, 1) catch error.OutOfMemory;
+    var ten = big_int.Managed.initSet(alloc, 10) catch return error.OutOfMemory;
+    var out = try mustManaged(alloc);
+    out.pow(&ten, @intCast(e)) catch return error.OutOfMemory;
+    return out;
+}
+
+/// Decimal digits (no sign) -> big int; every byte must be a digit.
+fn unsignedIntFromDecimal(alloc: std.mem.Allocator, s: []const u8) ValueError!big_int.Managed {
+    if (s.len == 0) return error.FailedConversion;
+    for (s) |c| if (!std.ascii.isDigit(c)) return error.FailedConversion;
+    var m = try mustManaged(alloc);
+    m.setString(10, s) catch return error.FailedConversion;
+    return m;
+}
+
+fn signedIntFromDecimal(alloc: std.mem.Allocator, s_in: []const u8) ValueError!big_int.Managed {
+    var s = s_in;
+    var negative = false;
+    if (s.len > 0 and (s[0] == '+' or s[0] == '-')) {
+        negative = s[0] == '-';
+        s = s[1..];
+    }
+    var m = try unsignedIntFromDecimal(alloc, s);
+    if (negative and !m.eqlZero()) m.negate();
+    return m;
+}
+
+/// Go NumericValue. `is_bignumeric` only changes the rendered precision
+/// (FloatString(38) vs FloatString(9)).
+pub const Numeric = struct {
+    rat: Rat,
+    is_bignumeric: bool = false,
+
+    /// Go NumericValue.toString: FloatString(9|38) with trailing zeros then
+    /// a trailing '.' trimmed (shared by ToString/ToApiString/ToJSON/Format).
+    pub fn toText(self: *const Numeric, alloc: std.mem.Allocator) ValueError![]u8 {
+        const prec: usize = if (self.is_bignumeric) 38 else 9;
+        const s = try self.rat.floatString(alloc, prec);
+        var end = s.len;
+        while (end > 0 and s[end - 1] == '0') end -= 1;
+        if (end > 0 and s[end - 1] == '.') end -= 1;
+        return s[0..end];
+    }
+};
+
 pub const Value = union(enum) {
     @"null",
     int: i64,
@@ -106,6 +471,8 @@ pub const Value = union(enum) {
     time: i64,
     /// INTERVAL: bigquery.IntervalValue components (Go wraps it in *IntervalValue).
     interval: Interval,
+    /// NUMERIC / BIGNUMERIC (Go *NumericValue); arena-allocated.
+    numeric: *Numeric,
     array: *ArrayValue,
     struct_: *StructValue,
     /// SAFE. function-call wrapper: swallows errors, yielding NULL / zero
@@ -156,6 +523,8 @@ pub const Value = union(enum) {
             .time => return fail("add operation is unsupported for time", error.UnsupportedOperation),
             .json => return fail("add operation is unsupported for json", error.UnsupportedOperation),
             .interval => return fail("unsupported add operator for interval value", error.UnsupportedOperation),
+            // Go NumericValue.Add: rat arithmetic, result keeps isBigNumeric.
+            .numeric => |n| return numericValue(alloc, try n.rat.add(alloc, try v.toRat(alloc)), n.is_bignumeric),
             .array => return fail("add operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("add operation is unsupported for struct", error.UnsupportedOperation),
             .safe => |p| return p.add(alloc, v) catch Value.@"null",
@@ -194,6 +563,7 @@ pub const Value = union(enum) {
             .time => return fail("sub operation is unsupported for time", error.UnsupportedOperation),
             .json => return fail("sub operation is unsupported for json", error.UnsupportedOperation),
             .interval => return fail("unsupported sub operator for interval value", error.UnsupportedOperation),
+            .numeric => |n| return numericValue(alloc, try n.rat.sub(alloc, try v.toRat(alloc)), n.is_bignumeric),
             .array => return fail("sub operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("sub operation is unsupported for struct", error.UnsupportedOperation),
             .safe => |p| return p.sub(alloc, v) catch Value.@"null",
@@ -205,6 +575,7 @@ pub const Value = union(enum) {
             .@"null" => return fail("mul on null value", error.NullValue),
             .int => |i| return Value{ .int = i *% try v.toInt64() },
             .float => |f| return Value{ .float = f * try v.toFloat64() },
+            .numeric => |n| return numericValue(alloc, try n.rat.mul(alloc, try v.toRat(alloc)), n.is_bignumeric),
             .safe => |p| return p.mul(alloc, v) catch Value.@"null",
             else => return fail("mul operation is unsupported for this type", error.UnsupportedOperation),
         }
@@ -224,6 +595,7 @@ pub const Value = union(enum) {
                 if (v2 == 0) return fail("zero divided error", error.DivideByZero);
                 return Value{ .float = f / v2 };
             },
+            .numeric => |n| return numericValue(alloc, try n.rat.div(alloc, try v.toRat(alloc)), n.is_bignumeric),
             .safe => |p| return p.div(alloc, v) catch Value.@"null",
             else => return fail("div operation is unsupported for this type", error.UnsupportedOperation),
         }
@@ -315,6 +687,20 @@ pub const Value = union(enum) {
             .json => return fail("comparison operation is unsupported for json", error.UnsupportedOperation),
             // Go: every comparison operator errors for IntervalValue.
             .interval => return fail("unsupported comparison operator for interval value", error.UnsupportedOperation),
+            // Go NumericValue EQ/GT/...: rat comparison against v.ToRat().
+            // compareOp has no allocator, so temporaries live in a scratch
+            // arena for the duration of the comparison.
+            .numeric => |n| {
+                var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer scratch.deinit();
+                const salloc = scratch.allocator();
+                const other = v.toRat(salloc) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return fail("failed to convert to rat", error.FailedConversion),
+                };
+                const ord = try n.rat.cmp(salloc, other);
+                return applyOrder(op, ord);
+            },
             .array => |arr| {
                 const arr2 = try v.toArray();
                 if (arr2.values.len != arr.values.len) return false;
@@ -390,6 +776,8 @@ pub const Value = union(enum) {
             .json => |s| return std.fmt.parseInt(i64, s, 0) catch
                 fail("failed to convert json to int64", error.FailedConversion),
             .interval => return fail("unsupported int64 cast for interval value", error.FailedConversion),
+            // Go NumericValue.ToInt64: Rat.Num().Int64() — the numerator.
+            .numeric => |n| return n.rat.numLowInt64(),
             .array => return fail("failed to convert int64 from array", error.FailedConversion),
             .struct_ => return fail("failed to convert int64 from struct", error.FailedConversion),
             .safe => |p| return p.toInt64() catch 0,
@@ -421,6 +809,7 @@ pub const Value = union(enum) {
             .json => |s| return std.fmt.parseFloat(f64, s) catch
                 fail("failed to convert json to float64", error.FailedConversion),
             .interval => return fail("unsupported float64 cast for interval value", error.FailedConversion),
+            .numeric => |n| return n.rat.toFloat64(),
             .array => return fail("failed to convert float64 from array", error.FailedConversion),
             .struct_ => return fail("failed to convert float64 from struct", error.FailedConversion),
             .safe => |p| return p.toFloat64() catch 0,
@@ -460,6 +849,12 @@ pub const Value = union(enum) {
             .json => |s| return parseGoBool(s) orelse
                 fail("failed to parse bool from json", error.FailedConversion),
             .interval => return fail("unsupported bool cast for interval value", error.FailedConversion),
+            // Go NumericValue.ToBool: numerator 1 -> true, 0 -> false.
+            .numeric => |n| switch (n.rat.numLowInt64()) {
+                1 => return true,
+                0 => return false,
+                else => return fail("failed to convert numeric value to bool type", error.FailedConversion),
+            },
             .array => return fail("failed to convert bool from array", error.FailedConversion),
             .struct_ => return fail("failed to convert bool from struct", error.FailedConversion),
             .safe => |p| return p.toBool() catch false,
@@ -500,6 +895,8 @@ pub const Value = union(enum) {
                 var buf: [96]u8 = undefined;
                 return alloc.dupe(u8, formatInterval(&buf, iv));
             },
+            // Go NumericValue.ToString: trimmed FloatString(9|38).
+            .numeric => |n| return n.toText(alloc),
             // Array/Struct ToString renders elements via ToJSON (deferred).
             .array => return fail("array ToString requires ToJSON (deferred)", error.Unimplemented),
             .struct_ => return fail("struct ToString requires ToJSON (deferred)", error.Unimplemented),
@@ -589,6 +986,8 @@ pub const Value = union(enum) {
                 var buf: [96]u8 = undefined;
                 return quoteJsonString(alloc, formatInterval(&buf, iv));
             },
+            // Go NumericValue.ToJSON: the unquoted decimal rendering.
+            .numeric => |n| return n.toText(alloc),
             // Go ArrayValue.ToString: "[elem,elem,...]", nil -> "null".
             .array => |arr| {
                 var out: std.ArrayList(u8) = .empty;
@@ -620,9 +1019,36 @@ pub const Value = union(enum) {
             .safe => |p| return p.toJson(alloc),
         }
     }
-    pub fn toRat(self: Value) ValueError!void {
-        _ = self;
-        return fail("ToRat is deferred", error.Unimplemented);
+    /// Go Value.ToRat per kind. Quirks kept: String/Bytes ignore the
+    /// SetString failure and hand back the zero Rat; SafeValue swallows
+    /// errors into (nil, nil), mirrored here as the zero Rat.
+    pub fn toRat(self: Value, alloc: std.mem.Allocator) ValueError!Rat {
+        switch (self) {
+            .@"null" => return fail("toRat on null value", error.NullValue),
+            .int => |i| return Rat.initInt(alloc, i),
+            .float => |f| return Rat.setFloat64(alloc, f),
+            .bool => |b| return Rat.initInt(alloc, @intFromBool(b)),
+            .string => |s| return Rat.setString(alloc, s) catch |err| switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                else => Rat.initInt(alloc, 0),
+            },
+            .bytes => |b| return Rat.setString(alloc, b) catch |err| switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                else => Rat.initInt(alloc, 0),
+            },
+            // Go JsonValue.ToRat: strconv.ParseInt(string, 0, 64) then SetInt64.
+            .json => |s| {
+                const i = std.fmt.parseInt(i64, s, 0) catch
+                    return fail("failed to convert json to rat", error.FailedConversion);
+                return Rat.initInt(alloc, i);
+            },
+            .numeric => |n| return n.rat,
+            .safe => |p| return p.toRat(alloc) catch |err| switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                else => Rat.initInt(alloc, 0),
+            },
+            else => return fail("unsupported rat conversion for this kind", error.FailedConversion),
+        }
     }
     /// Go ToApiString: the string form rows.go hands back through
     /// database/sql for each type kind. Implemented for the date/time kinds
@@ -655,6 +1081,8 @@ pub const Value = union(enum) {
             },
             // Go JsonValue.ToApiString == ToString: the raw JSON string.
             .json => |s| return alloc.dupe(u8, s),
+            // Go NumericValue.ToApiString == toString().
+            .numeric => |n| return n.toText(alloc),
             .safe => |p| return p.toApiString(alloc) catch alloc.dupe(u8, ""),
             else => return fail("ToApiString is deferred for this kind", error.Unimplemented),
         }
@@ -707,6 +1135,8 @@ pub const Value = union(enum) {
                 var buf: [96]u8 = undefined;
                 return alloc.dupe(u8, formatInterval(&buf, iv));
             },
+            // Go NumericValue.Format: toString() for every verb.
+            .numeric => |n| return n.toText(alloc),
             .array => |a| {
                 var out: std.ArrayList(u8) = .empty;
                 try out.append(alloc, '[');
@@ -804,6 +1234,16 @@ fn coerceToStringForCmp(v: Value, buf: []u8) ValueError![]const u8 {
         .datetime => |m| return formatDatetimeString(buf, m),
         .time => |m| return formatTimeString(buf, m),
         .interval => return error.Unimplemented,
+        // Numeric renders into the caller's scratch buffer (BIGNUMERIC
+        // extremes wider than the buffer degrade to FailedConversion).
+        .numeric => |n| {
+            var scratch = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer scratch.deinit();
+            const s = n.toText(scratch.allocator()) catch return error.FailedConversion;
+            if (s.len > buf.len) return error.FailedConversion;
+            @memcpy(buf[0..s.len], s);
+            return buf[0..s.len];
+        },
         // Array/Struct ToString needs ToJSON (deferred).
         .array, .struct_ => return error.Unimplemented,
         .safe => |p| return coerceToStringForCmp(p.*, buf) catch "",
@@ -1585,6 +2025,17 @@ pub fn safeValue(alloc: std.mem.Allocator, inner: Value) !Value {
     return Value{ .safe = p };
 }
 
+pub fn numericValue(alloc: std.mem.Allocator, rat: Rat, is_bignumeric: bool) ValueError!Value {
+    const p = alloc.create(Numeric) catch return error.OutOfMemory;
+    p.* = .{ .rat = rat, .is_bignumeric = is_bignumeric };
+    return Value{ .numeric = p };
+}
+
+/// Convenience for tests: NUMERIC/BIGNUMERIC from its decimal literal.
+pub fn numericFromString(alloc: std.mem.Allocator, s: []const u8, is_bignumeric: bool) ValueError!Value {
+    return numericValue(alloc, try Rat.setString(alloc, s), is_bignumeric);
+}
+
 /// Structural equality assertion for tests (floats compared bit-for-bit so
 /// NaN payloads and -0.0 round-trip checks are exact).
 pub fn expectValueEqual(expected: Value, actual: Value) !void {
@@ -1605,6 +2056,16 @@ pub fn expectValueEqual(expected: Value, actual: Value) !void {
         .datetime => |m| try std.testing.expectEqual(m, actual.datetime),
         .time => |m| try std.testing.expectEqual(m, actual.time),
         .interval => |iv| try std.testing.expectEqual(iv, actual.interval),
+        .numeric => |n| {
+            var scratch = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer scratch.deinit();
+            const salloc = scratch.allocator();
+            try std.testing.expectEqual(n.is_bignumeric, actual.numeric.is_bignumeric);
+            try std.testing.expectEqualStrings(
+                try n.rat.ratString(salloc),
+                try actual.numeric.rat.ratString(salloc),
+            );
+        },
         .array => |a| {
             try std.testing.expectEqual(a.values.len, actual.array.values.len);
             for (a.values, actual.array.values) |ev, av| try expectValueEqual(ev, av);
@@ -1964,6 +2425,133 @@ test "time-kind conversions (ToInt64 / ToFloat64 / ToString)" {
     const tv = Value{ .time = (10 * 3600 + 30 * 60) * second_micros };
     try std.testing.expectEqual(@as(i64, -62169946200), try tv.toInt64());
     try std.testing.expectEqualStrings("10:30:00", try tv.toApiString(alloc));
+}
+
+test "Rat setString / rendering matches Go big.Rat" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const cases = [_]struct { in: []const u8, rat: []const u8, dec9: []const u8 }{
+        .{ .in = "123.45", .rat = "2469/20", .dec9 = "123.45" },
+        .{ .in = "1.5", .rat = "3/2", .dec9 = "1.5" },
+        .{ .in = "-1.5", .rat = "-3/2", .dec9 = "-1.5" },
+        .{ .in = "0", .rat = "0", .dec9 = "0" },
+        .{ .in = "42", .rat = "42", .dec9 = "42" },
+        .{ .in = "12.4E17", .rat = "1240000000000000000", .dec9 = "1240000000000000000" },
+        .{ .in = "12.34E27", .rat = "12340000000000000000000000000", .dec9 = "12340000000000000000000000000" },
+        .{ .in = "1.0123456789", .rat = "10123456789/10000000000", .dec9 = "1.012345679" }, // rounds half away
+        .{ .in = "-0.000000001", .rat = "-1/1000000000", .dec9 = "-0.000000001" },
+        .{ .in = "3/2", .rat = "3/2", .dec9 = "1.5" },
+        .{ .in = "-3/2", .rat = "-3/2", .dec9 = "-1.5" },
+        .{ .in = "4/2", .rat = "2", .dec9 = "2" }, // normalizes
+        .{ .in = "1e-10", .rat = "1/10000000000", .dec9 = "0" }, // rounds to 0 at scale 9
+    };
+    for (cases) |c| {
+        const r = try Rat.setString(alloc, c.in);
+        try std.testing.expectEqualStrings(c.rat, try r.ratString(alloc));
+        const n = Numeric{ .rat = r, .is_bignumeric = false };
+        try std.testing.expectEqualStrings(c.dec9, try n.toText(alloc));
+    }
+
+    // BIGNUMERIC precision: 39 fractional digits round to 38.
+    const bn = try Rat.setString(alloc, "1.123456789012345678901234567890123456789");
+    const nb = Numeric{ .rat = bn, .is_bignumeric = true };
+    try std.testing.expectEqualStrings(
+        "1.12345678901234567890123456789012345679",
+        try nb.toText(alloc),
+    );
+    // NUMERIC rendering of the same value rounds at 9 digits.
+    const nn = Numeric{ .rat = bn, .is_bignumeric = false };
+    try std.testing.expectEqualStrings("1.123456789", try nn.toText(alloc));
+
+    // Go quirk: -1e-10 renders "-0" (sign survives the round-to-zero).
+    const tiny = try Rat.setString(alloc, "-1e-10");
+    const nt = Numeric{ .rat = tiny, .is_bignumeric = false };
+    try std.testing.expectEqualStrings("-0", try nt.toText(alloc));
+
+    // Invalid literals fail like Go's SetString.
+    try std.testing.expectError(error.FailedConversion, Rat.setString(alloc, ""));
+    try std.testing.expectError(error.FailedConversion, Rat.setString(alloc, "abc"));
+    try std.testing.expectError(error.FailedConversion, Rat.setString(alloc, "1.2.3"));
+    try std.testing.expectError(error.FailedConversion, Rat.setString(alloc, "1/0"));
+    try std.testing.expectError(error.FailedConversion, Rat.setString(alloc, "1e"));
+}
+
+test "numeric value arithmetic / comparisons / conversions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const a = try numericFromString(alloc, "1.5", false);
+    const b = try numericFromString(alloc, "2.25", false);
+
+    const sum = try a.add(alloc, b);
+    try std.testing.expectEqualStrings("3.75", try sum.toString(alloc));
+    const diff = try a.sub(alloc, b);
+    try std.testing.expectEqualStrings("-0.75", try diff.toString(alloc));
+    const prod = try a.mul(alloc, b);
+    try std.testing.expectEqualStrings("3.375", try prod.toString(alloc));
+    const quot = try b.div(alloc, a);
+    try std.testing.expectEqualStrings("1.5", try quot.toString(alloc));
+    // Division by a zero numeric errors (Go panics inside big.Rat.Inv).
+    const zero = try numericFromString(alloc, "0", false);
+    try std.testing.expectError(error.DivideByZero, a.div(alloc, zero));
+
+    // Mixed-kind rhs coerces through ToRat: int, float, string.
+    const plus_int = try a.add(alloc, Value{ .int = 2 });
+    try std.testing.expectEqualStrings("3.5", try plus_int.toString(alloc));
+    const plus_float = try a.add(alloc, Value{ .float = 0.25 });
+    try std.testing.expectEqualStrings("1.75", try plus_float.toString(alloc));
+    const plus_str = try a.add(alloc, Value{ .string = "1.5" });
+    try std.testing.expectEqualStrings("3", try plus_str.toString(alloc));
+    // Go quirk: an unparseable string coerces to the zero Rat.
+    const plus_bad = try a.add(alloc, Value{ .string = "abc" });
+    try std.testing.expectEqualStrings("1.5", try plus_bad.toString(alloc));
+
+    // Comparisons.
+    try std.testing.expect(try b.gt(a));
+    try std.testing.expect(try a.lt(b));
+    try std.testing.expect(try a.eq(try numericFromString(alloc, "1.50", false)));
+    try std.testing.expect(try a.gte(a));
+    try std.testing.expect(try a.eq(Value{ .float = 1.5 }));
+    try std.testing.expect(try a.lt(Value{ .int = 2 }));
+
+    // Conversions. ToInt64 is the *numerator* (Go bug-for-bug): 1.5 -> 3/2 -> 3.
+    try std.testing.expectEqual(@as(i64, 3), try a.toInt64());
+    try std.testing.expectEqual(@as(f64, 1.5), try a.toFloat64());
+    const one = try numericFromString(alloc, "1", false);
+    try std.testing.expectEqual(true, try one.toBool());
+    try std.testing.expectEqual(false, try zero.toBool());
+    const three = try numericFromString(alloc, "3", false);
+    try std.testing.expectError(error.FailedConversion, three.toBool());
+
+    // BIGNUMERIC results keep their flag through arithmetic.
+    const big1 = try numericFromString(alloc, "1.5", true);
+    const big_sum = try big1.add(alloc, Value{ .int = 1 });
+    try std.testing.expect(big_sum.numeric.is_bignumeric);
+    try std.testing.expectEqualStrings("2.5", try big_sum.toString(alloc));
+}
+
+test "Rat fromScaledTwosComplement (proto byte layout)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // NUMERIC '1.5': 1_500_000_000 LE minimal-length.
+    const r1 = try Rat.fromScaledTwosComplement(alloc, &.{ 0x00, 0x2f, 0x68, 0x59 }, 9);
+    try std.testing.expectEqualStrings("3/2", try r1.ratString(alloc));
+    // NUMERIC '-1.5'.
+    const r2 = try Rat.fromScaledTwosComplement(alloc, &.{ 0x00, 0xd1, 0x97, 0xa6 }, 9);
+    try std.testing.expectEqualStrings("-3/2", try r2.ratString(alloc));
+    // NUMERIC '0' (single zero byte) and empty payload.
+    const r3 = try Rat.fromScaledTwosComplement(alloc, &.{0x00}, 9);
+    try std.testing.expect(r3.isZero());
+    const r4 = try Rat.fromScaledTwosComplement(alloc, &.{}, 9);
+    try std.testing.expect(r4.isZero());
+    // NUMERIC '-0.000000001' == -1 scaled (0xff sign-extended).
+    const r5 = try Rat.fromScaledTwosComplement(alloc, &.{0xff}, 9);
+    try std.testing.expectEqualStrings("-1/1000000000", try r5.ratString(alloc));
 }
 
 test "compareForCollation orderings" {

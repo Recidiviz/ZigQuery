@@ -850,6 +850,16 @@ fn cellFromValue(
             }).toApiString(alloc) },
             else => return error.FailedConversion,
         },
+        // Go rows.go: castValueInternal wraps v.ToRat() in a NumericValue for
+        // the column kind, then assignInterfaceValue renders ToApiString — a
+        // plain decimal-string cell through database/sql.
+        .TYPE_NUMERIC, .TYPE_BIGNUMERIC => {
+            const n = value_mod.Numeric{
+                .rat = try v.toRat(alloc),
+                .is_bignumeric = typ.typeKind() == .TYPE_BIGNUMERIC,
+            };
+            return .{ .string = try n.toText(alloc) };
+        },
         .TYPE_ARRAY => {
             const arr = try v.toArray();
             const elem_type = typ.element_type orelse return error.FailedConversion;
@@ -872,8 +882,7 @@ fn cellFromValue(
             }
             return .{ .struct_ = fields };
         },
-        // Timestamp / numeric / json / datetime / time / interval defer with
-        // their Value kinds.
+        // Remaining kinds (geography, proto, ...) defer with their Value kinds.
         else => return error.Unimplemented,
     }
 }

@@ -13,8 +13,7 @@ const value_mod = @import("value.zig");
 pub const Value = value_mod.Value;
 pub const ValueError = value_mod.ValueError;
 
-// Tag bytes (complete set; Numeric/BigNumeric/JSON/Datetime/Time/Timestamp/
-// Interval decode paths are deferred with error.Unimplemented).
+// Tag bytes (complete set, all implemented).
 pub const bin_tag_null: u8 = 0x00;
 pub const bin_tag_int: u8 = 0x01;
 pub const bin_tag_float: u8 = 0x02;
@@ -104,6 +103,14 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
             var tmp: [96]u8 = undefined;
             try appendBinaryString(buf, alloc, bin_tag_interval, value_mod.formatInterval(&tmp, iv));
         },
+        // Go stores *NumericValue as Rat.MarshalText ("n/d" when the
+        // denominator != 1, else just "n"), tagged by isBigNumeric.
+        .numeric => |n| {
+            const tag: u8 = if (n.is_bignumeric) bin_tag_bignumeric else bin_tag_numeric;
+            const s = try n.rat.ratString(alloc);
+            defer alloc.free(s);
+            try appendBinaryString(buf, alloc, tag, s);
+        },
         .array => |arr| {
             try buf.append(alloc, bin_tag_array);
             try appendUvarint(buf, alloc, arr.values.len);
@@ -186,10 +193,15 @@ const BinReader = struct {
             bin_tag_interval => return Value{ .interval = try value_mod.parseIntervalValue(try r.lenBytes()) },
             // Go: JsonValue(string(b)) — the raw JSON string.
             bin_tag_json => return Value{ .json = try alloc.dupe(u8, try r.lenBytes()) },
-            // Deferred kinds: consume nothing further, surface Unimplemented.
-            bin_tag_numeric,
-            bin_tag_bignumeric,
-            => return error.Unimplemented,
+            // Go: big.Rat SetString over the stored MarshalText payload.
+            bin_tag_numeric, bin_tag_bignumeric => {
+                const b = try r.lenBytes();
+                const rat = value_mod.Rat.setString(alloc, b) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return error.CorruptData, // invalid numeric payload
+                };
+                return value_mod.numericValue(alloc, rat, tag == bin_tag_bignumeric);
+            },
             bin_tag_array => {
                 const n = try r.uvarint();
                 // Every element occupies at least one byte.
@@ -382,8 +394,40 @@ test "binary codec rejects truncated and corrupt input" {
     try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_int, 0x01 })); // truncated fixed64
     try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_string, 0x05, 'a' })); // truncated bytes
     try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{0x7f})); // unknown tag
-    // Remaining deferred kinds decode to Unimplemented, not corruption.
-    try testing.expectError(error.Unimplemented, decodeBinaryValue(alloc, &.{ bin_tag_numeric, 0x01, '1' }));
+    // Invalid numeric payload text is corruption, not a parse fallback.
+    try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_numeric, 0x01, 'x' }));
+}
+
+test "binary codec numeric round trips and byte layout" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // Round trips: integer form ("n"), fraction form ("n/d"), negatives,
+    // both kinds, extremes.
+    const literals = [_][]const u8{
+        "1.5",   "-1.5",         "0",
+        "42",    "-42",          "123.45",
+        "1e-38", "12.34e27",     "-0.000000001",
+        "3/7",   "-999999999/7",
+    };
+    for (literals) |lit| {
+        inline for ([_]bool{ false, true }) |is_big| {
+            const v = try value_mod.numericFromString(alloc, lit, is_big);
+            try value_mod.expectValueEqual(v, try roundTrip(alloc, v));
+        }
+    }
+
+    // Byte layout: tag + uvarint length + MarshalText payload.
+    const n15 = try value_mod.numericFromString(alloc, "1.5", false);
+    try testing.expectEqualSlices(u8, "\x06\x033/2", try encodeBinaryValue(alloc, n15));
+    const b15 = try value_mod.numericFromString(alloc, "1.5", true);
+    try testing.expectEqualSlices(u8, "\x07\x033/2", try encodeBinaryValue(alloc, b15));
+    // Integer-valued rationals store without the "/1" (Go MarshalText).
+    const n42 = try value_mod.numericFromString(alloc, "42", false);
+    try testing.expectEqualSlices(u8, "\x06\x0242", try encodeBinaryValue(alloc, n42));
+    const neg = try value_mod.numericFromString(alloc, "-42", false);
+    try testing.expectEqualSlices(u8, "\x06\x03-42", try encodeBinaryValue(alloc, neg));
 }
 
 test "binary codec json round trip" {

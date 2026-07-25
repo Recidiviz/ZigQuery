@@ -254,6 +254,9 @@ fn groupByImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqli
             var buf: [96]u8 = undefined;
             sqlite.resultText(ctx, value_mod.formatInterval(&buf, iv));
         },
+        // NUMERIC/BIGNUMERIC group key: the decimal rendering (distinct
+        // numeric values render to distinct text, so grouping is exact).
+        .numeric => |n| sqlite.resultText(ctx, try n.toText(alloc)),
         .safe => unreachable,
     }
 }
@@ -684,11 +687,27 @@ test "cast function (foundation kinds)" {
     ));
     try value_mod.expectValueEqual(Value{ .timestamp = ts_days * 86400 * 1_000_000 }, as_ts);
 
-    // Still-deferred target kinds raise (NUMERIC, kind 23).
+    // NUMERIC (kind 23) / BIGNUMERIC (kind 24) casts: string exponents parse
+    // via Rat.SetString; rendering trims trailing zeros (corpus case 617).
     const t_numeric = try env.encStr("{\"kind\":23}");
-    try env.expectErrorMsg(
-        "CAST: unimplemented cast",
-        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("1.5"), t_string, t_numeric }),
+    const t_bignumeric = try env.encStr("{\"kind\":24}");
+    const as_numeric = try env.queryValue(
+        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("12.4E17"), t_string, t_numeric }),
+    );
+    try testing.expect(as_numeric == .numeric);
+    try testing.expect(!as_numeric.numeric.is_bignumeric);
+    try testing.expectEqualStrings("1240000000000000000", try as_numeric.toString(env.alloc()));
+    const as_bignumeric = try env.queryValue(
+        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("12.4E37"), t_string, t_bignumeric }),
+    );
+    try testing.expect(as_bignumeric == .numeric);
+    try testing.expect(as_bignumeric.numeric.is_bignumeric);
+    try testing.expectEqualStrings("124000000000000000000000000000000000000", try as_bignumeric.toString(env.alloc()));
+    // numeric -> string (corpus case 620).
+    const numeric_lit = try env.enc(try value_mod.numericFromString(env.alloc(), "123.456", false));
+    try env.expectStringResult(
+        "123.456",
+        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ numeric_lit, t_numeric, t_string }),
     );
 
     // array cast: elements go through elementType.
@@ -699,6 +718,67 @@ test "cast function (foundation kinds)" {
         "SELECT zetasqlite_array_at_offset(zetasqlite_cast({s}, {s}, {s}, 0), 1)",
         .{ arr_in, t_arr_str, t_arr_int },
     ));
+}
+
+test "parse_numeric / parse_bignumeric" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    // Corpus cases 618/619: plain, exponent, and precision-rounding forms.
+    const cases = [_]struct { func: []const u8, in: []const u8, out: []const u8, big: bool }{
+        .{ .func = "zetasqlite_parse_numeric", .in = "123.45", .out = "123.45", .big = false },
+        .{ .func = "zetasqlite_parse_numeric", .in = "12.34E27", .out = "12340000000000000000000000000", .big = false },
+        .{ .func = "zetasqlite_parse_numeric", .in = "1.0123456789", .out = "1.012345679", .big = false },
+        .{ .func = "zetasqlite_parse_bignumeric", .in = "123.45", .out = "123.45", .big = true },
+        .{ .func = "zetasqlite_parse_bignumeric", .in = "123.456E37", .out = "1234560000000000000000000000000000000000", .big = true },
+        .{
+            .func = "zetasqlite_parse_bignumeric",
+            .in = "1.123456789012345678901234567890123456789",
+            .out = "1.12345678901234567890123456789012345679",
+            .big = true,
+        },
+    };
+    for (cases) |tc| {
+        const v = try env.queryValue(try env.fmt("SELECT {s}({s})", .{ tc.func, try env.encStr(tc.in) }));
+        try testing.expect(v == .numeric);
+        try testing.expectEqual(tc.big, v.numeric.is_bignumeric);
+        try testing.expectEqualStrings(tc.out, try v.toString(env.alloc()));
+    }
+
+    // Unparseable literals raise like Go's PARSE_NUMERIC.
+    try env.expectErrorMsg(
+        "unexpected numeric literal: abc",
+        try env.fmt("SELECT zetasqlite_parse_numeric({s})", .{try env.encStr("abc")}),
+    );
+}
+
+test "SUM / AVG / MIN / MAX over numeric values" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    const n1 = try env.enc(try value_mod.numericFromString(env.alloc(), "1.5", false));
+    const n2 = try env.enc(try value_mod.numericFromString(env.alloc(), "2.25", false));
+    const n3 = try env.enc(try value_mod.numericFromString(env.alloc(), "-0.75", false));
+    const table = try env.fmt(
+        "WITH t(v) AS (SELECT {s} UNION ALL SELECT {s} UNION ALL SELECT {s})",
+        .{ n1, n2, n3 },
+    );
+
+    // SUM keeps the NUMERIC kind (Go: sum.Add returns the NumericValue).
+    const sum = try env.queryValue(try env.fmt("{s} SELECT zetasqlite_sum(v) FROM t", .{table}));
+    try testing.expect(sum == .numeric);
+    try testing.expectEqualStrings("3", try sum.toString(env.alloc()));
+
+    // AVG converts through ToFloat64 (Go returns FloatValue).
+    const avg = try env.queryValue(try env.fmt("{s} SELECT zetasqlite_avg(v) FROM t", .{table}));
+    try testing.expect(avg == .float);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), avg.float, 1e-12);
+
+    // MIN/MAX order via the rat comparison.
+    const max = try env.queryValue(try env.fmt("{s} SELECT zetasqlite_max(v) FROM t", .{table}));
+    try testing.expectEqualStrings("2.25", try max.toString(env.alloc()));
+    const min = try env.queryValue(try env.fmt("{s} SELECT zetasqlite_min(v) FROM t", .{table}));
+    try testing.expectEqualStrings("-0.75", try min.toString(env.alloc()));
 }
 
 test "error() raises with its message; safe variant yields NULL" {

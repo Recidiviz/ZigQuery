@@ -51,6 +51,27 @@ fn parseTypeJson(alloc: std.mem.Allocator, s: []const u8) !std.json.Value {
     return std.json.parseFromSliceLeaky(std.json.Value, alloc, s, .{});
 }
 
+// ---------------------------------------------------------------------
+// PARSE_NUMERIC / PARSE_BIGNUMERIC (Go function_numeric.go + bindParseNumeric):
+// take the argument's string form and big.Rat.SetString it; a form Rat cannot
+// parse is "unexpected numeric literal: <s>".
+// ---------------------------------------------------------------------
+
+fn parseNumericImpl(alloc: std.mem.Allocator, args: []const Value, is_big: bool) Error!Value {
+    if (args[0] == .@"null") return null_v;
+    const s = try args[0].toString(alloc);
+    return value_mod.numericFromString(alloc, s, is_big) catch
+        return bind.fail("unexpected numeric literal: {s}", .{s}, error.FailedConversion);
+}
+
+pub fn parseNumeric(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    return parseNumericImpl(alloc, args, false);
+}
+
+pub fn parseBignumeric(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    return parseNumericImpl(alloc, args, true);
+}
+
 fn typeKindOf(t: std.json.Value) Error!pb.TypeKind {
     if (t != .object) return error.CorruptData;
     const kind = t.object.get("kind") orelse return error.CorruptData;
@@ -100,6 +121,10 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
             .interval => return v,
             else => return Value{ .interval = try value_mod.parseIntervalValue(try v.toString(alloc)) },
         },
+        // Go castValueInternal: NumericValue{Rat: v.ToRat()}, isBigNumeric per
+        // the target kind (a numeric input is rewrapped under the new kind).
+        .TYPE_NUMERIC => return value_mod.numericValue(alloc, try v.toRat(alloc), false),
+        .TYPE_BIGNUMERIC => return value_mod.numericValue(alloc, try v.toRat(alloc), true),
         .TYPE_ARRAY => {
             const arr = try v.toArray();
             const elem_type = if (t == .object)

@@ -115,6 +115,10 @@ pub const func_table = [_]FuncInfo{
     // debugging
     .{ .name = "error", .min_args = 1, .handler = misc.errorFn },
 
+    // numeric (Go function_numeric.go: bindParseNumeric / bindParseBigNumeric)
+    .{ .name = "parse_numeric", .min_args = 1, .handler = misc.parseNumeric },
+    .{ .name = "parse_bignumeric", .min_args = 1, .handler = misc.parseBignumeric },
+
     // predicates / conditionals
     .{ .name = "like", .min_args = 2, .handler = cmp.like },
     .{ .name = "between", .min_args = 3, .handler = cmp.between },

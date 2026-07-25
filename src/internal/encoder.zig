@@ -149,8 +149,7 @@ pub fn castValue(alloc: std.mem.Allocator, v: Value, to: TypeKind) ValueError!Va
 // ----------------------------------------------------------------------
 // valueFromProto: port of encoder.go ValueFromZetaSQLValue + the
 // *FromLiteral helpers, reading the decoded ValueProto/TypeProto instead of
-// go-googlesql's Value accessors. Foundation kinds only; timestamp /
-// numeric / json / datetime / time / interval / enum are deferred.
+// go-googlesql's Value accessors.
 // ----------------------------------------------------------------------
 
 const pb = @import("../proto/resolved_ast.zig");
@@ -404,8 +403,27 @@ pub fn valueFromProto(
             .json_value => |s| s,
             else => return error.CorruptData,
         } },
-        // Deferred kinds (numeric, bignumeric, ...): Go supports them;
-        // this port defers them with their Value kinds.
+        // NUMERIC/BIGNUMERIC literal: the proto carries the value as a
+        // minimal-length little-endian two's-complement integer scaled by
+        // 10^9 / 10^38 (verified empirically against the analyzer). Go goes
+        // through GetSQLLiteral + numericValueFromLiteral instead; decoding
+        // the proto directly yields the identical Rat.
+        .TYPE_NUMERIC, .TYPE_BIGNUMERIC => {
+            const bytes = switch (v) {
+                .numeric_value => |b| b,
+                .bignumeric_value => |b| b,
+                else => return error.CorruptData,
+            };
+            const is_big = kind == .TYPE_BIGNUMERIC;
+            const scale: usize = if (is_big) 38 else 9;
+            const rat = value_mod.Rat.fromScaledTwosComplement(alloc, bytes, scale) catch |err|
+                switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return error.CorruptData,
+                };
+            return value_mod.numericValue(alloc, rat, is_big);
+        },
+        // Remaining kinds (geography, proto, ...) stay deferred.
         else => return error.Unimplemented,
     }
 }
@@ -581,35 +599,34 @@ fn literalValueOf(alloc: std.mem.Allocator, sql: [:0]const u8) !Value {
     return valueFromProto(alloc, vwt.value.?, vwt.@"type".?);
 }
 
-test "PROBE numeric proto bytes" {
+test "valueFromProto numeric / bignumeric literals" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const probes = [_][:0]const u8{
-        "SELECT NUMERIC '1.5'",
-        "SELECT NUMERIC '-1.5'",
-        "SELECT NUMERIC '0'",
-        "SELECT NUMERIC '-0.000000001'",
-        "SELECT BIGNUMERIC '1.5'",
-        "SELECT BIGNUMERIC '-578960446186580977117854925043439539266.34992332820282019728792003956564819967'",
-        "SELECT NUMERIC '99999999999999999999999999999.999999999'",
+
+    const cases = [_]struct { sql: [:0]const u8, text: []const u8, big: bool }{
+        .{ .sql = "SELECT NUMERIC '1.5'", .text = "1.5", .big = false },
+        .{ .sql = "SELECT NUMERIC '-1.5'", .text = "-1.5", .big = false },
+        .{ .sql = "SELECT NUMERIC '0'", .text = "0", .big = false },
+        .{ .sql = "SELECT NUMERIC '-0.000000001'", .text = "-0.000000001", .big = false },
+        .{ .sql = "SELECT NUMERIC '99999999999999999999999999999.999999999'", .text = "99999999999999999999999999999.999999999", .big = false },
+        .{ .sql = "SELECT BIGNUMERIC '1.5'", .text = "1.5", .big = true },
+        .{
+            .sql = "SELECT BIGNUMERIC '-578960446186580977117854925043439539266.34992332820282019728792003956564819967'",
+            .text = "-578960446186580977117854925043439539266.34992332820282019728792003956564819967",
+            .big = true,
+        },
+        .{
+            .sql = "SELECT BIGNUMERIC '578960446186580977117854925043439539266.34992332820282019728792003956564819967'",
+            .text = "578960446186580977117854925043439539266.34992332820282019728792003956564819967",
+            .big = true,
+        },
     };
-    for (probes) |sql| {
-        const analyzed = try analyzer_ffi.analyzeNextStatement(alloc, sql, 0, "{}");
-        const query = analyzed.node.node.?.resolved_statement_node.node.?.resolved_query_stmt_node;
-        const scan = query.query.?.node.?.resolved_project_scan_node;
-        const literal = scan.expr_list[0].expr.?.node.?.resolved_literal_node;
-        const vwt = literal.value.?;
-        const v = vwt.value.?.value.?;
-        const bytes = switch (v) {
-            .numeric_value => |b| b,
-            .bignumeric_value => |b| b,
-            else => {
-                std.debug.print("PROBE {s}: not numeric oneof\n", .{sql});
-                continue;
-            },
-        };
-        std.debug.print("PROBE {s}: len={d} bytes={x}\n", .{ sql, bytes.len, bytes });
+    for (cases) |c| {
+        const v = try literalValueOf(alloc, c.sql);
+        try testing.expect(v == .numeric);
+        try testing.expectEqual(c.big, v.numeric.is_bignumeric);
+        try testing.expectEqualStrings(c.text, try v.toString(alloc));
     }
 }
 

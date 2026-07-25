@@ -652,3 +652,7 @@
 743	group by struct values with aggregation
 744	group by array values basic
 745	group by array values with aggregation
+617	cast numeric and bignumeric
+618	parse_numeric
+619	parse_bignumeric
+620	cast numeric and bignumeric to string
