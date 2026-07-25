@@ -1097,9 +1097,7 @@ fn transformStatement(
     opts: QueryOptions,
 ) Error![]const u8 {
     const fragment = try transformStatementFragment(db, arena, node, opts);
-    const s = try fragment.toString(arena);
-    if (std.c.getenv("DUMP_SQL") != null) std.debug.print("SQL>>> {s}\n", .{s});
-    return s;
+    return fragment.toString(arena);
 }
 
 /// Unwraps an analyzed node down to its statement-kind union.
