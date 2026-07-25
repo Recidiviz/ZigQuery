@@ -659,13 +659,128 @@ pub const Value = union(enum) {
             else => return fail("ToApiString is deferred for this kind", error.Unimplemented),
         }
     }
+    /// Go Value.Format(verb): the %t (printable) / %T (typed) renderings used
+    /// by FORMAT. Other verbs fall through to the printable form.
     pub fn format(self: Value, verb: u8, alloc: std.mem.Allocator) ValueError![]u8 {
-        _ = self;
-        _ = verb;
-        _ = alloc;
-        return fail("Format is deferred", error.Unimplemented);
+        switch (self) {
+            .@"null" => return alloc.dupe(u8, "NULL"),
+            .int => |i| return std.fmt.allocPrint(alloc, "{d}", .{i}),
+            .float => |f| {
+                var buf: [40]u8 = undefined;
+                return alloc.dupe(u8, formatFloatGo(&buf, f));
+            },
+            .bool => |b| return alloc.dupe(u8, if (b) "true" else "false"),
+            .string => |s| {
+                if (verb == 'T') return goQuote(alloc, s);
+                return alloc.dupe(u8, s);
+            },
+            .bytes => |b| return formatBytes(alloc, b, verb),
+            .json => |s| return alloc.dupe(u8, s),
+            .date => |days| {
+                var buf: [32]u8 = undefined;
+                const s = formatDateDays(&buf, days);
+                if (verb == 'T') return std.fmt.allocPrint(alloc, "DATE \"{s}\"", .{s});
+                return alloc.dupe(u8, s);
+            },
+            .timestamp => |m| {
+                var buf: [40]u8 = undefined;
+                const d = decomposeMicros(m);
+                const w = writeCivilPrefix(&buf, d, ' ');
+                @memcpy(buf[w .. w + 3], "+00");
+                const s = buf[0 .. w + 3];
+                if (verb == 'T') return std.fmt.allocPrint(alloc, "TIMESTAMP \"{s}\"", .{s});
+                return alloc.dupe(u8, s);
+            },
+            .datetime => |m| {
+                var buf: [40]u8 = undefined;
+                const s = formatDatetimeString(&buf, m);
+                if (verb == 'T') return std.fmt.allocPrint(alloc, "DATETIME \"{s}\"", .{s});
+                return alloc.dupe(u8, s);
+            },
+            .time => |m| {
+                var buf: [24]u8 = undefined;
+                const s = formatTimeString(&buf, m);
+                if (verb == 'T') return std.fmt.allocPrint(alloc, "TIME \"{s}\"", .{s});
+                return alloc.dupe(u8, s);
+            },
+            .interval => |iv| {
+                var buf: [96]u8 = undefined;
+                return alloc.dupe(u8, formatInterval(&buf, iv));
+            },
+            .array => |a| {
+                var out: std.ArrayList(u8) = .empty;
+                try out.append(alloc, '[');
+                for (a.values, 0..) |v, i| {
+                    if (i > 0) try out.appendSlice(alloc, ", ");
+                    if (v == .@"null") {
+                        try out.appendSlice(alloc, "NULL");
+                    } else {
+                        try out.appendSlice(alloc, try v.format(verb, alloc));
+                    }
+                }
+                try out.append(alloc, ']');
+                return out.toOwnedSlice(alloc);
+            },
+            .struct_ => |s| {
+                var out: std.ArrayList(u8) = .empty;
+                try out.append(alloc, '(');
+                for (s.values, 0..) |v, i| {
+                    if (i > 0) try out.appendSlice(alloc, ", ");
+                    if (v == .@"null") {
+                        try out.appendSlice(alloc, "NULL");
+                    } else {
+                        try out.appendSlice(alloc, try v.format(verb, alloc));
+                    }
+                }
+                try out.append(alloc, ')');
+                return out.toOwnedSlice(alloc);
+            },
+            .safe => |p| return p.format(verb, alloc),
+        }
     }
 };
+
+/// Go BytesValue.Format: printable bytes verbatim, others as \xNN; %T wraps
+/// in b"...".
+fn formatBytes(alloc: std.mem.Allocator, b: []const u8, verb: u8) ValueError![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    if (verb == 'T') try out.appendSlice(alloc, "b\"");
+    for (b) |byte| {
+        if (byte >= 0x20 and byte <= 0x7e) {
+            try out.append(alloc, byte);
+        } else {
+            try out.print(alloc, "\\x{x:0>2}", .{byte});
+        }
+    }
+    if (verb == 'T') try out.append(alloc, '"');
+    return out.toOwnedSlice(alloc);
+}
+
+/// Go strconv.Quote for the ASCII/common cases the corpus exercises: wraps in
+/// double quotes, backslash-escaping ", \, and the standard control escapes;
+/// other bytes < 0x20 use \xNN.
+fn goQuote(alloc: std.mem.Allocator, s: []const u8) ValueError![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.append(alloc, '"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try out.appendSlice(alloc, "\\\""),
+            '\\' => try out.appendSlice(alloc, "\\\\"),
+            '\n' => try out.appendSlice(alloc, "\\n"),
+            '\r' => try out.appendSlice(alloc, "\\r"),
+            '\t' => try out.appendSlice(alloc, "\\t"),
+            else => {
+                if (c < 0x20) {
+                    try out.print(alloc, "\\x{x:0>2}", .{c});
+                } else {
+                    try out.append(alloc, c);
+                }
+            },
+        }
+    }
+    try out.append(alloc, '"');
+    return out.toOwnedSlice(alloc);
+}
 
 // ----------------------------------------------------------------------
 // Coercion helpers

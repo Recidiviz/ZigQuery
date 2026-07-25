@@ -799,7 +799,15 @@ fn cellFromValue(
         // Go castValueInternal STRING renders DateValue as "2006-01-02";
         // Value.toString does the same for .date.
         .TYPE_STRING => return .{ .string = try v.toString(alloc) },
-        .TYPE_BYTES => return .{ .bytes = try v.toBytes(alloc) },
+        // Go rows.go renders a BYTES column through BytesValue.ToApiString =
+        // base64(StdEncoding), i.e. a plain string cell (database/sql sees a
+        // string, never []byte).
+        .TYPE_BYTES => {
+            const b = try v.toBytes(alloc);
+            const enc = std.base64.standard.Encoder;
+            const out = try alloc.alloc(u8, enc.calcSize(b.len));
+            return .{ .string = enc.encode(out, b) };
+        },
         // Go rows.go: JSON columns are scanned as their raw JSON string
         // (ToApiString) through database/sql, i.e. a plain string cell.
         .TYPE_JSON => return .{ .string = try v.toApiString(alloc) },
@@ -964,7 +972,8 @@ test "query scalar literals of each foundation kind" {
     try testing.expectEqualStrings("a", row[1].string);
     try testing.expectEqual(true, row[2].bool);
     try testing.expect(row[3] == .null);
-    try testing.expectEqualStrings("xy", row[4].bytes);
+    // BYTES columns render as base64 STRING cells (Go ToApiString).
+    try testing.expectEqualStrings("eHk=", row[4].string);
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
 

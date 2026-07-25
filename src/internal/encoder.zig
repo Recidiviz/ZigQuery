@@ -186,6 +186,17 @@ fn timeMicrosFromPacked64(packed64: i64) i64 {
     return (hour * 3600 + min * 60 + sec) * second_micros + @divTrunc(nanos, 1000);
 }
 
+/// googlesql NormalizeMode enum value -> name (public/functions/normalize_mode.proto).
+fn normalizeModeName(idx: i32) ?[]const u8 {
+    return switch (idx) {
+        0 => "NFC",
+        1 => "NFKC",
+        2 => "NFD",
+        3 => "NFKD",
+        else => null,
+    };
+}
+
 /// googlesql DateTimestampPart enum value -> name (public/functions/datetime.proto).
 /// The only enums passed as function arguments are date-part enums.
 fn datePartName(idx: i32) ?[]const u8 {
@@ -372,15 +383,19 @@ pub fn valueFromProto(
             return .{ .interval = intervalFromBinary(bytes) catch return error.CorruptData };
         },
         // Enum literal: Go reads GetSQLLiteral (the enum value's name) and
-        // wraps it as a StringValue. The only enums the engine receives as
-        // arguments are date-part enums (googlesql DateTimestampPart), so we
-        // map the enum_value index to its name.
+        // wraps it as a StringValue. The engine receives date-part enums
+        // (googlesql DateTimestampPart) and the NORMALIZE mode enum; select
+        // the name table by the enum type name.
         .TYPE_ENUM => {
             const idx = switch (v) {
                 .enum_value => |x| x,
                 else => return error.CorruptData,
             };
-            const name = datePartName(idx) orelse return error.Unimplemented;
+            const enum_name: []const u8 = if (type_proto.enum_type) |et| (et.enum_name orelse "") else "";
+            const name = if (std.mem.indexOf(u8, enum_name, "NormalizeMode") != null)
+                (normalizeModeName(idx) orelse return error.Unimplemented)
+            else
+                (datePartName(idx) orelse return error.Unimplemented);
             return .{ .string = name };
         },
         // Go jsonValueFromLiteral: the analyzer hands us the normalized JSON

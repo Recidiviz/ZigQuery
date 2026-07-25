@@ -4,6 +4,7 @@
 
 pub const sqlite = @import("sqlite.zig");
 pub const analyzer_ffi = @import("analyzer_ffi.zig");
+pub const regexp_ffi = @import("regexp_ffi.zig");
 pub const pb = @import("proto/resolved_ast.zig");
 pub const wire = @import("proto/wire.zig");
 pub const driver = @import("driver.zig");

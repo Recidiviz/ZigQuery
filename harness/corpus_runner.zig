@@ -81,6 +81,23 @@ pub fn main(init: std.process.Init) !void {
         },
     );
 
+    // Optional: dump every FAIL detail (invoke with any extra arg).
+    if (init.environ_map.get("DUMP_FAILS") != null) {
+        for (results.items) |r| {
+            if (r.outcome == .fail or r.outcome == .errmsg_mismatch) {
+                const q = blk: {
+                    for (cases) |cv| {
+                        if (@as(usize, @intCast(cv.object.get("idx").?.integer)) == r.idx)
+                            break :blk cv.object.get("query").?.string;
+                    }
+                    break :blk "";
+                };
+                try out.print("FAIL [{d}] {s} :: {s} :: {s}\n", .{ r.idx, r.name, r.detail, q });
+            }
+        }
+        try out.flush();
+    }
+
     // Baseline diff.
     var regressions: usize = 0;
     var newly_passing: usize = 0;

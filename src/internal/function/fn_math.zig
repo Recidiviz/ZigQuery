@@ -170,3 +170,32 @@ fn gonumRound(x: f64, prec: i32) f64 {
     if (rounded == 0) return 0;
     return rounded / pow;
 }
+
+// ---------------------------------------------------------------------
+// sign / bit_count (Go function_math.go SIGN, function_bit.go BIT_COUNT)
+// ---------------------------------------------------------------------
+
+pub fn sign(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (bind.existsNull(args)) return null_v;
+    const f = try args[0].toFloat64();
+    if (std.math.signbit(f)) return Value{ .int = -1 };
+    if (f == 0) return Value{ .int = 0 };
+    return Value{ .int = 1 };
+}
+
+pub fn bitCount(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (bind.existsNull(args)) return null_v;
+    switch (args[0]) {
+        .bytes => |b| {
+            var sum: i64 = 0;
+            for (b) |byte| sum += @popCount(byte);
+            return Value{ .int = sum };
+        },
+        else => {
+            const v: u64 = @bitCast(try args[0].toInt64());
+            return Value{ .int = @popCount(v) };
+        },
+    }
+}

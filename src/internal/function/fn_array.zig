@@ -103,6 +103,62 @@ pub fn makeArray(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return value_mod.arrayValue(alloc, args);
 }
 
+/// Go ARRAY_TO_STRING(array, delimiter[, null_text]): joins elements' %t
+/// rendering; NULL elements are dropped unless null_text is supplied.
+pub fn arrayToString(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len < 2)
+        return bind.fail("ARRAY_TO_STRING: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const arr = try args[0].toArray();
+    const delim = try args[1].toString(alloc);
+    const null_text: ?[]const u8 = if (args.len == 3) try args[2].toString(alloc) else null;
+    var out: std.ArrayList(u8) = .empty;
+    var first = true;
+    for (arr.values) |v| {
+        const piece: []const u8 = if (v == .@"null") (null_text orelse continue) else try v.format('t', alloc);
+        if (!first) try out.appendSlice(alloc, delim);
+        try out.appendSlice(alloc, piece);
+        first = false;
+    }
+    return Value{ .string = try out.toOwnedSlice(alloc) };
+}
+
+/// Go ARRAY_REVERSE.
+pub fn arrayReverse(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len != 1)
+        return bind.fail("ARRAY_REVERSE: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const arr = try args[0].toArray();
+    const out = try alloc.alloc(Value, arr.values.len);
+    for (arr.values, 0..) |v, i| out[arr.values.len - 1 - i] = v;
+    return value_mod.arrayValue(alloc, out);
+}
+
+/// Go GENERATE_ARRAY(start, end[, step=1]). Any NULL argument yields an empty
+/// array (Go bindGenerateArray).
+pub fn generateArray(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len != 2 and args.len != 3)
+        return bind.fail("GENERATE_ARRAY: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return value_mod.arrayValue(alloc, &.{});
+    const start = args[0];
+    const end = args[1];
+    const step: Value = if (args.len == 3) args[2] else Value{ .int = 1 };
+    const is_lt = try start.lte(end);
+    const is_positive_step = try step.gt(Value{ .int = 0 });
+    var out: std.ArrayList(Value) = .empty;
+    if ((is_lt and !is_positive_step) or (!is_lt and is_positive_step))
+        return value_mod.arrayValue(alloc, out.items);
+    var cur = start;
+    while (true) {
+        try out.append(alloc, cur);
+        const after = try cur.add(alloc, step);
+        const cond = if (is_lt) try after.lte(end) else try after.gte(end);
+        if (!cond) break;
+        cur = after;
+    }
+    return value_mod.arrayValue(alloc, out.items);
+}
+
 /// Go bindMakeStruct -> MAKE_STRUCT: (key, value) pairs; empty keys become
 /// "_field_<n>".
 pub fn makeStruct(alloc: std.mem.Allocator, args: []const Value) Error!Value {

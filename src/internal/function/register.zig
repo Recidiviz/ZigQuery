@@ -314,6 +314,9 @@ test {
     testing.refAllDecls(@import("fn_math.zig"));
     testing.refAllDecls(@import("fn_compare.zig"));
     testing.refAllDecls(@import("fn_string.zig"));
+    testing.refAllDecls(@import("fn_regexp.zig"));
+    testing.refAllDecls(@import("fn_format.zig"));
+    testing.refAllDecls(@import("fn_net.zig"));
     testing.refAllDecls(@import("fn_array.zig"));
     testing.refAllDecls(@import("fn_misc.zig"));
     testing.refAllDecls(@import("fn_date.zig"));
@@ -399,6 +402,12 @@ const TestEnv = struct {
         const v = try env.queryValue(sql);
         try testing.expect(v == .string);
         try testing.expectEqualStrings(expected, v.string);
+    }
+
+    fn expectBytesResult(env: *TestEnv, expected: []const u8, sql: []const u8) !void {
+        const v = try env.queryValue(sql);
+        try testing.expect(v == .bytes);
+        try testing.expectEqualStrings(expected, v.bytes);
     }
 
     fn expectErrorMsg(env: *TestEnv, expected_substr: []const u8, sql: []const u8) !void {
@@ -799,4 +808,148 @@ test "min_args guard rejects too few arguments instead of UB" {
     var env = try TestEnv.init();
     defer env.deinit();
     try env.expectErrorMsg("zetasqlite_add: invalid argument num", "SELECT zetasqlite_add(1)");
+}
+
+test "extended string functions (ascii/length/case/pad/split/soundex)" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    try env.expectInt(97, try env.fmt("SELECT zetasqlite_ascii({s})", .{try env.encStr("abcd")}));
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_ascii({s})", .{try env.encStr("")}));
+    // rune vs byte length.
+    try env.expectInt(5, try env.fmt("SELECT zetasqlite_char_length({s})", .{try env.encStr("абвгд")}));
+    try env.expectInt(10, try env.fmt("SELECT zetasqlite_byte_length({s})", .{try env.encStr("абвгд")}));
+    // full-unicode case mapping.
+    try env.expectStringResult("ΚΑΘΊΣΜΑΤΑ", try env.fmt("SELECT zetasqlite_upper({s})", .{try env.encStr("καθίσματα")}));
+    // rune-aware reverse.
+    try env.expectStringResult("дгвба", try env.fmt("SELECT zetasqlite_reverse({s})", .{try env.encStr("абвгд")}));
+    // lpad on runes, with repeated pattern.
+    try env.expectStringResult("中文中例子", try env.fmt(
+        "SELECT zetasqlite_lpad({s}, 5, {s})",
+        .{ try env.encStr("例子"), try env.encStr("中文") },
+    ));
+    try env.expectStringResult("  例子", try env.fmt("SELECT zetasqlite_lpad({s}, 4)", .{try env.encStr("例子")}));
+    // initcap default delimiters (Greek).
+    try env.expectStringResult("Καθίσματα Ταινιών", try env.fmt("SELECT zetasqlite_initcap({s})", .{try env.encStr("καθίσματα ταινιών")}));
+    // soundex.
+    try env.expectStringResult("A261", try env.fmt("SELECT zetasqlite_soundex({s})", .{try env.encStr("Ashcraft")}));
+    try env.expectStringResult("", try env.fmt("SELECT zetasqlite_soundex({s})", .{try env.encStr("#1")}));
+    // strpos / instr / starts_with / ends_with.
+    try env.expectInt(4, try env.fmt("SELECT zetasqlite_strpos({s}, {s})", .{ try env.encStr("foo@bar"), try env.encStr("@") }));
+    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 1, 2)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1, 1)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_starts_with({s}, {s})", .{ try env.encStr("bar"), try env.encStr("b") }));
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_ends_with({s}, {s})", .{ try env.encStr("apple"), try env.encStr("e") }));
+    // translate.
+    try env.expectStringResult("Thiz iz a kuukie", try env.fmt(
+        "SELECT zetasqlite_translate({s}, {s}, {s})",
+        .{ try env.encStr("This is a cookie"), try env.encStr("sco"), try env.encStr("zku") },
+    ));
+    try env.expectInt(226, try env.fmt("SELECT zetasqlite_unicode({s})", .{try env.encStr("âbc")}));
+}
+
+test "trim / normalize functions" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.expectStringResult("apple   ", try env.fmt("SELECT zetasqlite_ltrim({s})", .{try env.encStr("   apple   ")}));
+    try env.expectStringResult("apple", try env.fmt("SELECT zetasqlite_trim({s})", .{try env.encStr("   apple   ")}));
+    try env.expectStringResult("apple", try env.fmt("SELECT zetasqlite_trim({s}, {s})", .{ try env.encStr("***apple***"), try env.encStr("*") }));
+    // NFC composes e + combining circumflex into ê.
+    try env.expectStringResult("\u{00ea}", try env.fmt("SELECT zetasqlite_normalize({s})", .{try env.encStr("e\u{0302}")}));
+}
+
+test "base32 / base64 / hex encodings" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.expectStringResult("MFRGGZDF74======", try env.fmt("SELECT zetasqlite_to_base32({s})", .{try env.enc(Value{ .bytes = "abcde\xFF" })}));
+    try env.expectBytesResult("abcde\xFF", try env.fmt("SELECT zetasqlite_from_base32({s})", .{try env.encStr("MFRGGZDF74======")}));
+    try env.expectStringResult("00010203aaeeefff", try env.fmt("SELECT zetasqlite_to_hex({s})", .{try env.enc(Value{ .bytes = "\x00\x01\x02\x03\xAA\xEE\xEF\xFF" })}));
+    try env.expectBytesResult("\x00\xAF", try env.fmt("SELECT zetasqlite_from_hex({s})", .{try env.encStr("0AF")}));
+}
+
+test "regexp functions (RE2 shim)" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_regexp_contains({s}, {s})", .{ try env.encStr("a@foo.com"), try env.encStr("@foo\\.com$") }));
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_regexp_contains({s}, {s})", .{ try env.encStr("www.net"), try env.encStr("@") }));
+    // capture group -> last submatch.
+    try env.expectStringResult("com", try env.fmt(
+        "SELECT zetasqlite_regexp_extract({s}, {s})",
+        .{ try env.encStr("foo@example.com"), try env.encStr(".*@.*\\.([a-z]+)$") },
+    ));
+    // no groups -> whole match.
+    try env.expectStringResult("foo", try env.fmt(
+        "SELECT zetasqlite_regexp_extract({s}, {s})",
+        .{ try env.encStr("foo@example.com"), try env.encStr("^[a-z]+") },
+    ));
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_regexp_extract({s}, {s})", .{ try env.encStr("###"), try env.encStr("[a-z]+") }));
+    // replace with \1 rewrite.
+    try env.expectStringResult("<h1>Heading</h1>", try env.fmt(
+        "SELECT zetasqlite_regexp_replace({s}, {s}, {s})",
+        .{ try env.encStr("# Heading"), try env.encStr("^# (.+)$"), try env.encStr("<h1>\\1</h1>") },
+    ));
+    // instr: 1-based byte position of the match.
+    try env.expectInt(3, try env.fmt("SELECT zetasqlite_regexp_instr({s}, {s})", .{ try env.encStr("ab@gmail.com"), try env.encStr("@[^.]*") }));
+}
+
+test "FORMAT verbs" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.expectStringResult("10 11 12 ff FF", try env.fmt("SELECT zetasqlite_format({s}, 10, 11, 10, 255, 255)", .{try env.encStr("%d %i %o %x %X")}));
+    try env.expectStringResult("|        11|", try env.fmt("SELECT zetasqlite_format({s}, 11)", .{try env.encStr("|%10d|")}));
+    try env.expectStringResult("+0000000012+", try env.fmt("SELECT zetasqlite_format({s}, 12)", .{try env.encStr("+%010d+")}));
+    try env.expectStringResult("123,456,789", try env.fmt("SELECT zetasqlite_format({s}, 123456789)", .{try env.encStr("%'d")}));
+    try env.expectStringResult("1.100000 2.200000E+00", try env.fmt("SELECT zetasqlite_format({s}, 1.1, 2.2)", .{try env.encStr("%f %E")}));
+    try env.expectStringResult("-abcd-", try env.fmt("SELECT zetasqlite_format({s}, {s})", .{ try env.encStr("-%s-"), try env.encStr("abcd") }));
+    // %T typed rendering of BYTES.
+    try env.expectStringResult("b\"abc\"", try env.fmt("SELECT zetasqlite_format({s}, {s})", .{ try env.encStr("%T"), try env.enc(Value{ .bytes = "abc" }) }));
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_format({s}, NULL)", .{try env.encStr("%s")}));
+}
+
+test "array functions (generate_array/array_to_string/array_reverse)" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    // GENERATE_ARRAY(10, 0, -3) -> [10,7,4,1].
+    try env.expectInt(4, "SELECT zetasqlite_array_length(zetasqlite_generate_array(10, 0, -3))");
+    try env.expectInt(1, "SELECT zetasqlite_array_at_offset(zetasqlite_generate_array(10, 0, -3), 3)");
+    // step wrong sign -> empty.
+    try env.expectInt(0, "SELECT zetasqlite_array_length(zetasqlite_generate_array(10, 0, 3))");
+    // NULL bound -> empty array.
+    try env.expectInt(0, "SELECT zetasqlite_array_length(zetasqlite_generate_array(5, NULL, 1))");
+    try env.expectInt(3, "SELECT zetasqlite_array_at_offset(zetasqlite_array_reverse(zetasqlite_make_array(1, 2, 3)), 0)");
+    try env.expectStringResult("a--b", try env.fmt(
+        "SELECT zetasqlite_array_to_string(zetasqlite_make_array({s}, {s}), {s})",
+        .{ try env.encStr("a"), try env.encStr("b"), try env.encStr("--") },
+    ));
+}
+
+test "math sign / bit_count" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.expectInt(1, "SELECT zetasqlite_sign(25)");
+    try env.expectInt(0, "SELECT zetasqlite_sign(0)");
+    try env.expectInt(-1, "SELECT zetasqlite_sign(-25)");
+    try env.expectInt(2, "SELECT zetasqlite_bit_count(5)");
+    try env.expectInt(64, "SELECT zetasqlite_bit_count(-1)");
+    try env.expectInt(16, try env.fmt("SELECT zetasqlite_bit_count({s})", .{try env.enc(Value{ .bytes = "\xFF\xFF" })}));
+}
+
+test "net functions" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    // IPV4_FROM_INT64(0xABCDEF) -> bytes 00 ab cd ef.
+    try env.expectBytesResult("\x00\xAB\xCD\xEF", "SELECT zetasqlite_net_ipv4_from_int64(11259375)");
+    try env.expectInt(0xABCDEF, try env.fmt("SELECT zetasqlite_net_ipv4_to_int64({s})", .{try env.enc(Value{ .bytes = "\x00\xAB\xCD\xEF" })}));
+    // IP_TO_STRING for v4 and v6.
+    try env.expectStringResult("48.49.50.51", try env.fmt("SELECT zetasqlite_net_ip_to_string({s})", .{try env.enc(Value{ .bytes = "0123" })}));
+    try env.expectStringResult("::1", try env.fmt("SELECT zetasqlite_net_ip_to_string({s})", .{try env.enc(Value{ .bytes = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01" })}));
+    // IP_FROM_STRING round-trips.
+    try env.expectBytesResult("0123", try env.fmt("SELECT zetasqlite_net_ip_from_string({s})", .{try env.encStr("48.49.50.51")}));
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_net_safe_ip_from_string({s})", .{try env.encStr("::wxyz")}));
+    // HOST / PUBLIC_SUFFIX / REG_DOMAIN.
+    try env.expectStringResult("abc.xyz", try env.fmt("SELECT zetasqlite_net_host({s})", .{try env.encStr("http://abc.xyz")}));
+    try env.expectStringResult("xyz", try env.fmt("SELECT zetasqlite_net_public_suffix({s})", .{try env.encStr("http://abc.xyz")}));
+    try env.expectStringResult("amazon.co.uk", try env.fmt("SELECT zetasqlite_net_reg_domain({s})", .{try env.encStr("amazon.co.uk")}));
+    // GENERATE_UUID shape.
+    try env.expectInt(36, "SELECT zetasqlite_length(zetasqlite_generate_uuid())");
 }

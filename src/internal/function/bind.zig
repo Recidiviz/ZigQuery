@@ -69,6 +69,9 @@ const math = @import("fn_math.zig");
 const cmp = @import("fn_compare.zig");
 const str = @import("fn_string.zig");
 const arr = @import("fn_array.zig");
+const reg = @import("fn_regexp.zig");
+const fmtfn = @import("fn_format.zig");
+const net = @import("fn_net.zig");
 const misc = @import("fn_misc.zig");
 const fdate = @import("fn_date.zig");
 const fdatetime = @import("fn_datetime.zig");
@@ -136,6 +139,62 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "right", .min_args = 2, .handler = str.right },
     .{ .name = "substr", .handler = str.substr },
     .{ .name = "upper", .handler = str.upper },
+    .{ .name = "ascii", .min_args = 1, .handler = str.ascii },
+    .{ .name = "byte_length", .min_args = 1, .handler = str.byteLength },
+    .{ .name = "char_length", .min_args = 1, .handler = str.charLength },
+    .{ .name = "chr", .min_args = 1, .handler = str.chr },
+    .{ .name = "code_points_to_bytes", .min_args = 1, .handler = str.codePointsToBytes },
+    .{ .name = "code_points_to_string", .min_args = 1, .handler = str.codePointsToString },
+    .{ .name = "to_code_points", .min_args = 1, .handler = str.toCodePoints },
+    .{ .name = "ends_with", .min_args = 2, .handler = str.endsWith },
+    .{ .name = "starts_with", .min_args = 2, .handler = str.startsWith },
+    .{ .name = "strpos", .min_args = 2, .handler = str.strpos },
+    .{ .name = "instr", .min_args = 2, .handler = str.instr },
+    .{ .name = "replace", .min_args = 3, .handler = str.replace },
+    .{ .name = "repeat", .min_args = 2, .handler = str.repeat },
+    .{ .name = "reverse", .min_args = 1, .handler = str.reverse },
+    .{ .name = "trim", .min_args = 1, .handler = str.trim },
+    .{ .name = "ltrim", .min_args = 1, .handler = str.ltrim },
+    .{ .name = "rtrim", .min_args = 1, .handler = str.rtrim },
+    .{ .name = "lpad", .min_args = 2, .handler = str.lpad },
+    .{ .name = "rpad", .min_args = 2, .handler = str.rpad },
+    .{ .name = "split", .min_args = 1, .handler = str.split },
+    .{ .name = "initcap", .min_args = 1, .handler = str.initcap },
+    .{ .name = "translate", .min_args = 3, .handler = str.translate },
+    .{ .name = "unicode", .min_args = 1, .handler = str.unicode },
+    .{ .name = "soundex", .min_args = 1, .handler = str.soundex },
+    .{ .name = "safe_convert_bytes_to_string", .min_args = 1, .handler = str.safeConvertBytesToString },
+    .{ .name = "normalize", .min_args = 1, .handler = str.normalize },
+    .{ .name = "normalize_and_casefold", .min_args = 1, .handler = str.normalizeAndCasefold },
+    .{ .name = "to_base32", .min_args = 1, .handler = str.toBase32 },
+    .{ .name = "from_base32", .min_args = 1, .handler = str.fromBase32 },
+    .{ .name = "to_base64", .min_args = 1, .handler = str.toBase64 },
+    .{ .name = "from_base64", .min_args = 1, .handler = str.fromBase64 },
+    .{ .name = "to_hex", .min_args = 1, .handler = str.toHex },
+    .{ .name = "from_hex", .min_args = 1, .handler = str.fromHex },
+
+    // regexp functions (RE2 via the shim)
+    .{ .name = "regexp_contains", .min_args = 2, .handler = reg.regexpContains },
+    .{ .name = "regexp_extract", .min_args = 2, .handler = reg.regexpExtract },
+    .{ .name = "regexp_extract_all", .min_args = 2, .handler = reg.regexpExtractAll },
+    .{ .name = "regexp_instr", .min_args = 2, .handler = reg.regexpInstr },
+    .{ .name = "regexp_replace", .min_args = 3, .handler = reg.regexpReplace },
+
+    // FORMAT
+    .{ .name = "format", .min_args = 1, .handler = fmtfn.format },
+
+    // net.* functions
+    .{ .name = "generate_uuid", .handler = net.generateUuid },
+    .{ .name = "net_host", .min_args = 1, .handler = net.netHost },
+    .{ .name = "net_ip_from_string", .min_args = 1, .handler = net.netIpFromString },
+    .{ .name = "net_ip_net_mask", .min_args = 2, .handler = net.netIpNetMask },
+    .{ .name = "net_ip_to_string", .min_args = 1, .handler = net.netIpToString },
+    .{ .name = "net_ip_trunc", .min_args = 2, .handler = net.netIpTrunc },
+    .{ .name = "net_ipv4_from_int64", .min_args = 1, .handler = net.netIpv4FromInt64 },
+    .{ .name = "net_ipv4_to_int64", .min_args = 1, .handler = net.netIpv4ToInt64 },
+    .{ .name = "net_safe_ip_from_string", .min_args = 1, .handler = net.netSafeIpFromString },
+    .{ .name = "net_public_suffix", .min_args = 1, .handler = net.netPublicSuffix },
+    .{ .name = "net_reg_domain", .min_args = 1, .handler = net.netRegDomain },
 
     // math functions
     .{ .name = "abs", .min_args = 1, .handler = math.abs },
@@ -145,11 +204,18 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "least", .min_args = 1, .handler = cmp.least },
     .{ .name = "greatest", .min_args = 1, .handler = cmp.greatest },
 
+    // math functions (cont.)
+    .{ .name = "sign", .min_args = 1, .handler = math.sign },
+    .{ .name = "bit_count", .min_args = 1, .handler = math.bitCount },
+
     // array functions
     .{ .name = "array_concat", .handler = arr.arrayConcat },
     .{ .name = "array_length", .handler = arr.arrayLength },
     .{ .name = "make_array", .handler = arr.makeArray },
     .{ .name = "make_struct", .handler = arr.makeStruct },
+    .{ .name = "array_to_string", .min_args = 2, .handler = arr.arrayToString },
+    .{ .name = "array_reverse", .min_args = 1, .handler = arr.arrayReverse },
+    .{ .name = "generate_array", .min_args = 2, .handler = arr.generateArray },
 
     // date family (Go function_date.go)
     .{ .name = "current_date", .handler = fdate.currentDate },
