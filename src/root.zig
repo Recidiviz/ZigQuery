@@ -19,6 +19,7 @@ pub const coordinator_context = @import("internal/coordinator/context.zig");
 pub const extractor = @import("internal/coordinator/extractor.zig");
 pub const coordinator = @import("internal/coordinator/coordinator.zig");
 pub const function = @import("internal/function/register.zig");
+pub const function_window = @import("internal/function/window.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

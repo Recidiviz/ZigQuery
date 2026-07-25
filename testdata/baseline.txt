@@ -256,3 +256,39 @@
 721	limit offset test
 732	simple truncate
 733	simple drop
+110	any_value with window
+128	array_agg with window
+134	avg with window
+146	countif with window
+151	logical_and default
+152	logical_and no rows
+153	logical_and with window
+154	logical_or window default
+155	logical_or window no rows
+156	logical_or with window
+159	max window from date group
+162	min window from date group
+171	string_agg with window
+195	window total
+196	window subtotal
+197	window cumulative
+198	window cumulative omit current row
+199	window offset
+200	window avg
+201	window first_value
+202	window last_value
+203	window last_value with offset
+204	window last_value with named window
+209	window order by
+210	window order by handles nil
+217	window range
+222	rank with same order
+223	window dense_rank
+229	window row_number
+230	row_number nest
+241	window partitions are distinct from each other
+242	lag with option
+326	qualify
+327	qualify without group by / where / having
+328	qualify group
+330	qualify direct

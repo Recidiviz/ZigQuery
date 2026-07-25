@@ -12,10 +12,11 @@
 //!   CreateView, Drop/DropFunction (Merge deferred; plain CreateTable is
 //!   handled by the driver action via spec.SQLiteSchema, like Go)
 //! - scans: SingleRow, Project, Filter, Join, Aggregate (no grouping sets),
-//!   OrderBy, LimitOffset, SetOperation, With/WithRef/WithEntry, Array
+//!   OrderBy, LimitOffset, SetOperation, With/WithRef/WithEntry, Array,
+//!   Analytic
 //! - expressions: Literal, ColumnRef, FunctionCall, AggregateFunctionCall,
-//!   Cast, SubqueryExpr, ComputedColumn, OutputColumn, GetStructField,
-//!   MakeStruct
+//!   AnalyticFunctionCall, Cast, SubqueryExpr, ComputedColumn, OutputColumn,
+//!   GetStructField, MakeStruct
 
 const std = @import("std");
 const pb = @import("../../proto/resolved_ast.zig");
@@ -253,6 +254,109 @@ pub fn formatNamePath(alloc: std.mem.Allocator, path: []const []const u8) error{
         if (c.* == '.') c.* = '_';
     }
     return joined;
+}
+
+// ----------------------------------------------------------------------
+// Window-frame helpers (Go: getWindowBoundaryTypeData / windowFuncFixedRanges)
+// ----------------------------------------------------------------------
+
+/// Go getWindowBoundaryTypeData: boundary enum + optional offset literal ->
+/// FrameBoundData (allocated; Go returns it by value).
+fn getWindowBoundaryTypeData(
+    alloc: std.mem.Allocator,
+    boundary_type: pb.ResolvedWindowFrameExprEnums_BoundaryType,
+    literal: ExpressionData,
+) Error!*types_data.FrameBoundData {
+    const bound = try alloc.create(types_data.FrameBoundData);
+    bound.* = switch (boundary_type) {
+        .UNBOUNDED_PRECEDING => .{ .type = "UNBOUNDED PRECEDING" },
+        .OFFSET_PRECEDING => .{ .type = "PRECEDING", .offset = literal },
+        .CURRENT_ROW => .{ .type = "CURRENT ROW" },
+        .OFFSET_FOLLOWING => .{ .type = "FOLLOWING", .offset = literal },
+        .UNBOUNDED_FOLLOWING => .{ .type = "UNBOUNDED FOLLOWING" },
+        else => .{}, // Go: falls through to FrameBoundData{}
+    };
+    return bound;
+}
+
+/// One entry of Go's windowFuncFixedRanges map (comptime-friendly shape; the
+/// cume_dist offset literal is materialized in windowFuncFixedRange).
+const FixedRange = struct {
+    unit: []const u8,
+    start: []const u8,
+    start_offset_int: ?i64 = null,
+    end: []const u8,
+};
+
+/// Go windowFuncFixedRanges: window functions whose SQLite frame is fixed by
+/// the runtime UDF's semantics; a user-supplied framing clause is an error.
+const window_func_fixed_ranges = std.StaticStringMap(FixedRange).initComptime(.{
+    .{ "zetasqlite_window_ntile", FixedRange{
+        .unit = "ROWS",
+        .start = "CURRENT ROW",
+        .end = "UNBOUNDED FOLLOWING",
+    } },
+    .{ "zetasqlite_window_cume_dist", FixedRange{
+        .unit = "GROUPS",
+        .start = "FOLLOWING",
+        .start_offset_int = 1,
+        .end = "UNBOUNDED FOLLOWING",
+    } },
+    .{ "zetasqlite_window_dense_rank", FixedRange{
+        .unit = "RANGE",
+        .start = "UNBOUNDED PRECEDING",
+        .end = "CURRENT ROW",
+    } },
+    .{ "zetasqlite_window_rank", FixedRange{
+        .unit = "GROUPS",
+        .start = "UNBOUNDED PRECEDING",
+        .end = "CURRENT ROW EXCLUDE TIES",
+    } },
+    .{ "zetasqlite_window_percent_rank", FixedRange{
+        .unit = "GROUPS",
+        .start = "CURRENT ROW",
+        .end = "UNBOUNDED FOLLOWING",
+    } },
+    .{ "zetasqlite_window_row_number", FixedRange{
+        .unit = "ROWS",
+        .start = "UNBOUNDED PRECEDING",
+        .end = "CURRENT ROW",
+    } },
+    .{ "zetasqlite_window_lag", FixedRange{
+        .unit = "ROWS",
+        .start = "UNBOUNDED PRECEDING",
+        .end = "CURRENT ROW",
+    } },
+    .{ "zetasqlite_window_lead", FixedRange{
+        .unit = "ROWS",
+        .start = "CURRENT ROW",
+        .end = "UNBOUNDED FOLLOWING",
+    } },
+});
+
+/// Materializes a windowFuncFixedRanges entry as FrameClauseData, or null
+/// when the function has no fixed range (Go: map lookup miss).
+fn windowFuncFixedRange(
+    alloc: std.mem.Allocator,
+    func_name: []const u8,
+) Error!?*types_data.FrameClauseData {
+    const fixed = window_func_fixed_ranges.get(func_name) orelse return null;
+
+    const start = try alloc.create(types_data.FrameBoundData);
+    start.* = .{ .type = fixed.start };
+    if (fixed.start_offset_int) |offset| {
+        // Go: Offset: ExpressionData{Type: Literal, Literal: &LiteralData{
+        // Value: IntValue(1)}} (cume_dist's `1 FOLLOWING` GROUPS bound).
+        const literal = try alloc.create(types_data.LiteralData);
+        literal.* = .{ .value = .{ .int = offset } };
+        start.offset = .{ .type = .literal, .literal = literal };
+    }
+    const end = try alloc.create(types_data.FrameBoundData);
+    end.* = .{ .type = fixed.end };
+
+    const clause = try alloc.create(types_data.FrameClauseData);
+    clause.* = .{ .unit = fixed.unit, .start = start, .end = end };
+    return clause;
 }
 
 // ----------------------------------------------------------------------
@@ -750,8 +854,8 @@ pub const NodeExtractor = struct {
             .resolved_with_ref_scan_node => |n| return self.extractWithRefScanNode(alloc, n, ctx),
             .resolved_array_scan_node => |n| return self.extractArrayScanData(alloc, n, ctx),
             .resolved_table_scan_node => |n| return extractTableScanData(alloc, n),
+            .resolved_analytic_scan_node => |n| return self.extractAnalyticScanData(alloc, n, ctx),
             // Deferred foundation gaps:
-            .resolved_analytic_scan_node => return error.Unimplemented,
             .resolved_recursive_scan_node => return error.Unimplemented,
             .resolved_recursive_ref_scan_node => return error.Unimplemented,
             else => return error.UnsupportedNode, // Go: "unsupported scan node type"
@@ -1191,6 +1295,94 @@ pub const NodeExtractor = struct {
         };
     }
 
+    /// Go extractAnalyticScanData: flattens the function_group_list into a
+    /// single function_list. Each group carries the PARTITION BY / ORDER BY
+    /// shared by its analytic functions; those attach onto each function's
+    /// WindowSpec (whose FrameClause was already set by
+    /// extractAnalyticFunctionCallData).
+    fn extractAnalyticScanData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedAnalyticScanProto,
+        ctx: *TransformContext,
+    ) Error!ScanData {
+        const input_scan = node.input_scan orelse return error.InvalidAST;
+        const input_scan_data = try self.ExtractScanData(alloc, input_scan, ctx);
+
+        var function_list: std.ArrayList(*types_data.ComputedColumnData) = .empty;
+        for (node.function_group_list) |group| {
+            // Extract PARTITION BY expressions from the group. Go routes the
+            // *ResolvedColumnRef through ExtractExpressionData, which lands
+            // in NewColumnExpressionData.
+            var group_partition_by: std.ArrayList(*ExpressionData) = .empty;
+            if (group.partition_by) |partitioning| {
+                for (partitioning.partition_by_list) |part_ref| {
+                    const column = part_ref.column orelse return error.InvalidAST;
+                    const part_data = try alloc.create(ExpressionData);
+                    part_data.* = try newColumnExpressionData(alloc, column);
+                    try group_partition_by.append(alloc, part_data);
+                }
+            }
+
+            // Extract ORDER BY expressions from the group.
+            var group_order_by: std.ArrayList(*types_data.OrderByItemData) = .empty;
+            if (group.order_by) |ordering| {
+                for (ordering.order_by_item_list) |order_item| {
+                    const column_ref = order_item.column_ref orelse return error.InvalidAST;
+                    const column = column_ref.column orelse return error.InvalidAST;
+                    const item = try alloc.create(types_data.OrderByItemData);
+                    item.* = .{
+                        .expression = try newColumnExpressionData(alloc, column),
+                        .is_descending = order_item.is_descending orelse false,
+                        .null_order = order_item.null_order orelse .ORDER_UNSPECIFIED,
+                    };
+                    try group_order_by.append(alloc, item);
+                }
+            }
+
+            const partition_slice = try group_partition_by.toOwnedSlice(alloc);
+            const order_slice = try group_order_by.toOwnedSlice(alloc);
+
+            for (group.analytic_function_list) |func_any| {
+                // Go's analyticFunctionList items are ResolvedComputedColumns
+                // whose Expr is the analytic function call.
+                const cc = try computedColumnOf(func_any);
+                const expr = cc.expr orelse return error.InvalidAST;
+                const expr_data = try self.ExtractExpressionData(alloc, expr, ctx);
+
+                // Merge the group's PARTITION BY / ORDER BY into the
+                // function's window spec (Go only assigns non-empty lists).
+                if (expr_data.type == .function) {
+                    if (expr_data.function) |function| {
+                        if (function.window_spec) |window_spec| {
+                            if (partition_slice.len > 0) window_spec.partition_by = partition_slice;
+                            if (order_slice.len > 0) window_spec.order_by = order_slice;
+                        }
+                    }
+                }
+
+                const out = try alloc.create(types_data.ComputedColumnData);
+                out.* = .{
+                    .column = try extractColumnData(alloc, cc.column),
+                    .expression = expr_data,
+                };
+                try function_list.append(alloc, out);
+            }
+        }
+
+        const parent = node.parent orelse return error.InvalidAST;
+        const analytic = try alloc.create(types_data.AnalyticScanData);
+        analytic.* = .{
+            .input_scan = input_scan_data,
+            .function_list = try function_list.toOwnedSlice(alloc),
+        };
+        return .{
+            .type = .analytic,
+            .column_list = try extractColumnDataList(alloc, parent.column_list),
+            .analytic_scan = analytic,
+        };
+    }
+
     // ------------------------------------------------------------------
     // Expressions
     // ------------------------------------------------------------------
@@ -1220,9 +1412,7 @@ pub const NodeExtractor = struct {
                         const ns_node = ns.node orelse return error.InvalidAST;
                         switch (ns_node) {
                             .resolved_aggregate_function_call_node => |agg| return self.extractAggregateFunctionCallData(alloc, agg, ctx),
-                            // Analytic function calls: deferred with the
-                            // analytic scan.
-                            .resolved_analytic_function_call_node => return error.Unimplemented,
+                            .resolved_analytic_function_call_node => |an| return self.extractAnalyticFunctionCallData(alloc, an, ctx),
                         }
                     },
                 }
@@ -1438,6 +1628,127 @@ pub const NodeExtractor = struct {
         }
 
         function.arguments = try arguments.toOwnedSlice(alloc);
+        return base_data;
+    }
+
+    /// Go getWindowBoundaryOptionFuncSQL: a ResolvedWindowFrame (or its
+    /// absence) becomes a FrameClauseData. Absent frame -> Go's default
+    /// `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`.
+    fn getWindowBoundaryOptionFuncSQL(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: ?*const pb.ResolvedWindowFrameProto,
+        ctx: *TransformContext,
+    ) Error!*types_data.FrameClauseData {
+        const clause = try alloc.create(types_data.FrameClauseData);
+        const frame = node orelse {
+            const start = try alloc.create(types_data.FrameBoundData);
+            start.* = .{ .type = "UNBOUNDED PRECEDING" };
+            const end = try alloc.create(types_data.FrameBoundData);
+            end.* = .{ .type = "UNBOUNDED FOLLOWING" };
+            clause.* = .{ .unit = "ROWS", .start = start, .end = end };
+            return clause;
+        };
+
+        const frame_nodes = [2]*const pb.ResolvedWindowFrameExprProto{
+            frame.start_expr orelse return error.InvalidAST,
+            frame.end_expr orelse return error.InvalidAST,
+        };
+        var frames: [2]*types_data.FrameBoundData = undefined;
+        for (frame_nodes, 0..) |frame_expr, i| {
+            const typ = frame_expr.boundary_type orelse return error.InvalidAST;
+            var literal = ExpressionData{};
+            switch (typ) {
+                .UNBOUNDED_PRECEDING, .CURRENT_ROW, .UNBOUNDED_FOLLOWING => {},
+                .OFFSET_PRECEDING, .OFFSET_FOLLOWING => {
+                    const expression = frame_expr.expression orelse return error.InvalidAST;
+                    literal = try self.ExtractExpressionData(alloc, expression, ctx);
+                },
+                // Go: "unexpected boundary type %d"
+                else => return error.UnsupportedNode,
+            }
+            frames[i] = try getWindowBoundaryTypeData(alloc, typ, literal);
+        }
+
+        const unit: []const u8 = switch (frame.frame_unit orelse .ROWS) {
+            .ROWS => "ROWS",
+            .RANGE => "RANGE",
+            // Go: "unexpected frame unit %d"
+            else => return error.UnsupportedNode,
+        };
+        clause.* = .{ .unit = unit, .start = frames[0], .end = frames[1] };
+        return clause;
+    }
+
+    /// Go extractAnalyticFunctionCallData: base function call (window name
+    /// normalization) plus the analytic modifiers as trailing pseudo-args —
+    /// DISTINCT then IGNORE NULLS, in that order (unlike the aggregate path
+    /// there is no ORDER BY/LIMIT/HAVING encoding; partitioning/ordering
+    /// travel in the WindowSpec instead). The frame becomes WindowSpec
+    /// FrameClause data; PARTITION BY / ORDER BY are attached later by
+    /// extractAnalyticScanData from the surrounding function group.
+    fn extractAnalyticFunctionCallData(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        node: *const pb.ResolvedAnalyticFunctionCallProto,
+        ctx: *TransformContext,
+    ) Error!ExpressionData {
+        const non_scalar = node.parent orelse return error.InvalidAST;
+        const base = non_scalar.parent orelse return error.InvalidAST;
+
+        // Extract the base function call (isWindowFunc=true selects the
+        // zetasqlite_window_* runtime names).
+        const base_data = try self.extractFunctionCallData(alloc, base, ctx, true);
+        const function = base_data.function orelse return error.InvalidAST;
+
+        var arguments: std.ArrayList(ExpressionData) = .empty;
+        try arguments.appendSlice(alloc, function.arguments);
+
+        if (non_scalar.distinct orelse false) {
+            try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
+                alloc,
+                "zetasqlite_distinct",
+                &.{},
+            ));
+        }
+
+        // Go windowFunctionsIgnoreNullsByDefault: percentile_disc only.
+        const ignore_nulls_by_default =
+            std.mem.eql(u8, function.name, "zetasqlite_window_percentile_disc");
+
+        switch (non_scalar.null_handling_modifier orelse .DEFAULT_NULL_HANDLING) {
+            .IGNORE_NULLS => try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
+                alloc,
+                "zetasqlite_ignore_nulls",
+                &.{},
+            )),
+            .DEFAULT_NULL_HANDLING => if (ignore_nulls_by_default) {
+                try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
+                    alloc,
+                    "zetasqlite_ignore_nulls",
+                    &.{},
+                ));
+            },
+            else => {},
+        }
+        function.arguments = try arguments.toOwnedSlice(alloc);
+
+        var frame_clause = try windowFuncFixedRange(alloc, function.name);
+        if (frame_clause != null and node.window_frame != null) {
+            // Go: "%s: window framing clause is not allowed for analytic
+            // function"
+            return error.UnsupportedFunction;
+        }
+        if (frame_clause == null) {
+            frame_clause = try self.getWindowBoundaryOptionFuncSQL(alloc, node.window_frame, ctx);
+        }
+
+        // Ordering and partitioning come from the AnalyticFunctionGroup
+        // node; omit them here (extractAnalyticScanData fills them in).
+        const window_spec = try alloc.create(types_data.WindowSpecificationData);
+        window_spec.* = .{ .frame_clause = frame_clause };
+        function.window_spec = window_spec;
+
         return base_data;
     }
 
@@ -1855,6 +2166,121 @@ test "extract scalar subquery and cast" {
     try testing.expectEqual(pb.TypeKind.TYPE_STRING, cast.to_type.?.typeKind());
     try testing.expectEqual(types_data.ExpressionType.column, cast.expression.type);
     try testing.expectEqualStrings("x", cast.expression.column.?.column_name);
+}
+
+test "extract ROW_NUMBER analytic scan (fixed frame, group ORDER BY)" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const stmt = try TestHarness.statementData(
+        alloc,
+        "SELECT x, ROW_NUMBER() OVER (ORDER BY x) FROM UNNEST([3, 1, 2]) AS x",
+    );
+    var from: *const ScanData = stmt.select.?.from_clause.?;
+    while (from.type == .project) from = &from.project_scan.?.input_scan;
+    try testing.expectEqual(types_data.ScanType.analytic, from.type);
+    const analytic = from.analytic_scan.?;
+
+    try testing.expectEqual(@as(usize, 1), analytic.function_list.len);
+    const function = analytic.function_list[0].expression.function.?;
+    try testing.expectEqualStrings("zetasqlite_window_row_number", function.name);
+    try testing.expectEqual(@as(usize, 0), function.arguments.len);
+
+    // Window spec: no PARTITION BY, the group's ORDER BY on x, and the
+    // fixed row_number frame from Go's windowFuncFixedRanges.
+    const window_spec = function.window_spec.?;
+    try testing.expectEqual(@as(usize, 0), window_spec.partition_by.len);
+    try testing.expectEqual(@as(usize, 1), window_spec.order_by.len);
+    const order_item = window_spec.order_by[0];
+    try testing.expect(!order_item.is_descending);
+    try testing.expectEqual(types_data.ExpressionType.column, order_item.expression.type);
+    try testing.expectEqualStrings("x", order_item.expression.column.?.column_name);
+
+    const frame = window_spec.frame_clause.?;
+    try testing.expectEqualStrings("ROWS", frame.unit);
+    try testing.expectEqualStrings("UNBOUNDED PRECEDING", frame.start.?.type);
+    try testing.expectEqualStrings("CURRENT ROW", frame.end.?.type);
+}
+
+test "extract SUM OVER with PARTITION BY and explicit frame" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const stmt = try TestHarness.statementData(
+        alloc,
+        \\SELECT SUM(x) OVER (PARTITION BY y ORDER BY x DESC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
+        \\FROM UNNEST([STRUCT(1 AS x, 'a' AS y)])
+    );
+    var from: *const ScanData = stmt.select.?.from_clause.?;
+    while (from.type == .project) from = &from.project_scan.?.input_scan;
+    try testing.expectEqual(types_data.ScanType.analytic, from.type);
+    const analytic = from.analytic_scan.?;
+
+    try testing.expectEqual(@as(usize, 1), analytic.function_list.len);
+    const function = analytic.function_list[0].expression.function.?;
+    try testing.expectEqualStrings("zetasqlite_window_sum", function.name);
+    // One argument: the analyzer inlines the struct-field access
+    // ($unnest.x) as the SUM argument rather than a column ref.
+    try testing.expectEqual(@as(usize, 1), function.arguments.len);
+
+    const window_spec = function.window_spec.?;
+    try testing.expectEqual(@as(usize, 1), window_spec.partition_by.len);
+    try testing.expectEqualStrings("y", window_spec.partition_by[0].column.?.column_name);
+    try testing.expectEqual(@as(usize, 1), window_spec.order_by.len);
+    try testing.expect(window_spec.order_by[0].is_descending);
+
+    // Explicit frame extracted via getWindowBoundaryOptionFuncSQL.
+    const frame = window_spec.frame_clause.?;
+    try testing.expectEqualStrings("ROWS", frame.unit);
+    try testing.expectEqualStrings("PRECEDING", frame.start.?.type);
+    try value_mod.expectValueEqual(.{ .int = 1 }, frame.start.?.offset.literal.?.value);
+    try testing.expectEqualStrings("CURRENT ROW", frame.end.?.type);
+}
+
+test "extract analytic DISTINCT / RANK fixed GROUPS frame" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // COUNT(DISTINCT x) OVER (): DISTINCT becomes a trailing pseudo-arg;
+    // no frame given -> Go default ROWS UNBOUNDED PRECEDING..FOLLOWING.
+    {
+        const stmt = try TestHarness.statementData(
+            alloc,
+            "SELECT COUNT(DISTINCT x) OVER () FROM UNNEST([1, 1, 2]) AS x",
+        );
+        var from: *const ScanData = stmt.select.?.from_clause.?;
+        while (from.type == .project) from = &from.project_scan.?.input_scan;
+        const function = from.analytic_scan.?.function_list[0].expression.function.?;
+        try testing.expectEqualStrings("zetasqlite_window_count", function.name);
+        try testing.expectEqual(@as(usize, 2), function.arguments.len);
+        try testing.expectEqualStrings(
+            "zetasqlite_distinct",
+            function.arguments[1].function.?.name,
+        );
+        const frame = function.window_spec.?.frame_clause.?;
+        try testing.expectEqualStrings("ROWS", frame.unit);
+        try testing.expectEqualStrings("UNBOUNDED PRECEDING", frame.start.?.type);
+        try testing.expectEqualStrings("UNBOUNDED FOLLOWING", frame.end.?.type);
+    }
+
+    // RANK(): fixed GROUPS frame with the EXCLUDE TIES end bound.
+    {
+        const stmt = try TestHarness.statementData(
+            alloc,
+            "SELECT RANK() OVER (ORDER BY x) FROM UNNEST([1, 1, 2]) AS x",
+        );
+        var from: *const ScanData = stmt.select.?.from_clause.?;
+        while (from.type == .project) from = &from.project_scan.?.input_scan;
+        const function = from.analytic_scan.?.function_list[0].expression.function.?;
+        try testing.expectEqualStrings("zetasqlite_window_rank", function.name);
+        const frame = function.window_spec.?.frame_clause.?;
+        try testing.expectEqualStrings("GROUPS", frame.unit);
+        try testing.expectEqualStrings("UNBOUNDED PRECEDING", frame.start.?.type);
+        try testing.expectEqualStrings("CURRENT ROW EXCLUDE TIES", frame.end.?.type);
+    }
 }
 
 test "extract STRUCT field access becomes zetasqlite_get_struct_field" {

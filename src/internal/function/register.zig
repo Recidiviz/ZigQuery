@@ -58,10 +58,15 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
     // Aggregate UDFs + option marker functions (Go: aggregateFuncs plus the
     // distinct/limit/order_by/ignore_nulls/having_* normalFuncs entries).
     try aggregate.registerAggregates(db, state);
+
+    // Window UDFs (Go: windowFuncs / setupWindowFuncMap), registered as
+    // zetasqlite_window_<name> with SQLite's real window callbacks.
+    try window.registerWindowFunctions(db, state);
     return state;
 }
 
 const aggregate = @import("aggregate.zig");
+const window = @import("window.zig");
 
 // ----------------------------------------------------------------------
 // Generic scalar trampoline (Go setupNormalFuncMap closure equivalent)
