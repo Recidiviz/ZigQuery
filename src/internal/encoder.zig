@@ -185,6 +185,61 @@ fn timeMicrosFromPacked64(packed64: i64) i64 {
     return (hour * 3600 + min * 60 + sec) * second_micros + @divTrunc(nanos, 1000);
 }
 
+/// googlesql DateTimestampPart enum value -> name (public/functions/datetime.proto).
+/// The only enums passed as function arguments are date-part enums.
+fn datePartName(idx: i32) ?[]const u8 {
+    return switch (idx) {
+        1 => "YEAR",
+        2 => "MONTH",
+        3 => "DAY",
+        4 => "DAYOFWEEK",
+        5 => "DAYOFYEAR",
+        6 => "QUARTER",
+        7 => "HOUR",
+        8 => "MINUTE",
+        9 => "SECOND",
+        10 => "MILLISECOND",
+        11 => "MICROSECOND",
+        12 => "NANOSECOND",
+        13 => "DATE",
+        14 => "WEEK",
+        15 => "DATETIME",
+        16 => "TIME",
+        17 => "ISOYEAR",
+        18 => "ISOWEEK",
+        19 => "WEEK_MONDAY",
+        20 => "WEEK_TUESDAY",
+        21 => "WEEK_WEDNESDAY",
+        22 => "WEEK_THURSDAY",
+        23 => "WEEK_FRIDAY",
+        24 => "WEEK_SATURDAY",
+        25 => "PICOSECOND",
+        else => null,
+    };
+}
+
+/// Decodes googlesql's 16-byte IntervalValue binary layout (interval_value.cc
+/// SerializeAndAppendToBytes): micros(int64 LE), days(int32 LE), months_nanos
+/// (uint32 LE: sign@31, months@13..30, nano_fractions@0..9). An empty slice is
+/// the zero interval.
+fn intervalFromBinary(bytes: []const u8) !value_mod.Interval {
+    if (bytes.len == 0) return value_mod.Interval{};
+    if (bytes.len != 16) return error.CorruptData;
+    const micros = std.mem.readInt(i64, bytes[0..8], .little);
+    const days = std.mem.readInt(i32, bytes[8..12], .little);
+    const months_nanos = std.mem.readInt(u32, bytes[12..16], .little);
+    const nano_fractions: i64 = @intCast(months_nanos & 0x3FF);
+    const months_mag: i64 = @intCast((months_nanos & 0x7FFFE000) >> 13);
+    const months: i64 = if (months_nanos & 0x80000000 != 0) -months_mag else months_mag;
+    const total_nanos: i64 = micros * 1000 + nano_fractions;
+    // Build the raw interval: months (canonicalize splits into years), days,
+    // and H:M:S.subsec from the nanosecond total.
+    var iv = value_mod.intervalFromDuration(total_nanos);
+    iv.months = @intCast(months);
+    iv.days = days;
+    return iv;
+}
+
 /// Go ValueFromZetaSQLValue. A ValueProto with no oneof member set is the
 /// NULL literal (Go: v.IsNull() -> nil Value).
 pub fn valueFromProto(
@@ -306,12 +361,29 @@ pub fn valueFromProto(
             return value_mod.structValue(alloc, keys, values);
         },
         // INTERVAL literal: the proto carries interval_value as googlesql's
-        // binary interval encoding (not the canonical string Go reads via
-        // GetSQLLiteral). Decoding that layout is deferred; the .interval
-        // value kind + codec still round-trip (see codec_binary.zig).
-        .TYPE_INTERVAL => return error.Unimplemented,
-        // Deferred kinds (numeric, bignumeric, json, enum, ...): Go supports
-        // them; this port defers them with their Value kinds.
+        // 16-byte binary interval encoding. Go reads the canonical string via
+        // GetSQLLiteral; we decode the binary layout directly.
+        .TYPE_INTERVAL => {
+            const bytes = switch (v) {
+                .interval_value => |x| x,
+                else => return error.CorruptData,
+            };
+            return .{ .interval = intervalFromBinary(bytes) catch return error.CorruptData };
+        },
+        // Enum literal: Go reads GetSQLLiteral (the enum value's name) and
+        // wraps it as a StringValue. The only enums the engine receives as
+        // arguments are date-part enums (googlesql DateTimestampPart), so we
+        // map the enum_value index to its name.
+        .TYPE_ENUM => {
+            const idx = switch (v) {
+                .enum_value => |x| x,
+                else => return error.CorruptData,
+            };
+            const name = datePartName(idx) orelse return error.Unimplemented;
+            return .{ .string = name };
+        },
+        // Deferred kinds (numeric, bignumeric, json, ...): Go supports them;
+        // this port defers them with their Value kinds.
         else => return error.Unimplemented,
     }
 }
@@ -580,15 +652,27 @@ test "valueFromProto timestamp / datetime / time literals" {
     try testing.expectEqualStrings("10:30:15.5", value_mod.formatTimeString(&buf, tvf.time));
 }
 
-test "valueFromProto defers interval literal" {
+test "valueFromProto decodes interval literal (googlesql binary layout)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    // INTERVAL literal extraction (googlesql binary interval_value layout) is
-    // deferred; the analyzer also lowers "INTERVAL n DAY" to a function call
-    // rather than a literal, so this is the direct proto-path assertion.
-    var vp = pb.ValueProto{ .value = .{ .interval_value = "\x00\x00" } };
+    // 16-byte layout: micros(i64 LE), days(i32 LE), months_nanos(u32 LE).
+    // Encode INTERVAL "1-2 3 4:5:6" = 14 months, 3 days, 4:05:06 in micros.
+    var buf: [16]u8 = undefined;
+    const micros: i64 = ((4 * 3600 + 5 * 60 + 6)) * 1_000_000;
+    std.mem.writeInt(i64, buf[0..8], micros, .little);
+    std.mem.writeInt(i32, buf[8..12], 3, .little);
+    std.mem.writeInt(u32, buf[12..16], @as(u32, 14) << 13, .little); // months=14
+    var vp = pb.ValueProto{ .value = .{ .interval_value = &buf } };
     var tp = pb.TypeProto{ .type_kind = .TYPE_INTERVAL };
-    try testing.expectError(error.Unimplemented, valueFromProto(alloc, &vp, &tp));
+    const v = try valueFromProto(alloc, &vp, &tp);
+    try testing.expect(v == .interval);
+    var out: [96]u8 = undefined;
+    try testing.expectEqualStrings("1-2 3 4:5:6", value_mod.formatInterval(&out, v.interval));
+
+    // Empty slice -> zero interval.
+    var vp0 = pb.ValueProto{ .value = .{ .interval_value = "" } };
+    const z = try valueFromProto(alloc, &vp0, &tp);
+    try testing.expectEqualStrings("0-0 0 0:0:0", value_mod.formatInterval(&out, z.interval));
 }

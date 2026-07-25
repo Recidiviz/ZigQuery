@@ -149,6 +149,16 @@ pub fn round(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return Value{ .float = gonumRound(try args[0].toFloat64(), precision) };
 }
 
+/// Go MOD: math.Mod over float64 operands (returns FLOAT64). Zero divisor errors.
+pub fn mod(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (bind.existsNull(args)) return null_v;
+    const x = try args[0].toFloat64();
+    const y = try args[1].toFloat64();
+    if (y == 0) return bind.fail("MOD: zero divided", .{}, error.DivideByZero);
+    return Value{ .float = @rem(x, y) };
+}
+
 /// gonum floats/scalar.Round: half away from zero at `prec` decimals.
 fn gonumRound(x: f64, prec: i32) f64 {
     if (x == 0) return 0; // return +0 even for -0 input

@@ -15,6 +15,28 @@ pub fn equal(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return Value{ .bool = try args[0].eq(args[1]) };
 }
 
+/// Go GREATEST: max via GT; any NULL argument yields NULL.
+pub fn greatest(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (bind.existsNull(args)) return null_v;
+    var max = args[0];
+    for (args[1..]) |arg| {
+        if (try arg.gt(max)) max = arg;
+    }
+    return max;
+}
+
+/// Go LEAST: min via LT; any NULL argument yields NULL.
+pub fn least(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (bind.existsNull(args)) return null_v;
+    var min = args[0];
+    for (args[1..]) |arg| {
+        if (try arg.lt(min)) min = arg;
+    }
+    return min;
+}
+
 pub fn notEqual(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (bind.existsNull(args)) return null_v;

@@ -299,3 +299,180 @@
 534	datetime literal
 567	minimum / maximum timestamp value uses microsecond precision and range
 575	timestamp to string
+143	count with window
+174	sum with window
+175	sum with window and distinct
+205	nth_value
+206	lead
+207	lead with offset
+208	lead with default
+218	date type
+221	window rank
+226	percent_rank
+227	cume_dist
+228	ntile
+248	make_array
+295	generate_date_array function
+296	generate_date_array nil
+297	generate_date_array function with step
+298	generate_date_array function with negative step
+299	generate_date_array function with same value
+300	generate_date_array function with over step
+301	generate_date_array function with null
+302	generate_date_array function with month
+303	generate_date_array function with variable
+304	generate_timestamp_array function
+305	generate_timestamp_array function interval 1 second
+306	generate_timestamp_array function negative interval
+307	generate_timestamp_array function same value
+308	generate_timestamp_array function over step
+309	generate_timestamp_array function with null
+310	generate_timestamp_array function with variable
+431	substring
+443	least greatest between string
+444	least greatest between integer
+445	least greatest date
+446	current_date
+447	date_add
+448	date_add quarter
+449	date_trunc with quarter
+450	datetime_trunc with quarter
+451	timestamp_trunc with quarter
+452	datetime_trunc with day weekday
+453	datetime_trunc isoyear
+456	date_sub
+457	current_date
+458	base date is epoch
+459	extract date
+460	date_diff with week
+461	date_diff with week day
+462	date_diff with week day
+463	datetime_diff with week day
+464	datetime_diff with week day 1 week
+465	datetime_diff with week day
+466	timestamp diff with week day
+467	date_diff with month
+468	date_diff with day
+469	date_diff with month
+470	date_diff with day
+471	date_from_unix_date
+472	date_trunc with day
+473	date_trunc with week
+474	date_trunc with month
+475	date_trunc with year
+476	format_date with %x
+477	format_date with %y
+478	format_date with %b-%d-%Y
+479	format_date with %b %Y
+480	format_date with %E4Y
+481	cast date as string
+482	cast date as string
+483	cast date as string
+484	last_day
+485	last_day with month
+486	last_day with year
+487	last_day with week(sunday)
+488	last_day with week(monday)
+495	parse date with single-digit month %m
+496	parse_date with %y
+497	parse date with %A %b %e %Y
+498	parse date with %Y%m%d
+499	parse date with %e
+500	parse date with %e - leading space allows multiple digits
+504	parse date with %F
+505	parse date with %x
+507	safe parse date ( the year element is in different locations )
+509	unix_date
+510	current_datetime
+511	datetime
+512	datetime_add
+513	datetime_add
+514	datetime_sub
+515	datetime_sub
+516	datetime_diff with day, more than 24 hours
+517	datetime_diff with day, less than 24 hours and does not cross boundary
+518	datetime_diff with day, less than 24 hours and does cross boundary
+519	datetime_diff with day, more than 24 hours, reverse
+520	datetime_diff with day, less than 24 hours and does not cross boundary, reverse
+521	datetime_diff with day, less than 24 hours and does cross boundary, reverse
+522	datetime_diff with week
+523	datetime_diff with year, ISOYEAR
+524	datetime_diff with isoweek
+525	datetime_trunc with day
+526	datetime_trunc with weekday(monday)
+527	datetime_trunc with isoyear
+528	format_datetime with %c
+529	format_datetime with %b-%d-%Y
+530	format_datetime with %b %Y
+531	format_datetime with %E3S
+532	format_datetime with %E*S
+533	format_datetime with %E4Y
+536	cast datetime as string
+537	cast date as datetime
+538	parse datetime
+539	parse datetime with %c
+542	parse datetime %F respectfully consuming digits
+543	current_time
+544	time
+545	time from datetime
+546	time_add
+547	time_sub
+548	time_diff
+549	time_trunc
+550	parse_time with %R
+553	format_time with %k %l
+554	format_time with %R
+555	format_time with %E3S
+556	format_time with %E*S
+557	cast time as string
+559	cast time with timezone as string
+560	cast time from datetime as string
+561	parse time with %I:%M:%S
+562	parse time with %T
+565	current_timestamp
+568	string
+569	timestamp
+570	timestamp with zone
+571	timestamp in zone
+572	timestamp from datetime
+573	timestamp from date
+576	timestamp_add
+577	timestamp_sub
+578	timestamp_diff
+579	timestamp_trunc with day
+580	timestamp_trunc with week
+581	timestamp_trunc with year
+582	format_timestamp with %c
+583	format_timestamp with %b-%d-%Y
+584	format_timestamp with %b %Y
+585	format_timestamp with %Y-%m-%d %H:%M:%S
+586	format_timestamp with %E3S
+587	format_timestamp with %E*S
+588	format_timestamp with %E4Y
+589	format_timestamp with %Ez
+590	cast timestamp as string
+591	timestamp parses with T value
+592	parse timestamp with %a %b %e %I:%M:%S %Y
+593	parse timestamp with %c
+594	parse timestamp with %k
+595	parse timestamp with %k
+596	parse_timestamp with %D
+597	parse timestamp with %p
+598	parse timestamp with extra whitespace 
+599	parse timestamp with %Y-%m-%d %H:%M:%S%Ez
+600	parse timestamp with %Y-%m-%d %H:%M:%E*S%Ez
+603	timestamp_seconds
+604	timestamp_millis
+605	timestamp_micros
+606	unix_seconds
+607	unix_millis
+608	unix_micros
+609	extract from timestamp
+610	interval operator
+611	interval from sub operator
+612	make interval
+613	extract from interval
+614	justify_days
+615	justify_hours
+616	justify_interval
+735	with ref scan maps column aliases correctly

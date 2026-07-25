@@ -134,9 +134,10 @@ pub const Value = union(enum) {
             },
             .bool => return fail("add operation is unsupported for bool", error.UnsupportedOperation),
             .date => |days| switch (v) {
-                // Go type-switches on IntValue (add days) and *IntervalValue
-                // (deferred); anything else is an error.
+                // Go DateValue.Add: IntValue adds days; *IntervalValue promotes
+                // to a DATETIME via calendar arithmetic.
                 .int => |n| return Value{ .date = days +% n },
+                .interval => |iv| return Value{ .datetime = addCalendar(days *% day_micros, iv, 1) },
                 else => return fail("failed to use add operator for date", error.UnsupportedOperation),
             },
             // Go TimestampValue/DatetimeValue.Add: only INTERVAL is accepted
@@ -167,8 +168,14 @@ pub const Value = union(enum) {
             .bool => return fail("sub operation is unsupported for bool", error.UnsupportedOperation),
             .date => |days| switch (v) {
                 .int => |n| return Value{ .date = days -% n },
-                // date - date / date - interval produce IntervalValue in Go: deferred.
-                else => return fail("date sub produces interval (deferred)", error.Unimplemented),
+                // Go DateValue.Sub: *IntervalValue -> DATETIME (calendar sub);
+                // any other time-shaped value -> INTERVAL of whole days.
+                .interval => |iv| return Value{ .datetime = addCalendar(days *% day_micros, iv, -1) },
+                else => {
+                    const dst = try timeMicrosForCompare(v);
+                    const duration_days = @divTrunc(days *% day_micros -% dst, day_micros);
+                    return Value{ .interval = .{ .days = @intCast(duration_days) } };
+                },
             },
             // Go TimestampValue/DatetimeValue.Sub: INTERVAL => calendar sub;
             // otherwise => the difference as an INTERVAL (H:M:S.nanos duration).

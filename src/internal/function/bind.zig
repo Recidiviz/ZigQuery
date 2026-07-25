@@ -70,6 +70,11 @@ const cmp = @import("fn_compare.zig");
 const str = @import("fn_string.zig");
 const arr = @import("fn_array.zig");
 const misc = @import("fn_misc.zig");
+const fdate = @import("fn_date.zig");
+const fdatetime = @import("fn_datetime.zig");
+const ftime = @import("fn_time.zig");
+const ftimestamp = @import("fn_timestamp.zig");
+const fintv = @import("fn_interval.zig");
 
 pub const func_table = [_]FuncInfo{
     // arithmetic (Go: bindAdd/bindSub/bindMul/bindOpDiv + SAFE_* funcs)
@@ -135,9 +140,74 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "abs", .min_args = 1, .handler = math.abs },
     .{ .name = "round", .handler = math.round },
 
+    .{ .name = "mod", .min_args = 2, .handler = math.mod },
+    .{ .name = "least", .min_args = 1, .handler = cmp.least },
+    .{ .name = "greatest", .min_args = 1, .handler = cmp.greatest },
+
     // array functions
     .{ .name = "array_concat", .handler = arr.arrayConcat },
     .{ .name = "array_length", .handler = arr.arrayLength },
     .{ .name = "make_array", .handler = arr.makeArray },
     .{ .name = "make_struct", .handler = arr.makeStruct },
+
+    // date family (Go function_date.go)
+    .{ .name = "current_date", .handler = fdate.currentDate },
+    .{ .name = "date", .min_args = 1, .handler = fdate.date },
+    .{ .name = "date_add", .min_args = 3, .handler = fdate.dateAdd },
+    .{ .name = "date_sub", .min_args = 3, .handler = fdate.dateSub },
+    .{ .name = "date_diff", .min_args = 3, .handler = fdate.dateDiff },
+    .{ .name = "date_trunc", .min_args = 2, .handler = fdate.dateTrunc },
+    .{ .name = "date_from_unix_date", .min_args = 1, .handler = fdate.dateFromUnixDate },
+    .{ .name = "format_date", .min_args = 2, .handler = fdate.formatDate },
+    .{ .name = "last_day", .min_args = 1, .handler = fdate.lastDay },
+    .{ .name = "parse_date", .min_args = 2, .handler = fdate.parseDate },
+    .{ .name = "unix_date", .min_args = 1, .handler = fdate.unixDate },
+    .{ .name = "extract", .min_args = 2, .handler = fdate.extract },
+    .{ .name = "extract_date", .min_args = 1, .handler = fdate.extractDate },
+    .{ .name = "generate_date_array", .min_args = 2, .handler = fdate.generateDateArray },
+
+    // datetime family (Go function_datetime.go)
+    .{ .name = "current_datetime", .handler = fdatetime.currentDatetime },
+    .{ .name = "datetime", .min_args = 1, .handler = fdatetime.datetime },
+    .{ .name = "datetime_add", .min_args = 3, .handler = fdatetime.datetimeAdd },
+    .{ .name = "datetime_sub", .min_args = 3, .handler = fdatetime.datetimeSub },
+    .{ .name = "datetime_diff", .min_args = 3, .handler = fdatetime.datetimeDiff },
+    .{ .name = "datetime_trunc", .min_args = 2, .handler = fdatetime.datetimeTrunc },
+    .{ .name = "format_datetime", .min_args = 2, .handler = fdatetime.formatDatetime },
+    .{ .name = "parse_datetime", .min_args = 2, .handler = fdatetime.parseDatetime },
+
+    // time family (Go function_time.go)
+    .{ .name = "current_time", .handler = ftime.currentTime },
+    .{ .name = "time", .min_args = 1, .handler = ftime.time },
+    .{ .name = "time_add", .min_args = 3, .handler = ftime.timeAdd },
+    .{ .name = "time_sub", .min_args = 3, .handler = ftime.timeSub },
+    .{ .name = "time_diff", .min_args = 3, .handler = ftime.timeDiff },
+    .{ .name = "time_trunc", .min_args = 2, .handler = ftime.timeTrunc },
+    .{ .name = "format_time", .min_args = 2, .handler = ftime.formatTimeFn },
+    .{ .name = "parse_time", .min_args = 2, .handler = ftime.parseTime },
+
+    // timestamp family (Go function_timestamp.go)
+    .{ .name = "current_timestamp", .handler = ftimestamp.currentTimestamp },
+    .{ .name = "string", .min_args = 1, .handler = ftimestamp.string },
+    .{ .name = "timestamp", .min_args = 1, .handler = ftimestamp.timestamp },
+    .{ .name = "timestamp_add", .min_args = 3, .handler = ftimestamp.timestampAdd },
+    .{ .name = "timestamp_sub", .min_args = 3, .handler = ftimestamp.timestampSub },
+    .{ .name = "timestamp_diff", .min_args = 3, .handler = ftimestamp.timestampDiff },
+    .{ .name = "timestamp_trunc", .min_args = 2, .handler = ftimestamp.timestampTrunc },
+    .{ .name = "format_timestamp", .min_args = 2, .handler = ftimestamp.formatTimestamp },
+    .{ .name = "parse_timestamp", .min_args = 2, .handler = ftimestamp.parseTimestamp },
+    .{ .name = "timestamp_seconds", .min_args = 1, .handler = ftimestamp.timestampSeconds },
+    .{ .name = "timestamp_millis", .min_args = 1, .handler = ftimestamp.timestampMillis },
+    .{ .name = "timestamp_micros", .min_args = 1, .handler = ftimestamp.timestampMicros },
+    .{ .name = "unix_seconds", .min_args = 1, .handler = ftimestamp.unixSeconds },
+    .{ .name = "unix_millis", .min_args = 1, .handler = ftimestamp.unixMillis },
+    .{ .name = "unix_micros", .min_args = 1, .handler = ftimestamp.unixMicros },
+    .{ .name = "generate_timestamp_array", .min_args = 4, .handler = ftimestamp.generateTimestampArray },
+
+    // interval family (Go function_interval.go)
+    .{ .name = "interval", .min_args = 2, .handler = fintv.interval },
+    .{ .name = "make_interval", .min_args = 6, .handler = fintv.makeInterval },
+    .{ .name = "justify_days", .min_args = 1, .handler = fintv.justifyDaysFn },
+    .{ .name = "justify_hours", .min_args = 1, .handler = fintv.justifyHoursFn },
+    .{ .name = "justify_interval", .min_args = 1, .handler = fintv.justifyIntervalFn },
 };

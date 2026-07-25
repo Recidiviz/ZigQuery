@@ -314,6 +314,14 @@ test {
     testing.refAllDecls(@import("fn_string.zig"));
     testing.refAllDecls(@import("fn_array.zig"));
     testing.refAllDecls(@import("fn_misc.zig"));
+    testing.refAllDecls(@import("fn_date.zig"));
+    testing.refAllDecls(@import("fn_datetime.zig"));
+    testing.refAllDecls(@import("fn_time.zig"));
+    testing.refAllDecls(@import("fn_timestamp.zig"));
+    testing.refAllDecls(@import("fn_interval.zig"));
+    testing.refAllDecls(@import("time_util.zig"));
+    testing.refAllDecls(@import("time_parser.zig"));
+    testing.refAllDecls(@import("date_ops.zig"));
     testing.refAllDecls(@import("aggregate.zig"));
 }
 
