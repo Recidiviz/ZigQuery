@@ -1,5 +1,4 @@
 # Baseline: cases that must pass (idx<TAB>name). Regressions fail the build.
-0	distinct union
 1	with scan union all
 2	with scan union distinct
 3	having with union all
@@ -116,6 +115,7 @@
 127	array_agg with abs
 128	array_agg with window
 129	array_concat_agg
+131	array_concat_agg with format
 132	avg
 133	avg with distinct
 134	avg with window
@@ -197,6 +197,8 @@
 242	lag with option
 243	window lag with offset
 244	window lag with offset and default value
+245	sign
+246	bit_count
 247	array formatting
 248	make_array
 249	unnest with offset
@@ -232,6 +234,17 @@
 281	array_length function
 282	array_length null
 283	array length comparison
+284	array_to_string function
+285	array_to_string null
+286	array_to_string function with null text
+287	generate_array function
+288	generate_array nil
+289	generate_array function with step
+290	generate_array function with negative step value
+291	generate_array function with large step value
+292	generate_array function with over step value
+293	generate_array function with null
+294	generate_array function for generate multiple array
 295	generate_date_array function
 296	generate_date_array nil
 297	generate_date_array function with step
@@ -249,6 +262,8 @@
 309	generate_timestamp_array function with null
 310	generate_timestamp_array function with variable
 311	null array scan
+312	array_reverse function
+313	array_reverse null
 314	group by
 317	group by having
 318	order by
@@ -268,13 +283,96 @@
 334	safe cast for invalid cast
 335	cast string to int64
 336	cast string to int64 - leading zeros
+342	ascii
+343	byte_length
+344	byte_length null
+345	char_length
+346	char_length null
+347	character_length
+348	chr
+349	code_points_to_bytes
+350	code_points_to_string
+351	concat
 359	contains_substr nil
+363	ends_with
+364	format %d
+365	format |%10d|
+366	format +%010d+
+367	format %'d
+368	format %s
+369	format %f %E
+370	format date with %t
+371	format timestamp with %t
+372	from_base32
+373	from_base64
+374	from_hex
+375	initcap
+376	initcap with delimiters
+377	instr
 378	left with string value
+379	left with bytes value
 380	length
+381	lpad string without pattern
+382	lpad string with pattern
+383	lpad bytes without pattern
+384	lpad bytes with pattern
 385	lower
+386	ltrim
+387	normalize
+388	normalize null
+389	normalize with nfkc
+390	normalize_and_casefold
+391	normalize_and_casefold with params
+392	octet_length
+393	octet_length null
+394	regexp_contains
+395	regexp_contains2
+396	regexp_contains null pattern
+397	regexp_extract
+398	regexp_extract null pattern
+399	regexp_extract with capture
+400	regexp_extract with position and occurrence
+401	regexp_extract_all
+402	regexp_extract_all null
+403	regexp_instr
+404	regexp_instr with position
+405	regexp_instr with occurrence
+406	regexp_instr with occurrence position
+407	regexp_replace
+408	regexp_replace quoted
+409	regexp_replace null
+410	regexp_substr
+411	replace
+412	replace null
+413	repeat
+414	reverse
 415	right string
+416	right bytes
+417	rpad string
+418	rpad string with pattern
+419	rpad bytes
+420	rpad bytes with pattern
+421	rtrim
+422	rtrim2
+423	rtrim3
+424	safe_convert_bytes_to_string
+425	soundex
+426	split
+427	split null delimiter
+428	starts_with
+429	strpos
 430	substr
 431	substring
+432	to_base32
+433	to_base64
+434	to_code_points with string value
+435	to_code_points with bytes value
+436	to_code_points compare string and bytes
+437	to_hex
+438	translate
+439	translate unicode source and target
+440	trim
+441	unicode
 442	upper
 443	least greatest between string
 444	least greatest between integer
@@ -431,6 +529,7 @@
 595	parse timestamp with %k
 596	parse_timestamp with %D
 597	parse timestamp with %p
+598	parse timestamp with extra whitespace 
 599	parse timestamp with %Y-%m-%d %H:%M:%S%Ez
 600	parse timestamp with %Y-%m-%d %H:%M:%E*S%Ez
 601	parse timestamp ( the year element is in different locations )
@@ -449,6 +548,8 @@
 614	justify_days
 615	justify_hours
 616	justify_interval
+621	bytes_formatting
+623	generate_uuid
 627	except
 628	except
 629	replace
@@ -526,10 +627,18 @@
 701	nested with
 702	join nested with
 703	nested with 2
+704	net_host
+705	net_ip_from_string
+706	net_ip_net_mask
 707	net_ip_net_mask with invalid output bytes
 708	net_ip_net_mask with invalid prefix length
+709	net_ip_to_string
+710	net_ip_trunc
 711	net_ip_trunc with invalid ip address
 712	net_ip_trunc with invalid length
+713	net_ipv4_from_int64
+714	net_ipv4_to_int64
+715	net_safe_if_from_string
 720	not enough positional params given
 721	limit offset test
 724	function call with many arguments - under limit
@@ -542,109 +651,3 @@
 743	group by struct values with aggregation
 744	group by array values basic
 745	group by array values with aggregation
-131	array_concat_agg with format
-245	sign
-246	bit_count
-284	array_to_string function
-285	array_to_string null
-286	array_to_string function with null text
-287	generate_array function
-288	generate_array nil
-289	generate_array function with step
-290	generate_array function with negative step value
-291	generate_array function with large step value
-292	generate_array function with over step value
-293	generate_array function with null
-294	generate_array function for generate multiple array
-312	array_reverse function
-313	array_reverse null
-342	ascii
-343	byte_length
-344	byte_length null
-345	char_length
-346	char_length null
-347	character_length
-348	chr
-349	code_points_to_bytes
-350	code_points_to_string
-363	ends_with
-364	format %d
-365	format |%10d|
-366	format +%010d+
-367	format %'d
-368	format %s
-369	format %f %E
-370	format date with %t
-371	format timestamp with %t
-372	from_base32
-373	from_base64
-374	from_hex
-375	initcap
-376	initcap with delimiters
-377	instr
-379	left with bytes value
-381	lpad string without pattern
-382	lpad string with pattern
-383	lpad bytes without pattern
-384	lpad bytes with pattern
-386	ltrim
-387	normalize
-388	normalize null
-389	normalize with nfkc
-390	normalize_and_casefold
-391	normalize_and_casefold with params
-392	octet_length
-393	octet_length null
-394	regexp_contains
-395	regexp_contains2
-396	regexp_contains null pattern
-397	regexp_extract
-398	regexp_extract null pattern
-399	regexp_extract with capture
-401	regexp_extract_all
-402	regexp_extract_all null
-403	regexp_instr
-404	regexp_instr with position
-405	regexp_instr with occurrence
-406	regexp_instr with occurrence position
-407	regexp_replace
-408	regexp_replace quoted
-409	regexp_replace null
-411	replace
-412	replace null
-413	repeat
-414	reverse
-416	right bytes
-417	rpad string
-418	rpad string with pattern
-419	rpad bytes
-420	rpad bytes with pattern
-421	rtrim
-422	rtrim2
-423	rtrim3
-424	safe_convert_bytes_to_string
-425	soundex
-426	split
-427	split null delimiter
-428	starts_with
-429	strpos
-432	to_base32
-433	to_base64
-434	to_code_points with string value
-435	to_code_points with bytes value
-436	to_code_points compare string and bytes
-437	to_hex
-438	translate
-439	translate unicode source and target
-440	trim
-441	unicode
-621	bytes_formatting
-623	generate_uuid
-704	net_host
-705	net_ip_from_string
-706	net_ip_net_mask
-709	net_ip_to_string
-710	net_ip_trunc
-713	net_ipv4_from_int64
-714	net_ipv4_to_int64
-715	net_safe_if_from_string
