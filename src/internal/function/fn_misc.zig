@@ -75,12 +75,28 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
             return Value{ .string = try v.toString(alloc) };
         },
         .TYPE_BYTES => return Value{ .bytes = try v.toBytes(alloc) },
+        // Go CastValue: DATE(v.ToTime()) — the civil date of the instant.
         .TYPE_DATE => switch (v) {
             .date => return v,
             .string => |s| return Value{ .date = try value_mod.parseDateDays(s) },
             .bytes => |b| return Value{ .date = try value_mod.parseDateDays(b) },
-            // Go casts via ToTime (timestamps etc.): deferred kinds here.
+            .timestamp, .datetime, .time => return Value{
+                .date = @divFloor(try value_mod.toUnixMicros(v), value_mod.day_micros),
+            },
             else => return bind.fail("CAST: unimplemented cast to DATE", .{}, error.Unimplemented),
+        },
+        // Go CastValue: TIMESTAMP/DATETIME/TIME(v.ToTime()). DATETIME shares
+        // the unix-micros scale; TIME is the time-of-day remainder.
+        .TYPE_TIMESTAMP => return Value{ .timestamp = try value_mod.toUnixMicros(v) },
+        .TYPE_DATETIME => return Value{ .datetime = try value_mod.toUnixMicros(v) },
+        .TYPE_TIME => {
+            const micros = try value_mod.toUnixMicros(v);
+            return Value{ .time = @mod(micros, value_mod.day_micros) };
+        },
+        // Go CastValue: parseInterval(v.ToString()).
+        .TYPE_INTERVAL => switch (v) {
+            .interval => return v,
+            else => return Value{ .interval = try value_mod.parseIntervalValue(try v.toString(alloc)) },
         },
         .TYPE_ARRAY => {
             const arr = try v.toArray();

@@ -54,6 +54,13 @@ pub const Cell = union(enum) {
     string: []const u8,
     bytes: []const u8,
     date: []const u8, // civil date rendered as YYYY-MM-DD, like Go returns
+    // Date/time kinds render as their Go ToApiString forms (what rows.go
+    // hands back through database/sql): timestamp "sec.rem", datetime
+    // "YYYY-MM-DDTHH:MM:SS.ffffff", time "HH:MM:SS.ffffff", interval canonical.
+    timestamp: []const u8,
+    datetime: []const u8,
+    time: []const u8,
+    interval: []const u8,
     array: []Cell,
     struct_: []Field,
 
@@ -752,6 +759,11 @@ fn valueFromCell(alloc: std.mem.Allocator, cell: Cell) !value_mod.Value {
         .string => |s| return .{ .string = s },
         .bytes => |b| return .{ .bytes = b },
         .date => |s| return .{ .date = try value_mod.parseDateDays(s) },
+        // Inverse of cellFromValue: parse the rendered api strings back.
+        .timestamp => |s| return .{ .timestamp = try value_mod.parseTimestampApi(s) },
+        .datetime => |s| return .{ .datetime = try value_mod.parseDatetimeMicros(s) },
+        .time => |s| return .{ .time = try value_mod.parseTimeMicros(s) },
+        .interval => |s| return .{ .interval = try value_mod.parseIntervalValue(s) },
         .array => |cells| {
             const values = try alloc.alloc(value_mod.Value, cells.len);
             for (cells, 0..) |c, i| values[i] = try valueFromCell(alloc, c);
@@ -795,6 +807,36 @@ fn cellFromValue(
                 return .{ .date = try alloc.dupe(u8, s) };
             },
             .string => |s| return .{ .date = try alloc.dupe(u8, s) },
+            else => return error.FailedConversion,
+        },
+        // Go rows.go assignInterfaceValue renders these via ToApiString after
+        // castValueInternal; the decoded value already carries the right kind.
+        .TYPE_TIMESTAMP => switch (v) {
+            .timestamp => return .{ .timestamp = try v.toApiString(alloc) },
+            .string => |s| return .{ .timestamp = try (value_mod.Value{
+                .timestamp = try value_mod.parseTimestampMicros(s),
+            }).toApiString(alloc) },
+            else => return error.FailedConversion,
+        },
+        .TYPE_DATETIME => switch (v) {
+            .datetime => return .{ .datetime = try v.toApiString(alloc) },
+            .string => |s| return .{ .datetime = try (value_mod.Value{
+                .datetime = try value_mod.parseDatetimeMicros(s),
+            }).toApiString(alloc) },
+            else => return error.FailedConversion,
+        },
+        .TYPE_TIME => switch (v) {
+            .time => return .{ .time = try v.toApiString(alloc) },
+            .string => |s| return .{ .time = try (value_mod.Value{
+                .time = try value_mod.parseTimeMicros(s),
+            }).toApiString(alloc) },
+            else => return error.FailedConversion,
+        },
+        .TYPE_INTERVAL => switch (v) {
+            .interval => return .{ .interval = try v.toApiString(alloc) },
+            .string => |s| return .{ .interval = try (value_mod.Value{
+                .interval = try value_mod.parseIntervalValue(s),
+            }).toApiString(alloc) },
             else => return error.FailedConversion,
         },
         .TYPE_ARRAY => {
@@ -934,6 +976,28 @@ test "query date and array literals" {
     try testing.expectEqualStrings("2023-01-15", row[0].date);
     try testing.expectEqual(@as(usize, 3), row[1].array.len);
     try testing.expectEqual(Cell{ .int = 2 }, row[1].array[1]);
+}
+
+test "query timestamp / datetime / time literals render as Go api strings" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        "SELECT TIMESTAMP '2006-01-02 22:04:05+00' AS ts, " ++
+            "DATETIME '2024-01-15 10:30:15.123456' AS dt, " ++
+            "TIME '10:30:15' AS tm",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    const row = (try rows.next()).?;
+    // Timestamp cell: "sec.microRemainder" (ToApiString), exactly like the
+    // corpus expects (e.g. "1136239445.0").
+    try testing.expectEqualStrings("1136239445.0", row[0].timestamp);
+    try testing.expectEqualStrings("2024-01-15T10:30:15.123456", row[1].datetime);
+    try testing.expectEqualStrings("10:30:15", row[2].time);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
 
 test "query struct literal" {

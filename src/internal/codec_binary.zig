@@ -81,6 +81,27 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
             var tmp: [32]u8 = undefined;
             try appendBinaryString(buf, alloc, bin_tag_date, value_mod.formatDateDays(&tmp, days));
         },
+        // Go stores DatetimeValue/TimeValue as their ToString strings.
+        .datetime => |m| {
+            var tmp: [40]u8 = undefined;
+            try appendBinaryString(buf, alloc, bin_tag_datetime, value_mod.formatDatetimeString(&tmp, m));
+        },
+        .time => |m| {
+            var tmp: [24]u8 = undefined;
+            try appendBinaryString(buf, alloc, bin_tag_time, value_mod.formatTimeString(&tmp, m));
+        },
+        // Go stores TimestampValue as fixed64 little-endian UnixMicro.
+        .timestamp => |m| {
+            try buf.append(alloc, bin_tag_timestamp);
+            var le: [8]u8 = undefined;
+            std.mem.writeInt(u64, &le, @bitCast(m), .little);
+            try buf.appendSlice(alloc, &le);
+        },
+        // Go stores *IntervalValue as its ToString string.
+        .interval => |iv| {
+            var tmp: [96]u8 = undefined;
+            try appendBinaryString(buf, alloc, bin_tag_interval, value_mod.formatInterval(&tmp, iv));
+        },
         .array => |arr| {
             try buf.append(alloc, bin_tag_array);
             try appendUvarint(buf, alloc, arr.values.len);
@@ -156,14 +177,15 @@ const BinReader = struct {
             bin_tag_string => return Value{ .string = try alloc.dupe(u8, try r.lenBytes()) },
             bin_tag_bytes => return Value{ .bytes = try alloc.dupe(u8, try r.lenBytes()) },
             bin_tag_date => return Value{ .date = try value_mod.parseDateDays(try r.lenBytes()) },
+            // Go parses the stored ToString back into the civil value.
+            bin_tag_datetime => return Value{ .datetime = try value_mod.parseDatetimeMicros(try r.lenBytes()) },
+            bin_tag_time => return Value{ .time = try value_mod.parseTimeMicros(try r.lenBytes()) },
+            bin_tag_timestamp => return Value{ .timestamp = @bitCast(try r.fixed64()) },
+            bin_tag_interval => return Value{ .interval = try value_mod.parseIntervalValue(try r.lenBytes()) },
             // Deferred kinds: consume nothing further, surface Unimplemented.
             bin_tag_numeric,
             bin_tag_bignumeric,
             bin_tag_json,
-            bin_tag_datetime,
-            bin_tag_time,
-            bin_tag_timestamp,
-            bin_tag_interval,
             => return error.Unimplemented,
             bin_tag_array => {
                 const n = try r.uvarint();
@@ -238,10 +260,46 @@ test "binary codec scalar round trips" {
         Value{ .date = 0 },
         Value{ .date = try value_mod.parseDateDays("2024-02-29") },
         Value{ .date = try value_mod.parseDateDays("1969-12-31") },
+        Value{ .timestamp = 1136239445_000000 },
+        Value{ .timestamp = 1705314615_500000 },
+        Value{ .timestamp = -62135596800_000000 }, // pre-epoch
+        Value{ .datetime = try value_mod.parseDatetimeMicros("2024-01-15 10:30:15.123456") },
+        Value{ .datetime = try value_mod.parseDatetimeMicros("2024-01-15 10:30:00") },
+        Value{ .time = try value_mod.parseTimeMicros("10:30:15.5") },
+        Value{ .time = try value_mod.parseTimeMicros("00:00:00") },
+        Value{ .interval = try value_mod.parseIntervalValue("1-2 3 4:5:6") },
+        Value{ .interval = try value_mod.parseIntervalValue("0-0 0 1:2:3.123456") },
     };
     for (cases) |v| {
         try value_mod.expectValueEqual(v, try roundTrip(alloc, v));
     }
+}
+
+test "binary codec time-kind byte layout matches Go" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // Timestamp: tag 0x0c + fixed64 LE UnixMicro.
+    const ts = try encodeBinaryValue(alloc, Value{ .timestamp = 1136239445_000000 });
+    var expected_ts: [9]u8 = undefined;
+    expected_ts[0] = bin_tag_timestamp;
+    std.mem.writeInt(u64, expected_ts[1..9], @as(u64, 1136239445_000000), .little);
+    try testing.expectEqualSlices(u8, &expected_ts, ts);
+
+    // Datetime: tag 0x0a + uvarint length + ToString ("space" form).
+    const dt = try encodeBinaryValue(alloc, Value{
+        .datetime = try value_mod.parseDatetimeMicros("2024-01-15 10:30:00"),
+    });
+    try testing.expectEqualSlices(u8, "\x0a\x132024-01-15 10:30:00", dt);
+
+    // Time: tag 0x0b + uvarint length + ToString.
+    const tv = try encodeBinaryValue(alloc, Value{ .time = try value_mod.parseTimeMicros("10:30:15") });
+    try testing.expectEqualSlices(u8, "\x0b\x0810:30:15", tv);
+
+    // Interval: tag 0x0d + uvarint length + canonical ToString.
+    const iv = try encodeBinaryValue(alloc, Value{ .interval = try value_mod.parseIntervalValue("1-2 3 4:5:6") });
+    try testing.expectEqualSlices(u8, "\x0d\x0b1-2 3 4:5:6", iv);
 }
 
 test "binary codec tag bytes match the Go format" {

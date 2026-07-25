@@ -292,3 +292,10 @@
 327	qualify without group by / where / having
 328	qualify group
 330	qualify direct
+225	window dense_rank with group
+240	window lag
+243	window lag with offset
+244	window lag with offset and default value
+534	datetime literal
+567	minimum / maximum timestamp value uses microsecond precision and range
+575	timestamp to string

@@ -315,9 +315,15 @@ fn cellMatches(want_tagged: std.json.Value, got: driver.Cell) bool {
     }
     if (std.mem.eql(u8, tag, "string")) {
         const want = obj.get("v").?.string;
+        // Go returns date/time kinds as strings (ToApiString) through
+        // database/sql, so each renders to a distinct string-valued Cell.
         return switch (got) {
             .string => |s| std.mem.eql(u8, want, s),
             .date => |s| std.mem.eql(u8, want, s),
+            .timestamp => |s| std.mem.eql(u8, want, s),
+            .datetime => |s| std.mem.eql(u8, want, s),
+            .time => |s| std.mem.eql(u8, want, s),
+            .interval => |s| std.mem.eql(u8, want, s),
             else => false,
         };
     }

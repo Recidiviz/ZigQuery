@@ -154,6 +154,37 @@ pub fn castValue(alloc: std.mem.Allocator, v: Value, to: TypeKind) ValueError!Va
 
 const pb = @import("../proto/resolved_ast.zig");
 
+const second_micros: i64 = 1_000_000;
+
+// Packed civil bitfield layout shared by DATETIME/TIME (Go encoder.go). The
+// packed-64-micros value is (seconds_bitfield << 20) | micros; within the
+// seconds bitfield: sec@0(6), min@6(6), hour@12(5), day@17(5), month@22(4),
+// year@26(14).
+fn datetimeMicrosFromBitfield(bitfield: i64, nanos: i32) i64 {
+    const sec = bitfield & 0b111111;
+    const min = (bitfield >> 6) & 0b111111;
+    const hour = (bitfield >> 12) & 0b11111;
+    const day = (bitfield >> 17) & 0b11111;
+    const month = (bitfield >> 22) & 0b1111;
+    const year = (bitfield >> 26) & 0x3FFF;
+    const micro = @divTrunc(@as(i64, nanos), 1000);
+    const days = value_mod.daysFromCivil(year, month, day);
+    return (days * 86400 + hour * 3600 + min * 60 + sec) * second_micros + micro;
+}
+
+// The proto's time_value is TimeValue::Packed64TimeNanos: the civil bitfield
+// (hour@12(5), min@6(6), sec@0(6)) shifted left 30, with nanoseconds in the
+// low 30 bits. (Go reaches the same value via the go-googlesql
+// ToPacked64TimeMicros accessor, which rescales nanos->micros for it.)
+fn timeMicrosFromPacked64(packed64: i64) i64 {
+    const b = packed64 >> 30;
+    const hour = (b >> 12) & 0b11111;
+    const min = (b >> 6) & 0b111111;
+    const sec = b & 0b111111;
+    const nanos = packed64 & 0x3FFFFFFF;
+    return (hour * 3600 + min * 60 + sec) * second_micros + @divTrunc(nanos, 1000);
+}
+
 /// Go ValueFromZetaSQLValue. A ValueProto with no oneof member set is the
 /// NULL literal (Go: v.IsNull() -> nil Value).
 pub fn valueFromProto(
@@ -208,6 +239,38 @@ pub fn valueFromProto(
             .date_value => |days| @as(i64, days),
             else => return error.CorruptData,
         } },
+        // Go timestampValueFromLiteral: the proto carries seconds + nanos;
+        // TimestampValue stores unix micros (Go: time.Unix(sec, rem*1000)).
+        .TYPE_TIMESTAMP => {
+            const ts = switch (v) {
+                .timestamp_value => |x| x,
+                else => return error.CorruptData,
+            };
+            const seconds = ts.seconds orelse 0;
+            const nanos = ts.nanos orelse 0;
+            return .{ .timestamp = seconds *% second_micros + @divTrunc(@as(i64, nanos), 1000) };
+        },
+        // Go datetimeValueFromLiteral: unpack the packed civil bitfield. The
+        // proto splits it as bit_field_datetime_seconds (Y/M/D/H/M/S) + nanos.
+        .TYPE_DATETIME => {
+            const dt = switch (v) {
+                .datetime_value => |x| x,
+                else => return error.CorruptData,
+            };
+            return .{ .datetime = datetimeMicrosFromBitfield(
+                dt.bit_field_datetime_seconds orelse 0,
+                dt.nanos orelse 0,
+            ) };
+        },
+        // Go timeValueFromLiteral: the proto's time_value is the packed-64
+        // time-micros value (bitfield << 20 | micros).
+        .TYPE_TIME => {
+            const packed64 = switch (v) {
+                .time_value => |x| x,
+                else => return error.CorruptData,
+            };
+            return .{ .time = timeMicrosFromPacked64(packed64) };
+        },
         .TYPE_ARRAY => {
             // Go arrayValueFromLiteral. NULL arrays were handled by the
             // oneof-not-set case above; this is a present (possibly empty)
@@ -242,9 +305,13 @@ pub fn valueFromProto(
             }
             return value_mod.structValue(alloc, keys, values);
         },
-        // Deferred kinds (timestamp, numeric, bignumeric, json, datetime,
-        // time, interval, enum, ...): Go supports them; this port defers
-        // them with their Value kinds.
+        // INTERVAL literal: the proto carries interval_value as googlesql's
+        // binary interval encoding (not the canonical string Go reads via
+        // GetSQLLiteral). Decoding that layout is deferred; the .interval
+        // value kind + codec still round-trip (see codec_binary.zig).
+        .TYPE_INTERVAL => return error.Unimplemented,
+        // Deferred kinds (numeric, bignumeric, json, enum, ...): Go supports
+        // them; this port defers them with their Value kinds.
         else => return error.Unimplemented,
     }
 }
@@ -324,6 +391,28 @@ test "DecodeValue(EncodeValue(v)) round trips foundation kinds" {
     // Bool round-trips as INTEGER (exactly like the Go driver stack).
     const bool_decoded = try DecodeValue(alloc, try EncodeValue(alloc, Value{ .bool = true }));
     try value_mod.expectValueEqual(Value{ .int = 1 }, bool_decoded);
+}
+
+test "EncodeValue/DecodeValue round-trips time kinds (CURRENT_TIMESTAMP path)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const cases = [_]Value{
+        // The encoded-timestamp-literal arg the transformer injects for
+        // QueryOptions.current_time_unix_micros travels through here.
+        Value{ .timestamp = 1136239445_000000 },
+        Value{ .timestamp = 1705314615_500000 },
+        Value{ .datetime = try value_mod.parseDatetimeMicros("2024-01-15 10:30:15.123456") },
+        Value{ .time = try value_mod.parseTimeMicros("10:30:15.5") },
+        Value{ .interval = try value_mod.parseIntervalValue("1-2 3 4:5:6") },
+    };
+    for (cases) |v| {
+        // Non-scalar kinds cross the boundary as base64(binary codec) TEXT.
+        const repr = try EncodeValue(alloc, v);
+        try testing.expect(repr == .text);
+        try value_mod.expectValueEqual(v, try DecodeValue(alloc, repr));
+    }
 }
 
 test "DecodeValue rejects legacy JSON payloads and bad base64" {
@@ -459,13 +548,47 @@ test "valueFromProto struct literal" {
     try value_mod.expectValueEqual(expected, v);
 }
 
-test "valueFromProto defers non-foundation kinds" {
+test "valueFromProto timestamp / datetime / time literals" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    try testing.expectError(
-        error.Unimplemented,
-        literalValueOf(alloc, "SELECT TIMESTAMP '2023-01-15 00:00:00+00'"),
-    );
+    // TIMESTAMP '2006-01-02 22:04:05+00' == unix 1136239445 => micros *1e6.
+    const ts = try literalValueOf(alloc, "SELECT TIMESTAMP '2006-01-02 22:04:05+00'");
+    try testing.expect(ts == .timestamp);
+    try testing.expectEqual(@as(i64, 1136239445_000000), ts.timestamp);
+
+    // Fractional-second timestamp.
+    const tsf = try literalValueOf(alloc, "SELECT TIMESTAMP '2024-01-15 10:30:15.5+00'");
+    try testing.expectEqual(@as(i64, 1705314615_500000), tsf.timestamp);
+
+    // DATETIME round-trips through the packed civil bitfield.
+    const dt = try literalValueOf(alloc, "SELECT DATETIME '2024-01-15 10:30:00'");
+    try testing.expect(dt == .datetime);
+    var buf: [40]u8 = undefined;
+    try testing.expectEqualStrings("2024-01-15 10:30:00", value_mod.formatDatetimeString(&buf, dt.datetime));
+
+    const dtf = try literalValueOf(alloc, "SELECT DATETIME '2024-01-15 10:30:15.123456'");
+    try testing.expectEqualStrings("2024-01-15 10:30:15.123456", value_mod.formatDatetimeString(&buf, dtf.datetime));
+
+    // TIME via the packed-64 time-micros value.
+    const tv = try literalValueOf(alloc, "SELECT TIME '10:30:15'");
+    try testing.expect(tv == .time);
+    try testing.expectEqualStrings("10:30:15", value_mod.formatTimeString(&buf, tv.time));
+
+    const tvf = try literalValueOf(alloc, "SELECT TIME '10:30:15.5'");
+    try testing.expectEqualStrings("10:30:15.5", value_mod.formatTimeString(&buf, tvf.time));
+}
+
+test "valueFromProto defers interval literal" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // INTERVAL literal extraction (googlesql binary interval_value layout) is
+    // deferred; the analyzer also lowers "INTERVAL n DAY" to a function call
+    // rather than a literal, so this is the direct proto-path assertion.
+    var vp = pb.ValueProto{ .value = .{ .interval_value = "\x00\x00" } };
+    var tp = pb.TypeProto{ .type_kind = .TYPE_INTERVAL };
+    try testing.expectError(error.Unimplemented, valueFromProto(alloc, &vp, &tp));
 }

@@ -38,6 +38,29 @@ pub const ArrayValue = struct {
     values: []Value,
 };
 
+/// Faithful port of cloud.google.com/go/bigquery.IntervalValue, the payload
+/// go-zetasqlite's *IntervalValue wraps. Stored inline (Go heap-allocates it).
+pub const Interval = struct {
+    years: i32 = 0,
+    months: i32 = 0,
+    days: i32 = 0,
+    hours: i32 = 0,
+    minutes: i32 = 0,
+    seconds: i32 = 0,
+    sub_second_nanos: i32 = 0,
+};
+
+// Microsecond scale factors and the civil-time constants shared by the
+// timestamp / datetime / time value kinds (all UTC; Go uses time.Time with
+// locations, the corpus pins TZ=UTC — see module docs).
+pub const day_micros: i64 = 86_400_000_000;
+pub const hour_micros: i64 = 3_600_000_000;
+pub const minute_micros: i64 = 60_000_000;
+pub const second_micros: i64 = 1_000_000;
+/// time.Date(0, 0, 0, 0, 0, 0, 0, time.UTC).UnixMicro(): the Go "zero" civil
+/// date that TimeValue is anchored to (time-of-day micros are added on top).
+pub const time_base_micros: i64 = -62_169_984_000_000_000;
+
 pub const StructValue = struct {
     keys: [][]const u8,
     values: []Value,
@@ -69,6 +92,17 @@ pub const Value = union(enum) {
     /// observable behavior is identical: ToInt64 => days*86400 (unix
     /// seconds), ToString => "YYYY-MM-DD").
     date: i64,
+    /// TIMESTAMP: unix microseconds, UTC (Go stores time.Time; ToInt64 =>
+    /// Unix() seconds, codec => fixed64 UnixMicro, ToApiString => "sec.rem").
+    timestamp: i64,
+    /// DATETIME: civil microseconds since 1970-01-01T00:00:00 treated as UTC
+    /// (a wall-clock instant with no zone). ToString "2006-01-02 15:04:05.999999".
+    datetime: i64,
+    /// TIME: microseconds since midnight, [0, 86_400_000_000). ToString
+    /// "15:04:05.999999".
+    time: i64,
+    /// INTERVAL: bigquery.IntervalValue components (Go wraps it in *IntervalValue).
+    interval: Interval,
     array: *ArrayValue,
     struct_: *StructValue,
     /// SAFE. function-call wrapper: swallows errors, yielding NULL / zero
@@ -105,6 +139,18 @@ pub const Value = union(enum) {
                 .int => |n| return Value{ .date = days +% n },
                 else => return fail("failed to use add operator for date", error.UnsupportedOperation),
             },
+            // Go TimestampValue/DatetimeValue.Add: only INTERVAL is accepted
+            // (calendar arithmetic); anything else errors.
+            .timestamp => |m| switch (v) {
+                .interval => |iv| return Value{ .timestamp = addCalendar(m, iv, 1) },
+                else => return fail("failed to use add operator for timestamp", error.UnsupportedOperation),
+            },
+            .datetime => |m| switch (v) {
+                .interval => |iv| return Value{ .datetime = addCalendar(m, iv, 1) },
+                else => return fail("failed to use add operator for datetime", error.UnsupportedOperation),
+            },
+            .time => return fail("add operation is unsupported for time", error.UnsupportedOperation),
+            .interval => return fail("unsupported add operator for interval value", error.UnsupportedOperation),
             .array => return fail("add operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("add operation is unsupported for struct", error.UnsupportedOperation),
             .safe => |p| return p.add(alloc, v) catch Value.@"null",
@@ -124,6 +170,18 @@ pub const Value = union(enum) {
                 // date - date / date - interval produce IntervalValue in Go: deferred.
                 else => return fail("date sub produces interval (deferred)", error.Unimplemented),
             },
+            // Go TimestampValue/DatetimeValue.Sub: INTERVAL => calendar sub;
+            // otherwise => the difference as an INTERVAL (H:M:S.nanos duration).
+            .timestamp => |m| switch (v) {
+                .interval => |iv| return Value{ .timestamp = addCalendar(m, iv, -1) },
+                else => return Value{ .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000) },
+            },
+            .datetime => |m| switch (v) {
+                .interval => |iv| return Value{ .datetime = addCalendar(m, iv, -1) },
+                else => return Value{ .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000) },
+            },
+            .time => return fail("sub operation is unsupported for time", error.UnsupportedOperation),
+            .interval => return fail("unsupported sub operator for interval value", error.UnsupportedOperation),
             .array => return fail("sub operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("sub operation is unsupported for struct", error.UnsupportedOperation),
             .safe => |p| return p.sub(alloc, v) catch Value.@"null",
@@ -227,6 +285,22 @@ pub const Value = union(enum) {
                 };
                 return applyOrder(op, std.math.order(days, d2));
             },
+            // Go compares the underlying time.Time (self) against v.ToTime();
+            // for UTC that is exactly a unix-microsecond ordering.
+            .timestamp => |m| {
+                const o = timeMicrosForCompare(v) catch return fail("failed to convert to time", error.FailedConversion);
+                return applyOrder(op, std.math.order(m, o));
+            },
+            .datetime => |m| {
+                const o = timeMicrosForCompare(v) catch return fail("failed to convert to time", error.FailedConversion);
+                return applyOrder(op, std.math.order(m, o));
+            },
+            .time => |m| {
+                const o = timeMicrosForCompare(v) catch return fail("failed to convert to time", error.FailedConversion);
+                return applyOrder(op, std.math.order(time_base_micros +% m, o));
+            },
+            // Go: every comparison operator errors for IntervalValue.
+            .interval => return fail("unsupported comparison operator for interval value", error.UnsupportedOperation),
             .array => |arr| {
                 const arr2 = try v.toArray();
                 if (arr2.values.len != arr.values.len) return false;
@@ -294,6 +368,11 @@ pub const Value = union(enum) {
             },
             // Go DateValue.ToInt64 returns time.Time(d).Unix() = days * 86400.
             .date => |days| return days *% 86400,
+            // Go: time.Time.Unix() = floor(micros / 1e6) (floor, not trunc).
+            .timestamp => |m| return @divFloor(m, second_micros),
+            .datetime => |m| return @divFloor(m, second_micros),
+            .time => |m| return @divFloor(time_base_micros +% m, second_micros),
+            .interval => return fail("unsupported int64 cast for interval value", error.FailedConversion),
             .array => return fail("failed to convert int64 from array", error.FailedConversion),
             .struct_ => return fail("failed to convert int64 from struct", error.FailedConversion),
             .safe => |p| return p.toInt64() catch 0,
@@ -317,6 +396,11 @@ pub const Value = union(enum) {
                     fail("failed to convert bytes to float64", error.FailedConversion);
             },
             .date => |days| return @floatFromInt(days *% 86400),
+            // Go: float64(time.Time.Unix()).
+            .timestamp => |m| return @floatFromInt(@divFloor(m, second_micros)),
+            .datetime => |m| return @floatFromInt(@divFloor(m, second_micros)),
+            .time => |m| return @floatFromInt(@divFloor(time_base_micros +% m, second_micros)),
+            .interval => return fail("unsupported float64 cast for interval value", error.FailedConversion),
             .array => return fail("failed to convert float64 from array", error.FailedConversion),
             .struct_ => return fail("failed to convert float64 from struct", error.FailedConversion),
             .safe => |p| return p.toFloat64() catch 0,
@@ -349,6 +433,10 @@ pub const Value = union(enum) {
                     fail("failed to parse bool from bytes", error.FailedConversion);
             },
             .date => return fail("failed to convert date to bool type", error.FailedConversion),
+            .timestamp => return fail("failed to convert timestamp to bool type", error.FailedConversion),
+            .datetime => return fail("failed to convert datetime to bool type", error.FailedConversion),
+            .time => return fail("failed to convert time to bool type", error.FailedConversion),
+            .interval => return fail("unsupported bool cast for interval value", error.FailedConversion),
             .array => return fail("failed to convert bool from array", error.FailedConversion),
             .struct_ => return fail("failed to convert bool from struct", error.FailedConversion),
             .safe => |p| return p.toBool() catch false,
@@ -369,6 +457,23 @@ pub const Value = union(enum) {
             .date => |days| {
                 var buf: [32]u8 = undefined;
                 return alloc.dupe(u8, formatDateDays(&buf, days));
+            },
+            // Go ToString formats (timestamp uses the "-07" zone verb => "+00").
+            .timestamp => |m| {
+                var buf: [40]u8 = undefined;
+                return alloc.dupe(u8, formatTimestampString(&buf, m));
+            },
+            .datetime => |m| {
+                var buf: [40]u8 = undefined;
+                return alloc.dupe(u8, formatDatetimeString(&buf, m));
+            },
+            .time => |m| {
+                var buf: [24]u8 = undefined;
+                return alloc.dupe(u8, formatTimeString(&buf, m));
+            },
+            .interval => |iv| {
+                var buf: [96]u8 = undefined;
+                return alloc.dupe(u8, formatInterval(&buf, iv));
             },
             // Array/Struct ToString renders elements via ToJSON (deferred).
             .array => return fail("array ToString requires ToJSON (deferred)", error.Unimplemented),
@@ -431,10 +536,38 @@ pub const Value = union(enum) {
         _ = self;
         return fail("ToRat is deferred", error.Unimplemented);
     }
+    /// Go ToApiString: the string form rows.go hands back through
+    /// database/sql for each type kind. Implemented for the date/time kinds
+    /// (the observable result-cell rendering); other kinds stay deferred.
     pub fn toApiString(self: Value, alloc: std.mem.Allocator) ValueError![]u8 {
-        _ = self;
-        _ = alloc;
-        return fail("ToApiString is deferred", error.Unimplemented);
+        switch (self) {
+            .date => |days| {
+                var buf: [32]u8 = undefined;
+                return alloc.dupe(u8, formatDateDays(&buf, days));
+            },
+            // TimestampValue.ToApiString: "sec.microrem" (see formatTimestampApi).
+            .timestamp => |m| {
+                var buf: [40]u8 = undefined;
+                return alloc.dupe(u8, formatTimestampApi(&buf, m));
+            },
+            // DatetimeValue.ToApiString: datetimeDefaultFormat ("...T...").
+            .datetime => |m| {
+                var buf: [40]u8 = undefined;
+                return alloc.dupe(u8, formatDatetimeApi(&buf, m));
+            },
+            // TimeValue.ToApiString == ToString.
+            .time => |m| {
+                var buf: [24]u8 = undefined;
+                return alloc.dupe(u8, formatTimeString(&buf, m));
+            },
+            // IntervalValue.ToApiString == ToString.
+            .interval => |iv| {
+                var buf: [96]u8 = undefined;
+                return alloc.dupe(u8, formatInterval(&buf, iv));
+            },
+            .safe => |p| return p.toApiString(alloc) catch alloc.dupe(u8, ""),
+            else => return fail("ToApiString is deferred for this kind", error.Unimplemented),
+        }
     }
     pub fn format(self: Value, verb: u8, alloc: std.mem.Allocator) ValueError![]u8 {
         _ = self;
@@ -459,6 +592,12 @@ fn coerceToStringForCmp(v: Value, buf: []u8) ValueError![]const u8 {
         .float => |f| return formatFloatGo(buf, f),
         .bool => |b| return if (b) "true" else "false",
         .date => |days| return formatDateDays(buf, days),
+        // ToString forms (buf is >= 32 bytes; interval can exceed it, so it
+        // is length-checked into the caller scratch — timestamp/datetime fit).
+        .timestamp => |m| return formatTimestampString(buf, m),
+        .datetime => |m| return formatDatetimeString(buf, m),
+        .time => |m| return formatTimeString(buf, m),
+        .interval => return error.Unimplemented,
         // Array/Struct ToString needs ToJSON (deferred).
         .array, .struct_ => return error.Unimplemented,
         .safe => |p| return coerceToStringForCmp(p.*, buf) catch "",
@@ -608,6 +747,476 @@ fn isLeapYear(y: i64) bool {
 }
 
 // ----------------------------------------------------------------------
+// TIMESTAMP / DATETIME / TIME / INTERVAL helpers (Go value.go time kinds).
+// All UTC (the corpus pins TZ=UTC; Zig has no timezone database).
+// ----------------------------------------------------------------------
+
+const zero_time_micros: i64 = zero_time_days * 86400 * second_micros; // time.Time{} (0001-01-01)
+
+const Decomposed = struct {
+    year: i64,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    micro: u32,
+};
+
+/// Breaks civil/unix microseconds into calendar + time-of-day components.
+fn decomposeMicros(m: i64) Decomposed {
+    const days = @divFloor(m, day_micros);
+    const day_rem = m - days * day_micros; // [0, day_micros)
+    const c = civilFromDays(days);
+    const hour = @divTrunc(day_rem, hour_micros);
+    var rem = day_rem - hour * hour_micros;
+    const minute = @divTrunc(rem, minute_micros);
+    rem -= minute * minute_micros;
+    const second = @divTrunc(rem, second_micros);
+    const micro = rem - second * second_micros;
+    return .{
+        .year = c.year,
+        .month = c.month,
+        .day = c.day,
+        .hour = @intCast(hour),
+        .minute = @intCast(minute),
+        .second = @intCast(second),
+        .micro = @intCast(micro),
+    };
+}
+
+/// Writes Go's ".999999" optional fractional-seconds field: nothing when
+/// micro == 0, otherwise "." then up to six digits with trailing zeros
+/// trimmed. Returns the number of bytes written.
+fn writeFracMicros(buf: []u8, micro: u32) usize {
+    if (micro == 0) return 0;
+    var tmp: [6]u8 = undefined;
+    _ = std.fmt.bufPrint(&tmp, "{d:0>6}", .{micro}) catch unreachable;
+    var end: usize = 6;
+    while (end > 0 and tmp[end - 1] == '0') end -= 1;
+    buf[0] = '.';
+    @memcpy(buf[1 .. 1 + end], tmp[0..end]);
+    return 1 + end;
+}
+
+/// Writes "YYYY-MM-DD<sep>HH:MM:SS" (year sign handled like formatDateDays).
+fn writeCivilPrefix(buf: []u8, d: Decomposed, sep: u8) usize {
+    var w: usize = 0;
+    if (d.year < 0) {
+        const y: u64 = @intCast(-d.year);
+        w = (std.fmt.bufPrint(buf, "-{d:0>4}-{d:0>2}-{d:0>2}", .{ y, d.month, d.day }) catch unreachable).len;
+    } else {
+        const y: u64 = @intCast(d.year);
+        w = (std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}", .{ y, d.month, d.day }) catch unreachable).len;
+    }
+    buf[w] = sep;
+    w += 1;
+    w += (std.fmt.bufPrint(buf[w..], "{d:0>2}:{d:0>2}:{d:0>2}", .{ d.hour, d.minute, d.second }) catch unreachable).len;
+    return w;
+}
+
+/// TimestampValue.ToApiString: fmt.Sprintf("%d.%d", sec, microRemainder)
+/// where sec = unixMicro/1e6 (truncated) — a "seconds.remainder" form with
+/// the remainder printed unpadded (e.g. 1136239445 micros => "1136239445.0").
+pub fn formatTimestampApi(buf: []u8, micros: i64) []const u8 {
+    const sec = @divTrunc(micros, second_micros);
+    const rem = micros - sec * second_micros;
+    return std.fmt.bufPrint(buf, "{d}.{d}", .{ sec, rem }) catch unreachable;
+}
+
+/// Inverse of formatTimestampApi ("sec.microRemainder" -> unix micros). Used
+/// to round-trip a timestamp result cell back into a bound parameter value.
+pub fn parseTimestampApi(s: []const u8) ValueError!i64 {
+    const dot = std.mem.indexOfScalar(u8, s, '.') orelse return error.FailedConversion;
+    const sec = std.fmt.parseInt(i64, s[0..dot], 10) catch return error.FailedConversion;
+    const rem = std.fmt.parseInt(i64, s[dot + 1 ..], 10) catch return error.FailedConversion;
+    return sec *% second_micros +% rem;
+}
+
+/// TimestampValue.Interface(): time.RFC3339 = "2006-01-02T15:04:05Z" for UTC
+/// (no fractional seconds). Used as the GROUP BY key rendering.
+pub fn formatTimestampRfc3339(buf: []u8, micros: i64) []const u8 {
+    const d = decomposeMicros(micros);
+    const w = writeCivilPrefix(buf, d, 'T');
+    buf[w] = 'Z';
+    return buf[0 .. w + 1];
+}
+
+/// TimestampValue.ToString: "2006-01-02 15:04:05.999999-07"; UTC => "+00".
+pub fn formatTimestampString(buf: []u8, micros: i64) []const u8 {
+    const d = decomposeMicros(micros);
+    var w = writeCivilPrefix(buf, d, ' ');
+    w += writeFracMicros(buf[w..], d.micro);
+    @memcpy(buf[w .. w + 3], "+00");
+    return buf[0 .. w + 3];
+}
+
+/// DatetimeValue.ToString: "2006-01-02 15:04:05.999999" (space separator).
+pub fn formatDatetimeString(buf: []u8, micros: i64) []const u8 {
+    const d = decomposeMicros(micros);
+    var w = writeCivilPrefix(buf, d, ' ');
+    w += writeFracMicros(buf[w..], d.micro);
+    return buf[0..w];
+}
+
+/// DatetimeValue.ToApiString: "2006-01-02T15:04:05.999999" (T separator).
+pub fn formatDatetimeApi(buf: []u8, micros: i64) []const u8 {
+    const d = decomposeMicros(micros);
+    var w = writeCivilPrefix(buf, d, 'T');
+    w += writeFracMicros(buf[w..], d.micro);
+    return buf[0..w];
+}
+
+/// TimeValue.ToString / ToApiString: "15:04:05.999999".
+pub fn formatTimeString(buf: []u8, micros: i64) []const u8 {
+    const d = decomposeMicros(micros);
+    var w = (std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}:{d:0>2}", .{ d.hour, d.minute, d.second }) catch unreachable).len;
+    w += writeFracMicros(buf[w..], d.micro);
+    return buf[0..w];
+}
+
+fn i32Abs(x: i32) i32 {
+    return if (x < 0) -x else x;
+}
+
+/// bigquery.IntervalValue.Canonicalize: reduce Y-M and H:M:S.F parts.
+fn canonicalizeInterval(iv: Interval) Interval {
+    var out = Interval{ .days = iv.days };
+    const total_months: i32 = iv.years * 12 + iv.months;
+    out.years = @divTrunc(total_months, 12);
+    out.months = @rem(total_months, 12);
+    var total_nanos: i64 = @as(i64, iv.hours) * 3600 * 1_000_000_000 +
+        @as(i64, iv.minutes) * 60 * 1_000_000_000 +
+        @as(i64, iv.seconds) * 1_000_000_000 +
+        @as(i64, iv.sub_second_nanos);
+    out.hours = @intCast(@divTrunc(total_nanos, 3600 * 1_000_000_000));
+    total_nanos -= @as(i64, out.hours) * 3600 * 1_000_000_000;
+    out.minutes = @intCast(@divTrunc(total_nanos, 60 * 1_000_000_000));
+    total_nanos -= @as(i64, out.minutes) * 60 * 1_000_000_000;
+    out.seconds = @intCast(@divTrunc(total_nanos, 1_000_000_000));
+    total_nanos -= @as(i64, out.seconds) * 1_000_000_000;
+    out.sub_second_nanos = @intCast(total_nanos);
+    return out;
+}
+
+/// IntervalValue.ToString: bigquery canonical "[sign]Y-M [sign]D H:M:S[.F]",
+/// plus go-zetasqlite's leading "-" when Years==0 && Months<0. `buf` needs
+/// >= 96 bytes.
+pub fn formatInterval(buf: []u8, iv_in: Interval) []const u8 {
+    const c = canonicalizeInterval(iv_in);
+    var w: usize = 0;
+    // go-zetasqlite ToString: negative-month intervals get a leading '-'.
+    if (c.years == 0 and c.months < 0) {
+        buf[0] = '-';
+        w = 1;
+    }
+    w += (std.fmt.bufPrint(buf[w..], "{d}-{d} {d} {d}:{d}:{d}", .{
+        c.years,
+        i32Abs(c.months),
+        c.days,
+        c.hours,
+        i32Abs(c.minutes),
+        i32Abs(c.seconds),
+    }) catch unreachable).len;
+    if (c.sub_second_nanos != 0) {
+        var tmp: [16]u8 = undefined;
+        const mant: []const u8 = if (c.sub_second_nanos < 0)
+            std.fmt.bufPrint(&tmp, "-{d:0>8}", .{@as(u32, @intCast(-c.sub_second_nanos))}) catch unreachable
+        else
+            std.fmt.bufPrint(&tmp, "{d:0>9}", .{@as(u32, @intCast(c.sub_second_nanos))}) catch unreachable;
+        var end: usize = mant.len;
+        while (end > 0 and mant[end - 1] == '0') end -= 1;
+        buf[w] = '.';
+        w += 1;
+        @memcpy(buf[w .. w + end], mant[0..end]);
+        w += end;
+    }
+    return buf[0..w];
+}
+
+/// bigquery.IntervalValueFromDuration: only the H/M/S/subsecond parts.
+pub fn intervalFromDuration(nanos_in: i64) Interval {
+    var nanos = nanos_in;
+    var iv = Interval{};
+    iv.hours = @intCast(@divTrunc(nanos, 3600 * 1_000_000_000));
+    nanos -= @as(i64, iv.hours) * 3600 * 1_000_000_000;
+    iv.minutes = @intCast(@divTrunc(nanos, 60 * 1_000_000_000));
+    nanos -= @as(i64, iv.minutes) * 60 * 1_000_000_000;
+    iv.seconds = @intCast(@divTrunc(nanos, 1_000_000_000));
+    nanos -= @as(i64, iv.seconds) * 1_000_000_000;
+    iv.sub_second_nanos = @intCast(nanos);
+    return iv;
+}
+
+const Norm = struct { hi: i64, lo: i64 };
+
+/// Go time.norm: carry lo into hi so lo lands in [0, base).
+fn norm(hi: i64, lo: i64, base: i64) Norm {
+    var h = hi;
+    var l = lo;
+    if (l < 0) {
+        const n = @divTrunc(-l - 1, base) + 1;
+        h -= n;
+        l += n * base;
+    }
+    if (l >= base) {
+        const n = @divTrunc(l, base);
+        h += n;
+        l -= n * base;
+    }
+    return .{ .hi = h, .lo = l };
+}
+
+/// TimestampValue/DatetimeValue + INTERVAL: calendar arithmetic mirroring Go's
+/// time.Date(y+Y, m+Mo, d+D, h+H, ...) component add with normalization.
+/// `sign` is +1 for Add, -1 for Sub.
+fn addCalendar(base_micros: i64, iv: Interval, sign: i64) i64 {
+    const d = decomposeMicros(base_micros);
+    var year: i64 = d.year + sign * iv.years;
+    var month: i64 = @as(i64, d.month) + sign * iv.months;
+    var day: i64 = @as(i64, d.day) + sign * iv.days;
+    var hour: i64 = @as(i64, d.hour) + sign * iv.hours;
+    var minute: i64 = @as(i64, d.minute) + sign * iv.minutes;
+    var second: i64 = @as(i64, d.second) + sign * iv.seconds;
+    var nsec: i64 = @as(i64, d.micro) * 1000 + sign * iv.sub_second_nanos;
+
+    var r = norm(second, nsec, 1_000_000_000);
+    second = r.hi;
+    nsec = r.lo;
+    r = norm(minute, second, 60);
+    minute = r.hi;
+    second = r.lo;
+    r = norm(hour, minute, 60);
+    hour = r.hi;
+    minute = r.lo;
+    r = norm(day, hour, 24);
+    day = r.hi;
+    hour = r.lo;
+    r = norm(year, month - 1, 12);
+    year = r.hi;
+    month = r.lo + 1;
+
+    const total_days = daysFromCivil(year, month, 1) + (day - 1);
+    return total_days * day_micros +
+        hour * hour_micros +
+        minute * minute_micros +
+        second * second_micros +
+        @divTrunc(nsec, 1000);
+}
+
+/// Public bridge (Go: Value.ToTime()) projecting any time-shaped value onto
+/// unix microseconds; used by the CAST machinery for cross-kind time casts.
+pub fn toUnixMicros(v: Value) ValueError!i64 {
+    return timeMicrosForCompare(v);
+}
+
+/// The rhs of a time-kind comparison as unix microseconds (Go: v.ToTime()).
+fn timeMicrosForCompare(v: Value) ValueError!i64 {
+    switch (v) {
+        .@"null" => return error.NullValue,
+        .timestamp => |m| return m,
+        .datetime => |m| return m,
+        .time => |m| return time_base_micros +% m,
+        .date => |days| return days *% 86400 *% second_micros,
+        .string => |s| return parseAnyTimeMicros(s),
+        .bytes => |b| return parseAnyTimeMicros(b),
+        // Go SafeValue.ToTime swallows errors into time.Time{} (0001-01-01).
+        .safe => |p| return timeMicrosForCompare(p.*) catch zero_time_micros,
+        else => return error.FailedConversion,
+    }
+}
+
+/// StringValue.ToTime dispatch: date / datetime / time / timestamp shaped
+/// strings, projected onto unix microseconds.
+fn parseAnyTimeMicros(s: []const u8) ValueError!i64 {
+    if (isDateString(s)) return (try parseDateDays(s)) *% 86400 *% second_micros;
+    if (isDatetimeString(s)) return parseDatetimeMicros(s);
+    if (isTimePrefixString(s)) return time_base_micros +% (try parseTimeMicros(s));
+    return parseTimestampMicros(s) catch error.FailedConversion;
+}
+
+// -- Parsers (Go value.go parse* functions) ---------------------------------
+
+fn parseTwoDigits(s: []const u8, max: i64) ValueError!i64 {
+    if (s.len < 2 or !std.ascii.isDigit(s[0]) or !std.ascii.isDigit(s[1])) return error.InvalidDate;
+    const v = @as(i64, s[0] - '0') * 10 + @as(i64, s[1] - '0');
+    if (v >= max) return error.InvalidDate;
+    return v;
+}
+
+/// Reads leading decimal digits as sub-second micros (first 6 significant
+/// digits, remaining digits truncated). Returns micros and the consumed count.
+fn readFracMicros(s: []const u8) struct { micro: u32, len: usize } {
+    var micro: u32 = 0;
+    var digits: usize = 0;
+    var i: usize = 0;
+    while (i < s.len and std.ascii.isDigit(s[i])) : (i += 1) {
+        if (digits < 6) {
+            micro = micro * 10 + (s[i] - '0');
+            digits += 1;
+        }
+    }
+    while (digits < 6) : (digits += 1) micro *= 10;
+    return .{ .micro = micro, .len = i };
+}
+
+/// Go parseTime("15:04:05.999999") -> microseconds since midnight.
+pub fn parseTimeMicros(s: []const u8) ValueError!i64 {
+    if (s.len < 8 or s[2] != ':' or s[5] != ':') return fail("invalid time literal", error.InvalidDate);
+    const hour = try parseTwoDigits(s[0..2], 24);
+    const min = try parseTwoDigits(s[3..5], 60);
+    const sec = try parseTwoDigits(s[6..8], 60);
+    var micro: i64 = 0;
+    if (s.len > 8) {
+        if (s[8] != '.') return fail("invalid time literal", error.InvalidDate);
+        const frac = readFracMicros(s[9..]);
+        if (9 + frac.len != s.len) return fail("invalid time literal", error.InvalidDate);
+        micro = frac.micro;
+    }
+    return (hour * 3600 + min * 60 + sec) * second_micros + micro;
+}
+
+/// Go parseDatetime -> civil microseconds (T or space separator).
+pub fn parseDatetimeMicros(s: []const u8) ValueError!i64 {
+    if (s.len < 19) return fail("invalid datetime literal", error.InvalidDate);
+    const days = try parseDateDays(s[0..10]);
+    if (s[10] != 'T' and s[10] != ' ') return fail("invalid datetime literal", error.InvalidDate);
+    const tod = try parseTimeMicros(s[11..]);
+    return days * day_micros + tod;
+}
+
+/// Go parseTimestamp -> unix microseconds (UTC). Accepts an optional zone
+/// suffix: Z, ±HH[:MM], or a trailing " NAME" (treated as UTC — Zig has no
+/// timezone database; the corpus runs TZ=UTC). Non-UTC named zones therefore
+/// parse as UTC.
+pub fn parseTimestampMicros(s: []const u8) ValueError!i64 {
+    if (s.len < 10) return fail("invalid timestamp literal", error.InvalidDate);
+    const days = try parseDateDays(s[0..10]);
+    if (s.len == 10) return days * 86400 * second_micros;
+    if (s[10] != 'T' and s[10] != ' ') return fail("invalid timestamp literal", error.InvalidDate);
+    const rest = s[11..];
+    if (rest.len < 8 or rest[2] != ':' or rest[5] != ':') return fail("invalid timestamp literal", error.InvalidDate);
+    const hour = try parseTwoDigits(rest[0..2], 24);
+    const min = try parseTwoDigits(rest[3..5], 60);
+    const sec = try parseTwoDigits(rest[6..8], 60);
+    var idx: usize = 8;
+    var micro: i64 = 0;
+    if (idx < rest.len and rest[idx] == '.') {
+        const frac = readFracMicros(rest[idx + 1 ..]);
+        micro = frac.micro;
+        idx += 1 + frac.len;
+    }
+    var offset_sec: i64 = 0;
+    if (idx < rest.len) {
+        const c = rest[idx];
+        if (c == 'Z') {
+            idx += 1;
+        } else if (c == '+' or c == '-') {
+            const zsign: i64 = if (c == '-') -1 else 1;
+            idx += 1;
+            const oh = try parseTwoDigits(rest[idx..], 24);
+            idx += 2;
+            var om: i64 = 0;
+            if (idx < rest.len and rest[idx] == ':') {
+                idx += 1;
+                om = try parseTwoDigits(rest[idx..], 60);
+                idx += 2;
+            }
+            offset_sec = zsign * (oh * 3600 + om * 60);
+        } else if (c == ' ') {
+            // " NAME" zone: assume UTC (documented limitation).
+            idx = rest.len;
+        } else {
+            return fail("invalid timestamp literal", error.InvalidDate);
+        }
+    }
+    if (idx != rest.len) return fail("invalid timestamp literal", error.InvalidDate);
+    return (days * 86400 + hour * 3600 + min * 60 + sec) * second_micros + micro - offset_sec * second_micros;
+}
+
+// -- Interval parsing (bigquery.ParseInterval + go-zetasqlite wrapper) -------
+
+const IntervalPart = enum { years, months, days, hours, minutes, seconds, subsecs };
+
+fn intervalTrimByte(part: IntervalPart) u8 {
+    return switch (part) {
+        .years, .days, .hours => ' ',
+        .months => '-',
+        .minutes, .seconds => ':',
+        .subsecs => '.',
+    };
+}
+
+/// Go bigquery getPartValue: trim the part prefix then capture its value.
+/// Returns the parsed value and the remaining slice.
+fn intervalGetPart(part: IntervalPart, s_in: []const u8) ValueError!struct { val: i32, rest: []const u8 } {
+    var s = s_in;
+    const tb = intervalTrimByte(part);
+    while (s.len > 0 and s[0] == tb) s = s[1..];
+
+    const allow_sign = switch (part) {
+        .years, .days, .hours => true,
+        else => false,
+    };
+    var negative = false;
+    if (s.len > 0 and allow_sign) {
+        if (s[0] == '-') {
+            negative = true;
+            s = s[1..];
+        } else if (s[0] == '+') {
+            s = s[1..];
+        }
+    }
+    var captured: usize = 0;
+    while (captured < s.len and std.ascii.isDigit(s[captured])) captured += 1;
+    const digits = s[0..captured];
+    s = s[captured..];
+
+    if (digits.len == 0) {
+        if (part == .subsecs) return .{ .val = 0, .rest = s };
+        return fail("no value parsed for interval part", error.CorruptData);
+    }
+    if (part == .subsecs) {
+        // 0.<digits> * 1e9 nanos, truncated (first 9 significant digits).
+        var nanos: i64 = 0;
+        var i: usize = 0;
+        while (i < 9) : (i += 1) {
+            nanos *= 10;
+            if (i < digits.len) nanos += digits[i] - '0';
+        }
+        return .{ .val = @intCast(nanos), .rest = s };
+    }
+    var v: i64 = 0;
+    for (digits) |ch| v = v * 10 + (ch - '0');
+    if (negative) v = -v;
+    return .{ .val = @intCast(v), .rest = s };
+}
+
+/// Go value.go parseInterval -> Interval (bigquery.ParseInterval plus the
+/// negative-months fixup).
+pub fn parseIntervalValue(s: []const u8) ValueError!Interval {
+    if (s.len == 0) return fail("interval value is empty", error.CorruptData);
+    const is_negative = s[0] == '-';
+    var iv = Interval{};
+    var rest = s;
+    inline for ([_]IntervalPart{ .years, .months, .days, .hours, .minutes, .seconds, .subsecs }) |part| {
+        const r = try intervalGetPart(part, rest);
+        rest = r.rest;
+        switch (part) {
+            .years => iv.years = r.val,
+            .months => iv.months = if (iv.years < 0) -r.val else r.val,
+            .days => iv.days = r.val,
+            .hours => iv.hours = r.val,
+            .minutes => iv.minutes = if (iv.hours < 0) -r.val else r.val,
+            .seconds => iv.seconds = if (iv.hours < 0) -r.val else r.val,
+            .subsecs => iv.sub_second_nanos = if (iv.hours < 0) -r.val else r.val,
+        }
+    }
+    if (is_negative and iv.months > 0) iv.months = -iv.months;
+    return iv;
+}
+
+// ----------------------------------------------------------------------
 // Go-compatible float formatting: strconv.FormatFloat(f, 'g', -1, 64)
 // ----------------------------------------------------------------------
 
@@ -746,6 +1355,10 @@ pub fn expectValueEqual(expected: Value, actual: Value) !void {
         .string => |s| try std.testing.expectEqualStrings(s, actual.string),
         .bytes => |b| try std.testing.expectEqualSlices(u8, b, actual.bytes),
         .date => |d| try std.testing.expectEqual(d, actual.date),
+        .timestamp => |m| try std.testing.expectEqual(m, actual.timestamp),
+        .datetime => |m| try std.testing.expectEqual(m, actual.datetime),
+        .time => |m| try std.testing.expectEqual(m, actual.time),
+        .interval => |iv| try std.testing.expectEqual(iv, actual.interval),
         .array => |a| {
             try std.testing.expectEqual(a.values.len, actual.array.values.len);
             for (a.values, actual.array.values) |ev, av| try expectValueEqual(ev, av);
@@ -972,6 +1585,139 @@ test "safe value swallows errors" {
     // Failed comparisons become false.
     const safe_bool = try safeValue(alloc, Value{ .bool = true });
     try std.testing.expectEqual(false, try safe_bool.gt(Value{ .bool = false }));
+}
+
+test "timestamp api/string formatting matches Go" {
+    var buf: [48]u8 = undefined;
+    // ToApiString: "sec.microRemainder" (unpadded remainder).
+    try std.testing.expectEqualStrings("1136239445.0", formatTimestampApi(&buf, 1136239445_000000));
+    try std.testing.expectEqualStrings("1705314615.500000", formatTimestampApi(&buf, 1705314615_500000));
+    // ToString: "...-07" zone verb => "+00" (fractional trimmed).
+    try std.testing.expectEqualStrings("2006-01-02 22:04:05+00", formatTimestampString(&buf, 1136239445_000000));
+    try std.testing.expectEqualStrings("2024-01-15 10:30:15.5+00", formatTimestampString(&buf, 1705314615_500000));
+    // Interface(): RFC3339 (no fractional, 'Z').
+    try std.testing.expectEqualStrings("2006-01-02T22:04:05Z", formatTimestampRfc3339(&buf, 1136239445_000000));
+    // Round trip: parse (space + "+00") back to unix micros.
+    try std.testing.expectEqual(@as(i64, 1136239445_000000), try parseTimestampMicros("2006-01-02 22:04:05+00"));
+    try std.testing.expectEqual(@as(i64, 1136239445_000000), try parseTimestampApi("1136239445.0"));
+}
+
+test "timestamp parse accepts every Go layout" {
+    // All represent the same instant 2006-01-02 22:04:05 UTC (1136239445s).
+    const want: i64 = 1136239445_000000;
+    const layouts = [_][]const u8{
+        "2006-01-02T22:04:05Z",
+        "2006-01-02T22:04:05+00:00",
+        "2006-01-02T22:04:05-00",
+        "2006-01-02T22:04:05 UTC",
+        "2006-01-02T22:04:05",
+        "2006-01-02 22:04:05Z",
+        "2006-01-02 22:04:05+00:00",
+        "2006-01-02 22:04:05-00",
+        "2006-01-02 22:04:05",
+    };
+    for (layouts) |s| try std.testing.expectEqual(want, try parseTimestampMicros(s));
+    // Bare date => midnight.
+    try std.testing.expectEqual(
+        (try parseDateDays("2006-01-02")) * 86400 * second_micros,
+        try parseTimestampMicros("2006-01-02"),
+    );
+    // Non-zero offset shifts the instant: 00:04:05+02 == 22:04:05 UTC the
+    // previous day, i.e. the same instant as `want`.
+    try std.testing.expectEqual(want, try parseTimestampMicros("2006-01-03 00:04:05+02"));
+}
+
+test "datetime and time formatting / parsing" {
+    var buf: [48]u8 = undefined;
+    const dt = try parseDatetimeMicros("2024-01-15 10:30:00");
+    try std.testing.expectEqualStrings("2024-01-15 10:30:00", formatDatetimeString(&buf, dt));
+    try std.testing.expectEqualStrings("2024-01-15T10:30:00", formatDatetimeApi(&buf, dt));
+    // T separator and fractional round-trip.
+    const dtf = try parseDatetimeMicros("2024-01-15T10:30:15.123456");
+    try std.testing.expectEqualStrings("2024-01-15 10:30:15.123456", formatDatetimeString(&buf, dtf));
+
+    const tv = try parseTimeMicros("10:30:15");
+    try std.testing.expectEqual(@as(i64, (10 * 3600 + 30 * 60 + 15) * second_micros), tv);
+    try std.testing.expectEqualStrings("10:30:15", formatTimeString(&buf, tv));
+    const tvf = try parseTimeMicros("10:30:15.5");
+    try std.testing.expectEqualStrings("10:30:15.5", formatTimeString(&buf, tvf));
+    try std.testing.expectError(error.InvalidDate, parseTimeMicros("10:30"));
+    try std.testing.expectError(error.InvalidDate, parseTimeMicros("25:00:00"));
+}
+
+test "interval parse/format round trips (bigquery canonical)" {
+    var buf: [96]u8 = undefined;
+    const cases = [_][]const u8{
+        "1-2 3 4:5:6",
+        "0-0 1 0:0:0",
+        "1-2 0 0:0:0",
+        "0-0 0 1:2:3.123456",
+        "0-0 0 1:2:3.5",
+        "-1-2 0 0:0:0",
+        "0-0 0 -1:2:3",
+        "10-0 0 0:0:0",
+    };
+    for (cases) |s| {
+        const iv = try parseIntervalValue(s);
+        try std.testing.expectEqualStrings(s, formatInterval(&buf, iv));
+    }
+    // Canonicalization reduces 13 months to 1-1.
+    const c = try parseIntervalValue("0-13 0 0:0:0");
+    try std.testing.expectEqualStrings("1-1 0 0:0:0", formatInterval(&buf, c));
+}
+
+test "timestamp / datetime arithmetic and comparison" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var buf: [48]u8 = undefined;
+
+    const ts = Value{ .timestamp = try parseTimestampMicros("2024-01-31 10:00:00+00") };
+    // + INTERVAL 1 month => Go's time.Date normalizes Jan 31 -> Feb 31 -> Mar 2.
+    const plus_month = try ts.add(alloc, Value{ .interval = .{ .months = 1 } });
+    try std.testing.expectEqualStrings("2024-03-02 10:00:00+00", formatTimestampString(&buf, plus_month.timestamp));
+    // + INTERVAL 1 day.
+    const plus_day = try ts.add(alloc, Value{ .interval = .{ .days = 1 } });
+    try std.testing.expectEqualStrings("2024-02-01 10:00:00+00", formatTimestampString(&buf, plus_day.timestamp));
+    // timestamp - timestamp => interval duration (H:M:S).
+    const later = Value{ .timestamp = try parseTimestampMicros("2024-01-31 12:30:15+00") };
+    const diff = try later.sub(alloc, ts);
+    try std.testing.expectEqualStrings("0-0 0 2:30:15", formatInterval(&buf, diff.interval));
+
+    // Comparisons compare the underlying instant.
+    try std.testing.expect(try later.gt(ts));
+    try std.testing.expect(try ts.lt(later));
+    try std.testing.expect(try ts.eq(Value{ .timestamp = ts.timestamp }));
+    // Against a string form (parsed via ToTime).
+    try std.testing.expect(try ts.eq(Value{ .string = "2024-01-31 10:00:00+00" }));
+
+    // Datetime + interval.
+    const dt = Value{ .datetime = try parseDatetimeMicros("2024-02-29 23:59:59") };
+    const dt_next = try dt.add(alloc, Value{ .interval = .{ .seconds = 1 } });
+    try std.testing.expectEqualStrings("2024-03-01 00:00:00", formatDatetimeString(&buf, dt_next.datetime));
+
+    // Interval comparisons and arithmetic are unsupported (like Go).
+    const iv = Value{ .interval = .{ .days = 1 } };
+    try std.testing.expectError(error.UnsupportedOperation, iv.eq(iv));
+    try std.testing.expectError(error.UnsupportedOperation, iv.add(alloc, iv));
+}
+
+test "time-kind conversions (ToInt64 / ToFloat64 / ToString)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const ts = Value{ .timestamp = 1136239445_000000 };
+    try std.testing.expectEqual(@as(i64, 1136239445), try ts.toInt64());
+    try std.testing.expectEqual(@as(f64, 1136239445), try ts.toFloat64());
+    try std.testing.expectEqualStrings("2006-01-02 22:04:05+00", try ts.toString(alloc));
+    try std.testing.expectEqualStrings("1136239445.0", try ts.toApiString(alloc));
+    try std.testing.expectError(error.FailedConversion, ts.toBool());
+
+    // TIME anchored at Go's zero civil date; Unix() is the huge negative base.
+    const tv = Value{ .time = (10 * 3600 + 30 * 60) * second_micros };
+    try std.testing.expectEqual(@as(i64, -62169946200), try tv.toInt64());
+    try std.testing.expectEqualStrings("10:30:00", try tv.toApiString(alloc));
 }
 
 test "compareForCollation orderings" {

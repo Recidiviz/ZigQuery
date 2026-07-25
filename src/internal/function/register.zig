@@ -234,6 +234,24 @@ fn groupByImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqli
             var buf: [32]u8 = undefined;
             sqlite.resultText(ctx, value_mod.formatDateDays(&buf, days));
         },
+        // Go decoded.Interface(): timestamp => time.RFC3339, the others =>
+        // their ToApiString form.
+        .timestamp => |m| {
+            var buf: [40]u8 = undefined;
+            sqlite.resultText(ctx, value_mod.formatTimestampRfc3339(&buf, m));
+        },
+        .datetime => |m| {
+            var buf: [40]u8 = undefined;
+            sqlite.resultText(ctx, value_mod.formatDatetimeApi(&buf, m));
+        },
+        .time => |m| {
+            var buf: [24]u8 = undefined;
+            sqlite.resultText(ctx, value_mod.formatTimeString(&buf, m));
+        },
+        .interval => |iv| {
+            var buf: [96]u8 = undefined;
+            sqlite.resultText(ctx, value_mod.formatInterval(&buf, iv));
+        },
         .safe => unreachable,
     }
 }
@@ -638,10 +656,20 @@ test "cast function (foundation kinds)" {
         "failed to convert string to int64",
         try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("abc"), t_string, t_int }),
     );
-    // Unimplemented target kinds raise (timestamp is deferred).
+    // string -> timestamp parses the date/datetime/timestamp form (a bare
+    // date lands at midnight UTC).
+    const ts_days = try value_mod.parseDateDays("2021-01-02");
+    const as_ts = try env.queryValue(try env.fmt(
+        "SELECT zetasqlite_cast({s}, {s}, {s}, 0)",
+        .{ try env.encStr("2021-01-02"), t_string, t_ts },
+    ));
+    try value_mod.expectValueEqual(Value{ .timestamp = ts_days * 86400 * 1_000_000 }, as_ts);
+
+    // Still-deferred target kinds raise (NUMERIC, kind 23).
+    const t_numeric = try env.encStr("{\"kind\":23}");
     try env.expectErrorMsg(
         "CAST: unimplemented cast",
-        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("2021-01-02"), t_string, t_ts }),
+        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("1.5"), t_string, t_numeric }),
     );
 
     // array cast: elements go through elementType.
