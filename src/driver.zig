@@ -153,10 +153,13 @@ pub const Db = struct {
     /// How much of the catalog has been pushed to `catalog_handle`.
     pushed_tables: usize = 0,
     pushed_functions: usize = 0,
-    /// Catalog rebuild generation the handle reflects. Removals and in-place
-    /// replacements cannot be expressed as a delta, so a change here forces a
-    /// rebuild.
+    /// Catalog rebuild generation the handle reflects. Only function removals
+    /// force a full rebuild now; table changes travel as a mutation journal.
     handle_generation: u64 = 0,
+    /// Set when an incremental update failed partway. The journal has already
+    /// been drained at that point, so the handle can no longer be trusted and
+    /// is rebuilt from the whole catalog on the next use.
+    handle_needs_rebuild: bool = false,
 
     pub fn open(gpa: std.mem.Allocator, path: [:0]const u8) Error!*Db {
         return openWith(gpa, path, .{});
@@ -440,30 +443,100 @@ pub const Db = struct {
     ) ?*analyzer_ffi.CatalogHandle {
         var handle = db.catalog_handle orelse return null;
 
-        if (db.catalog.rebuild_generation != db.handle_generation) {
+        // Function removals are rare and have no incremental path, so they
+        // still rebuild. Table changes never reach here — they travel as a
+        // journal below.
+        if (db.handle_needs_rebuild or
+            db.catalog.rebuild_generation != db.handle_generation)
+        {
             analyzer_ffi.catalogDestroy(handle);
             db.catalog_handle = null;
             handle = analyzer_ffi.catalogCreate(db.gpa) catch return null;
             db.catalog_handle = handle;
             db.handle_generation = db.catalog.rebuild_generation;
-            db.pushed_tables = 0;
+            db.handle_needs_rebuild = false;
             db.pushed_functions = 0;
+            db.catalog.discardTableMutations();
+
+            const all = db.catalog.catalogJsonForSpecs(
+                arena,
+                db.catalog.tables.items,
+            ) catch {
+                db.handle_needs_rebuild = true;
+                return null;
+            };
+            analyzer_ffi.catalogAddTables(db.gpa, handle, all) catch {
+                db.handle_needs_rebuild = true;
+                return null;
+            };
         }
 
-        const n_tables = db.catalog.tables.items.len;
+        if (!db.applyTableMutations(arena, handle)) {
+            db.handle_needs_rebuild = true;
+            return null;
+        }
+
+        // Functions only ever append, so an index delta is enough.
         const n_funcs = db.catalog.functions.items.len;
-        if (db.pushed_tables == n_tables and db.pushed_functions == n_funcs) return handle;
-
-        const delta = db.catalog.catalogJsonFrom(
-            arena,
-            db.pushed_tables,
-            db.pushed_functions,
-        ) catch return null;
-        analyzer_ffi.catalogAddTables(db.gpa, handle, delta) catch return null;
-
-        db.pushed_tables = n_tables;
-        db.pushed_functions = n_funcs;
+        if (db.pushed_functions != n_funcs) {
+            const delta = db.catalog.catalogJsonFrom(
+                arena,
+                db.catalog.tables.items.len,
+                db.pushed_functions,
+            ) catch {
+                db.handle_needs_rebuild = true;
+                return null;
+            };
+            analyzer_ffi.catalogAddTables(db.gpa, handle, delta) catch {
+                db.handle_needs_rebuild = true;
+                return null;
+            };
+            db.pushed_functions = n_funcs;
+        }
         return handle;
+    }
+
+    /// Replays the catalog's table journal onto the handle, in order.
+    ///
+    /// Order matters: a table created and then dropped in the same batch must
+    /// end up absent. Runs of consecutive additions are coalesced into one
+    /// push so a bulk load stays a single merge rather than one per table.
+    fn applyTableMutations(
+        db: *Db,
+        arena: std.mem.Allocator,
+        handle: *analyzer_ffi.CatalogHandle,
+    ) bool {
+        const muts = db.catalog.drainTableMutations(arena) catch return false;
+        if (muts.len == 0) return true;
+
+        var pending: std.ArrayList(*spec.TableSpec) = .empty;
+
+        for (muts) |m| {
+            if (!m.removed) {
+                if (db.catalog.tableSpecByName(m.name)) |s| {
+                    pending.append(arena, s) catch return false;
+                }
+                continue;
+            }
+            // Flush additions before a removal so ordering is preserved.
+            if (!db.flushCatalogAdditions(arena, handle, &pending)) return false;
+            const name_z = arena.dupeZ(u8, m.name) catch return false;
+            analyzer_ffi.catalogRemoveTable(db.gpa, handle, name_z) catch return false;
+        }
+        return db.flushCatalogAdditions(arena, handle, &pending);
+    }
+
+    fn flushCatalogAdditions(
+        db: *Db,
+        arena: std.mem.Allocator,
+        handle: *analyzer_ffi.CatalogHandle,
+        pending: *std.ArrayList(*spec.TableSpec),
+    ) bool {
+        if (pending.items.len == 0) return true;
+        const delta = db.catalog.catalogJsonForSpecs(arena, pending.items) catch return false;
+        analyzer_ffi.catalogAddTables(db.gpa, handle, delta) catch return false;
+        pending.* = .empty;
+        return true;
     }
 
     const Mode = enum { query, exec };

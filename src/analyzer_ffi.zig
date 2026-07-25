@@ -159,6 +159,11 @@ extern fn GoogleSQL_CatalogAddTables(
     catalog_json: [*:0]const u8,
     out_error: *?[*:0]u8,
 ) c_int;
+extern fn GoogleSQL_CatalogRemoveTable(
+    handle: ?*anyopaque,
+    name: [*:0]const u8,
+    out_error: *?[*:0]u8,
+) c_int;
 extern fn GoogleSQL_AnalyzeNextStatementWithCatalog(
     handle: ?*anyopaque,
     sql: [*:0]const u8,
@@ -195,6 +200,22 @@ pub fn catalogAddTables(
 ) AnalyzeError!void {
     var err: ?[*:0]u8 = null;
     if (GoogleSQL_CatalogAddTables(@ptrCast(handle), catalog_json.ptr, &err) != 0) {
+        setLastErrorFromC(gpa, err);
+        return error.AnalyzeFailed;
+    }
+}
+
+/// Removes a table from the handle's catalog by canonical name.
+///
+/// Removing something absent is not an error. This exists so a DROP costs
+/// O(1) rather than forcing the whole catalog to be re-pushed.
+pub fn catalogRemoveTable(
+    gpa: std.mem.Allocator,
+    handle: *CatalogHandle,
+    name: [:0]const u8,
+) AnalyzeError!void {
+    var err: ?[*:0]u8 = null;
+    if (GoogleSQL_CatalogRemoveTable(@ptrCast(handle), name.ptr, &err) != 0) {
         setLastErrorFromC(gpa, err);
         return error.AnalyzeFailed;
     }

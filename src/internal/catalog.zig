@@ -93,6 +93,13 @@ pub const view_spec_kind = "view";
 pub const function_spec_kind = "function";
 const catalog_name = "zetasqlite";
 
+/// One table change, in the order it happened.
+pub const TableMutation = struct {
+    /// Canonical ("_"-joined) table name.
+    name: []const u8,
+    removed: bool,
+};
+
 pub const Catalog = struct {
     gpa: std.mem.Allocator,
     /// Owns every stored TableSpec and all derived strings.
@@ -116,6 +123,17 @@ pub const Catalog = struct {
     /// Timestamp string of the last sync ("" = never; sorts before any
     /// stored timestamp, so the first sync loads everything).
     last_synced_at: []const u8 = "",
+    /// Ordered journal of table changes since a consumer last drained it.
+    ///
+    /// A persistent analyzer catalog can be updated incrementally, but only
+    /// if it is told what changed: additions are pushed as a delta, removals
+    /// are removed by name. Recording the changes here is what keeps a DROP
+    /// from costing O(catalog) — the emulator drops and recreates a table on
+    /// every view materialization, so that cost dominates otherwise.
+    ///
+    /// Names are canonical and arena-owned, so they outlive the spec.
+    table_mutations: std.ArrayList(TableMutation),
+
     /// Bumped by any change that is NOT a pure append.
     ///
     /// Appends can be pushed to a persistent analyzer catalog as a delta, but
@@ -125,6 +143,54 @@ pub const Catalog = struct {
     /// compares this against the generation it last saw and rebuilds from
     /// scratch when it differs.
     rebuild_generation: u64 = 0,
+
+    /// Copies the journal into `alloc` and clears it, retaining the backing
+    /// buffer for reuse. Order is preserved: a table created and then dropped
+    /// must not be left present.
+    ///
+    /// The copy matters — clearing first would leave a consumer holding a
+    /// slice into a buffer that later appends overwrite.
+    pub fn drainTableMutations(
+        c: *Catalog,
+        alloc: std.mem.Allocator,
+    ) error{OutOfMemory}![]const TableMutation {
+        if (c.table_mutations.items.len == 0) return &.{};
+        const out = try alloc.dupe(TableMutation, c.table_mutations.items);
+        c.table_mutations.clearRetainingCapacity();
+        return out;
+    }
+
+    /// Drops the journal without reading it (the consumer is about to rebuild
+    /// from the whole catalog anyway).
+    pub fn discardTableMutations(c: *Catalog) void {
+        c.table_mutations.clearRetainingCapacity();
+    }
+
+    /// Spec currently registered under a canonical name, if any.
+    pub fn tableSpecByName(c: *const Catalog, name: []const u8) ?*spec.TableSpec {
+        const idx = c.table_map.get(name) orelse return null;
+        return c.tables.items[idx];
+    }
+
+    /// Renders a SimpleCatalogProto containing exactly `specs`.
+    pub fn catalogJsonForSpecs(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        specs: []const *spec.TableSpec,
+    ) error{ OutOfMemory, InvalidSpec }![:0]u8 {
+        _ = c;
+        if (specs.len == 0) return alloc.dupeZ(u8, "{}");
+        var root = Node{ .name = catalog_name };
+        for (specs) |table_spec| {
+            const canonical = try table_spec.tableName(alloc);
+            try addTableToNode(alloc, &root, table_spec.name_path, table_spec, canonical);
+        }
+        var out: std.ArrayList(u8) = .empty;
+        try appendNodeJson(&out, alloc, &root);
+        try out.append(alloc, 0);
+        const bytes = try out.toOwnedSlice(alloc);
+        return bytes[0 .. bytes.len - 1 :0];
+    }
 
     /// Discards the incremental sync cursor so the next sync() reloads every
     /// row.
@@ -151,6 +217,7 @@ pub const Catalog = struct {
             .functions = .empty,
             .func_map = std.StringHashMap(usize).init(gpa),
             .table_json_hash = std.StringHashMap(u64).init(gpa),
+            .table_mutations = .empty,
         };
         errdefer c.deinit();
         // Go NewCatalog: seed MISSING_FUNCTIONS (memory only, never
@@ -170,6 +237,7 @@ pub const Catalog = struct {
         c.functions.deinit(c.gpa);
         c.func_map.deinit();
         c.table_json_hash.deinit();
+        c.table_mutations.deinit(c.gpa);
         c.arena_state.deinit();
         c.gpa.destroy(c);
     }
@@ -271,8 +339,9 @@ pub const Catalog = struct {
 
     /// Go DeleteTableSpec: remove from memory and from the persisted table.
     pub fn deleteTableSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
-        c.rebuild_generation +%= 1;
         const entry = c.table_map.fetchRemove(name) orelse return error.TableNotFound;
+        try c.table_mutations.append(c.gpa, .{ .name = entry.key, .removed = true });
+        _ = c.table_json_hash.remove(name);
         _ = c.tables.orderedRemove(entry.value);
         // Reindex the map entries that shifted down.
         var it = c.table_map.valueIterator();
@@ -410,14 +479,18 @@ pub const Catalog = struct {
         const arena = c.arena_state.allocator();
         const table_name = try table_spec.tableName(arena);
         if (c.table_map.get(table_name)) |idx| {
-            // Replacement in place: the entry count does not change, so this
-            // is invisible to an append-only delta. Force a rebuild.
-            c.rebuild_generation +%= 1;
+            // Replacement in place. The entry count does not change, so this
+            // is invisible to an append-only delta: record it as a remove
+            // followed by an add so a consumer redefines rather than keeps
+            // the stale entry.
             c.tables.items[idx] = table_spec;
+            try c.table_mutations.append(c.gpa, .{ .name = table_name, .removed = true });
+            try c.table_mutations.append(c.gpa, .{ .name = table_name, .removed = false });
             return;
         }
         try c.tables.append(c.gpa, table_spec);
         try c.table_map.put(table_name, c.tables.items.len - 1);
+        try c.table_mutations.append(c.gpa, .{ .name = table_name, .removed = false });
     }
 
     // ------------------------------------------------------------------

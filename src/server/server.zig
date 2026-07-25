@@ -357,7 +357,7 @@ pub const Server = struct {
     // ---- tables ----
 
     fn handleTablesInsert(
-        s: *Server,
+        server: *Server,
         req: *const http_server.Request,
         project_id: []const u8,
         dataset_id: []const u8,
@@ -383,13 +383,13 @@ pub const Server = struct {
                 "CREATE OR REPLACE VIEW `{s}.{s}.{s}` AS {s}",
                 .{ project_id, dataset_id, table_id, view_sql },
             );
-            s.db.exec(ddl, &.{}, .{}) catch {
+            server.db.exec(ddl, &.{}, .{}) catch {
                 return .{
                     .status = .bad_request,
                     .body = try errors.body(
                         arena,
                         .invalid_query,
-                        try query_handler.wrapEngineError(arena, s.db.lastError()),
+                        try query_handler.wrapEngineError(arena, server.db.lastError()),
                     ),
                 };
             };
@@ -401,13 +401,13 @@ pub const Server = struct {
                 table_id,
                 schema_node,
             );
-            s.db.exec(ddl, &.{}, .{}) catch {
+            server.db.exec(ddl, &.{}, .{}) catch {
                 return .{
                     .status = .bad_request,
                     .body = try errors.body(
                         arena,
                         .invalid_query,
-                        try query_handler.wrapEngineError(arena, s.db.lastError()),
+                        try query_handler.wrapEngineError(arena, server.db.lastError()),
                     ),
                 };
             };
@@ -417,14 +417,14 @@ pub const Server = struct {
             .project_id = project_id,
             .dataset_id = dataset_id,
             .table_id = table_id,
-            .endpoint = s.endpoint,
+            .endpoint = server.endpoint,
             .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
             .schema = schema_node,
             .kind = kind,
         };
         var out: std.ArrayList(u8) = .empty;
         try tables_handler.writeTable(arena, &out, meta);
-        try s.repo.addTable(project_id, dataset_id, table_id, out.items);
+        try server.repo.addTable(project_id, dataset_id, table_id, out.items);
 
         return .{ .body = out.items };
     }

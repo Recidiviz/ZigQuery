@@ -1,6 +1,10 @@
-//! Two bulk patterns the view graph exercises: creating N distinct objects,
-//! and repeatedly replacing the same one. The second is the case an
-//! append-only catalog delta cannot express, so it forces a handle rebuild.
+//! Does a delete force work proportional to catalog size?
+//!
+//! A removal cannot be expressed as an append-only catalog delta, so the
+//! driver rebuilds the analyzer handle and re-pushes everything. If that is
+//! what happens, the cost of a create+delete cycle grows with the number of
+//! tables already present — which is exactly the shape the view graph hits,
+//! since materializing a view deletes and recreates its table.
 const std = @import("std");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
@@ -11,36 +15,28 @@ pub fn main(init: std.process.Init) !void {
     const o = &w.interface;
     const gpa = std.heap.smp_allocator;
 
-    try o.print("{s:>7} {s:>12} {s:>12} {s:>12}\n", .{ "n", "create ms", "replace ms", "repl ms/op" });
-    for ([_]usize{ 100, 200, 400, 800 }) |n| {
+    try o.print("{s:>9} {s:>14} {s:>16}\n", .{ "base", "20 cycles ms", "ms per cycle" });
+    for ([_]usize{ 100, 250, 500, 1000, 2000 }) |base| {
         var db = try driver.Db.open(gpa, ":memory:");
         defer db.close();
         var sql: [256]u8 = undefined;
 
-        const t0 = std.Io.Clock.awake.now(init.io);
         var i: usize = 0;
-        while (i < n) : (i += 1) {
-            const s = try std.fmt.bufPrint(&sql, "CREATE TABLE `p.d.t{d}` (a INT64, b STRING)", .{i});
+        while (i < base) : (i += 1) {
+            const s = try std.fmt.bufPrint(&sql, "CREATE TABLE `p.d.t{d}` (a INT64)", .{i});
             try db.exec(s, &.{}, .{});
         }
-        const create_ms = ms(t0, init.io);
 
-        // CREATE OR REPLACE VIEW over and over: the view graph's dominant op.
-        const t1 = std.Io.Clock.awake.now(init.io);
+        // create + drop, the materialization pattern
+        const cycles = 20;
+        const t0 = std.Io.Clock.awake.now(init.io);
         i = 0;
-        while (i < n) : (i += 1) {
-            const s = try std.fmt.bufPrint(
-                &sql,
-                "CREATE OR REPLACE VIEW `p.d.v{d}` AS SELECT a FROM `p.d.t0`",
-                .{i},
-            );
-            try db.exec(s, &.{}, .{});
+        while (i < cycles) : (i += 1) {
+            try db.exec("CREATE OR REPLACE TABLE `p.d.mat` AS SELECT 1 AS a", &.{}, .{});
+            try db.exec("DROP TABLE IF EXISTS `p.d.mat`", &.{}, .{});
         }
-        const replace_ms = ms(t1, init.io);
-
-        try o.print("{d:>7} {d:>12.1} {d:>12.1} {d:>12.3}\n", .{
-            n, create_ms, replace_ms, replace_ms / @as(f64, @floatFromInt(n)),
-        });
+        const ms_total = ms(t0, init.io);
+        try o.print("{d:>9} {d:>14.1} {d:>16.2}\n", .{ base, ms_total, ms_total / cycles });
     }
     try o.flush();
 }
