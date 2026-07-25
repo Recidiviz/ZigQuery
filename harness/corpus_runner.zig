@@ -102,7 +102,13 @@ pub fn main(init: std.process.Init) !void {
     var regressions: usize = 0;
     var newly_passing: usize = 0;
     for (results.items) |r| {
-        const key = try std.fmt.allocPrint(arena, "{d}\t{s}", .{ r.idx, r.name });
+        // Trim to match loadBaseline's per-line trim (case names in the Go
+        // suite can carry trailing whitespace, e.g. corpus case 598).
+        const key = std.mem.trim(
+            u8,
+            try std.fmt.allocPrint(arena, "{d}\t{s}", .{ r.idx, r.name }),
+            " \r\t",
+        );
         const in_baseline = baseline.contains(key);
         const passed = r.outcome == .pass;
         if (in_baseline and !passed) {
@@ -115,7 +121,13 @@ pub fn main(init: std.process.Init) !void {
     if (newly_passing > 0) {
         try out.print("{d} newly passing (append to {s}):\n", .{ newly_passing, baseline_path });
         for (results.items) |r| {
-            const key = try std.fmt.allocPrint(arena, "{d}\t{s}", .{ r.idx, r.name });
+            // Trim to match loadBaseline's per-line trim (case names in the Go
+        // suite can carry trailing whitespace, e.g. corpus case 598).
+        const key = std.mem.trim(
+            u8,
+            try std.fmt.allocPrint(arena, "{d}\t{s}", .{ r.idx, r.name }),
+            " \r\t",
+        );
             if (r.outcome == .pass and !baseline.contains(key)) {
                 try out.print("{d}\t{s}\n", .{ r.idx, r.name });
             }

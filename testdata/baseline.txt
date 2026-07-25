@@ -1,4 +1,5 @@
 # Baseline: cases that must pass (idx<TAB>name). Regressions fail the build.
+0	distinct union
 1	with scan union all
 2	with scan union distinct
 3	having with union all
@@ -529,7 +530,7 @@
 595	parse timestamp with %k
 596	parse_timestamp with %D
 597	parse timestamp with %p
-598	parse timestamp with extra whitespace 
+598	parse timestamp with extra whitespace
 599	parse timestamp with %Y-%m-%d %H:%M:%S%Ez
 600	parse timestamp with %Y-%m-%d %H:%M:%E*S%Ez
 601	parse timestamp ( the year element is in different locations )

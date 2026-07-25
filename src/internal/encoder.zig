@@ -581,6 +581,38 @@ fn literalValueOf(alloc: std.mem.Allocator, sql: [:0]const u8) !Value {
     return valueFromProto(alloc, vwt.value.?, vwt.@"type".?);
 }
 
+test "PROBE numeric proto bytes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const probes = [_][:0]const u8{
+        "SELECT NUMERIC '1.5'",
+        "SELECT NUMERIC '-1.5'",
+        "SELECT NUMERIC '0'",
+        "SELECT NUMERIC '-0.000000001'",
+        "SELECT BIGNUMERIC '1.5'",
+        "SELECT BIGNUMERIC '-578960446186580977117854925043439539266.34992332820282019728792003956564819967'",
+        "SELECT NUMERIC '99999999999999999999999999999.999999999'",
+    };
+    for (probes) |sql| {
+        const analyzed = try analyzer_ffi.analyzeNextStatement(alloc, sql, 0, "{}");
+        const query = analyzed.node.node.?.resolved_statement_node.node.?.resolved_query_stmt_node;
+        const scan = query.query.?.node.?.resolved_project_scan_node;
+        const literal = scan.expr_list[0].expr.?.node.?.resolved_literal_node;
+        const vwt = literal.value.?;
+        const v = vwt.value.?.value.?;
+        const bytes = switch (v) {
+            .numeric_value => |b| b,
+            .bignumeric_value => |b| b,
+            else => {
+                std.debug.print("PROBE {s}: not numeric oneof\n", .{sql});
+                continue;
+            },
+        };
+        std.debug.print("PROBE {s}: len={d} bytes={x}\n", .{ sql, bytes.len, bytes });
+    }
+}
+
 test "valueFromProto scalar literals" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
