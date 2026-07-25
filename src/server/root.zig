@@ -12,6 +12,12 @@ pub const errors = @import("error.zig");
 pub const govalue = @import("internal/types/govalue.zig");
 pub const schema = @import("internal/types/schema.zig");
 pub const response = @import("internal/types/response.zig");
+pub const storage = @import("storage.zig");
+pub const discovery = @import("discovery.zig");
+pub const query_handler = @import("handler/query.zig");
+pub const jobs_handler = @import("handler/jobs.zig");
+pub const Server = @import("server.zig").Server;
+pub const server = @import("server.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

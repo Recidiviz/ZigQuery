@@ -127,6 +127,41 @@ pub fn coerceNullArrays(
     return cell;
 }
 
+/// Total length of a row's rendered cell strings.
+///
+/// Go accumulates this while converting values and reports it as
+/// totalBytesProcessed / totalBytesBilled (contentdata/repository.go
+/// convertValueToCell). NULLs and container brackets contribute nothing —
+/// only the scalar text does.
+pub fn renderedByteLen(
+    arena: std.mem.Allocator,
+    row: []const driver.Cell,
+) std.mem.Allocator.Error!usize {
+    var n: usize = 0;
+    for (row) |cell| n += try cellByteLen(arena, cell);
+    return n;
+}
+
+fn cellByteLen(arena: std.mem.Allocator, cell: driver.Cell) std.mem.Allocator.Error!usize {
+    return switch (cell) {
+        .null => 0,
+        .int => |v| (try govalue.formatInt(arena, v)).len,
+        .float => |v| (try govalue.formatFloat(arena, v)).len,
+        .bool => |v| govalue.formatBool(v).len,
+        .string, .bytes, .date, .timestamp, .datetime, .time, .interval => |v| v.len,
+        .array => |items| blk: {
+            var n: usize = 0;
+            for (items) |it| n += try cellByteLen(arena, it);
+            break :blk n;
+        },
+        .struct_ => |fields| blk: {
+            var n: usize = 0;
+            for (fields) |f| n += try cellByteLen(arena, f.value);
+            break :blk n;
+        },
+    };
+}
+
 /// Applies coerceNullArrays across a whole row.
 pub fn materializeRow(
     arena: std.mem.Allocator,

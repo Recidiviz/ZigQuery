@@ -66,11 +66,18 @@ pub fn main(init: std.process.Init) !void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var handler = SpikeHandler{};
+    var app = try bqserver.Server.init(gpa, .{
+        .project = opts.project.?,
+        .database = opts.database,
+        .host = opts.host,
+        .port = opts.port,
+    });
+    defer app.deinit();
+
     var server = try http_server.Server.listen(gpa, io, .{
         .address = opts.host,
         .port = opts.port,
-    }, .{ .ctx = &handler, .func = SpikeHandler.handle });
+    }, app.handler());
     defer server.deinit();
 
     // The node and python test fixtures both gate readiness on this exact
@@ -100,21 +107,6 @@ fn flagValue(arg: []const u8, name: []const u8) ?[]const u8 {
     if (rest[0] != '=') return null;
     return rest[1..];
 }
-
-/// Placeholder until the router lands: answers every request with `{}` so the
-/// transport can be exercised end to end.
-const SpikeHandler = struct {
-    fn handle(ctx: *anyopaque, req: *const http_server.Request) anyerror!http_server.Response {
-        _ = ctx;
-        return .{
-            .body = try std.fmt.allocPrint(
-                req.arena,
-                "{{\"path\":\"{s}\",\"bodyLen\":{d}}}",
-                .{ req.path, req.body.len },
-            ),
-        };
-    }
-};
 
 test "flagValue accepts --name=value and rejects bare or foreign flags" {
     try std.testing.expectEqualStrings("test", flagValue("--project=test", "--project").?);
