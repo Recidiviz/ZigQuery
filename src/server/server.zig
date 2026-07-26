@@ -470,16 +470,21 @@ pub const Server = struct {
         dataset_id: []const u8,
         table_id: []const u8,
     ) !?[]const u8 {
-        const probe = try std.fmt.allocPrint(
+        // Look the object up in the catalog rather than probing with a
+        // SELECT. A probe answers "is this currently resolvable", not "does
+        // this exist": while views are being materialized their dependencies
+        // are dropped and recreated constantly, so a probe reports a
+        // perfectly good view as missing whenever it happens to race one of
+        // those windows.
+        const table_spec = (try s.db.catalogTable(
             arena,
-            "SELECT * FROM `{s}.{s}.{s}` LIMIT 0",
-            .{ project_id, dataset_id, table_id },
-        );
-        var rows = s.db.query(probe, &.{}, .{}) catch return null;
-        defer rows.deinit();
+            project_id,
+            dataset_id,
+            table_id,
+        )) orelse return null;
 
         var sbuf: std.ArrayList(u8) = .empty;
-        try schema_mod.writeSchema(arena, &sbuf, rows.columnTypes());
+        try schema_mod.writeSchemaFromSpec(arena, &sbuf, table_spec);
         const schema_json = std.json.parseFromSliceLeaky(
             std.json.Value,
             arena,
@@ -495,6 +500,7 @@ pub const Server = struct {
             .endpoint = s.endpoint,
             .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
             .schema = schema_json,
+            .kind = if (table_spec.is_view) "VIEW" else "TABLE",
         });
         return out.items;
     }

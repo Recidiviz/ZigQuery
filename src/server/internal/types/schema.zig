@@ -363,3 +363,64 @@ test "DDL from a posted schema actually creates a queryable table" {
         \\{"fields":[{"name":"a","type":"INTEGER"},{"mode":"REPEATED","name":"b","type":"STRING"}]}
     , out.items);
 }
+
+/// Emits a schema from a catalog TableSpec's columns.
+///
+/// Used when answering tables.get for something the engine knows about but
+/// the metadata store does not; reading the spec avoids running a query just
+/// to learn the shape.
+pub fn writeSchemaFromSpec(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    table_spec: *const spec.TableSpec,
+) std.mem.Allocator.Error!void {
+    try out.appendSlice(arena, "{\"fields\":[");
+    for (table_spec.columns, 0..) |col, i| {
+        if (i > 0) try out.append(arena, ',');
+        try writeField(arena, out, col.name, col.type);
+    }
+    try out.appendSlice(arena, "]}");
+}
+
+test "schema from a catalog spec matches the query-derived one" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try zetasqlite.driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(
+        "CREATE TABLE `p.d.spec_t` (a INT64, b STRING, c ARRAY<INT64>)",
+        &.{},
+        .{},
+    );
+
+    const table_spec = (try db.catalogTable(arena, "p", "d", "spec_t")).?;
+    var from_spec: std.ArrayList(u8) = .empty;
+    try writeSchemaFromSpec(arena, &from_spec, table_spec);
+
+    var rows = try db.query("SELECT a, b, c FROM `p.d.spec_t`", &.{}, .{});
+    defer rows.deinit();
+    var from_query: std.ArrayList(u8) = .empty;
+    try writeSchema(arena, &from_query, rows.columnTypes());
+
+    try testing.expectEqualStrings(from_query.items, from_spec.items);
+}
+
+test "catalogTable finds views and misses absent tables" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try zetasqlite.driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE `p.d.base` (a INT64)", &.{}, .{});
+    try db.exec("CREATE OR REPLACE VIEW `p.d.v` AS SELECT a FROM `p.d.base`", &.{}, .{});
+
+    try testing.expect((try db.catalogTable(arena, "p", "d", "v")) != null);
+    try testing.expect((try db.catalogTable(arena, "p", "d", "base")) != null);
+    try testing.expectEqual(
+        @as(?*const spec.TableSpec, null),
+        try db.catalogTable(arena, "p", "d", "nope"),
+    );
+}

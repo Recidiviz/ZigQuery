@@ -291,6 +291,29 @@ pub const Db = struct {
         _ = try db.runStatements(arena_state.allocator(), sql, args, opts, .exec);
     }
 
+    /// Table or view registered in the GoogleSQL catalog under
+    /// `project.dataset.table`, or null.
+    ///
+    /// This answers "does it exist" without running a query. Probing with a
+    /// SELECT would instead answer "is it currently resolvable", which is a
+    /// different and much less stable question: a view whose dependency is
+    /// momentarily dropped — as happens constantly while materializing —
+    /// would look absent.
+    pub fn catalogTable(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        table_id: []const u8,
+    ) error{OutOfMemory}!?*const spec.TableSpec {
+        const canonical = try std.mem.join(
+            arena,
+            "_",
+            &.{ project_id, dataset_id, table_id },
+        );
+        return db.catalog.tableSpecByName(canonical);
+    }
+
     // ---- Raw SQLite passthrough (Go zetasqlite.WithQueryFormattingDisabled) ----
     //
     // bigquery-emulator's metadata tables (projects/datasets/tables/jobs/...)
@@ -1377,9 +1400,20 @@ fn stripSQLLiterals(arena: std.mem.Allocator, q: []const u8) error{OutOfMemory}!
     try b.ensureTotalCapacity(arena, q.len);
     var quote: u8 = 0;
     var in_line_comment = false;
+    var in_block_comment = false;
     var i: usize = 0;
     while (i < q.len) : (i += 1) {
         const c = q[i];
+        if (in_block_comment) {
+            // Block comments routinely contain prose with question marks, and
+            // a stray '?' here would otherwise be read as a positional
+            // parameter — which then conflicts with any real @named one.
+            if (c == '*' and i + 1 < q.len and q[i + 1] == '/') {
+                in_block_comment = false;
+                i += 1;
+            }
+            continue;
+        }
         if (in_line_comment) {
             if (c == '\n') {
                 in_line_comment = false;
@@ -1395,6 +1429,12 @@ fn stripSQLLiterals(arena: std.mem.Allocator, q: []const u8) error{OutOfMemory}!
             quote = c;
         } else if (c == '-' and i + 1 < q.len and q[i + 1] == '-') {
             in_line_comment = true;
+            i += 1;
+        } else if (c == '#') {
+            // BigQuery also accepts '#' line comments.
+            in_line_comment = true;
+        } else if (c == '/' and i + 1 < q.len and q[i + 1] == '*') {
+            in_block_comment = true;
             i += 1;
         } else {
             try b.append(arena, c);
@@ -3152,4 +3192,44 @@ test "Go error-message shapes: modernc wrapper + StringValue.ToTime text" {
             db.lastError(),
         );
     }
+}
+
+test "parameter mode ignores question marks inside comments" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A '?' in prose must not be mistaken for a positional parameter. Real
+    // views carry comments like "is the sentence done?", and pairing that
+    // with a genuine @named parameter used to be rejected outright.
+    try testing.expectEqual(
+        ParamMode.named,
+        try parameterMode(arena, "/* is it done? */ SELECT @x AS a"),
+    );
+    try testing.expectEqual(
+        ParamMode.named,
+        try parameterMode(arena, "-- really? \nSELECT @x AS a"),
+    );
+    try testing.expectEqual(
+        ParamMode.named,
+        try parameterMode(arena, "# what? \nSELECT @x AS a"),
+    );
+    try testing.expectEqual(
+        ParamMode.named,
+        try parameterMode(arena, "SELECT 'huh?' AS a, @x AS b"),
+    );
+
+    // Genuine markers are still detected.
+    try testing.expectEqual(ParamMode.positional, try parameterMode(arena, "SELECT ? AS a"));
+    try testing.expectEqual(ParamMode.named, try parameterMode(arena, "SELECT @x AS a"));
+    try testing.expectError(
+        error.MixedParameters,
+        parameterMode(arena, "SELECT ? AS a, @x AS b"),
+    );
+
+    // Block comments must not swallow the rest of the query.
+    try testing.expectEqual(
+        ParamMode.positional,
+        try parameterMode(arena, "/* c */ SELECT ? AS a"),
+    );
 }
