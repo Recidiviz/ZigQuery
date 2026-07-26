@@ -1399,6 +1399,7 @@ fn stripSQLLiterals(arena: std.mem.Allocator, q: []const u8) error{OutOfMemory}!
     var b: std.ArrayList(u8) = .empty;
     try b.ensureTotalCapacity(arena, q.len);
     var quote: u8 = 0;
+    var triple = false;
     var in_line_comment = false;
     var in_block_comment = false;
     var i: usize = 0;
@@ -1422,11 +1423,28 @@ fn stripSQLLiterals(arena: std.mem.Allocator, q: []const u8) error{OutOfMemory}!
             continue;
         }
         if (quote != 0) {
-            if (c == quote) quote = 0;
+            if (c == quote) {
+                if (triple) {
+                    // Only a matching triple ends a triple-quoted string; a
+                    // lone quote inside it is just text.
+                    if (i + 2 < q.len and q[i + 1] == quote and q[i + 2] == quote) {
+                        quote = 0;
+                        triple = false;
+                        i += 2;
+                    }
+                } else {
+                    quote = 0;
+                }
+            }
             continue;
         }
         if (c == '\'' or c == '"' or c == '`') {
             quote = c;
+            // BigQuery triple-quoted strings routinely hold prose. Read as
+            // three adjacent empty strings, that prose stays in the scanned
+            // text and a '?' in a description looks like a parameter.
+            triple = (i + 2 < q.len and q[i + 1] == c and q[i + 2] == c);
+            if (triple) i += 2;
         } else if (c == '-' and i + 1 < q.len and q[i + 1] == '-') {
             in_line_comment = true;
             i += 1;
@@ -3231,5 +3249,28 @@ test "parameter mode ignores question marks inside comments" {
     try testing.expectEqual(
         ParamMode.positional,
         try parameterMode(arena, "/* c */ SELECT ? AS a"),
+    );
+}
+
+test "parameter mode ignores question marks in triple-quoted strings" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Views carry prose in OPTIONS(description='''...'''). Read as three
+    // adjacent empty strings, that prose stays in the scanned text and any
+    // '?' in it looks like a positional parameter.
+    try testing.expectEqual(
+        ParamMode.named,
+        try parameterMode(arena, "CREATE VIEW v OPTIONS(description='''Why? Because.''') AS SELECT 1"),
+    );
+    try testing.expectEqual(
+        ParamMode.named,
+        try parameterMode(arena, "CREATE VIEW v OPTIONS(description=\"\"\"Really? yes.\"\"\") AS SELECT @x"),
+    );
+    // A real positional parameter after one is still detected.
+    try testing.expectEqual(
+        ParamMode.positional,
+        try parameterMode(arena, "SELECT '''prose?''' AS a, ? AS b"),
     );
 }

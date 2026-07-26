@@ -20,6 +20,7 @@ pub const metadata_repository = @import("internal/metadata/repository.zig");
 pub const datasets_handler = @import("handler/datasets.zig");
 pub const tables_handler = @import("handler/tables.zig");
 pub const source = @import("source.zig");
+pub const stats = @import("stats.zig");
 pub const Server = @import("server.zig").Server;
 pub const server = @import("server.zig");
 

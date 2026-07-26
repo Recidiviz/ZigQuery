@@ -51,6 +51,7 @@ pub const Route = struct {
         tables_get,
         tables_delete,
         tables_patch,
+        debug_stats,
     };
 
     id: Id,
@@ -63,6 +64,8 @@ pub const Route = struct {
 pub const routes = [_]Route{
     .{ .id = .discovery, .method = .GET, .pattern = "/discovery/v1/apis/bigquery/v2/rest" },
     .{ .id = .discovery, .method = .GET, .pattern = "/$discovery/rest" },
+    // Not part of the BigQuery API: per-route timing for this process.
+    .{ .id = .debug_stats, .method = .GET, .pattern = "/debug/stats" },
     .{ .id = .jobs_query, .method = .POST, .pattern = "/projects/*/queries" },
     .{ .id = .jobs_get_query_results, .method = .GET, .pattern = "/projects/*/queries/*" },
     .{ .id = .jobs_insert, .method = .POST, .pattern = "/projects/*/jobs" },

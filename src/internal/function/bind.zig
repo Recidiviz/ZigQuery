@@ -223,6 +223,12 @@ pub const func_table = [_]FuncInfo{
     // math functions
     .{ .name = "abs", .min_args = 1, .handler = math.abs },
     .{ .name = "round", .handler = math.round },
+    .{ .name = "floor", .min_args = 1, .handler = math.floor },
+    .{ .name = "ceil", .min_args = 1, .handler = math.ceil },
+    .{ .name = "ceiling", .min_args = 1, .handler = math.ceil },
+    .{ .name = "trunc", .min_args = 1, .handler = math.trunc },
+    .{ .name = "div", .min_args = 2, .handler = math.div },
+    .{ .name = "ieee_divide", .min_args = 2, .handler = math.ieeeDivide },
 
     .{ .name = "mod", .min_args = 2, .handler = math.mod },
     .{ .name = "least", .min_args = 1, .handler = cmp.least },

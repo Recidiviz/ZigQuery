@@ -204,22 +204,38 @@ fn strOf(v: std.json.Value, name: []const u8) ?[]const u8 {
     return if (f == .string) f.string else null;
 }
 
-/// DDL that materializes `sql` into the destination, honouring the write
-/// disposition.
-pub fn materializeDdl(
+/// DDL that appends the query's rows to an existing destination.
+pub fn appendDdl(
     arena: std.mem.Allocator,
     dst: Destination,
     sql: []const u8,
 ) std.mem.Allocator.Error![]const u8 {
-    const path = try std.fmt.allocPrint(arena, "`{s}.{s}.{s}`", .{
-        dst.project_id, dst.dataset_id, dst.table_id,
+    return std.fmt.allocPrint(arena, "INSERT INTO `{s}.{s}.{s}` {s}", .{
+        dst.project_id, dst.dataset_id, dst.table_id, sql,
     });
-    if (std.mem.eql(u8, dst.write_disposition, "WRITE_APPEND")) {
-        return std.fmt.allocPrint(arena, "INSERT INTO {s} {s}", .{ path, sql });
-    }
-    // WRITE_TRUNCATE replaces the table outright; WRITE_EMPTY only differs
-    // when the table already has rows, which the emulator does not enforce.
-    return std.fmt.allocPrint(arena, "CREATE OR REPLACE TABLE {s} AS {s}", .{ path, sql });
+}
+
+/// DDL that (re)creates the destination from the query's own shape.
+///
+/// This is what Go effectively does for every disposition. It never issues an
+/// INSERT ... SELECT: it runs the query, derives a table definition from the
+/// *result* schema (handler.go tableDefFromQueryResponse), creates the table
+/// from that if absent, and writes the rows. So in Go the query defines the
+/// destination's shape, and a schema the client declared earlier never
+/// constrains it.
+pub fn replaceDdl(
+    arena: std.mem.Allocator,
+    dst: Destination,
+    sql: []const u8,
+) std.mem.Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "CREATE OR REPLACE TABLE `{s}.{s}.{s}` AS {s}", .{
+        dst.project_id, dst.dataset_id, dst.table_id, sql,
+    });
+}
+
+/// True when this disposition appends to whatever is already there.
+pub fn isAppend(dst: Destination) bool {
+    return std.mem.eql(u8, dst.write_disposition, "WRITE_APPEND");
 }
 
 test "reads a destination table and write disposition" {
@@ -256,16 +272,18 @@ test "write disposition selects the DDL form" {
     const arena = arena_state.allocator();
 
     const base = Destination{ .project_id = "p", .dataset_id = "d", .table_id = "t" };
+    try testing.expect(!isAppend(base));
     try testing.expectEqualStrings(
         "CREATE OR REPLACE TABLE `p.d.t` AS SELECT 1 AS a",
-        try materializeDdl(arena, base, "SELECT 1 AS a"),
+        try replaceDdl(arena, base, "SELECT 1 AS a"),
     );
 
     var append = base;
     append.write_disposition = "WRITE_APPEND";
+    try testing.expect(isAppend(append));
     try testing.expectEqualStrings(
         "INSERT INTO `p.d.t` SELECT 1 AS a",
-        try materializeDdl(arena, append, "SELECT 1 AS a"),
+        try appendDdl(arena, append, "SELECT 1 AS a"),
     );
 }
 
@@ -283,9 +301,43 @@ test "materialization actually creates a queryable table" {
         .table_id = "mat",
         .write_disposition = "WRITE_TRUNCATE",
     };
-    try db.exec(try materializeDdl(arena, dst, "SELECT 7 AS x"), &.{}, .{});
+    try db.exec(try replaceDdl(arena, dst, "SELECT 7 AS x"), &.{}, .{});
 
     var rows = try db.query("SELECT x FROM `p.d.mat`", &.{}, .{});
     defer rows.deinit();
     try testing.expectEqual(@as(i64, 7), (try rows.next()).?[0].int);
+}
+
+test "appending a wider result than the destination falls back to replacing" {
+    // Go never lets a previously declared schema constrain the query: it
+    // derives the destination from the query's own result schema. Recidiviz
+    // declares an archive table's schema and then appends a view that yields
+    // one more column, which is fine there and must be fine here.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE `p.d.arch` (a INT64, b STRING)", &.{}, .{});
+
+    const dst = Destination{
+        .project_id = "p",
+        .dataset_id = "d",
+        .table_id = "arch",
+        .write_disposition = "WRITE_APPEND",
+    };
+    const wider = "SELECT 1 AS a, 'x' AS b, DATE '2024-01-01' AS export_date";
+
+    // The append itself cannot work against the narrower table.
+    try testing.expectError(
+        error.AnalyzeFailed,
+        db.exec(try appendDdl(arena, dst, wider), &.{}, .{}),
+    );
+    // Replacing from the query does.
+    try db.exec(try replaceDdl(arena, dst, wider), &.{}, .{});
+
+    var rows = try db.query("SELECT export_date FROM `p.d.arch`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("2024-01-01", (try rows.next()).?[0].date);
 }

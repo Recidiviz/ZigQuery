@@ -24,6 +24,7 @@ const datasets_handler = @import("handler/datasets.zig");
 const tables_handler = @import("handler/tables.zig");
 const metadata = @import("internal/metadata/repository.zig");
 const schema_mod = @import("internal/types/schema.zig");
+const stats_mod = @import("stats.zig");
 const source_mod = @import("source.zig");
 
 /// Microsecond wall clock via libc, since std.time's timestamp helpers are
@@ -54,6 +55,10 @@ pub const Server = struct {
     /// milestone; the engine is single-threaded per Db either way.
     db: *driver.Db,
     jobs: query_handler.JobStore,
+    /// Per-route timing, indexed by Route.Id.
+    route_stats: std.enums.EnumArray(router.Route.Id, stats_mod.RouteStats) =
+        std.enums.EnumArray(router.Route.Id, stats_mod.RouteStats).initFill(.{}),
+    started_ms: i64 = 0,
     repo: metadata.Repository,
     rng: std.Random.DefaultPrng,
     /// Host:port, for the selfLink-style URLs handlers build.
@@ -75,6 +80,7 @@ pub const Server = struct {
             // the same thing internal/catalog.zig does.
             .rng = std.Random.DefaultPrng.init(nowSeed()),
             .endpoint = undefined,
+            .started_ms = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
         };
         errdefer s.arena_state.deinit();
         const arena = s.arena_state.allocator();
@@ -158,7 +164,12 @@ pub const Server = struct {
                     ),
                 };
             },
-            .matched => |m| return s.route(req, m),
+            .matched => |m| {
+                const t0 = nowSeed();
+                const res = try s.route(req, m);
+                s.route_stats.getPtr(m.route).record(nowSeed() -| t0);
+                return res;
+            },
         }
     }
 
@@ -169,6 +180,7 @@ pub const Server = struct {
     ) !http_server.Response {
         return switch (m.route) {
             .discovery => discovery.handle(req.arena, s.endpoint),
+            .debug_stats => s.handleDebugStats(req),
             .jobs_query => s.handleQuery(req, m.captures.get(0)),
             .jobs_get_query_results => s.handleGetQueryResults(
                 req,
@@ -240,6 +252,65 @@ pub const Server = struct {
         // getQueryResults 404s for a jobs.query id. Verified against the Go
         // emulator; reproduced here deliberately.
         return .{ .body = res.body };
+    }
+
+    /// Per-route timing for this process. Not a BigQuery endpoint; it exists
+    /// because the emulator is the only place that can measure server-side
+    /// request cost, and the recidiviz harness's own stats only work against
+    /// the Docker image.
+    fn handleDebugStats(s: *Server, req: *const http_server.Request) !http_server.Response {
+        const arena = req.arena;
+        var out: std.ArrayList(u8) = .empty;
+        try out.appendSlice(arena, "{\"uptimeSeconds\":");
+        try out.print(arena, "{d}", .{
+            @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000) - @divFloor(s.started_ms, 1000),
+        });
+        const reqs = http_server.stat_requests.load(.monotonic);
+        const wait_ms = @as(f64, @floatFromInt(http_server.stat_wait_ns.load(.monotonic))) / 1e6;
+        const handle_ms = @as(f64, @floatFromInt(http_server.stat_handle_ns.load(.monotonic))) / 1e6;
+        try out.print(arena,
+            ",\"contention\":{{\"requests\":{d},\"totalWaitMs\":{d:.1}," ++
+                "\"totalHandleMs\":{d:.1},\"meanWaitMs\":{d:.3}," ++
+                "\"meanHandleMs\":{d:.3},\"waitFraction\":{d:.3}," ++
+                "\"maxWaiters\":{d},\"waitersNow\":{d}}}",
+            .{
+                reqs,
+                wait_ms,
+                handle_ms,
+                if (reqs == 0) 0 else wait_ms / @as(f64, @floatFromInt(reqs)),
+                if (reqs == 0) 0 else handle_ms / @as(f64, @floatFromInt(reqs)),
+                if (wait_ms + handle_ms == 0) 0 else wait_ms / (wait_ms + handle_ms),
+                http_server.stat_waiters_max.load(.monotonic),
+                http_server.stat_waiters_now.load(.monotonic),
+            });
+        try out.appendSlice(arena, ",\"routes\":[");
+
+        var first = true;
+        var it = s.route_stats.iterator();
+        while (it.next()) |entry| {
+            const st = entry.value;
+            if (st.count == 0) continue;
+            if (!first) try out.append(arena, ',');
+            first = false;
+            try out.appendSlice(arena, "{\"route\":\"");
+            try out.appendSlice(arena, @tagName(entry.key));
+            try out.appendSlice(arena, "\",");
+            try out.print(arena, "\"count\":{d},\"meanMs\":{d:.3},\"minMs\":{d:.3}," ++
+                "\"p50Ms\":{d:.3},\"p90Ms\":{d:.3},\"p99Ms\":{d:.3},\"maxMs\":{d:.3}," ++
+                "\"totalMs\":{d:.1}", .{
+                st.count,
+                st.meanUs() / 1000.0,
+                @as(f64, @floatFromInt(st.min_us)) / 1000.0,
+                @as(f64, @floatFromInt(st.percentileUs(0.50))) / 1000.0,
+                @as(f64, @floatFromInt(st.percentileUs(0.90))) / 1000.0,
+                @as(f64, @floatFromInt(st.percentileUs(0.99))) / 1000.0,
+                @as(f64, @floatFromInt(st.max_us)) / 1000.0,
+                @as(f64, @floatFromInt(st.total_us)) / 1000.0,
+            });
+            try out.append(arena, '}');
+        }
+        try out.appendSlice(arena, "]}");
+        return .{ .body = out.items };
     }
 
     // ---- datasets ----
@@ -583,16 +654,16 @@ pub const Server = struct {
         // materialization writes results. Run the DDL form instead of the
         // bare SELECT, then record the resulting table's metadata.
         const res = if (jobs_handler.destinationFromJobConfig(parsed)) |dst| blk: {
-            const ddl = try jobs_handler.materializeDdl(arena, dst, sql);
-            s.db.exec(ddl, &.{}, .{}) catch {
-                return .{
+            s.materializeInto(arena, dst, sql) catch |err| switch (err) {
+                error.MaterializeFailed => return .{
                     .status = .bad_request,
                     .body = try errors.body(
                         arena,
                         .invalid_query,
                         try query_handler.wrapEngineError(arena, s.db.lastError()),
                     ),
-                };
+                },
+                else => return err,
             };
             try s.recordMaterializedTable(arena, dst);
             // Materialization returns no rows of its own.
@@ -608,6 +679,12 @@ pub const Server = struct {
         } else try query_handler.runQuery(arena, s.db, project_id, job_id, sql);
 
         if (!res.ok) {
+            // Log the statement alongside the failure: an analyzer message on
+            // its own rarely identifies which query produced it.
+            std.log.warn(
+                "job failed: {s}\n  sql: {s}",
+                .{ s.db.lastError(), sql[0..@min(sql.len, 600)] },
+            );
             return .{ .status = .bad_request, .body = res.body };
         }
 
@@ -623,6 +700,45 @@ pub const Server = struct {
 
         try s.jobs.put(project_id, job_id, res.body, resource.items);
         return .{ .body = resource.items };
+    }
+
+    /// Writes a query's results into its destination table.
+    ///
+    /// Go never issues INSERT ... SELECT here: it runs the query, derives a
+    /// table definition from the result schema, and writes the rows — so the
+    /// query defines the destination's shape and a previously declared schema
+    /// never constrains it (handler.go jobsInsertHandler). An append is tried
+    /// first to preserve existing rows, but if the destination's shape does
+    /// not admit the result, the table is rebuilt from the query, which is
+    /// what Go effectively does.
+    fn materializeInto(
+        s: *Server,
+        arena: std.mem.Allocator,
+        dst: jobs_handler.Destination,
+        sql: []const u8,
+    ) !void {
+        if (jobs_handler.isAppend(dst)) {
+            const append = try jobs_handler.appendDdl(arena, dst, sql);
+            if (s.db.exec(append, &.{}, .{})) |_| return else |_| {
+                std.log.info(
+                    "append into {s}.{s}.{s} did not fit the existing shape; " ++
+                        "rebuilding from the query, as Go does ({s})",
+                    .{ dst.project_id, dst.dataset_id, dst.table_id, s.db.lastError() },
+                );
+            }
+        }
+        const replace = try jobs_handler.replaceDdl(arena, dst, sql);
+        s.db.exec(replace, &.{}, .{}) catch {
+            std.log.warn(
+                "materialize failed for {s}.{s}.{s} ({s}): {s}\n  ddl: {s}",
+                .{
+                    dst.project_id,   dst.dataset_id,
+                    dst.table_id,     dst.write_disposition,
+                    s.db.lastError(), replace[0..@min(replace.len, 400)],
+                },
+            );
+            return error.MaterializeFailed;
+        };
     }
 
     /// Registers a table produced by a materialization job, deriving its

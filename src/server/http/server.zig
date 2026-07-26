@@ -82,6 +82,18 @@ pub const Handler = struct {
     func: HandlerFn,
 };
 
+/// Contention accounting for the single handler mutex.
+///
+/// The question these answer: is the server the bottleneck, or is it waiting
+/// on the client? If `wait` dominates `handle`, requests are queueing behind
+/// the mutex and parallelism is the lever. If it does not, the client is not
+/// offering work fast enough and a pool would buy nothing.
+pub var stat_requests: std.atomic.Value(u64) = .init(0);
+pub var stat_wait_ns: std.atomic.Value(u64) = .init(0);
+pub var stat_handle_ns: std.atomic.Value(u64) = .init(0);
+pub var stat_waiters_now: std.atomic.Value(u64) = .init(0);
+pub var stat_waiters_max: std.atomic.Value(u64) = .init(0);
+
 pub const Options = struct {
     address: []const u8 = "0.0.0.0",
     port: u16 = 9050,
@@ -233,9 +245,30 @@ pub const Server = struct {
         };
 
         const res = blk: {
+            const waiting = stat_waiters_now.fetchAdd(1, .monotonic) + 1;
+            if (waiting > stat_waiters_max.load(.monotonic)) {
+                stat_waiters_max.store(waiting, .monotonic);
+            }
+            const t_arrive = std.Io.Clock.awake.now(s.io);
+
             s.handler_mutex.lockUncancelable(s.io);
+            const t_locked = std.Io.Clock.awake.now(s.io);
+            _ = stat_waiters_now.fetchSub(1, .monotonic);
             defer s.handler_mutex.unlock(s.io);
-            break :blk try s.handler.func(s.handler.ctx, &req);
+
+            const out = try s.handler.func(s.handler.ctx, &req);
+            const t_done = std.Io.Clock.awake.now(s.io);
+
+            _ = stat_requests.fetchAdd(1, .monotonic);
+            _ = stat_wait_ns.fetchAdd(
+                @intCast(t_arrive.durationTo(t_locked).nanoseconds),
+                .monotonic,
+            );
+            _ = stat_handle_ns.fetchAdd(
+                @intCast(t_locked.durationTo(t_done).nanoseconds),
+                .monotonic,
+            );
+            break :blk out;
         };
 
         try request.respond(res.body, .{

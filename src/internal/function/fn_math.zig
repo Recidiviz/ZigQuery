@@ -199,3 +199,68 @@ pub fn bitCount(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         },
     }
 }
+
+/// Go FLOOR: largest integral value not greater than x.
+pub fn floor(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 1)
+        return bind.fail("FLOOR: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .float = @floor(try args[0].toFloat64()) };
+}
+
+/// Go CEIL / CEILING: smallest integral value not less than x.
+pub fn ceil(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 1)
+        return bind.fail("CEIL: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .float = @ceil(try args[0].toFloat64()) };
+}
+
+/// Go TRUNC: truncate toward zero, optionally to `digits` decimal places.
+///
+/// Note this rounds toward zero rather than down, so it differs from FLOOR
+/// for negatives: TRUNC(-1.5) is -1, FLOOR(-1.5) is -2.
+pub fn trunc(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 1 and args.len != 2)
+        return bind.fail("TRUNC: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const x = try args[0].toFloat64();
+    if (args.len == 1) return Value{ .float = @trunc(x) };
+
+    const digits: i32 = @intCast(try args[1].toInt64());
+    const scale = std.math.pow(f64, 10, @floatFromInt(digits));
+    if (!std.math.isFinite(scale) or scale == 0) return Value{ .float = @trunc(x) };
+    return Value{ .float = @trunc(x * scale) / scale };
+}
+
+/// Go DIV: integer division truncating toward zero. Errors on a zero divisor,
+/// unlike IEEE_DIVIDE.
+pub fn div(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 2)
+        return bind.fail("DIV: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const x = try args[0].toInt64();
+    const y = try args[1].toInt64();
+    if (y == 0) return bind.fail("DIV: zero divided", .{}, error.DivideByZero);
+    // Guard the one case two's complement cannot represent.
+    if (x == std.math.minInt(i64) and y == -1) {
+        return bind.fail("DIV: overflow", .{}, error.UnsupportedOperation);
+    }
+    return Value{ .int = @divTrunc(x, y) };
+}
+
+/// Go IEEE_DIVIDE: float division that yields ±Inf or NaN instead of an
+/// error, which is exactly how it differs from the `/` operator.
+pub fn ieeeDivide(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 2)
+        return bind.fail("IEEE_DIVIDE: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const x = try args[0].toFloat64();
+    const y = try args[1].toFloat64();
+    return Value{ .float = x / y };
+}
