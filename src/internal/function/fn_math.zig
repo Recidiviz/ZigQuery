@@ -163,12 +163,12 @@ pub fn mod(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 fn gonumRound(x: f64, prec: i32) f64 {
     if (x == 0) return 0; // return +0 even for -0 input
     if (prec >= 0 and x == @trunc(x)) return x;
-    const pow = std.math.pow(f64, 10, @floatFromInt(prec));
-    const intermed = x * pow;
+    const scale = std.math.pow(f64, 10, @floatFromInt(prec));
+    const intermed = x * scale;
     if (std.math.isInf(intermed)) return x;
     const rounded = @round(intermed); // half away from zero, like Go math.Round
     if (rounded == 0) return 0;
-    return rounded / pow;
+    return rounded / scale;
 }
 
 // ---------------------------------------------------------------------
@@ -263,4 +263,142 @@ pub fn ieeeDivide(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     const x = try args[0].toFloat64();
     const y = try args[1].toFloat64();
     return Value{ .float = x / y };
+}
+
+// ---- remaining GoogleSQL math builtins ----
+//
+// BigQuery errors on a domain violation (SQRT of a negative, LN of zero)
+// rather than returning NaN, so each of these checks its domain. The SAFE_
+// variants registered alongside turn those errors into NULL.
+
+fn oneArg(name: []const u8, args: []const Value) Error!void {
+    if (args.len != 1)
+        return bind.fail("{s}: invalid argument num {d}", .{ name, args.len }, error.UnsupportedOperation);
+}
+
+pub fn sqrt(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("SQRT", args);
+    if (bind.existsNull(args)) return null_v;
+    const x = try args[0].toFloat64();
+    if (x < 0) return bind.fail("SQRT: argument must not be negative", .{}, error.UnsupportedOperation);
+    return Value{ .float = @sqrt(x) };
+}
+
+pub fn cbrt(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("CBRT", args);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .float = std.math.cbrt(try args[0].toFloat64()) };
+}
+
+pub fn pow(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 2)
+        return bind.fail("POW: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .float = std.math.pow(f64, try args[0].toFloat64(), try args[1].toFloat64()) };
+}
+
+pub fn exp(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("EXP", args);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .float = @exp(try args[0].toFloat64()) };
+}
+
+pub fn ln(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("LN", args);
+    if (bind.existsNull(args)) return null_v;
+    const x = try args[0].toFloat64();
+    if (x <= 0) return bind.fail("LN: argument must be positive", .{}, error.UnsupportedOperation);
+    return Value{ .float = @log(x) };
+}
+
+pub fn log10(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("LOG10", args);
+    if (bind.existsNull(args)) return null_v;
+    const x = try args[0].toFloat64();
+    if (x <= 0) return bind.fail("LOG10: argument must be positive", .{}, error.UnsupportedOperation);
+    return Value{ .float = @log10(x) };
+}
+
+/// LOG(x) is the natural log; LOG(x, base) changes the base.
+pub fn log(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len == 1) return ln(alloc, args);
+    if (args.len != 2)
+        return bind.fail("LOG: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const x = try args[0].toFloat64();
+    const base = try args[1].toFloat64();
+    if (x <= 0) return bind.fail("LOG: argument must be positive", .{}, error.UnsupportedOperation);
+    if (base <= 0 or base == 1)
+        return bind.fail("LOG: base must be positive and not 1", .{}, error.UnsupportedOperation);
+    return Value{ .float = @log(x) / @log(base) };
+}
+
+pub fn isInf(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("IS_INF", args);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .bool = std.math.isInf(try args[0].toFloat64()) };
+}
+
+pub fn isNan(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("IS_NAN", args);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .bool = std.math.isNan(try args[0].toFloat64()) };
+}
+
+fn unaryTrig(comptime f: fn (f64) f64, args: []const Value) Error!Value {
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .float = f(try args[0].toFloat64()) };
+}
+
+pub fn cos(a: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = a;
+    try oneArg("COS", args);
+    return unaryTrig(struct {
+        fn g(x: f64) f64 {
+            return @cos(x);
+        }
+    }.g, args);
+}
+pub fn sin(a: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = a;
+    try oneArg("SIN", args);
+    return unaryTrig(struct {
+        fn g(x: f64) f64 {
+            return @sin(x);
+        }
+    }.g, args);
+}
+pub fn tan(a: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = a;
+    try oneArg("TAN", args);
+    return unaryTrig(struct {
+        fn g(x: f64) f64 {
+            return @tan(x);
+        }
+    }.g, args);
+}
+pub fn atan(a: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = a;
+    try oneArg("ATAN", args);
+    return unaryTrig(struct {
+        fn g(x: f64) f64 {
+            return std.math.atan(x);
+        }
+    }.g, args);
+}
+
+pub fn atan2(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 2)
+        return bind.fail("ATAN2: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .float = std.math.atan2(try args[0].toFloat64(), try args[1].toFloat64()) };
 }
