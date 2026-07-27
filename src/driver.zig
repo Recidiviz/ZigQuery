@@ -30,6 +30,7 @@ const coordinator_mod = @import("internal/coordinator/coordinator.zig");
 const context_mod = @import("internal/coordinator/context.zig");
 const function = @import("internal/function/register.zig");
 const catalog_mod = @import("internal/catalog.zig");
+const shared_catalog = @import("internal/shared_catalog.zig");
 
 pub const Error = error{
     Unimplemented,
@@ -106,6 +107,10 @@ pub const OpenOptions = struct {
     pragmas: []const [:0]const u8 = &.{},
     /// sqlite3_busy_timeout in milliseconds.
     busy_timeout_ms: ?i32 = null,
+    /// Persistent catalog to share with the rest of a connection pool. When
+    /// null the connection owns a private catalog, which is what every
+    /// single-connection caller wants and what all the tests use.
+    shared_catalog: ?*shared_catalog.SharedCatalog = null,
 };
 
 /// One output column of a QueryStmt (Go ColumnSpec: name + spec Type).
@@ -124,7 +129,24 @@ pub const Db = struct {
     gpa: std.mem.Allocator,
     sqlite_db: sqlite.Db,
     udf_state: *function.State,
-    catalog: *catalog_mod.Catalog,
+    /// The persistent catalog this connection owns, or null when it uses a
+    /// shared one. Reachable only through `lockCatalog`, so no call site can
+    /// touch a shared catalog without holding its mutex.
+    own_catalog: ?*catalog_mod.Catalog,
+    shared: ?*shared_catalog.SharedCatalog,
+    /// TEMP tables, views and functions created by this connection.
+    ///
+    /// A separate catalog rather than a flag on the persistent one: TEMP
+    /// objects are scoped to the connection that made them, so once the
+    /// persistent catalog is shared across a pool they cannot live in it —
+    /// one connection's TEMP table would resolve for every other. Keeping
+    /// them apart also fixes a shadowing bug: a TEMP table named the same as
+    /// a persistent one used to delete the *persistent* spec when the query's
+    /// cleanup dropped it.
+    ///
+    /// Lookups check this first, so a TEMP object shadows a persistent one of
+    /// the same name.
+    temps: *catalog_mod.Catalog,
     last_error: ?[]u8 = null,
     /// Parameter mode of the currently-running script (set per runStatements).
     param_mode: ParamMode = .named,
@@ -150,16 +172,14 @@ pub const Db = struct {
     ///
     /// Per-Db and unsynchronized, like the rest of Db.
     catalog_handle: ?*analyzer_ffi.CatalogHandle = null,
-    /// How much of the catalog has been pushed to `catalog_handle`.
-    pushed_tables: usize = 0,
-    pushed_functions: usize = 0,
-    /// Catalog rebuild generation the handle reflects. Only function removals
-    /// force a full rebuild now; table changes travel as a mutation journal.
-    handle_generation: u64 = 0,
-    /// Set when an incremental update failed partway. The journal has already
-    /// been drained at that point, so the handle can no longer be trusted and
-    /// is rebuilt from the whole catalog on the next use.
-    handle_needs_rebuild: bool = false,
+    /// This handle's position in the catalog's change log: how much of the
+    /// catalog it already reflects. Other connections read the same log at
+    /// their own cursors, so replaying is non-destructive.
+    cursor: catalog_mod.Cursor = .{},
+    /// The handle's position in the TEMP overlay's change log. Applied after
+    /// the persistent delta so a TEMP object shadows rather than loses to the
+    /// persistent one it overrides.
+    temp_cursor: catalog_mod.Cursor = .{},
 
     pub fn open(gpa: std.mem.Allocator, path: [:0]const u8) Error!*Db {
         return openWith(gpa, path, .{});
@@ -179,7 +199,9 @@ pub const Db = struct {
             .gpa = gpa,
             .sqlite_db = try sqlite.Db.open(path),
             .udf_state = undefined,
-            .catalog = undefined,
+            .own_catalog = null,
+            .shared = opts.shared_catalog,
+            .temps = undefined,
         };
         errdefer db.sqlite_db.close();
         if (opts.busy_timeout_ms) |ms| db.sqlite_db.busyTimeout(ms);
@@ -193,12 +215,25 @@ pub const Db = struct {
         db.udf_state = function.registerAll(&db.sqlite_db, gpa) catch
             return error.ExecFailed;
         errdefer db.udf_state.deinit();
-        // zetasqlite_catalog tables + initial sync (Go: Catalog.Sync at the
-        // top of Analyzer.Analyze; done eagerly here and re-checked per
-        // query via syncCatalog).
-        db.catalog = try catalog_mod.Catalog.init(gpa);
-        errdefer db.catalog.deinit();
-        db.catalog.sync(&db.sqlite_db) catch return error.ExecFailed;
+        // zetasqlite_catalog tables + the one-shot load of everything already
+        // persisted. A shared catalog is loaded by whichever connection
+        // attaches first; later ones find it already done.
+        if (opts.shared_catalog == null) db.own_catalog = try catalog_mod.Catalog.init(gpa);
+        errdefer if (db.own_catalog) |c| c.deinit();
+        {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            if (db.shared == null or !db.shared.?.loaded) {
+                g.catalog.loadFromStorage(&db.sqlite_db) catch return error.ExecFailed;
+                if (db.shared) |sc| sc.loaded = true;
+            } else {
+                // Still ensure this connection can write catalog rows.
+                g.catalog.createCatalogTablesIfNotExist(&db.sqlite_db) catch
+                    return error.ExecFailed;
+            }
+        }
+        db.temps = try catalog_mod.Catalog.init(gpa);
+        errdefer db.temps.deinit();
         db.catalog_handle = analyzer_ffi.catalogCreate(gpa) catch null;
         return db;
     }
@@ -209,7 +244,9 @@ pub const Db = struct {
         // Before sqlite_db.close(): sqlite3_close_v2 leaves the handle a
         // zombie until every statement is finalized.
         db.deinitRawCache();
-        db.catalog.deinit();
+        db.temps.deinit();
+        // A shared catalog outlives its connections; whoever built it owns it.
+        if (db.own_catalog) |c| c.deinit();
         db.sqlite_db.close();
         db.udf_state.deinit();
         db.gpa.destroy(db);
@@ -311,7 +348,105 @@ pub const Db = struct {
             "_",
             &.{ project_id, dataset_id, table_id },
         );
-        return db.catalog.tableSpecByName(canonical);
+        // Persistent only: this is the metadata API's "does this table exist",
+        // and a TEMP object exists solely for the duration of the script that
+        // made it.
+        //
+        // The returned pointer outlives the lock. That is safe because a
+        // published TableSpec is never mutated in place — a replacement swaps
+        // the slot to a new spec — and tombstoned slots are never reused, so
+        // the object stays valid for the catalog's lifetime. The worst case is
+        // reading a definition that another connection replaced a moment ago.
+        var g = db.lockCatalog();
+        defer g.unlock();
+        return g.catalog.tableSpecByName(canonical);
+    }
+
+    /// Exclusive access to this connection's persistent catalog. Blocks while
+    /// another connection holds a shared one; a no-op when the catalog is
+    /// private. Release with `unlock`.
+    ///
+    /// Do not hold this across a GoogleSQL analyze or any SQLite work beyond
+    /// the catalog's own upsert — the point of sharing a catalog rather than
+    /// synchronising copies is that the expensive work stays parallel. See
+    /// the lock-ordering invariant on `shared_catalog.Guard`.
+    pub fn lockCatalog(db: *Db) shared_catalog.Guard {
+        if (db.shared) |sc| return shared_catalog.lockShared(sc);
+        return .{ .catalog = db.own_catalog.? };
+    }
+
+    /// Registers a table/view spec in the connection's TEMP overlay or the
+    /// persistent catalog, per its scope.
+    fn registerTableSpec(db: *Db, table_spec: *const spec.TableSpec) catalog_mod.Error!void {
+        if (table_spec.is_temp) return db.temps.addOverlayTableSpec(table_spec);
+        var g = db.lockCatalog();
+        defer g.unlock();
+        return g.catalog.addNewTableSpec(&db.sqlite_db, table_spec);
+    }
+
+    /// Removes a table/view spec, TEMP overlay first so a DROP of a shadowing
+    /// TEMP object leaves the persistent table it shadowed intact.
+    fn unregisterTableSpec(db: *Db, name: []const u8) catalog_mod.Error!void {
+        if (db.temps.findTableSpec(name) != null) {
+            return db.temps.deleteOverlayTableSpec(name);
+        }
+        var g = db.lockCatalog();
+        defer g.unlock();
+        return g.catalog.deleteTableSpec(&db.sqlite_db, name);
+    }
+
+    /// Removes a function spec, TEMP overlay first (same reasoning as
+    /// `unregisterTableSpec`).
+    fn unregisterFunctionSpec(db: *Db, name: []const u8) catalog_mod.Error!void {
+        if (db.temps.findFunctionSpec(name) != null) {
+            return db.temps.deleteOverlayFunctionSpec(name);
+        }
+        var g = db.lockCatalog();
+        defer g.unlock();
+        return g.catalog.deleteFunctionSpec(&db.sqlite_db, name);
+    }
+
+    /// The whole catalog as one proto, for the stateless analyzer path.
+    fn statelessCatalogJson(
+        db: *Db,
+        arena: std.mem.Allocator,
+    ) error{ OutOfMemory, InvalidSpec }![:0]u8 {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        return g.catalog.catalogJsonWith(arena, db.temps);
+    }
+
+    fn addPersistentFunctionSpec(db: *Db, fs: *const spec.FunctionSpec) catalog_mod.Error!void {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        return g.catalog.addNewFunctionSpec(&db.sqlite_db, fs);
+    }
+
+    /// Persistent functions with the connection's TEMP ones layered on top,
+    /// so a TEMP function shadows a persistent one of the same name.
+    ///
+    /// The map holds catalog-owned `*FunctionSpec` pointers and is used after
+    /// the lock is dropped. Safe for the same reason as `catalogTable`:
+    /// registration replaces the pointer rather than mutating the spec, and
+    /// nothing in the catalog arena is freed before teardown — so a spec
+    /// dropped by another connection mid-statement is stale, not dangling.
+    fn mergedFuncMap(db: *Db, arena: std.mem.Allocator) error{OutOfMemory}!*spec.FuncMap {
+        const fm = blk: {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            break :blk try g.catalog.funcMap(arena);
+        };
+        try db.temps.addFunctionsTo(arena, fm);
+        return fm;
+    }
+
+    /// Whether a canonical name is registered, TEMP overlay shadowing the
+    /// persistent catalog.
+    fn tableSpecExists(db: *Db, name: []const u8) bool {
+        if (db.temps.findTableSpec(name) != null) return true;
+        var g = db.lockCatalog();
+        defer g.unlock();
+        return g.catalog.findTableSpec(name) != null;
     }
 
     // ---- Raw SQLite passthrough (Go zetasqlite.WithQueryFormattingDisabled) ----
@@ -457,108 +592,80 @@ pub const Db = struct {
     /// to the stateless one.
     ///
     /// The returned pointer must be used instead of any handle captured
-    /// earlier: a catalog removal cannot be expressed as a delta (the
-    /// analyzer catalog has no "forget this" operation), so it forces a
-    /// rebuild that destroys the previous handle.
+    /// earlier: a change that cannot be expressed as a delta forces a rebuild,
+    /// which destroys the previous handle.
     fn syncedCatalogHandle(
         db: *Db,
         arena: std.mem.Allocator,
     ) ?*analyzer_ffi.CatalogHandle {
-        var handle = db.catalog_handle orelse return null;
+        if (db.catalog_handle == null) return null;
 
-        // Function removals are rare and have no incremental path, so they
-        // still rebuild. Table changes never reach here — they travel as a
-        // journal below.
-        if (db.handle_needs_rebuild or
-            db.catalog.rebuild_generation != db.handle_generation)
-        {
-            analyzer_ffi.catalogDestroy(handle);
-            db.catalog_handle = null;
-            handle = analyzer_ffi.catalogCreate(db.gpa) catch return null;
-            db.catalog_handle = handle;
-            db.handle_generation = db.catalog.rebuild_generation;
-            db.handle_needs_rebuild = false;
-            db.pushed_functions = 0;
-            db.catalog.discardTableMutations();
-
-            const all = db.catalog.catalogJsonForSpecs(
-                arena,
-                db.catalog.tables.items,
-            ) catch {
-                db.handle_needs_rebuild = true;
+        // Both sources are rendered before either is applied, because a full
+        // render assumes a fresh handle: if one side rendered from scratch and
+        // the other incrementally, recreating the handle would silently drop
+        // whatever the incremental side thought it already held. Disagreement
+        // is resolved by forcing both full and rendering again — which happens
+        // only when another connection drops a function between the two
+        // renders, so the loop is a guard rather than a hot path.
+        var attempt: usize = 0;
+        while (attempt < 3) : (attempt += 1) {
+            const persistent = blk: {
+                var g = db.lockCatalog();
+                defer g.unlock();
+                break :blk g.catalog.renderDelta(arena, &db.cursor) catch {
+                    db.cursor.needs_rebuild = true;
+                    return null;
+                };
+            };
+            const temps = db.temps.renderDelta(arena, &db.temp_cursor) catch {
+                db.temp_cursor.needs_rebuild = true;
                 return null;
             };
-            analyzer_ffi.catalogAddTables(db.gpa, handle, all) catch {
-                db.handle_needs_rebuild = true;
-                return null;
-            };
-        }
 
-        if (!db.applyTableMutations(arena, handle)) {
-            db.handle_needs_rebuild = true;
-            return null;
-        }
-
-        // Functions only ever append, so an index delta is enough.
-        const n_funcs = db.catalog.functions.items.len;
-        if (db.pushed_functions != n_funcs) {
-            const delta = db.catalog.catalogJsonFrom(
-                arena,
-                db.catalog.tables.items.len,
-                db.pushed_functions,
-            ) catch {
-                db.handle_needs_rebuild = true;
-                return null;
-            };
-            analyzer_ffi.catalogAddTables(db.gpa, handle, delta) catch {
-                db.handle_needs_rebuild = true;
-                return null;
-            };
-            db.pushed_functions = n_funcs;
-        }
-        return handle;
-    }
-
-    /// Replays the catalog's table journal onto the handle, in order.
-    ///
-    /// Order matters: a table created and then dropped in the same batch must
-    /// end up absent. Runs of consecutive additions are coalesced into one
-    /// push so a bulk load stays a single merge rather than one per table.
-    fn applyTableMutations(
-        db: *Db,
-        arena: std.mem.Allocator,
-        handle: *analyzer_ffi.CatalogHandle,
-    ) bool {
-        const muts = db.catalog.drainTableMutations(arena) catch return false;
-        if (muts.len == 0) return true;
-
-        var pending: std.ArrayList(*spec.TableSpec) = .empty;
-
-        for (muts) |m| {
-            if (!m.removed) {
-                if (db.catalog.tableSpecByName(m.name)) |s| {
-                    pending.append(arena, s) catch return false;
-                }
+            if (persistent.full != temps.full) {
+                db.cursor.needs_rebuild = true;
+                db.temp_cursor.needs_rebuild = true;
                 continue;
             }
-            // Flush additions before a removal so ordering is preserved.
-            if (!db.flushCatalogAdditions(arena, handle, &pending)) return false;
-            const name_z = arena.dupeZ(u8, m.name) catch return false;
-            analyzer_ffi.catalogRemoveTable(db.gpa, handle, name_z) catch return false;
+
+            if (persistent.full) {
+                analyzer_ffi.catalogDestroy(db.catalog_handle.?);
+                db.catalog_handle = analyzer_ffi.catalogCreate(db.gpa) catch null;
+                if (db.catalog_handle == null) return null;
+            }
+
+            if (!db.applyOps(persistent.ops, &db.cursor)) return null;
+            // The overlay goes last: its entries carry a removal ahead of the
+            // addition, so applying them after the persistent ones is what
+            // makes a TEMP object shadow the persistent one it overrides.
+            if (!db.applyOps(temps.ops, &db.temp_cursor)) return null;
+            return db.catalog_handle;
         }
-        return db.flushCatalogAdditions(arena, handle, &pending);
+        return null;
     }
 
-    fn flushCatalogAdditions(
+    /// Pushes rendered ops into the analyzer handle. Returns false if the
+    /// caller must fall back to the stateless path.
+    ///
+    /// A failure partway leaves the handle reflecting an unknown prefix of the
+    /// delta, and the cursor has already advanced past it — so the only safe
+    /// recovery is a full rebuild on the next use.
+    fn applyOps(
         db: *Db,
-        arena: std.mem.Allocator,
-        handle: *analyzer_ffi.CatalogHandle,
-        pending: *std.ArrayList(*spec.TableSpec),
+        ops: []const catalog_mod.DeltaOp,
+        cur: *catalog_mod.Cursor,
     ) bool {
-        if (pending.items.len == 0) return true;
-        const delta = db.catalog.catalogJsonForSpecs(arena, pending.items) catch return false;
-        analyzer_ffi.catalogAddTables(db.gpa, handle, delta) catch return false;
-        pending.* = .empty;
+        const handle = db.catalog_handle orelse return false;
+        for (ops) |op| switch (op) {
+            .add_json => |json| analyzer_ffi.catalogAddTables(db.gpa, handle, json) catch {
+                cur.needs_rebuild = true;
+                return false;
+            },
+            .remove => |name| analyzer_ffi.catalogRemoveTable(db.gpa, handle, name) catch {
+                cur.needs_rebuild = true;
+                return false;
+            },
+        };
         return true;
     }
 
@@ -628,18 +735,13 @@ pub const Db = struct {
         db.temp_func_collector = &temp_functions;
         defer db.temp_func_collector = null;
         defer for (temp_functions.items) |name| {
-            db.catalog.deleteFunctionSpec(&db.sqlite_db, name) catch {};
+            db.unregisterFunctionSpec(name) catch {};
         };
 
-        // Go Analyzer.Analyze: catalog sync before analysis.
-        db.catalog.sync(&db.sqlite_db) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => {
-                db.setLastError(db.sqlite_db.errmsg());
-                return error.ExecFailed;
-            },
-        };
-
+        // No catalog re-read here (Go re-syncs from SQLite before every
+        // statement). Every write goes through the in-process catalog, so it
+        // is already current; re-reading only reintroduced the timestamp
+        // cursor's lost-commit window and a SQLite round trip per statement.
         while (true) {
             // Re-rendered per statement: DDL/DML actions mutate the
             // catalog between statements of one script.
@@ -668,7 +770,7 @@ pub const Db = struct {
 
             const catalog_json = if (opts.catalog_scope == .none)
                 try arena.dupeZ(u8, "{}")
-            else db.catalog.catalogJson(arena) catch |err| switch (err) {
+            else db.statelessCatalogJson(arena) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     db.setLastError(@errorName(err));
@@ -749,7 +851,7 @@ pub const Db = struct {
                 // SQLite object exists for a UDF).
                 .resolved_drop_function_stmt_node => |drop_fn| {
                     const name = try formatNamePath(arena, drop_fn.name_path);
-                    db.catalog.deleteFunctionSpec(&db.sqlite_db, name) catch |err| {
+                    db.unregisterFunctionSpec(name) catch |err| {
                         // DROP FUNCTION IF EXISTS on a missing function is
                         // a no-op; otherwise Go errors out.
                         if (err == error.TableNotFound and (drop_fn.is_if_exists orelse false)) {
@@ -814,7 +916,7 @@ pub const Db = struct {
         for (names) |name| {
             const drop_sql = std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name}) catch continue;
             _ = db.execSql(arena, drop_sql, &.{}) catch {};
-            db.catalog.deleteTableSpec(&db.sqlite_db, name) catch {};
+            db.unregisterTableSpec(name) catch {};
         }
     }
 
@@ -894,8 +996,12 @@ pub const Db = struct {
         opts: QueryOptions,
     ) Error!void {
         const fn_spec = try db.newFunctionSpec(arena, cf, opts);
-        db.catalog.addNewFunctionSpec(&db.sqlite_db, fn_spec) catch |err|
-            return db.failCatalog(err);
+        if (fn_spec.is_temp)
+            db.temps.addNewFunctionSpec(&db.sqlite_db, fn_spec) catch |err|
+                return db.failCatalog(err)
+        else
+            db.addPersistentFunctionSpec(fn_spec) catch |err|
+                return db.failCatalog(err);
         if (fn_spec.is_temp) {
             if (db.temp_func_collector) |collector| {
                 collector.append(arena, try fn_spec.funcName(arena)) catch {};
@@ -984,7 +1090,7 @@ pub const Db = struct {
         config.* = context_mod.defaultTransformConfig();
         const ctx = try context_mod.TransformContext.init(arena, config);
         ctx.query_ctx.current_time_unix_micros = opts.current_time_unix_micros;
-        ctx.func_map = try db.catalog.funcMap(arena);
+        ctx.func_map = try db.mergedFuncMap(arena);
 
         var coordinator = coordinator_mod.QueryCoordinator.init(arena);
         var extractor = coordinator_mod.NodeExtractor{};
@@ -1082,11 +1188,11 @@ pub const Db = struct {
         // statement, so skipping the upsert reproduces Go's observable
         // (and BigQuery's actual) no-op semantics.
         if (table_spec.create_mode == spec.create_mode_create_if_not_exists and
-            db.catalog.findTableSpec(table_name) != null)
+            db.tableSpecExists(table_name))
         {
             return consumed;
         }
-        db.catalog.addNewTableSpec(&db.sqlite_db, table_spec) catch |err|
+        db.registerTableSpec(table_spec) catch |err|
             return db.failCatalog(err);
         return consumed;
     }
@@ -1150,7 +1256,7 @@ pub const Db = struct {
         }
         const create_sql = fragment.toString(arena) catch return error.OutOfMemory;
         _ = try db.execSql(arena, create_sql, &.{});
-        db.catalog.addNewTableSpec(&db.sqlite_db, table_spec) catch |err|
+        db.registerTableSpec(table_spec) catch |err|
             return db.failCatalog(err);
     }
 
@@ -1174,7 +1280,7 @@ pub const Db = struct {
         const consumed = try db.execSql(arena, formatted, args);
 
         const name = try formatNamePath(arena, drop_stmt.name_path);
-        db.catalog.deleteTableSpec(&db.sqlite_db, name) catch |err|
+        db.unregisterTableSpec(name) catch |err|
             return db.failCatalog(err);
         return consumed;
     }
@@ -1475,7 +1581,9 @@ fn transformStatementFragment(
     // Go analyzer.go: withFuncMap(ctx, catalog.getFunctions(namePath)) before
     // transforming, so the function transformer can inline UDF bodies
     // (transformer_function.go funcMapFromContext -> spec.CallSQL).
-    if (db) |d| ctx.func_map = try d.catalog.funcMap(arena);
+    if (db) |d| {
+        ctx.func_map = try d.mergedFuncMap(arena);
+    }
 
     var coordinator = coordinator_mod.QueryCoordinator.init(arena);
     const fragment = coordinator.transformStatementNode(node, ctx) catch |err| switch (err) {
@@ -2177,7 +2285,11 @@ const catalog_test = struct {
         try insert.appendSlice(arena, ")");
         try db.sqlite_db.exec(try arena.dupeZ(u8, insert.items));
 
-        try db.catalog.addNewTableSpec(&db.sqlite_db, table_spec);
+        {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            try g.catalog.addNewTableSpec(&db.sqlite_db, table_spec);
+        }
     }
 };
 
@@ -2273,7 +2385,11 @@ test "dotted table names resolve and scan" {
     // SQLite table under the canonical "_"-joined name.
     try db.sqlite_db.exec(try arena.dupeZ(u8, try table_spec.sqliteSchema(arena)));
     try db.sqlite_db.exec("INSERT INTO `proj_ds_t` VALUES (7)");
-    try db.catalog.addNewTableSpec(&db.sqlite_db, table_spec);
+    {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        try g.catalog.addNewTableSpec(&db.sqlite_db, table_spec);
+    }
 
     inline for (.{
         "SELECT x FROM proj.ds.t",
@@ -2516,6 +2632,66 @@ test "temp table is dropped after its query script completes" {
     try testing.expectEqual(Cell{ .int = 7 }, (try rows.next()).?[0]);
 }
 
+test "TEMP objects live in the connection's overlay, not the persistent catalog" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE keeper (a INT64); INSERT INTO keeper (a) VALUES (1)", &.{}, .{});
+    {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        try testing.expectEqual(@as(usize, 1), g.catalog.tableCount());
+    }
+
+    // Mid-script the TEMP table is registered — in the overlay only, so the
+    // persistent catalog a pool would share stays untouched by it.
+    {
+        var rows = try db.query(
+            "CREATE TEMP TABLE scratch (a INT64); INSERT INTO scratch (a) VALUES (99); " ++
+                "SELECT a FROM scratch",
+            &.{},
+            .{},
+        );
+        try testing.expect(db.temps.findTableSpec("scratch") != null);
+        {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            try testing.expect(g.catalog.findTableSpec("scratch") == null);
+        }
+        try testing.expectEqual(Cell{ .int = 99 }, (try rows.next()).?[0]);
+        rows.deinit();
+    }
+
+    // Cleanup drops it from the overlay and leaves the persistent catalog
+    // exactly as it was — the whole point of the split, since cleanup used to
+    // call deleteTableSpec on the one shared catalog.
+    try testing.expect(db.temps.findTableSpec("scratch") == null);
+    var g = db.lockCatalog();
+    defer g.unlock();
+    try testing.expectEqual(@as(usize, 1), g.catalog.tableCount());
+    try testing.expect(g.catalog.findTableSpec("keeper") != null);
+}
+
+test "a TEMP function shadows a persistent one of the same name" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE FUNCTION dbl(x INT64) AS (x * 2)", &.{}, .{});
+    {
+        var rows = try db.query(
+            "CREATE TEMP FUNCTION dbl(x INT64) AS (x * 100); SELECT dbl(3)",
+            &.{},
+            .{},
+        );
+        defer rows.deinit();
+        try testing.expectEqual(Cell{ .int = 300 }, (try rows.next()).?[0]);
+    }
+    // The persistent definition survives the TEMP one's cleanup.
+    var rows = try db.query("SELECT dbl(3)", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 6 }, (try rows.next()).?[0]);
+}
+
 test "CREATE VIEW resolves through the catalog and reflects base rows" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
@@ -2745,48 +2921,48 @@ test "GENERATE_UUID yields a distinct value per row" {
     try testing.expectEqual(@as(usize, 5), n);
 }
 
-test "incremental catalog sync can permanently skip another connection's DDL" {
-    // R4. Catalog.sync stamps last_synced_at with wall-clock time taken
-    // *before* it reads, and selects rows WHERE updatedAt >= cursor. A commit
-    // stamped before that cursor but made visible after the read is therefore
-    // never loaded. Under one connection this cannot happen; under a pool it
-    // can, because a writer stamps updatedAt before its (~0.5 ms) analyzer
-    // round trip.
-    //
-    // Rather than race two threads, this reproduces the same end state
-    // deterministically: back-date a catalog row behind a cursor that has
-    // already advanced past it.
-    const dsn = "file:/zetasqlite_cursor_test?vfs=memdb";
+test "a new connection loads every persisted spec at open" {
+    const dsn = "file:/zetasqlite_load_test?vfs=memdb";
+
+    var first = try Db.open(testing.allocator, dsn);
+    defer first.close();
+    try first.exec("CREATE TABLE preexisting (a INT64); INSERT INTO preexisting (a) VALUES (5)", &.{}, .{});
+
+    // No timestamp filter: opening reads the whole catalog table, so
+    // everything committed before this point resolves immediately.
+    var second = try Db.open(testing.allocator, dsn);
+    defer second.close();
+    var rows = try second.query("SELECT a FROM preexisting", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 5 }, (try rows.next()).?[0]);
+}
+
+test "connections with separate catalogs do not see each other's later DDL" {
+    // The contract this replaces the old sync-cursor behaviour with: catalog
+    // coherence between connections is *not* a property of re-reading SQLite.
+    // Two Dbs each owning a catalog are independent by construction, which is
+    // sound and predictable, where the old timestamp cursor made the same
+    // scenario silently and permanently lossy. Connections that must agree
+    // share one catalog instead — see SharedCatalog.
+    const dsn = "file:/zetasqlite_independent_test?vfs=memdb";
 
     var writer = try Db.open(testing.allocator, dsn);
     defer writer.close();
     var reader = try Db.open(testing.allocator, dsn);
     defer reader.close();
 
-    // reader syncs, advancing its cursor past everything committed so far.
-    try reader.exec("CREATE TABLE cursor_seen (a INT64)", &.{}, .{});
+    try writer.exec("CREATE TABLE written_later (a INT64)", &.{}, .{});
 
-    // writer commits DDL on the shared database...
-    try writer.exec("CREATE TABLE cursor_lost (a INT64)", &.{}, .{});
-    // ...whose updatedAt predates the reader's cursor (the lost-commit case).
-    try reader.rawExec(
-        "UPDATE zetasqlite_catalog SET updatedAt = '1999-01-01 00:00:00.000000+00:00' " ++
-            "WHERE name LIKE '%cursor_lost%'",
-        &.{},
-    );
-
-    // The row exists on disk but the reader's incremental sync skips it.
+    var wg = writer.lockCatalog();
+    defer wg.unlock();
+    var rg = reader.lockCatalog();
+    defer rg.unlock();
+    try testing.expect(wg.catalog.findTableSpec("written_later") != null);
+    try testing.expect(rg.catalog.findTableSpec("written_later") == null);
     try testing.expectError(
         error.AnalyzeFailed,
-        reader.query("SELECT a FROM cursor_lost", &.{}, .{}),
+        reader.query("SELECT a FROM written_later", &.{}, .{}),
     );
-
-    // Dropping the cursor forces a full reload, which recovers it. This is
-    // what the server's pool does when another connection reports DDL.
-    reader.catalog.invalidateSyncCursor();
-    var rows = try reader.query("SELECT a FROM cursor_lost", &.{}, .{});
-    defer rows.deinit();
-    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
 
 test "created tables persist across connections to the same file" {
@@ -3165,7 +3341,9 @@ test "JS-language function is persisted and analyzable but not executable" {
     , &.{}, .{});
 
     // Persisted with its language and code (Go newFunctionSpec).
-    const fs = db.catalog.findFunctionSpec("jsf") orelse return error.TestUnexpectedResult;
+    var g = db.lockCatalog();
+    defer g.unlock();
+    const fs = g.catalog.findFunctionSpec("jsf") orelse return error.TestUnexpectedResult;
     try testing.expectEqualStrings("js", fs.language);
     try testing.expect(std.mem.indexOf(u8, fs.code, "return x+1;") != null);
     try testing.expectEqual(@as(?[]const u8, null), fs.body);

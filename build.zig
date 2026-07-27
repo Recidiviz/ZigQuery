@@ -116,6 +116,26 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_threads.addArgs(args);
     b.step("analyzer-threads", "Run the concurrency gating experiment").dependOn(&run_threads.step);
 
+    // Does a SharedCatalog actually make a connection pool coherent? Paired
+    // with a per-connection-catalog control that must fail, so a green result
+    // means something.
+    const sc_threads_exe = b.addExecutable(.{
+        .name = "shared-catalog-threads",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/shared_catalog_threads.zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = tsan,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| sc_threads_exe.step.dependOn(&bz.step);
+    b.installArtifact(sc_threads_exe);
+    const run_sc_threads = b.addRunArtifact(sc_threads_exe);
+    if (b.args) |args| run_sc_threads.addArgs(args);
+    b.step("shared-catalog-threads", "Shared-catalog coherence under a pool")
+        .dependOn(&run_sc_threads.step);
+
     // Per-query cost vs catalog size: the baseline the server's caching work
     // has to beat.
     const bench_exe = b.addExecutable(.{

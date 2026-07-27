@@ -84,8 +84,7 @@ const delete_catalog_query =
     \\DELETE FROM zetasqlite_catalog WHERE name = @name
     \\
 ;
-const sync_query =
-    "SELECT name, kind, spec FROM zetasqlite_catalog WHERE updatedAt >= @lastUpdatedAt";
+const load_query = "SELECT name, kind, spec FROM zetasqlite_catalog";
 
 /// Go CatalogSpecKind values.
 pub const table_spec_kind = "table";
@@ -93,11 +92,41 @@ pub const view_spec_kind = "view";
 pub const function_spec_kind = "function";
 const catalog_name = "zetasqlite";
 
-/// One table change, in the order it happened.
-pub const TableMutation = struct {
-    /// Canonical ("_"-joined) table name.
-    name: []const u8,
-    removed: bool,
+/// One table change, in the order it happened. Names are canonical
+/// ("_"-joined) and arena-owned, so an entry outlives the spec it describes.
+pub const Change = union(enum) {
+    table_added: []const u8,
+    table_removed: []const u8,
+};
+
+/// One step in bringing an analyzer catalog handle up to a cursor's position.
+pub const DeltaOp = union(enum) {
+    /// Merge this proto into the handle.
+    add_json: [:0]u8,
+    /// Forget this table by canonical name.
+    remove: [:0]const u8,
+};
+
+/// What a consumer must do to reach a cursor's position.
+pub const Delta = struct {
+    ops: []const DeltaOp,
+    /// The ops describe the whole catalog rather than a change to it, so they
+    /// only produce the right result when applied to a fresh handle.
+    full: bool,
+};
+
+/// One consumer's position in a catalog's change log.
+///
+/// The log is append-only and shared, so each consumer (one per analyzer
+/// catalog handle) tracks its own position rather than draining. `log_pos`
+/// and `functions_seen` are indices into `changes` and `functions`;
+/// `function_generation` mirrors the catalog's, and `needs_rebuild` forces a
+/// full re-push after a failed apply.
+pub const Cursor = struct {
+    log_pos: usize = 0,
+    functions_seen: usize = 0,
+    function_generation: u64 = 0,
+    needs_rebuild: bool = true,
 };
 
 pub const Catalog = struct {
@@ -105,25 +134,22 @@ pub const Catalog = struct {
     /// Owns every stored TableSpec and all derived strings.
     arena_state: std.heap.ArenaAllocator,
     /// Insertion-ordered specs (Go: c.tables). catalogJson renders from this.
-    tables: std.ArrayList(*spec.TableSpec),
-    /// Canonical table name -> index into `tables` (Go: c.tableMap).
+    ///
+    /// A deleted table leaves a null tombstone rather than compacting the
+    /// list: removing an element would shift every later index and force a
+    /// full rescan of `table_map` to repair it, which is O(catalog) per drop
+    /// on a path the emulator takes for every view materialization. Slots are
+    /// never reused, so a `*spec.TableSpec` handed to a caller stays valid for
+    /// the catalog's lifetime.
+    tables: std.ArrayList(?*spec.TableSpec),
+    /// Canonical table name -> index into `tables` (Go: c.tableMap). Only
+    /// live (non-tombstoned) slots are referenced.
     table_map: std.StringHashMap(usize),
     /// Insertion-ordered function specs (Go: c.functions).
     functions: std.ArrayList(*spec.FunctionSpec),
     /// Canonical function name -> index into `functions` (Go: c.funcMap).
     func_map: std.StringHashMap(usize),
-    /// Hash of the spec JSON each table was last loaded from.
-    ///
-    /// sync() is incremental by timestamp, so the row a statement just wrote
-    /// is re-read by the next statement's sync. Re-registering an identical
-    /// spec would otherwise count as a replacement and force consumers to
-    /// rebuild — every statement, defeating incremental catalog updates
-    /// entirely.
-    table_json_hash: std.StringHashMap(u64),
-    /// Timestamp string of the last sync ("" = never; sorts before any
-    /// stored timestamp, so the first sync loads everything).
-    last_synced_at: []const u8 = "",
-    /// Ordered journal of table changes since a consumer last drained it.
+    /// Append-only, ordered log of table changes.
     ///
     /// A persistent analyzer catalog can be updated incrementally, but only
     /// if it is told what changed: additions are pushed as a delta, removals
@@ -131,45 +157,126 @@ pub const Catalog = struct {
     /// from costing O(catalog) — the emulator drops and recreates a table on
     /// every view materialization, so that cost dominates otherwise.
     ///
-    /// Names are canonical and arena-owned, so they outlive the spec.
-    table_mutations: std.ArrayList(TableMutation),
+    /// Never truncated. Entries are read at a `Cursor` rather than drained so
+    /// that several consumers — one per analyzer catalog handle, i.e. one per
+    /// pooled connection — can each replay from their own position.
+    changes: std.ArrayList(Change),
 
-    /// Bumped by any change that is NOT a pure append.
+    /// Bumped by any change that cannot be expressed as a table delta.
     ///
-    /// Appends can be pushed to a persistent analyzer catalog as a delta, but
-    /// removals and in-place replacements cannot: that catalog has no "forget
-    /// this" or "redefine this" operation, and a merge that skips entries
+    /// Function removals have no incremental path: the analyzer catalog has
+    /// no "forget this function" operation, and a merge that skips entries
     /// already present would silently keep the stale definition. A consumer
-    /// compares this against the generation it last saw and rebuilds from
-    /// scratch when it differs.
-    rebuild_generation: u64 = 0,
+    /// compares this against the generation its `Cursor` last saw and
+    /// rebuilds from scratch when it differs.
+    function_generation: u64 = 0,
 
-    /// Copies the journal into `alloc` and clears it, retaining the backing
-    /// buffer for reuse. Order is preserved: a table created and then dropped
-    /// must not be left present.
-    ///
-    /// The copy matters — clearing first would leave a consumer holding a
-    /// slice into a buffer that later appends overwrite.
-    pub fn drainTableMutations(
-        c: *Catalog,
-        alloc: std.mem.Allocator,
-    ) error{OutOfMemory}![]const TableMutation {
-        if (c.table_mutations.items.len == 0) return &.{};
-        const out = try alloc.dupe(TableMutation, c.table_mutations.items);
-        c.table_mutations.clearRetainingCapacity();
-        return out;
+    /// Whether this cursor's consumer can be brought up to date incrementally,
+    /// or needs a fresh handle re-pushed from scratch. A function removal has
+    /// no incremental path, and a previous apply may have failed partway.
+    pub fn needsRebuild(c: *const Catalog, cur: Cursor) bool {
+        return cur.needs_rebuild or cur.function_generation != c.function_generation;
     }
 
-    /// Drops the journal without reading it (the consumer is about to rebuild
-    /// from the whole catalog anyway).
-    pub fn discardTableMutations(c: *Catalog) void {
-        c.table_mutations.clearRetainingCapacity();
+    /// The changes this cursor has not seen, without advancing it.
+    pub fn changesSince(c: *const Catalog, cur: Cursor) []const Change {
+        if (cur.log_pos >= c.changes.items.len) return &.{};
+        return c.changes.items[cur.log_pos..];
+    }
+
+    /// Renders everything `cur` has not seen as operations to apply to an
+    /// analyzer catalog handle, and advances `cur` past them.
+    ///
+    /// Every byte the caller needs is copied into `alloc` here, so the
+    /// returned ops stay valid after the catalog is released. That is what
+    /// lets the expensive half — pushing into C++ and then analyzing — happen
+    /// without holding the catalog.
+    ///
+    /// Order is preserved: a table created and then dropped must end up
+    /// absent. Runs of consecutive additions coalesce into one push, so a bulk
+    /// load stays a single merge rather than one merge per table.
+    ///
+    /// A `full` delta describes the whole catalog and assumes a *fresh*
+    /// handle — the caller must recreate it before applying. Two sources push
+    /// into one handle (persistent plus TEMP overlay), so when either renders
+    /// full the other must too, or the fresh handle loses whatever the
+    /// incremental side thought it already held.
+    pub fn renderDelta(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        cur: *Cursor,
+    ) error{ OutOfMemory, InvalidSpec }!Delta {
+        var ops: std.ArrayList(DeltaOp) = .empty;
+
+        if (c.needsRebuild(cur.*)) {
+            try ops.append(alloc, .{ .add_json = try c.catalogJson(alloc) });
+            c.advance(cur);
+            return .{ .ops = ops.items, .full = true };
+        }
+
+        var pending: std.ArrayList(*spec.TableSpec) = .empty;
+        for (c.changesSince(cur.*)) |ch| switch (ch) {
+            .table_added => |name| {
+                // A name added and later replaced resolves to the current
+                // spec, which is the definition the consumer should end up
+                // with either way.
+                if (c.tableSpecByName(name)) |s| try pending.append(alloc, s);
+            },
+            .table_removed => |name| {
+                try flushAdditions(c, alloc, &ops, &pending);
+                try ops.append(alloc, .{ .remove = try alloc.dupeZ(u8, name) });
+            },
+        };
+        try flushAdditions(c, alloc, &ops, &pending);
+
+        if (cur.functions_seen != c.functions.items.len) {
+            try ops.append(alloc, .{
+                .add_json = try c.functionJsonFrom(alloc, cur.functions_seen),
+            });
+        }
+
+        c.advance(cur);
+        return .{ .ops = ops.items, .full = false };
+    }
+
+    fn flushAdditions(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        ops: *std.ArrayList(DeltaOp),
+        pending: *std.ArrayList(*spec.TableSpec),
+    ) error{ OutOfMemory, InvalidSpec }!void {
+        if (pending.items.len == 0) return;
+        try ops.append(alloc, .{
+            .add_json = try c.catalogJsonForSpecs(alloc, pending.items),
+        });
+        pending.* = .empty;
+    }
+
+    /// Moves `cur` past everything currently logged. Non-destructive: other
+    /// consumers keep their own positions.
+    pub fn advance(c: *const Catalog, cur: *Cursor) void {
+        cur.log_pos = c.changes.items.len;
+        cur.functions_seen = c.functions.items.len;
+        cur.function_generation = c.function_generation;
+        cur.needs_rebuild = false;
     }
 
     /// Spec currently registered under a canonical name, if any.
     pub fn tableSpecByName(c: *const Catalog, name: []const u8) ?*spec.TableSpec {
         const idx = c.table_map.get(name) orelse return null;
         return c.tables.items[idx];
+    }
+
+    /// Every live spec, tombstones skipped, in registration order.
+    pub fn liveTableSpecs(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+    ) error{OutOfMemory}![]*spec.TableSpec {
+        var out = try std.ArrayList(*spec.TableSpec).initCapacity(alloc, c.table_map.count());
+        for (c.tables.items) |maybe| {
+            if (maybe) |table_spec| out.appendAssumeCapacity(table_spec);
+        }
+        return out.items;
     }
 
     /// Renders a SimpleCatalogProto containing exactly `specs`.
@@ -185,26 +292,7 @@ pub const Catalog = struct {
             const canonical = try table_spec.tableName(alloc);
             try addTableToNode(alloc, &root, table_spec.name_path, table_spec, canonical);
         }
-        var out: std.ArrayList(u8) = .empty;
-        try appendNodeJson(&out, alloc, &root);
-        try out.append(alloc, 0);
-        const bytes = try out.toOwnedSlice(alloc);
-        return bytes[0 .. bytes.len - 1 :0];
-    }
-
-    /// Discards the incremental sync cursor so the next sync() reloads every
-    /// row.
-    ///
-    /// The cursor is wall-clock based and sync() stamps it *before* reading,
-    /// so it can permanently skip a commit whose updatedAt was stamped
-    /// earlier but which became visible later — and a writer stamps
-    /// updatedAt before its analyzer round trip, making that window
-    /// milliseconds wide rather than instantaneous. Harmless while one
-    /// connection owns the database (go-zetasqlite's assumption, and
-    /// bigquery-emulator's global request mutex). A connection pool must
-    /// call this whenever another connection may have committed DDL.
-    pub fn invalidateSyncCursor(c: *Catalog) void {
-        c.last_synced_at = "";
+        return renderNode(alloc, &root);
     }
 
     pub fn init(gpa: std.mem.Allocator) error{OutOfMemory}!*Catalog {
@@ -216,8 +304,7 @@ pub const Catalog = struct {
             .table_map = std.StringHashMap(usize).init(gpa),
             .functions = .empty,
             .func_map = std.StringHashMap(usize).init(gpa),
-            .table_json_hash = std.StringHashMap(u64).init(gpa),
-            .table_mutations = .empty,
+            .changes = .empty,
         };
         errdefer c.deinit();
         // Go NewCatalog: seed MISSING_FUNCTIONS (memory only, never
@@ -236,8 +323,7 @@ pub const Catalog = struct {
         c.table_map.deinit();
         c.functions.deinit(c.gpa);
         c.func_map.deinit();
-        c.table_json_hash.deinit();
-        c.table_mutations.deinit(c.gpa);
+        c.changes.deinit(c.gpa);
         c.arena_state.deinit();
         c.gpa.destroy(c);
     }
@@ -249,16 +335,21 @@ pub const Catalog = struct {
         try db.exec(index_catalog_table_query);
     }
 
-    /// Go Catalog.Sync: incremental load of every row updated since the
-    /// last sync. Function rows are skipped (deferred milestone) rather
-    /// than failing the sync.
-    pub fn sync(c: *Catalog, db: *sqlite.Db) Error!void {
+    /// Loads every persisted spec into memory. Go's Catalog.Sync equivalent,
+    /// but a one-shot load rather than a per-statement incremental re-read.
+    ///
+    /// Go re-syncs before every statement, filtered by `updatedAt >= cursor`,
+    /// where the cursor is wall-clock time stamped *before* the read. That
+    /// permanently skips a commit stamped before the cursor but made visible
+    /// after it — narrow with one connection, the common case with several,
+    /// and it cost a connection-pool experiment 530 of 594 view creations.
+    /// Coherence between connections is the shared catalog's job now, not a
+    /// timestamp's, so this runs once at open and never again.
+    pub fn loadFromStorage(c: *Catalog, db: *sqlite.Db) Error!void {
         try c.createCatalogTablesIfNotExist(db);
-        const now = try nowTimestamps(c.arena_state.allocator());
 
-        var stmt = try db.prepare(sync_query);
+        var stmt = try db.prepare(load_query);
         defer stmt.finalize();
-        try stmt.bindText(1, c.last_synced_at);
         while (try stmt.step()) {
             const kind = stmt.columnText(1);
             if (std.mem.eql(u8, kind, table_spec_kind) or std.mem.eql(u8, kind, view_spec_kind)) {
@@ -272,7 +363,6 @@ pub const Catalog = struct {
                 return error.InvalidSpec; // Go: "unknown catalog spec kind %s"
             }
         }
-        c.last_synced_at = now.sql;
     }
 
     fn loadTableSpec(c: *Catalog, spec_json: []const u8) Error!void {
@@ -281,17 +371,6 @@ pub const Catalog = struct {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return error.InvalidSpec,
             };
-
-        // sync() re-reads whatever the previous statement wrote, so most
-        // loads are of a spec already held verbatim. Treating those as
-        // replacements would force a rebuild on every statement.
-        const arena = c.arena_state.allocator();
-        const table_name = try table_spec.tableName(arena);
-        const hash = std.hash.Wyhash.hash(0, spec_json);
-        if (c.table_json_hash.get(table_name)) |prev| {
-            if (prev == hash and c.table_map.contains(table_name)) return;
-        }
-        try c.table_json_hash.put(table_name, hash);
 
         try c.addTableSpecToMemory(table_spec);
     }
@@ -310,13 +389,32 @@ pub const Catalog = struct {
             else => return error.InvalidSpec,
         };
         try c.addTableSpecToMemory(owned);
-        // Record the hash of exactly what gets persisted, so the next
-        // statement's incremental sync recognises the row it reads back as
-        // the spec already held and does not treat it as a replacement.
-        try c.table_json_hash.put(try owned.tableName(arena), std.hash.Wyhash.hash(0, encoded));
         if (!owned.is_temp) {
             try c.saveTableSpec(db, owned, encoded);
         }
+    }
+
+    /// Registers a spec into a per-connection TEMP overlay, never persisting
+    /// it.
+    ///
+    /// A removal is logged before the addition because the overlay's consumer
+    /// may already hold a persistent table of the same name, and the analyzer
+    /// catalog's merge keeps whatever is already registered — without the
+    /// removal a TEMP table would silently resolve to the table it shadows.
+    /// Removing a name the consumer does not have is a no-op, so this is
+    /// unconditional rather than conditional on the persistent catalog.
+    pub fn addOverlayTableSpec(c: *Catalog, table_spec: *const spec.TableSpec) Error!void {
+        const arena = c.arena_state.allocator();
+        const encoded = table_spec.toJson(arena) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        const owned = spec.tableSpecFromJson(arena, encoded) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        try c.changes.append(c.gpa, .{ .table_removed = try owned.tableName(arena) });
+        try c.addTableSpecToMemory(owned);
     }
 
     /// Go saveTableSpec: the upsert. `encoded` is the spec's JSON.
@@ -337,17 +435,22 @@ pub const Catalog = struct {
         _ = try stmt.step();
     }
 
+    /// Overlay counterpart of `deleteTableSpec`: an overlay spec was never
+    /// persisted, so there is no row to delete.
+    pub fn deleteOverlayTableSpec(c: *Catalog, name: []const u8) Error!void {
+        return c.forgetTableSpec(name);
+    }
+
+    fn forgetTableSpec(c: *Catalog, name: []const u8) Error!void {
+        const entry = c.table_map.fetchRemove(name) orelse return error.TableNotFound;
+        try c.changes.append(c.gpa, .{ .table_removed = entry.key });
+        // Tombstone rather than compact: no index shifts, so no reindex.
+        c.tables.items[entry.value] = null;
+    }
+
     /// Go DeleteTableSpec: remove from memory and from the persisted table.
     pub fn deleteTableSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
-        const entry = c.table_map.fetchRemove(name) orelse return error.TableNotFound;
-        try c.table_mutations.append(c.gpa, .{ .name = entry.key, .removed = true });
-        _ = c.table_json_hash.remove(name);
-        _ = c.tables.orderedRemove(entry.value);
-        // Reindex the map entries that shifted down.
-        var it = c.table_map.valueIterator();
-        while (it.next()) |idx| {
-            if (idx.* > entry.value) idx.* -= 1;
-        }
+        try c.forgetTableSpec(name);
 
         var stmt = try db.prepare(delete_catalog_query);
         defer stmt.finalize();
@@ -355,9 +458,10 @@ pub const Catalog = struct {
         _ = try stmt.step();
     }
 
-    /// Number of registered (non-deleted) table specs.
+    /// Number of registered (non-deleted) table specs. Counts live slots, so
+    /// tombstones do not inflate it.
     pub fn tableCount(c: *const Catalog) usize {
-        return c.tables.items.len;
+        return c.table_map.count();
     }
 
     pub fn findTableSpec(c: *const Catalog, name: []const u8) ?*spec.TableSpec {
@@ -412,16 +516,25 @@ pub const Catalog = struct {
         _ = try stmt.step();
     }
 
-    /// Go DeleteFunctionSpec: remove from memory and the persisted table.
-    /// (Go: "failed to find function spec from map by %s".)
-    pub fn deleteFunctionSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
-        c.rebuild_generation +%= 1;
+    /// Overlay counterpart of `deleteFunctionSpec`: nothing was persisted.
+    pub fn deleteOverlayFunctionSpec(c: *Catalog, name: []const u8) Error!void {
+        return c.forgetFunctionSpec(name);
+    }
+
+    fn forgetFunctionSpec(c: *Catalog, name: []const u8) Error!void {
+        c.function_generation +%= 1;
         const entry = c.func_map.fetchRemove(name) orelse return error.TableNotFound;
         _ = c.functions.orderedRemove(entry.value);
         var it = c.func_map.valueIterator();
         while (it.next()) |idx| {
             if (idx.* > entry.value) idx.* -= 1;
         }
+    }
+
+    /// Go DeleteFunctionSpec: remove from memory and the persisted table.
+    /// (Go: "failed to find function spec from map by %s".)
+    pub fn deleteFunctionSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
+        try c.forgetFunctionSpec(name);
 
         var stmt = try db.prepare(delete_catalog_query);
         defer stmt.finalize();
@@ -445,11 +558,22 @@ pub const Catalog = struct {
     pub fn funcMap(c: *const Catalog, alloc: std.mem.Allocator) error{OutOfMemory}!*spec.FuncMap {
         const map = try alloc.create(spec.FuncMap);
         map.* = spec.FuncMap.init(alloc);
+        try c.addFunctionsTo(alloc, map);
+        return map;
+    }
+
+    /// Merges this catalog's functions into an existing map. Later callers
+    /// win, which is how a connection's TEMP overlay shadows a persistent
+    /// function of the same name.
+    pub fn addFunctionsTo(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        map: *spec.FuncMap,
+    ) error{OutOfMemory}!void {
         for (c.functions.items) |fs| {
             if (fs.body == null and std.mem.eql(u8, fs.language, "SQL")) continue;
             try map.put(try fs.funcName(alloc), fs);
         }
-        return map;
     }
 
     /// Number of registered function specs (seeded builtins included).
@@ -484,13 +608,13 @@ pub const Catalog = struct {
             // followed by an add so a consumer redefines rather than keeps
             // the stale entry.
             c.tables.items[idx] = table_spec;
-            try c.table_mutations.append(c.gpa, .{ .name = table_name, .removed = true });
-            try c.table_mutations.append(c.gpa, .{ .name = table_name, .removed = false });
+            try c.changes.append(c.gpa, .{ .table_removed = table_name });
+            try c.changes.append(c.gpa, .{ .table_added = table_name });
             return;
         }
         try c.tables.append(c.gpa, table_spec);
         try c.table_map.put(table_name, c.tables.items.len - 1);
-        try c.table_mutations.append(c.gpa, .{ .name = table_name, .removed = false });
+        try c.changes.append(c.gpa, .{ .table_added = table_name });
     }
 
     // ------------------------------------------------------------------
@@ -501,50 +625,77 @@ pub const Catalog = struct {
     /// analyzer shim. Returns "{}" (builtins only) when neither tables nor
     /// functions are registered. All memory comes from `alloc`.
     pub fn catalogJson(c: *const Catalog, alloc: std.mem.Allocator) error{ OutOfMemory, InvalidSpec }![:0]u8 {
-        return c.catalogJsonFrom(alloc, 0, 0);
+        return c.catalogJsonWith(alloc, null);
     }
 
-    /// Renders only the entries added at or after the given indices.
-    ///
-    /// The result is a well-formed SimpleCatalogProto containing just those
-    /// entries, so it can be merged into a catalog that already holds the
-    /// earlier ones instead of re-sending everything.
-    pub fn catalogJsonFrom(
+    /// Renders this catalog unioned with a per-connection TEMP overlay, the
+    /// overlay winning on name collisions. Used by the stateless analyzer
+    /// path, which rebuilds the whole proto per statement instead of pushing
+    /// deltas into a persistent handle.
+    pub fn catalogJsonWith(
         c: *const Catalog,
         alloc: std.mem.Allocator,
-        table_start: usize,
-        fn_start: usize,
+        overlay: ?*const Catalog,
     ) error{ OutOfMemory, InvalidSpec }![:0]u8 {
-        const tables = if (table_start < c.tables.items.len)
-            c.tables.items[table_start..]
-        else
-            &[_]*spec.TableSpec{};
-        const funcs = if (fn_start < c.functions.items.len)
-            c.functions.items[fn_start..]
-        else
-            &[_]*spec.FunctionSpec{};
-
-        if (tables.len == 0 and funcs.len == 0)
+        const ov_tables = if (overlay) |o| o.table_map.count() else 0;
+        const ov_funcs = if (overlay) |o| o.functions.items.len else 0;
+        if (c.table_map.count() == 0 and c.functions.items.len == 0 and
+            ov_tables == 0 and ov_funcs == 0)
             return alloc.dupeZ(u8, "{}");
 
         var root = Node{ .name = catalog_name };
-        for (tables) |table_spec| {
+        for (c.tables.items) |maybe| {
+            const table_spec = maybe orelse continue;
             const canonical = try table_spec.tableName(alloc);
+            // Shadowed by the overlay: emit the overlay's definition only.
+            if (overlay) |o| if (o.table_map.contains(canonical)) continue;
             try addTableToNode(alloc, &root, table_spec.name_path, table_spec, canonical);
         }
         // Go addFunctionSpecRecursive: functions register under their LEAF
         // name at the root and inside every sub-catalog along the path.
-        for (funcs) |fs| {
+        for (c.functions.items) |fs| {
+            if (overlay) |o| if (o.func_map.contains(try fs.funcName(alloc))) continue;
             try addFunctionToNode(alloc, &root, fs.name_path, fs);
         }
+        if (overlay) |o| {
+            for (o.tables.items) |maybe| {
+                const table_spec = maybe orelse continue;
+                const canonical = try table_spec.tableName(alloc);
+                try addTableToNode(alloc, &root, table_spec.name_path, table_spec, canonical);
+            }
+            for (o.functions.items) |fs| {
+                try addFunctionToNode(alloc, &root, fs.name_path, fs);
+            }
+        }
+        return renderNode(alloc, &root);
+    }
 
-        var out: std.ArrayList(u8) = .empty;
-        try appendNodeJson(&out, alloc, &root);
-        try out.append(alloc, 0);
-        const bytes = try out.toOwnedSlice(alloc);
-        return bytes[0 .. bytes.len - 1 :0];
+    /// Renders a SimpleCatalogProto containing only the functions registered
+    /// at or after `fn_start`, so a consumer that already holds the earlier
+    /// ones can merge rather than re-receive everything. Functions only ever
+    /// append, so an index is a sufficient cursor.
+    pub fn functionJsonFrom(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        fn_start: usize,
+    ) error{ OutOfMemory, InvalidSpec }![:0]u8 {
+        if (fn_start >= c.functions.items.len) return alloc.dupeZ(u8, "{}");
+        var root = Node{ .name = catalog_name };
+        for (c.functions.items[fn_start..]) |fs| {
+            try addFunctionToNode(alloc, &root, fs.name_path, fs);
+        }
+        return renderNode(alloc, &root);
     }
 };
+
+/// Serializes a built proto tree to NUL-terminated protobuf-JSON.
+fn renderNode(alloc: std.mem.Allocator, root: *Node) error{ OutOfMemory, InvalidSpec }![:0]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try appendNodeJson(&out, alloc, root);
+    try out.append(alloc, 0);
+    const bytes = try out.toOwnedSlice(alloc);
+    return bytes[0 .. bytes.len - 1 :0];
+}
 
 /// One registration point: the table resolves under `registered` and
 /// reports `canonical` as its Name() (Go createSimpleTable's canonicalName).
@@ -982,16 +1133,16 @@ test "addNewTableSpec persists a row and a fresh catalog syncs it" {
         try testing.expect(!(try stmt.step()));
     }
 
-    // A brand-new Catalog over the same connection picks it up via sync.
+    // A brand-new Catalog over the same connection picks it up at load.
     var c2 = try Catalog.init(testing.allocator);
     defer c2.deinit();
-    try c2.sync(&db);
+    try c2.loadFromStorage(&db);
     try testing.expectEqual(@as(usize, 1), c2.tableCount());
     const found = c2.findTableSpec("t1") orelse return error.TestUnexpectedResult;
     try testing.expectEqualStrings("b", found.columns[1].name);
 
-    // Incremental: a second sync with nothing new loads nothing extra.
-    try c2.sync(&db);
+    // Idempotent: reloading the same rows replaces rather than duplicates.
+    try c2.loadFromStorage(&db);
     try testing.expectEqual(@as(usize, 1), c2.tableCount());
 
     // Delete removes both memory and the persisted row.
@@ -1156,10 +1307,10 @@ test "catalogJson: user-defined SQL function resolves through the analyzer" {
     const catalog_json = try c.catalogJson(alloc);
     _ = try analyzer_ffi.analyzeNextStatement(alloc, "SELECT myadd(1, 2)", 0, catalog_json);
 
-    // Persisted row round-trips through a fresh catalog's sync.
+    // Persisted row round-trips through a fresh catalog's load.
     var c2 = try Catalog.init(testing.allocator);
     defer c2.deinit();
-    try c2.sync(&db);
+    try c2.loadFromStorage(&db);
     const found = c2.findFunctionSpec("myadd") orelse return error.TestUnexpectedResult;
     try testing.expectEqualStrings("zetasqlite_add(@x, @y)", found.body.?);
     try testing.expectEqual(@as(usize, 2), found.args.len);

@@ -7,6 +7,18 @@
 //!   SQLITE_LOCKED, which sqlite3_busy_timeout does NOT retry; Go got away
 //!   with it only because its global request mutex serialized everything.
 //!   memdb gives a genuinely shared in-memory database with normal locking.
+//!
+//!   memdb does, however, guard each database with a single mutex that every
+//!   read and write must hold, and its file-lock layer turns two concurrent
+//!   writers into SQLITE_BUSY. So SQLite work on an in-memory database cannot
+//!   run in parallel no matter how many connections exist.
+//!
+//!   That is why the server serves on one engine connection. A connection pool
+//!   was built and measured: at 4 connections the view-graph test took 833 s
+//!   and failed 35 views (15 x SQLITE_BUSY) against 58 s and none serially,
+//!   with sampling showing the threads stacked in sqlite3LockAndPrepare at
+//!   roughly one core. Extra connections bought contention, not throughput.
+//!
 //! - Pragmas are applied as statements via Db.openWith rather than through
 //!   DSN `_pragma=` parameters, which are a modernc.org/sqlite extension the
 //!   C API does not have.

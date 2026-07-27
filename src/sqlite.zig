@@ -80,17 +80,29 @@ pub const Db = struct {
         _ = c.sqlite3_busy_timeout(db.handle, ms);
     }
 
+    /// Compiles `sql`, retrying while the schema keeps changing underneath.
+    ///
+    /// prepare_v2 re-prepares internally when the schema cookie moves, but
+    /// gives up and returns SQLITE_SCHEMA after its own retry budget. One
+    /// connection never reaches that; several connections doing continuous DDL
+    /// against the same database do. It means "the schema moved while
+    /// compiling", not "this statement is wrong" — so it is retried rather
+    /// than reported.
     pub fn prepare(db: *Db, sql: []const u8) Error!Stmt {
-        var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(
-            db.handle,
-            sql.ptr,
-            @intCast(sql.len),
-            &stmt,
-            null,
-        );
-        if (rc != c.SQLITE_OK) return error.SQLite;
-        return .{ .handle = stmt.? };
+        var attempt: usize = 0;
+        while (true) : (attempt += 1) {
+            var stmt: ?*c.sqlite3_stmt = null;
+            const rc = c.sqlite3_prepare_v2(
+                db.handle,
+                sql.ptr,
+                @intCast(sql.len),
+                &stmt,
+                null,
+            );
+            if (rc == c.SQLITE_OK) return .{ .handle = stmt.? };
+            if (rc == c.SQLITE_SCHEMA and attempt < 8) continue;
+            return error.SQLite;
+        }
     }
 
     pub const ScalarFn = fn (

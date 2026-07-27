@@ -14,6 +14,7 @@ pub const encoder = @import("internal/encoder.zig");
 pub const sqlbuilder = @import("internal/sqlbuilder/sqlbuilder.zig");
 pub const spec = @import("internal/spec.zig");
 pub const catalog = @import("internal/catalog.zig");
+pub const shared_catalog = @import("internal/shared_catalog.zig");
 pub const coordinator_types = @import("internal/coordinator/types_data.zig");
 pub const coordinator_interfaces = @import("internal/coordinator/types_interfaces.zig");
 pub const coordinator_context = @import("internal/coordinator/context.zig");

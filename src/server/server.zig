@@ -4,8 +4,13 @@
 //! Differences from Go, by design:
 //! - No middleware chain, and in particular no sequentialAccessMiddleware.
 //!   Go serializes every request behind one package-level mutex; the
-//!   equivalent here is that M1 holds a single connection, which is replaced
-//!   by a pool rather than by a lock.
+//!   equivalent here is one engine connection, with connections accepted
+//!   concurrently and dispatched serially.
+//!
+//!   A connection pool was built on a shared catalog and measured: it is
+//!   correct, but on the view-graph workload it cost 833 s and 35 failed views
+//!   against 58 s and none serially, because SQLite's in-memory VFS cannot
+//!   execute concurrently (see storage.zig).
 //! - Route dispatch is a switch over Route.Id rather than one http.Handler
 //!   type per route (server/handler_gen.go's 39 empty structs).
 
@@ -51,8 +56,8 @@ pub const Server = struct {
     /// Owns the DSN string and anything else with process lifetime.
     arena_state: std.heap.ArenaAllocator,
     project: []const u8,
-    /// M1 runs one connection. The pool arrives with the concurrency
-    /// milestone; the engine is single-threaded per Db either way.
+    /// The one engine connection. Single-threaded per Db, and deliberately
+    /// not pooled — see the header.
     db: *driver.Db,
     jobs: query_handler.JobStore,
     /// Per-route timing, indexed by Route.Id.

@@ -15,17 +15,19 @@ pub fn main(init: std.process.Init) !void {
     const o = &w.interface;
     const gpa = std.heap.smp_allocator;
 
-    try o.print("{s:>9} {s:>14} {s:>16}\n", .{ "base", "20 cycles ms", "ms per cycle" });
+    try o.print("{s:>9} {s:>12} {s:>14} {s:>16}\n", .{ "base", "load ms", "20 cycles ms", "ms per cycle" });
     for ([_]usize{ 100, 250, 500, 1000, 2000 }) |base| {
         var db = try driver.Db.open(gpa, ":memory:");
         defer db.close();
         var sql: [256]u8 = undefined;
 
+        const t_load = std.Io.Clock.awake.now(init.io);
         var i: usize = 0;
         while (i < base) : (i += 1) {
             const s = try std.fmt.bufPrint(&sql, "CREATE TABLE `p.d.t{d}` (a INT64)", .{i});
             try db.exec(s, &.{}, .{});
         }
+        const load_ms = ms(t_load, init.io);
 
         // create + drop, the materialization pattern
         const cycles = 20;
@@ -36,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
             try db.exec("DROP TABLE IF EXISTS `p.d.mat`", &.{}, .{});
         }
         const ms_total = ms(t0, init.io);
-        try o.print("{d:>9} {d:>14.1} {d:>16.2}\n", .{ base, ms_total, ms_total / cycles });
+        try o.print("{d:>9} {d:>12.1} {d:>14.1} {d:>16.2}\n", .{ base, load_ms, ms_total, ms_total / cycles });
     }
     try o.flush();
 }
