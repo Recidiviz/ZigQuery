@@ -66,6 +66,10 @@ pub const Server = struct {
     /// Per-route timing, indexed by Route.Id.
     route_stats: std.enums.EnumArray(router.Route.Id, stats_mod.RouteStats) =
         std.enums.EnumArray(router.Route.Id, stats_mod.RouteStats).initFill(.{}),
+    /// The slowest query jobs seen. A route percentile says the p99 is 33 ms;
+    /// this says *which statement* that was, which is the difference between
+    /// a number and a lead.
+    slow_queries: stats_mod.SlowQueries(16, 400) = .{},
     started_ms: i64 = 0,
     repo: metadata.Repository,
     rng: std.Random.DefaultPrng,
@@ -370,6 +374,16 @@ pub const Server = struct {
                 @as(f64, @floatFromInt(st.max_us)) / 1000.0,
                 @as(f64, @floatFromInt(st.total_us)) / 1000.0,
             });
+            try out.append(arena, '}');
+        }
+        try out.appendSlice(arena, "],\"slowQueries\":[");
+        var slow_buf: [16]*const @TypeOf(s.slow_queries).Entry = undefined;
+        for (s.slow_queries.sorted(&slow_buf), 0..) |e, i| {
+            if (i > 0) try out.append(arena, ',');
+            try out.print(arena, "{{\"ms\":{d:.3},\"sql\":", .{
+                @as(f64, @floatFromInt(e.us)) / 1000.0,
+            });
+            try errors.writeJsonString(arena, &out, e.sql());
             try out.append(arena, '}');
         }
         try out.appendSlice(arena, "]}");
@@ -712,6 +726,7 @@ pub const Server = struct {
         };
 
         const job_id = try query_handler.randomId(arena, &s.rng);
+        const job_t0 = nowSeed();
 
         // A query job may carry a destination table: this is how view
         // materialization writes results. Run the DDL form instead of the
@@ -740,6 +755,7 @@ pub const Server = struct {
                 }),
             );
         } else try query_handler.runQuery(arena, s.db, project_id, job_id, sql);
+        s.slow_queries.record(nowSeed() -| job_t0, sql);
 
         if (!res.ok) {
             // Log the statement alongside the failure: an analyzer message on

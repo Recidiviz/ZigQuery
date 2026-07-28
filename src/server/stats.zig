@@ -53,7 +53,95 @@ pub const RouteStats = struct {
     }
 };
 
+/// The slowest statements seen, so "the server is slow" can be answered with
+/// *which query* rather than a percentile.
+///
+/// A fixed-size min-heap-ish array rather than a real heap: `capacity` is tiny,
+/// the scan to find the current minimum is a handful of comparisons, and it
+/// only runs for a statement already slower than the cheapest resident. The
+/// alternative — recording every statement and sorting later — would keep
+/// tens of thousands of SQL strings alive for a debug endpoint.
+///
+/// SQL is truncated to `sql_limit` bytes and copied into a caller-owned buffer,
+/// because the statement text is arena-allocated per request and gone by the
+/// time anyone reads /debug/stats.
+pub fn SlowQueries(comptime capacity: usize, comptime sql_limit: usize) type {
+    return struct {
+        const Self = @This();
+
+        pub const Entry = struct {
+            us: u64 = 0,
+            len: usize = 0,
+            buf: [sql_limit]u8 = undefined,
+
+            pub fn sql(e: *const Entry) []const u8 {
+                return e.buf[0..e.len];
+            }
+        };
+
+        entries: [capacity]Entry = @splat(.{}),
+        /// Number of slots filled, so a short run does not report empties.
+        len: usize = 0,
+
+        pub fn record(self: *Self, us: u64, sql: []const u8) void {
+            var slot: usize = undefined;
+            if (self.len < capacity) {
+                slot = self.len;
+                self.len += 1;
+            } else {
+                // Evict the fastest resident, and only if this beats it.
+                var min_i: usize = 0;
+                for (self.entries[0..self.len], 0..) |e, i| {
+                    if (e.us < self.entries[min_i].us) min_i = i;
+                }
+                if (us <= self.entries[min_i].us) return;
+                slot = min_i;
+            }
+            const n = @min(sql.len, sql_limit);
+            self.entries[slot].us = us;
+            self.entries[slot].len = n;
+            @memcpy(self.entries[slot].buf[0..n], sql[0..n]);
+        }
+
+        /// Entries slowest-first. Sorts a copy of the index order; the array is
+        /// `capacity` long, so this is free at any capacity worth having.
+        pub fn sorted(self: *const Self, out: *[capacity]*const Entry) []const *const Entry {
+            for (out[0..self.len], 0..) |*p, i| p.* = &self.entries[i];
+            const slice = out[0..self.len];
+            std.mem.sort(*const Entry, slice, {}, struct {
+                fn slower(_: void, a: *const Entry, b: *const Entry) bool {
+                    return a.us > b.us;
+                }
+            }.slower);
+            return slice;
+        }
+    };
+}
+
 const testing = std.testing;
+
+test "slow queries keeps the slowest and evicts the fastest" {
+    var q: SlowQueries(3, 16) = .{};
+    q.record(10, "ten");
+    q.record(30, "thirty");
+    q.record(20, "twenty");
+    q.record(5, "five"); // slower than nothing resident -> dropped
+    q.record(40, "forty"); // evicts "ten"
+
+    var buf: [3]*const @TypeOf(q).Entry = undefined;
+    const top = q.sorted(&buf);
+    try testing.expectEqual(@as(usize, 3), top.len);
+    try testing.expectEqualStrings("forty", top[0].sql());
+    try testing.expectEqualStrings("thirty", top[1].sql());
+    try testing.expectEqualStrings("twenty", top[2].sql());
+}
+
+test "slow queries truncates SQL to the limit" {
+    var q: SlowQueries(2, 4) = .{};
+    q.record(1, "abcdefgh");
+    var buf: [2]*const @TypeOf(q).Entry = undefined;
+    try testing.expectEqualStrings("abcd", q.sorted(&buf)[0].sql());
+}
 
 test "records count, extremes and mean" {
     var s = RouteStats{};
