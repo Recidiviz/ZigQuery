@@ -7,10 +7,39 @@
 //! register.zig mirrors that; this file only owns the table + shared helpers.
 
 const std = @import("std");
+const sqlite = @import("../../sqlite.zig");
 
 pub const value_mod = @import("../value.zig");
 pub const Value = value_mod.Value;
 pub const Error = value_mod.ValueError;
+
+// ----------------------------------------------------------------------
+// Per-call-site argument cache.
+//
+// A handler receives decoded Values, not the sqlite3_context those Values came
+// from, so the context is parked here for the duration of the call rather than
+// threaded through every one of the ~200 handler signatures. Only functions
+// whose arguments include a compile-time constant worth pre-digesting — CAST's
+// two type documents — reach for it.
+// ----------------------------------------------------------------------
+
+/// Set by the scalar trampoline for the duration of one call; null otherwise,
+/// which simply means no caching is available.
+pub threadlocal var current_ctx: ?*sqlite.c.sqlite3_context = null;
+
+/// Cached form of argument `arg`, or null when there is none. Callers must
+/// always be able to recompute: SQLite may discard the entry at any time.
+pub fn auxGet(comptime T: type, arg: i32) ?*T {
+    const ctx = current_ctx orelse return null;
+    return @ptrCast(@alignCast(sqlite.getAuxdata(ctx, arg)));
+}
+
+/// Hands `p` to SQLite as the cached form of argument `arg`. `p` must not be
+/// used afterwards — the destructor can run before this returns.
+pub fn auxSet(arg: i32, p: *anyopaque, destructor: sqlite.AuxDestructor) void {
+    const ctx = current_ctx orelse return;
+    sqlite.setAuxdata(ctx, arg, p, destructor);
+}
 
 pub const Handler = *const fn (alloc: std.mem.Allocator, args: []const Value) Error!Value;
 
@@ -26,6 +55,12 @@ pub const FuncInfo = struct {
     /// arguments. Such functions must not carry SQLITE_DETERMINISTIC, or
     /// SQLite evaluates them once per query rather than once per row.
     deterministic: bool = true,
+    /// Bit i marks argument i as a compile-time constant the handler digests
+    /// once and caches with auxGet/auxSet. The trampoline then skips decoding
+    /// it on rows where the cache is warm, since the handler will not look at
+    /// it. Handlers must still cope with the argument being absent, which is
+    /// what a cache hit means.
+    cached_args: u8 = 0,
 };
 
 // ----------------------------------------------------------------------
@@ -152,7 +187,9 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "ifnull", .handler = cmp.ifnull },
     .{ .name = "nullif", .handler = cmp.nullif },
     .{ .name = "length", .handler = str.length },
-    .{ .name = "cast", .handler = misc.cast },
+    // Args 1 and 2 are the from/to type documents, SQL literals that cast()
+    // parses once per call site rather than once per row.
+    .{ .name = "cast", .handler = misc.cast, .cached_args = 0b110 },
 
     // string functions
     .{ .name = "concat", .handler = str.concat },

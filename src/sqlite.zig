@@ -531,6 +531,35 @@ pub fn aggregateContext(ctx: ?*c.sqlite3_context, n_bytes: i32) ?*anyopaque {
     return c.sqlite3_aggregate_context(ctx, @intCast(n_bytes));
 }
 
+/// Destructor SQLite calls when it discards auxiliary data.
+pub const AuxDestructor = ?*const fn (?*anyopaque) callconv(.c) void;
+
+/// Per-call-site cache for a function argument, keyed by argument index
+/// (0-based). SQLite preserves it across rows "for function parameters that
+/// are compile-time constants, including literal values", and discards it when
+/// the statement is reset or finalized — the mechanism the docs illustrate
+/// with a compiled regular expression.
+///
+/// Returns null when nothing is cached, which is always a legal answer: the
+/// caller must be able to recompute.
+pub fn getAuxdata(ctx: ?*c.sqlite3_context, arg: i32) ?*anyopaque {
+    return c.sqlite3_get_auxdata(ctx, @intCast(arg));
+}
+
+/// Hands `p` to SQLite as the cached form of argument `arg`.
+///
+/// The destructor may run before this returns — during query planning, or on
+/// an allocation failure — so `p` must not be touched afterwards. Call it once
+/// the value is no longer needed for the current row.
+pub fn setAuxdata(
+    ctx: ?*c.sqlite3_context,
+    arg: i32,
+    p: ?*anyopaque,
+    destructor: AuxDestructor,
+) void {
+    c.sqlite3_set_auxdata(ctx, @intCast(arg), p, destructor);
+}
+
 // --- Tests ------------------------------------------------------------------
 
 fn testEcho(

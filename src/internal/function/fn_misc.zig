@@ -28,13 +28,13 @@ pub fn errorFn(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 pub fn cast(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len != 4)
         return bind.fail("CAST: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    const from_json = try args[1].toString(alloc);
-    const to_json = try args[2].toString(alloc);
     const is_safe = try args[3].toBool();
-    const from_type = parseTypeJson(alloc, from_json) catch
-        return bind.fail("CAST: failed to parse cast base type", .{}, error.CorruptData);
-    const to_type = parseTypeJson(alloc, to_json) catch
-        return bind.fail("CAST: failed to parse cast target type", .{}, error.CorruptData);
+
+    // The two type documents are SQL literals: the same bytes on every row of
+    // the scan. Parsing them per row dominated the cost of a cast — see the
+    // CachedType docs — so the parsed form is cached against the call site.
+    const from_type = try cachedTypeJson(alloc, args[1], 1, "base");
+    const to_type = try cachedTypeJson(alloc, args[2], 2, "target");
 
     const from_value = castValue(alloc, from_type, args[0]) catch |err| {
         if (is_safe) return null_v;
@@ -45,6 +45,62 @@ pub fn cast(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return err;
     };
     return casted;
+}
+
+/// A parsed type document, owned by an arena of its own so SQLite can free the
+/// whole thing through one destructor.
+///
+/// Everything the cast needs is reachable from `value`; the arena exists only
+/// to be torn down with it.
+const CachedType = struct {
+    arena: std.heap.ArenaAllocator,
+    value: std.json.Value,
+
+    fn destroy(p: ?*anyopaque) callconv(.c) void {
+        const self: *CachedType = @ptrCast(@alignCast(p.?));
+        const gpa = self.arena.child_allocator;
+        self.arena.deinit();
+        gpa.destroy(self);
+    }
+};
+
+/// The parsed form of a type argument, reusing the one cached against this
+/// call site when SQLite still has it.
+///
+/// A miss is always safe: SQLite may discard the entry at any point, and only
+/// promises to keep it for arguments that are compile-time constants. When
+/// there is no context at all — a direct unit-test call — this is just a parse.
+fn cachedTypeJson(
+    alloc: std.mem.Allocator,
+    arg: Value,
+    index: i32,
+    comptime what: []const u8,
+) Error!std.json.Value {
+    if (bind.auxGet(CachedType, index)) |hit| return hit.value;
+
+    const json = try arg.toString(alloc);
+    // No call site to cache against — a handler called directly, as the unit
+    // tests do. Anything allocated here would have no owner to free it.
+    if (bind.current_ctx == null) {
+        return parseTypeJson(alloc, json) catch
+            return bind.fail("CAST: failed to parse cast " ++ what ++ " type", .{}, error.CorruptData);
+    }
+
+    const gpa = std.heap.c_allocator;
+    const cached = gpa.create(CachedType) catch
+        return parseTypeJson(alloc, json) catch
+            return bind.fail("CAST: failed to parse cast " ++ what ++ " type", .{}, error.CorruptData);
+    cached.* = .{ .arena = std.heap.ArenaAllocator.init(gpa), .value = undefined };
+    cached.value = parseTypeJson(cached.arena.allocator(), json) catch {
+        cached.arena.deinit();
+        gpa.destroy(cached);
+        return bind.fail("CAST: failed to parse cast " ++ what ++ " type", .{}, error.CorruptData);
+    };
+
+    // Read the value out first: the destructor may run before auxSet returns.
+    const parsed = cached.value;
+    bind.auxSet(index, cached, CachedType.destroy);
+    return parsed;
 }
 
 fn parseTypeJson(alloc: std.mem.Allocator, s: []const u8) !std.json.Value {

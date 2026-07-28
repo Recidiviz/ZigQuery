@@ -83,6 +83,10 @@ fn invoke(
     _ = state.arena.reset(.retain_capacity);
     const alloc = state.arena.allocator();
     bind.clearDiagnostics();
+    // Lets a handler cache work derived from a constant argument against this
+    // call site; see bind.auxGet.
+    bind.current_ctx = ctx;
+    defer bind.current_ctx = null;
 
     const n: usize = @intCast(argc);
     if (n < info.min_args) {
@@ -90,7 +94,7 @@ fn invoke(
         return;
     }
 
-    const args = decodeArgs(alloc, argv, n) catch {
+    const args = decodeArgs(alloc, ctx, comptime info.cached_args, argv, n) catch {
         sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": failed to decode value");
         return;
     };
@@ -115,11 +119,22 @@ fn invoke(
 /// INTEGER/FLOAT pass through; TEXT/BLOB carry base64(binary codec).
 fn decodeArgs(
     alloc: std.mem.Allocator,
+    ctx: ?*c.sqlite3_context,
+    comptime cached_args: u8,
     argv: [*c]?*c.sqlite3_value,
     n: usize,
 ) ![]Value {
     const args = try alloc.alloc(Value, n);
     for (0..n) |i| {
+        // An argument the handler has already digested and cached against this
+        // call site is never read, so decoding it is pure waste — and for
+        // CAST's type documents that waste is two codec round trips per row.
+        if (cached_args != 0 and i < 8 and (cached_args >> @intCast(i)) & 1 == 1) {
+            if (sqlite.getAuxdata(ctx, @intCast(i)) != null) {
+                args[i] = Value.@"null";
+                continue;
+            }
+        }
         args[i] = switch (sqlite.valueType(argv[i])) {
             .null => Value.@"null",
             .integer => Value{ .int = sqlite.valueInt64(argv[i]) },
@@ -170,7 +185,7 @@ fn decodeArrayTramp(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3
 }
 
 fn decodeArrayImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqlite3_value) !void {
-    const args = try decodeArgs(alloc, @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})), 1);
+    const args = try decodeArgs(alloc, ctx, 0, @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})), 1);
     if (args[0] == .@"null") {
         sqlite.resultText(ctx, "[]");
         return;
@@ -218,7 +233,7 @@ fn groupByTramp(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_val
 }
 
 fn groupByImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqlite3_value) !void {
-    const args = try decodeArgs(alloc, @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})), 1);
+    const args = try decodeArgs(alloc, ctx, 0, @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})), 1);
     const decoded = if (args[0] == .safe) args[0].safe.* else args[0];
     switch (decoded) {
         .@"null" => sqlite.resultNull(ctx),
