@@ -1730,6 +1730,64 @@ fn newTableSpecFromCreate(
     return table_spec;
 }
 
+/// Like `translate`, but against a live database's catalog, so the statement
+/// may reference tables and views that database has created. `translate`
+/// analyzes with an empty catalog and cannot.
+///
+/// For inspecting emitted SQL — `EXPLAIN QUERY PLAN` over a recreated view
+/// graph, say — where the query is only meaningful in terms of what is already
+/// there.
+pub fn translateOn(
+    db: *Db,
+    arena: std.mem.Allocator,
+    sql: []const u8,
+    opts: QueryOptions,
+) Error![]const []const u8 {
+    const sqlz = try arena.dupeZ(u8, sql);
+    var out: std.ArrayList([]const u8) = .empty;
+    var offset: usize = 0;
+    while (true) {
+        const analyzed = blk: {
+            if (db.syncedCatalogHandle(arena)) |handle| {
+                break :blk analyzer_ffi.analyzeNextStatementWithCatalog(
+                    arena,
+                    handle,
+                    sqlz,
+                    offset,
+                    "{}",
+                ) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        db.setLastError(analyzer_ffi.last_error);
+                        return error.AnalyzeFailed;
+                    },
+                };
+            }
+            const catalog_json = db.statelessCatalogJson(arena) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    db.setLastError(@errorName(err));
+                    return error.AnalyzeFailed;
+                },
+            };
+            break :blk analyzer_ffi.analyzeNextStatement(arena, sqlz, offset, catalog_json) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    db.setLastError(analyzer_ffi.last_error);
+                    return error.AnalyzeFailed;
+                },
+            };
+        };
+        offset = analyzed.resume_offset;
+        try out.append(arena, transformStatement(db, arena, analyzed.node, opts) catch |err| {
+            db.setLastError(@errorName(err));
+            return err;
+        });
+        if (analyzed.at_end) break;
+    }
+    return out.toOwnedSlice(arena);
+}
+
 /// Analyze + transform without executing: the SQLite SQL text of every
 /// statement in `sql` (CLI --sql mode and golden tests). On AnalyzeFailed
 /// the message is in analyzer_ffi.last_error.
