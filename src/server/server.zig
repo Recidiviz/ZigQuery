@@ -350,6 +350,43 @@ pub const Server = struct {
                 if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
                 if (handle_ms == 0) 0 else sqlite_ms / handle_ms,
             });
+        // SQLite's own allocator accounting.
+        //
+        // `lookaside.hitRate` is the number that matters. Lookaside is a
+        // per-connection pool of small fixed-size slots serving the many
+        // short-lived allocations sqlite3_prepare_v2 makes for parse-tree and
+        // VDBE structures — the phase measured at 22% of handle time. A rate
+        // near 1.0 means allocation is already off the critical path; a rate
+        // near 0 with `missFull` high means the pool is exhausted.
+        //
+        // Exhausted is not the same as costly: on the view graph the rate was
+        // driven from 0.0000 to 0.9676 with no effect on prepare time outside
+        // the noise floor (Options.lookaside records the table). These are
+        // reported so that stays a measurement rather than a belief, in either
+        // direction.
+        const alloc = s.db.allocStats();
+        try out.print(arena, ",\"sqliteAlloc\":{{" ++
+            "\"memoryUsedBytes\":{d},\"memoryUsedPeakBytes\":{d}," ++
+            "\"mallocsOutstanding\":{d},\"mallocsOutstandingPeak\":{d}," ++
+            "\"largestAllocBytes\":{d}," ++
+            "\"schemaBytes\":{d},\"stmtBytes\":{d},\"pagerCacheBytes\":{d}," ++
+            "\"lookaside\":{{\"hit\":{d},\"missSize\":{d},\"missFull\":{d}," ++
+            "\"hitRate\":{d:.4},\"slotsInUse\":{d},\"slotsPeak\":{d}}}}}", .{
+            alloc.memory_used.current,
+            alloc.memory_used.highwater,
+            alloc.malloc_count.current,
+            alloc.malloc_count.highwater,
+            alloc.malloc_size_max,
+            alloc.schema_used,
+            alloc.stmt_used,
+            alloc.cache_used,
+            alloc.lookaside_hit,
+            alloc.lookaside_miss_size,
+            alloc.lookaside_miss_full,
+            alloc.hitRate() orelse 0.0,
+            alloc.lookaside_used.current,
+            alloc.lookaside_used.highwater,
+        });
         try out.appendSlice(arena, ",\"routes\":[");
 
         var first = true;

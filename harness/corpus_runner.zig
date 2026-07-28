@@ -146,6 +146,68 @@ pub fn main(init: std.process.Init) !void {
             @as(f64, @floatFromInt(zetasqlite.phase.count(.sqlite_prepare))),
     });
 
+    // Where the time went. Printed next to the allocator counters below
+    // because the pair is what makes a lookaside change judgeable: the
+    // counters say whether the pool is being missed, `prepareMs` says whether
+    // fixing that is worth anything.
+    const ms = struct {
+        fn of(ns: u64) f64 {
+            return @as(f64, @floatFromInt(ns)) / 1e6;
+        }
+    }.of;
+    try out.print(
+        "phases:       analyze {d:.0} ms / transform {d:.0} ms / " ++
+            "prepare {d:.0} ms / step {d:.0} ms / exec {d:.0} ms\n",
+        .{
+            ms(zetasqlite.phase.totalNs(.analyze)),
+            ms(zetasqlite.phase.totalNs(.transform)),
+            ms(zetasqlite.phase.totalNs(.sqlite_prepare)),
+            ms(zetasqlite.phase.totalNs(.sqlite_step)),
+            ms(zetasqlite.phase.totalNs(.sqlite_exec)),
+        },
+    );
+
+    // SQLite's own allocator accounting. The question this settles: is any of
+    // the prepare/step cost allocation, and would sizing the lookaside pool
+    // move it? A hit rate near 1.0 means allocation is already off the
+    // critical path and tuning the allocator cannot help.
+    //
+    // LOOKASIDE_SLOTS / LOOKASIDE_BYTES override the pool for a comparison run.
+    const alloc_stats = db.allocStats();
+    try out.print(
+        "sqlite alloc: {d} allocations outstanding (peak {d}), {d} KiB used " ++
+            "(peak {d} KiB), largest {d} B\n",
+        .{
+            alloc_stats.malloc_count.current,
+            alloc_stats.malloc_count.highwater,
+            @divFloor(alloc_stats.memory_used.current, 1024),
+            @divFloor(alloc_stats.memory_used.highwater, 1024),
+            alloc_stats.malloc_size_max,
+        },
+    );
+    try out.print(
+        "lookaside:    {d} hit / {d} miss-size / {d} miss-full  " ++
+            "hitRate={d:.4}  slots peak {d}\n",
+        .{
+            alloc_stats.lookaside_hit,
+            alloc_stats.lookaside_miss_size,
+            alloc_stats.lookaside_miss_full,
+            alloc_stats.hitRate() orelse 0.0,
+            alloc_stats.lookaside_used.highwater,
+        },
+    );
+    // What is holding the pool. Schema objects live for the connection's
+    // lifetime, so they are what decides the floor a pool has to clear before
+    // a single prepare can use it.
+    try out.print(
+        "conn memory:  schema {d} KiB / stmt {d} KiB / pager cache {d} KiB\n",
+        .{
+            @divFloor(alloc_stats.schema_used, 1024),
+            @divFloor(alloc_stats.stmt_used, 1024),
+            @divFloor(alloc_stats.cache_used, 1024),
+        },
+    );
+
     // Optional: dump every FAIL detail (invoke with any extra arg).
     if (init.environ_map.get("DUMP_FAILS") != null) {
         for (results.items) |r| {

@@ -220,7 +220,131 @@ pub const Db = struct {
         );
         if (rc != c.SQLITE_OK) return error.SQLite;
     }
+
+    /// Per-connection allocator counter.
+    ///
+    /// Read without resetting, so values are cumulative since the connection
+    /// opened — a served process wants totals, not an interval.
+    pub fn dbStatus(db: *Db, op: DbStatus) Counter {
+        var cur: c_int = 0;
+        var hi: c_int = 0;
+        const rc = c.sqlite3_db_status(db.handle, @intFromEnum(op), &cur, &hi, 0);
+        // The only documented failure is an unrecognized op, and every op is a
+        // constant lifted from sqlite3.h — so a failure means `DbStatus` has
+        // drifted from the header, not that the call was misused.
+        std.debug.assert(rc == c.SQLITE_OK);
+        std.debug.assert(cur >= 0);
+        std.debug.assert(hi >= 0);
+        // Assert the field SQLite does *not* maintain for this op, so reading
+        // the wrong one is caught here rather than silently reported as zero.
+        switch (op.shape()) {
+            .gauge_with_peak => std.debug.assert(hi >= cur),
+            .total_in_highwater => std.debug.assert(cur == 0),
+            .gauge_only => std.debug.assert(hi == 0),
+        }
+        return .{ .current = cur, .highwater = hi };
+    }
 };
+
+// --- Allocator instrumentation ----------------------------------------------
+//
+// These exist to answer one question with a number: is SQLite's allocator
+// worth tuning at all? The measured profile puts sqlite3_prepare_v2 at 22% of
+// server handle time, and lookaside targets exactly the small allocations
+// prepare makes — but only if the pool is actually being exhausted. The
+// counters below say whether it is, so the answer is a measurement rather
+// than an argument.
+
+pub const Counter = struct {
+    current: i64,
+    highwater: i64,
+};
+
+/// Which of a counter's two fields SQLite actually maintains.
+///
+/// The status APIs look uniform and are not: some ops are gauges with a peak,
+/// some report a running total in `highwater` and leave `current` pinned at
+/// zero, and some maintain no peak at all and leave `highwater` at zero. The
+/// distinction is documented per-op and nowhere in the signature, so it is
+/// recorded here and asserted on every read.
+pub const Shape = enum { gauge_with_peak, total_in_highwater, gauge_only };
+
+/// Process-wide allocator counters (sqlite3_status64).
+///
+/// `malloc_count` is the number of allocations *currently outstanding*, not a
+/// lifetime total — SQLite exposes no cumulative allocation count. Cumulative
+/// volume comes from the lookaside counters in `DbStatus`, which is the number
+/// that matters for prepare/step anyway.
+pub const Status = enum(c_int) {
+    memory_used = c.SQLITE_STATUS_MEMORY_USED,
+    /// Highwater is the largest single allocation ever requested; `current` is
+    /// always zero.
+    malloc_size = c.SQLITE_STATUS_MALLOC_SIZE,
+    malloc_count = c.SQLITE_STATUS_MALLOC_COUNT,
+    pagecache_used = c.SQLITE_STATUS_PAGECACHE_USED,
+    /// Page-cache bytes that overflowed to the general allocator.
+    pagecache_overflow = c.SQLITE_STATUS_PAGECACHE_OVERFLOW,
+
+    pub fn shape(op: Status) Shape {
+        return switch (op) {
+            .malloc_size => .total_in_highwater,
+            .memory_used,
+            .malloc_count,
+            .pagecache_used,
+            .pagecache_overflow,
+            => .gauge_with_peak,
+        };
+    }
+};
+
+/// Per-connection counters (sqlite3_db_status).
+///
+/// For the three lookaside outcome counters, SQLite documents `current` as
+/// always zero and only `highwater` as meaningful — they are running totals,
+/// not gauges. `lookaside_used` is a genuine gauge, and its highwater pinned
+/// at the configured slot count is what "the pool is too small" looks like.
+pub const DbStatus = enum(c_int) {
+    /// Slots checked out now, and at peak. A peak pinned to the configured
+    /// slot count is what an exhausted pool looks like.
+    lookaside_used = c.SQLITE_DBSTATUS_LOOKASIDE_USED,
+    /// Allocations served from lookaside: the fast path.
+    lookaside_hit = c.SQLITE_DBSTATUS_LOOKASIDE_HIT,
+    /// Missed because the request was larger than a slot -> raise slot_bytes.
+    lookaside_miss_size = c.SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE,
+    /// Missed because every slot was checked out -> raise slot_count.
+    lookaside_miss_full = c.SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL,
+    cache_used = c.SQLITE_DBSTATUS_CACHE_USED,
+    schema_used = c.SQLITE_DBSTATUS_SCHEMA_USED,
+    stmt_used = c.SQLITE_DBSTATUS_STMT_USED,
+
+    pub fn shape(op: DbStatus) Shape {
+        return switch (op) {
+            .lookaside_used => .gauge_with_peak,
+            .lookaside_hit,
+            .lookaside_miss_size,
+            .lookaside_miss_full,
+            => .total_in_highwater,
+            // SQLite documents the highwater for these three as always zero.
+            .cache_used, .schema_used, .stmt_used => .gauge_only,
+        };
+    }
+};
+
+/// Process-wide allocator counter (sqlite3_status64).
+pub fn status(op: Status) Counter {
+    var cur: c.sqlite3_int64 = 0;
+    var hi: c.sqlite3_int64 = 0;
+    const rc = c.sqlite3_status64(@intFromEnum(op), &cur, &hi, 0);
+    std.debug.assert(rc == c.SQLITE_OK);
+    std.debug.assert(cur >= 0);
+    std.debug.assert(hi >= 0);
+    switch (op.shape()) {
+        .gauge_with_peak => std.debug.assert(hi >= cur),
+        .total_in_highwater => std.debug.assert(cur == 0),
+        .gauge_only => std.debug.assert(hi == 0),
+    }
+    return .{ .current = cur, .highwater = hi };
+}
 
 pub const Stmt = struct {
     handle: *c.sqlite3_stmt,

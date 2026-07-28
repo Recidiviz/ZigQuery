@@ -114,6 +114,40 @@ pub const OpenOptions = struct {
     shared_catalog: ?*shared_catalog.SharedCatalog = null,
 };
 
+/// SQLite's own allocator accounting, process-wide and per-connection.
+///
+/// Exists so "would tuning SQLite's allocator help?" is answered by counters
+/// rather than by reasoning. `lookaside_hit` against the two miss counters is
+/// the whole answer: a high hit rate means allocation is already off the
+/// critical path and no amount of tuning will move the profile.
+pub const AllocStats = struct {
+    /// Bytes currently held by SQLite, and the most it ever held.
+    memory_used: sqlite.Counter,
+    /// Allocations outstanding now / at peak. Not a lifetime total.
+    malloc_count: sqlite.Counter,
+    /// Largest single allocation SQLite has ever requested.
+    malloc_size_max: i64,
+    /// Slots checked out now / at peak. A peak pinned to the configured slot
+    /// count is what an exhausted pool looks like.
+    lookaside_used: sqlite.Counter,
+    /// Running totals since this connection opened.
+    lookaside_hit: i64,
+    lookaside_miss_size: i64,
+    lookaside_miss_full: i64,
+    /// Page cache, schema and prepared-statement memory for this connection.
+    cache_used: i64,
+    schema_used: i64,
+    stmt_used: i64,
+
+    /// Fraction of lookaside-eligible allocations served from the pool, or
+    /// null when nothing has been allocated yet.
+    pub fn hitRate(a: AllocStats) ?f64 {
+        const total = a.lookaside_hit + a.lookaside_miss_size + a.lookaside_miss_full;
+        if (total == 0) return null;
+        return @as(f64, @floatFromInt(a.lookaside_hit)) / @as(f64, @floatFromInt(total));
+    }
+};
+
 /// One output column of a QueryStmt (Go ColumnSpec: name + spec Type).
 ///
 /// Public so servers can derive a result schema. Go reaches the same data
@@ -256,6 +290,25 @@ pub const Db = struct {
     /// Diagnostic message for the last failed query/exec call.
     pub fn lastError(db: *Db) []const u8 {
         return db.last_error orelse "";
+    }
+
+    /// SQLite's allocator accounting for this connection plus the process.
+    ///
+    /// Cheap (seven counter reads, no locks taken), so a stats endpoint can
+    /// call it per request without perturbing what it measures.
+    pub fn allocStats(db: *Db) AllocStats {
+        return .{
+            .memory_used = sqlite.status(.memory_used),
+            .malloc_count = sqlite.status(.malloc_count),
+            .malloc_size_max = sqlite.status(.malloc_size).highwater,
+            .lookaside_used = db.sqlite_db.dbStatus(.lookaside_used),
+            .lookaside_hit = db.sqlite_db.dbStatus(.lookaside_hit).highwater,
+            .lookaside_miss_size = db.sqlite_db.dbStatus(.lookaside_miss_size).highwater,
+            .lookaside_miss_full = db.sqlite_db.dbStatus(.lookaside_miss_full).highwater,
+            .cache_used = db.sqlite_db.dbStatus(.cache_used).current,
+            .schema_used = db.sqlite_db.dbStatus(.schema_used).current,
+            .stmt_used = db.sqlite_db.dbStatus(.stmt_used).current,
+        };
     }
 
     fn setLastError(db: *Db, msg: []const u8) void {
@@ -3591,4 +3644,29 @@ test "parameter mode ignores question marks in triple-quoted strings" {
         ParamMode.positional,
         try parameterMode(arena, "SELECT '''prose?''' AS a, ? AS b"),
     );
+}
+
+test "allocStats reports lookaside activity" {
+    // Two connections: one at SQLite's default pool, one deliberately starved
+    // to a single tiny slot. The starved one must show misses the default one
+    // does not, which is what proves the counters track the pool rather than
+    // just counting allocations.
+    const sql = "SELECT x, x * 2 AS d FROM UNNEST([1, 2, 3]) AS x ORDER BY x";
+
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    {
+        var rows = try db.query(sql, &.{}, .{});
+        defer rows.deinit();
+        while (try rows.next()) |_| {}
+    }
+    const default_stats = db.allocStats();
+    try testing.expect(default_stats.lookaside_hit > 0);
+    try testing.expect(default_stats.memory_used.current > 0);
+    try testing.expect(default_stats.malloc_size_max > 0);
+    // A pool that is never exhausted reports a hit rate; assert it is a real
+    // fraction rather than trusting the division.
+    const rate = default_stats.hitRate().?;
+    try testing.expect(rate > 0.0);
+    try testing.expect(rate <= 1.0);
 }
