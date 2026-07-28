@@ -63,6 +63,62 @@ def post(path, payload):
         return e.code, json.loads(e.read())
 
 
+def insert_all_cases():
+    """tabledata.insertAll: the success body and both insertErrors shapes.
+
+    The response is worth capturing verbatim because it is the one place the
+    emulator emits fields that `omitempty` would normally drop — `index` at 0,
+    and empty `debugInfo` / `location` / `message` — via the generated structs'
+    ForceSendFields.
+    """
+    dataset, table = "golden_ds", "golden_t"
+    post(f"/projects/{PROJECT}/datasets", {
+        "datasetReference": {"projectId": PROJECT, "datasetId": dataset},
+    })
+    post(f"/projects/{PROJECT}/datasets/{dataset}/tables", {
+        "tableReference": {
+            "projectId": PROJECT, "datasetId": dataset, "tableId": table,
+        },
+        "schema": {"fields": [
+            {"name": "name", "type": "STRING"},
+            {"name": "age", "type": "INTEGER"},
+        ]},
+    })
+
+    path = f"/projects/{PROJECT}/datasets/{dataset}/tables/{table}/insertAll"
+    cases = []
+    for name, rows in [
+        ("insert_all_ok", [
+            {"insertId": "a", "json": {"name": "Alice", "age": "30"}},
+            {"insertId": "b", "json": {"name": "Bob", "age": "25"}},
+        ]),
+        ("insert_all_no_rows", []),
+        ("insert_all_unknown_field", [
+            {"json": {"name": "Bob", "age": "25", "unknown_field": "value"}},
+        ]),
+        # Pins the ordering: every invalid row first, then a `stopped` entry
+        # for each row that was itself fine but went uninserted anyway.
+        ("insert_all_mixed", [
+            {"json": {"name": "ok1", "age": "1"}},
+            {"json": {"name": "bad1", "bad_field": "x"}},
+            {"json": {"name": "ok2", "age": "2"}},
+            {"json": {"name": "bad2", "bad1": "y"}},
+        ]),
+    ]:
+        status, body = post(path, {"rows": rows})
+        cases.append({"name": name, "rows": rows, "status": status, "response": body})
+
+    # And the 404 for a table that was never created.
+    missing = f"/projects/{PROJECT}/datasets/{dataset}/tables/nope/insertAll"
+    status, body = post(missing, {"rows": [{"json": {"a": 1}}]})
+    cases.append({
+        "name": "insert_all_table_not_found",
+        "status": status,
+        "response": body,
+    })
+    return cases
+
+
 def normalize(obj):
     """Blank out server-generated ids so responses compare stably."""
     if isinstance(obj, dict):
@@ -117,6 +173,8 @@ def main():
             "response": gr_body,
         }
     )
+
+    cases.extend(insert_all_cases())
 
     json.dump(
         {

@@ -51,6 +51,7 @@ pub const Route = struct {
         tables_get,
         tables_delete,
         tables_patch,
+        tabledata_insert_all,
         debug_stats,
     };
 
@@ -60,7 +61,7 @@ pub const Route = struct {
     pattern: []const u8,
 };
 
-/// M1 surface. Datasets, tables and tabledata arrive in M2/M3.
+/// The implemented surface. tabledata.list is not here yet; insertAll is.
 pub const routes = [_]Route{
     .{ .id = .discovery, .method = .GET, .pattern = "/discovery/v1/apis/bigquery/v2/rest" },
     .{ .id = .discovery, .method = .GET, .pattern = "/$discovery/rest" },
@@ -83,6 +84,12 @@ pub const routes = [_]Route{
     .{ .id = .tables_get, .method = .GET, .pattern = "/projects/*/datasets/*/tables/*" },
     .{ .id = .tables_delete, .method = .DELETE, .pattern = "/projects/*/datasets/*/tables/*" },
     .{ .id = .tables_patch, .method = .PATCH, .pattern = "/projects/*/datasets/*/tables/*" },
+
+    .{
+        .id = .tabledata_insert_all,
+        .method = .POST,
+        .pattern = "/projects/*/datasets/*/tables/*/insertAll",
+    },
 };
 
 /// Go registers every handler twice: bare, and under `/bigquery/v2`
@@ -189,7 +196,21 @@ test "trailing slash does not match" {
     try testing.expectEqual(Outcome.not_found, match(.POST, "/projects/p/queries/"));
 }
 
-test "all M1 routes match their own patterns" {
+test "insertAll sits under the table path and captures three ids" {
+    const out = match(.POST, "/projects/p/datasets/ds/tables/t/insertAll");
+    try testing.expectEqual(Route.Id.tabledata_insert_all, out.matched.route);
+    try testing.expectEqualStrings("p", out.matched.captures.get(0));
+    try testing.expectEqualStrings("ds", out.matched.captures.get(1));
+    try testing.expectEqualStrings("t", out.matched.captures.get(2));
+
+    // A table literally named insertAll is still a table GET, not an insert.
+    try testing.expectEqual(
+        Route.Id.tables_get,
+        match(.GET, "/projects/p/datasets/ds/tables/insertAll").matched.route,
+    );
+}
+
+test "all declared routes match their own patterns" {
     // Guards against a pattern that can never be reached.
     for (routes) |route| {
         var buf: [128]u8 = undefined;

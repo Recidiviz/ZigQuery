@@ -215,4 +215,23 @@ pub fn build(b: *std.Build) void {
     if (maybe_bazel) |bz| server_tests.step.dependOn(&bz.step);
     const run_server_tests = b.addRunArtifact(server_tests);
     b.step("test-server", "Run server unit tests").dependOn(&run_server_tests.step);
+
+    // Where insertAll's time goes, phase by phase, on a captured request body.
+    const insertbench_exe = b.addExecutable(.{
+        .name = "insert-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/insert_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "bqserver", .module = server_mod },
+                .{ .name = "zetasqlite", .module = mod },
+            },
+        }),
+    });
+    if (maybe_bazel) |bz| insertbench_exe.step.dependOn(&bz.step);
+    const run_insertbench = b.addRunArtifact(insertbench_exe);
+    if (b.args) |args| run_insertbench.addArgs(args);
+    b.step("insert-bench", "Profile a tabledata.insertAll request body")
+        .dependOn(&run_insertbench.step);
 }

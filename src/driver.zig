@@ -55,6 +55,13 @@ pub const Cell = union(enum) {
     bool: bool,
     string: []const u8,
     bytes: []const u8,
+    /// A raw JSON payload, for binding to a JSON column. Never produced when
+    /// reading: Go's rows.go hands a JSON column back as its ToApiString, i.e.
+    /// a plain string cell, so `cellFromValue` still yields `.string`. It
+    /// exists because CastValue(JSON) on a `.string` calls ToJSON, which
+    /// *quotes* the string — Go avoids that by unmarshalling before it binds
+    /// (contentdata/repository.go:510).
+    json: []const u8,
     date: []const u8, // civil date rendered as YYYY-MM-DD, like Go returns
     // Date/time kinds render as their Go ToApiString forms (what rows.go
     // hands back through database/sql): timestamp "sec.rem", datetime
@@ -382,6 +389,94 @@ pub const Db = struct {
         _ = try db.runStatements(arena_state.allocator(), sql, args, opts, .exec);
     }
 
+    /// Analyzes, transforms and SQLite-prepares one statement for reuse across
+    /// many bind/exec cycles — Go's conn.PrepareContext, which is how
+    /// bigquery-emulator's contentdata.AddTableData writes a whole batch
+    /// through a single prepare. Without it every row would pay its own
+    /// analyze + transform.
+    ///
+    /// One statement only, and only the kinds that lower to one reusable
+    /// SQLite statement: a query, or INSERT / UPDATE / DELETE. DDL, MERGE and
+    /// TRUNCATE *are* their own execution — they mutate the catalog inline and
+    /// leave nothing to hold on to — so they report error.Unimplemented.
+    ///
+    /// The handle embeds the schema resolved at prepare time, so it stays
+    /// valid only while the catalog objects it referenced are unchanged. Go's
+    /// prepared statements carry the same caveat.
+    pub fn prepare(db: *Db, sql: []const u8, opts: QueryOptions) Error!PreparedStmt {
+        var arena_state = std.heap.ArenaAllocator.init(db.gpa);
+        errdefer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        const flattened_sql = try flattenBeginEndBlocks(arena, sql);
+        const sqlz = try arena.dupeZ(u8, flattened_sql);
+
+        db.param_mode = parameterMode(arena, sql) catch {
+            db.setLastError("named parameter and positional parameter cannot be used together");
+            return error.AnalyzeFailed;
+        };
+        const options_json: [:0]const u8 = switch (db.param_mode) {
+            .positional => "{\"parameter_mode\":\"positional\"}",
+            .named => "{}",
+        };
+
+        const analyzed = try db.analyzeOne(arena, sqlz, 0, opts, options_json);
+        if (!analyzed.at_end) {
+            db.setLastError("cannot prepare a multi-statement script");
+            return error.Unimplemented;
+        }
+
+        // Temp objects live only as long as the script that created them, so a
+        // statement that collects any cannot outlive this call. Collect them
+        // anyway: the transform below expects the collectors to be set.
+        var temp_tables: std.ArrayList([]const u8) = .empty;
+        db.temp_collector = &temp_tables;
+        defer db.temp_collector = null;
+        var temp_functions: std.ArrayList([]const u8) = .empty;
+        db.temp_func_collector = &temp_functions;
+        defer db.temp_func_collector = null;
+        defer for (temp_functions.items) |name| {
+            db.unregisterFunctionSpec(name) catch {};
+        };
+
+        db.stmt_params = &.{};
+        const stmt_node = statementNodeOf(analyzed.node) orelse return error.Unimplemented;
+        var columns: []const OutputColumn = &.{};
+        const formatted = switch (stmt_node) {
+            .resolved_query_stmt_node => |query_stmt| blk: {
+                const text = try transformStatement(db, arena, analyzed.node, opts);
+                columns = try outputColumns(arena, query_stmt);
+                break :blk text;
+            },
+            .resolved_insert_stmt_node,
+            .resolved_update_stmt_node,
+            .resolved_delete_stmt_node,
+            => try transformStatement(db, arena, analyzed.node, opts),
+            else => return error.Unimplemented,
+        };
+        if (temp_tables.items.len > 0) {
+            db.dropTempTables(arena, temp_tables.items);
+            db.setLastError("cannot prepare a statement that creates temporary tables");
+            return error.Unimplemented;
+        }
+
+        const stmt = db.sqlite_db.prepare(formatted) catch {
+            db.setLastError(db.sqlite_db.errmsg());
+            return error.ExecFailed;
+        };
+        return .{
+            .db = db,
+            .arena = arena_state,
+            .scratch = std.heap.ArenaAllocator.init(db.gpa),
+            .stmt = stmt,
+            .param_mode = db.param_mode,
+            // Points into `arena_state`, which the handle now owns; only the
+            // Db-level field is transient.
+            .params = db.stmt_params,
+            .columns = columns,
+        };
+    }
+
     /// Table or view registered in the GoogleSQL catalog under
     /// `project.dataset.table`, or null.
     ///
@@ -414,6 +509,31 @@ pub const Db = struct {
         var g = db.lockCatalog();
         defer g.unlock();
         return g.catalog.tableSpecByName(canonical);
+    }
+
+    /// Every table and view the GoogleSQL catalog holds under
+    /// `project.dataset`, in registration order.
+    ///
+    /// The metadata API needs this to answer "what is in this dataset" for
+    /// objects the metadata store never saw — anything created by SQL rather
+    /// than by tables.insert. Pointer lifetime is as `catalogTable` describes.
+    pub fn catalogTablesIn(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) error{OutOfMemory}![]const *const spec.TableSpec {
+        var out: std.ArrayList(*const spec.TableSpec) = .empty;
+        var g = db.lockCatalog();
+        defer g.unlock();
+        for (try g.catalog.liveTableSpecs(arena)) |table_spec| {
+            const path = table_spec.name_path;
+            if (path.len != 3) continue;
+            if (!std.mem.eql(u8, path[0], project_id)) continue;
+            if (!std.mem.eql(u8, path[1], dataset_id)) continue;
+            try out.append(arena, table_spec);
+        }
+        return out.toOwnedSlice(arena);
     }
 
     /// Exclusive access to this connection's persistent catalog. Blocks while
@@ -739,6 +859,62 @@ pub const Db = struct {
         temp_tables: []const []const u8 = &.{},
     };
 
+    /// One analyzer round trip: the catalog-handle path when the delta can be
+    /// pushed into the live handle, the stateless JSON path otherwise. Shared
+    /// by the runStatements loop and by prepare.
+    fn analyzeOne(
+        db: *Db,
+        arena: std.mem.Allocator,
+        sqlz: [:0]const u8,
+        offset: usize,
+        opts: QueryOptions,
+        options_json: [:0]const u8,
+    ) Error!analyzer_ffi.Analyzed {
+        var analyze_timer = phase.Timer.begin(.analyze);
+        defer analyze_timer.end();
+        // Re-read the handle from `db` *after* syncing: a catalog removal
+        // forces a rebuild, which destroys the old handle. Using the pointer
+        // captured before the sync is a use-after-free.
+        if (opts.catalog_scope == .full) if (db.syncedCatalogHandle(arena)) |handle| {
+            return analyzer_ffi.analyzeNextStatementWithCatalog(
+                arena,
+                handle,
+                sqlz,
+                offset,
+                options_json,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    db.setLastError(analyzer_ffi.last_error);
+                    return error.AnalyzeFailed;
+                },
+            };
+        };
+
+        const catalog_json = if (opts.catalog_scope == .none)
+            try arena.dupeZ(u8, "{}")
+        else db.statelessCatalogJson(arena) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                db.setLastError(@errorName(err));
+                return error.AnalyzeFailed;
+            },
+        };
+        return analyzer_ffi.analyzeNextStatementOpts(
+            arena,
+            sqlz,
+            offset,
+            catalog_json,
+            options_json,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                db.setLastError(analyzer_ffi.last_error);
+                return error.AnalyzeFailed;
+            },
+        };
+    }
+
     /// The Analyze loop: analyzer -> per-kind statement action, mirroring
     /// Go's newStmtAction dispatch. QueryStmt transforms and prepares;
     /// CREATE/DML/DROP/TRUNCATE actions execute inline and mutate the
@@ -803,50 +979,7 @@ pub const Db = struct {
         while (true) {
             // Re-rendered per statement: DDL/DML actions mutate the
             // catalog between statements of one script.
-            const analyzed = blk: {
-            var analyze_timer = phase.Timer.begin(.analyze);
-            defer analyze_timer.end();
-            // Re-read the handle from `db` *after* syncing: a catalog
-            // removal forces a rebuild, which destroys the old handle. Using
-            // the pointer captured before the sync is a use-after-free.
-            if (opts.catalog_scope == .full) if (db.syncedCatalogHandle(arena)) |handle| {
-                {
-                    const analyzed_h = analyzer_ffi.analyzeNextStatementWithCatalog(
-                        arena,
-                        handle,
-                        sqlz,
-                        offset,
-                        options_json,
-                    ) catch |err| switch (err) {
-                        error.OutOfMemory => return error.OutOfMemory,
-                        else => {
-                            db.setLastError(analyzer_ffi.last_error);
-                            return error.AnalyzeFailed;
-                        },
-                    };
-                    break :blk analyzed_h;
-                }
-            };
-
-            const catalog_json = if (opts.catalog_scope == .none)
-                try arena.dupeZ(u8, "{}")
-            else db.statelessCatalogJson(arena) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => {
-                    db.setLastError(@errorName(err));
-                    return error.AnalyzeFailed;
-                },
-            };
-            break :blk analyzer_ffi.analyzeNextStatementOpts(arena, sqlz, offset, catalog_json, options_json) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => {
-                        db.setLastError(analyzer_ffi.last_error);
-                        return error.AnalyzeFailed;
-                    },
-                }
-            };
-            };
+            const analyzed = try db.analyzeOne(arena, sqlz, offset, opts, options_json);
             offset = analyzed.resume_offset;
             const last = analyzed.at_end;
 
@@ -1370,6 +1503,20 @@ pub const Db = struct {
         stmt: *sqlite.Stmt,
         args: []const Param,
     ) Error!usize {
+        return db.bindParamsWith(arena, stmt, args, db.param_mode, db.stmt_params);
+    }
+
+    /// bindParams against an explicit mode + parameter-type list, so a
+    /// PreparedStmt can bind from its own snapshot after `db.stmt_params` has
+    /// moved on to another statement.
+    fn bindParamsWith(
+        db: *Db,
+        arena: std.mem.Allocator,
+        stmt: *sqlite.Stmt,
+        args: []const Param,
+        param_mode: ParamMode,
+        stmt_params: []const context_mod.CollectedParam,
+    ) Error!usize {
         const count = stmt.bindParameterCount();
         if (count <= 0) return 0;
         const ucount: usize = @intCast(count);
@@ -1380,13 +1527,13 @@ pub const Db = struct {
             return error.ExecFailed;
         }
 
-        switch (db.param_mode) {
+        switch (param_mode) {
             .positional => {
                 var idx: i32 = 1;
                 while (idx <= count) : (idx += 1) {
                     const ord: usize = @intCast(idx - 1);
-                    const param_type = if (ord < db.stmt_params.len)
-                        db.stmt_params[ord].type
+                    const param_type = if (ord < stmt_params.len)
+                        stmt_params[ord].type
                     else
                         null;
                     try db.bindCell(arena, stmt, idx, args[ord].value, param_type);
@@ -1405,7 +1552,7 @@ pub const Db = struct {
                             db.setLastError("not enough query arguments");
                             return error.ExecFailed;
                         };
-                        for (db.stmt_params) |p| {
+                        for (stmt_params) |p| {
                             if (std.ascii.eqlIgnoreCase(p.identifier, pname)) {
                                 param_type = p.type;
                                 break;
@@ -1441,6 +1588,10 @@ pub const Db = struct {
         cell: Cell,
         param_type: ?*const spec.Type,
     ) Error!void {
+        // Cleared first so failDecode cannot report a diagnostic left behind
+        // by some earlier conversion (function/bind.zig does the same before
+        // it calls a UDF).
+        value_mod.diagnostic = null;
         var v = valueFromCell(arena, cell) catch |err| return db.failDecode(err);
         if (param_type) |t| {
             v = castParamValue(arena, v, t) catch |err| return db.failDecode(err);
@@ -1456,7 +1607,10 @@ pub const Db = struct {
 
     fn failDecode(db: *Db, err: anyerror) Error {
         if (err == error.OutOfMemory) return error.OutOfMemory;
-        db.setLastError(@errorName(err));
+        // Value conversions record Go's own message (e.g. "failed to convert
+        // 202-06-06 to time.Time type"); the error tag alone would throw it
+        // away. Same precedence the UDF error paths use.
+        db.setLastError(value_mod.diagnostic orelse @errorName(err));
         return error.DecodeFailed;
     }
 };
@@ -1974,12 +2128,18 @@ fn outputColumns(
     return out;
 }
 
-/// Cell -> Value for parameter binding (inverse of cellFromValue).
-/// Casts a bound parameter value to its resolved parameter type, mirroring
-/// the parts of Go CastValue that change the value shape: STRUCT types
-/// re-project the fields in declared order (missing fields become NULL) and
-/// ARRAY types cast every element. Scalar kinds pass through (the driver's
-/// cells already carry matching scalar types).
+/// Go encoder.go CastValue, keyed on the resolved parameter/column type.
+///
+/// STRUCT re-projects the fields in declared order (missing fields become
+/// NULL) and ARRAY casts every element; the scalar arms coerce whatever the
+/// caller bound to what the column actually holds, which is what lets a REST
+/// client send an INT64 as the JSON string "5". Go reaches this through
+/// EncodeGoValue = ValueFromGoValue + CastValue + EncodeValue.
+///
+/// The same switch exists twice more, pre-existing and untouched: the CAST
+/// UDF's copy keyed on a JSON type node
+/// (internal/function/fn_misc.zig castValue) and the same-kind-only stub in
+/// internal/encoder.zig.
 fn castParamValue(
     alloc: std.mem.Allocator,
     v: value_mod.Value,
@@ -2015,6 +2175,48 @@ fn castParamValue(
             }
             return value_mod.arrayValue(alloc, values);
         },
+
+        .TYPE_INT32, .TYPE_INT64, .TYPE_UINT32, .TYPE_UINT64 => {
+            return .{ .int = try v.toInt64() };
+        },
+        .TYPE_BOOL => return .{ .bool = try v.toBool() },
+        .TYPE_FLOAT, .TYPE_DOUBLE => return .{ .float = try v.toFloat64() },
+        // Go checks the concrete date/time types first and renders them with
+        // dedicated layouts; Value.toString already uses exactly those.
+        .TYPE_STRING, .TYPE_ENUM => return .{ .string = try v.toString(alloc) },
+        .TYPE_BYTES => return .{ .bytes = try v.toBytes(alloc) },
+        // Go CastValue: JsonValue(v.ToJSON()).
+        .TYPE_JSON => return .{ .json = try v.toJson(alloc) },
+        // Go CastValue: DATE(v.ToTime()) — the civil date of the instant.
+        // Routed through ToTime for every kind, as Go does, so a malformed
+        // date reports Go's "failed to convert %s to time.Time type" rather
+        // than a parser-specific message.
+        .TYPE_DATE => {
+            if (v == .date) return v;
+            return .{
+                .date = @divFloor(try value_mod.toUnixMicros(v), value_mod.day_micros),
+            };
+        },
+        // Go CastValue: TIMESTAMP/DATETIME/TIME(v.ToTime()). DATETIME shares
+        // the unix-micros scale; TIME is the time-of-day remainder.
+        .TYPE_TIMESTAMP => return .{ .timestamp = try value_mod.toUnixMicros(v) },
+        .TYPE_DATETIME => return .{ .datetime = try value_mod.toUnixMicros(v) },
+        .TYPE_TIME => {
+            const micros = try value_mod.toUnixMicros(v);
+            return .{ .time = @mod(micros, value_mod.day_micros) };
+        },
+        // Go CastValue: parseInterval(v.ToString()).
+        .TYPE_INTERVAL => switch (v) {
+            .interval => return v,
+            else => return .{ .interval = try value_mod.parseIntervalValue(try v.toString(alloc)) },
+        },
+        // Go castValueInternal: NumericValue{Rat: v.ToRat()}, isBigNumeric per
+        // the target kind (a numeric input is rewrapped under the new kind).
+        .TYPE_NUMERIC => return value_mod.numericValue(alloc, try v.toRat(alloc), false),
+        .TYPE_BIGNUMERIC => return value_mod.numericValue(alloc, try v.toRat(alloc), true),
+
+        // Kinds with no CastValue arm in Go (geography, proto, ...) pass the
+        // value through unchanged rather than failing the bind.
         else => return v,
     }
 }
@@ -2027,6 +2229,7 @@ fn valueFromCell(alloc: std.mem.Allocator, cell: Cell) !value_mod.Value {
         .bool => |b| return .{ .bool = b },
         .string => |s| return .{ .string = s },
         .bytes => |b| return .{ .bytes = b },
+        .json => |s| return .{ .json = s },
         .date => |s| return .{ .date = try value_mod.parseDateDays(s) },
         // Inverse of cellFromValue: parse the rendered api strings back.
         .timestamp => |s| return .{ .timestamp = try value_mod.parseTimestampApi(s) },
@@ -2155,6 +2358,54 @@ fn cellFromValue(
         else => return error.Unimplemented,
     }
 }
+
+/// A translated, SQLite-prepared statement that can be bound and run many
+/// times (Go database/sql Stmt). Created by Db.prepare; see its docs for the
+/// statement kinds accepted and the catalog-staleness caveat.
+pub const PreparedStmt = struct {
+    db: *Db,
+    /// Owns the translated SQL and the collected parameter types, so the
+    /// handle keeps working after Db.stmt_params has moved on.
+    arena: std.heap.ArenaAllocator,
+    /// Per-exec encoding scratch, reset rather than rebuilt between calls.
+    scratch: std.heap.ArenaAllocator,
+    stmt: sqlite.Stmt,
+    param_mode: ParamMode,
+    params: []const context_mod.CollectedParam,
+    /// Result columns of a query statement; empty for DML.
+    columns: []const OutputColumn = &.{},
+
+    /// Binds `args` and runs the statement to completion (Go
+    /// Stmt.ExecContext). Rows produced by a query statement are discarded.
+    pub fn exec(p: *PreparedStmt, args: []const Param) Error!void {
+        // Encoding allocates, and those allocations live only as long as the
+        // bind, so they must not accumulate in the handle's own arena. One
+        // scratch arena is reset per exec rather than built and torn down:
+        // over a streaming insert that is the difference between a couple of
+        // allocator round trips per row and none.
+        _ = p.scratch.reset(.retain_capacity);
+
+        p.stmt.reset();
+        p.stmt.clearBindings();
+        _ = try p.db.bindParamsWith(
+            p.scratch.allocator(),
+            &p.stmt,
+            args,
+            p.param_mode,
+            p.params,
+        );
+        while (p.stmt.step() catch {
+            p.db.setLastSqliteError();
+            return error.ExecFailed;
+        }) {}
+    }
+
+    pub fn deinit(p: *PreparedStmt) void {
+        p.stmt.finalize();
+        p.scratch.deinit();
+        p.arena.deinit();
+    }
+};
 
 /// Result of Db.rawQuery. Unlike Rows there is no arena: values borrow
 /// SQLite's row buffer directly and are invalidated by the next next().
@@ -3297,6 +3548,225 @@ test "struct parameter is cast to the declared parameter type" {
     );
     defer rows.deinit();
     try testing.expectEqual(Cell.null, (try rows.next()).?[0]);
+}
+
+test "scalar parameters are cast to the column type" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // The REST surface hands every scalar over as JSON text — google-cloud-
+    // bigquery sends INT64, NUMERIC and the date/time kinds as strings — so
+    // CastValue has to coerce them on the way in, exactly as Go does.
+    var rows = try db.query(
+        "CREATE TABLE cast_params (i INT64, f FLOAT64, b BOOL, n NUMERIC, d DATE, ts TIMESTAMP);\n" ++
+            "INSERT INTO cast_params (i, f, b, n, d, ts) VALUES (?, ?, ?, ?, ?, ?);\n" ++
+            "SELECT i, f, b, n, d, ts FROM cast_params;",
+        &.{
+            .{ .value = .{ .string = "5" } },
+            .{ .value = .{ .string = "1.5" } },
+            .{ .value = .{ .string = "true" } },
+            .{ .value = .{ .string = "1.2345" } },
+            .{ .value = .{ .string = "2024-01-02" } },
+            .{ .value = .{ .string = "2024-01-02T03:04:05Z" } },
+        },
+        .{},
+    );
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 5), row[0].int);
+    try testing.expectEqual(@as(f64, 1.5), row[1].float);
+    try testing.expectEqual(true, row[2].bool);
+    try testing.expectEqualStrings("1.2345", row[3].string);
+    try testing.expectEqualStrings("2024-01-02", row[4].date);
+    try testing.expectEqualStrings("1704164645.0", row[5].timestamp);
+}
+
+test "a value that cannot be cast reports Go's message, not the error tag" {
+    // emulator_test.py test_invalid_data_load_fails asserts on this exact
+    // text, so the diagnostic has to survive as far as lastError().
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try testing.expectError(error.DecodeFailed, db.query(
+        "CREATE TABLE bad_date (d DATE);\n" ++
+            "INSERT INTO bad_date (d) VALUES (?);",
+        &.{.{ .value = .{ .string = "202-06-06" } }},
+        .{},
+    ));
+    try testing.expectEqualStrings(
+        "failed to convert 202-06-06 to time.Time type",
+        db.lastError(),
+    );
+}
+
+test "a DATE column accepts the datetime spellings ToTime handles" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Go casts through ToTime and keeps the civil date of the instant.
+    var rows = try db.query(
+        "CREATE TABLE dates (d DATE);\n" ++
+            "INSERT INTO dates (d) VALUES (?), (?);\n" ++
+            "SELECT d FROM dates ORDER BY d;",
+        &.{
+            .{ .value = .{ .string = "2024-01-02" } },
+            .{ .value = .{ .string = "2024-03-04 05:06:07" } },
+        },
+        .{},
+    );
+    defer rows.deinit();
+    try testing.expectEqualStrings("2024-01-02", (try rows.next()).?[0].date);
+    try testing.expectEqualStrings("2024-03-04", (try rows.next()).?[0].date);
+}
+
+test "an INT64 column bound as a string still compares as a number" {
+    // The point of casting at bind time rather than at read time: the value
+    // has to reach SQLite as an INTEGER, or predicates and aggregates over it
+    // silently do string comparisons.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        "CREATE TABLE nums (i INT64);\n" ++
+            "INSERT INTO nums (i) VALUES (?), (?), (?);\n" ++
+            "SELECT SUM(i), MAX(i) FROM nums WHERE i > 5;",
+        &.{
+            .{ .value = .{ .string = "9" } },
+            .{ .value = .{ .string = "10" } },
+            .{ .value = .{ .string = "2" } },
+        },
+        .{},
+    );
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 19), row[0].int);
+    try testing.expectEqual(@as(i64, 10), row[1].int);
+}
+
+test "a JSON cell binds its payload without re-quoting it" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Binding the same text as a plain string would go through ToJSON and
+    // come back quoted; Go avoids that by unmarshalling before it binds.
+    var rows = try db.query(
+        "CREATE TABLE docs (j JSON);\n" ++
+            "INSERT INTO docs (j) VALUES (?);\n" ++
+            "SELECT JSON_VALUE(j, '$.a'), j FROM docs;",
+        &.{.{ .value = .{ .json = "{\"a\":\"x\"}" } }},
+        .{},
+    );
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqualStrings("x", row[0].string);
+    try testing.expectEqualStrings("{\"a\":\"x\"}", row[1].string);
+}
+
+test "a prepared INSERT analyzes once and executes per row" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE batch (i INT64, s STRING)", &.{}, .{});
+
+    const before = phase.count(.analyze);
+    var stmt = try db.prepare("INSERT INTO batch (i, s) VALUES (?, ?)", .{});
+    defer stmt.deinit();
+    const after_prepare = phase.count(.analyze);
+
+    for ([_]struct { i: i64, s: []const u8 }{
+        .{ .i = 1, .s = "a" },
+        .{ .i = 2, .s = "b" },
+        .{ .i = 3, .s = "c" },
+    }) |row| {
+        try stmt.exec(&.{
+            .{ .value = .{ .int = row.i } },
+            .{ .value = .{ .string = row.s } },
+        });
+    }
+    // The whole batch costs the one analysis the prepare paid for; this is
+    // the entire point of the handle.
+    try testing.expectEqual(@as(u64, 1), after_prepare - before);
+    try testing.expectEqual(after_prepare, phase.count(.analyze));
+
+    var rows = try db.query("SELECT i, s FROM batch ORDER BY i", &.{}, .{});
+    defer rows.deinit();
+    var seen: usize = 0;
+    while (try rows.next()) |row| : (seen += 1) {
+        try testing.expectEqual(@as(i64, @intCast(seen + 1)), row[0].int);
+    }
+    try testing.expectEqual(@as(usize, 3), seen);
+}
+
+test "a prepared statement rebinds cleanly between executions" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE rebind (a INT64, b STRING)", &.{}, .{});
+
+    var stmt = try db.prepare("INSERT INTO rebind (a, b) VALUES (?, ?)", .{});
+    defer stmt.deinit();
+    try stmt.exec(&.{ .{ .value = .{ .int = 1 } }, .{ .value = .{ .string = "x" } } });
+    // A NULL where the previous execution bound a value: without
+    // clearBindings the stale "x" would survive.
+    try stmt.exec(&.{ .{ .value = .{ .int = 2 } }, .{ .value = .null } });
+
+    var rows = try db.query("SELECT b FROM rebind WHERE a = 2", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell.null, (try rows.next()).?[0]);
+}
+
+test "prepared parameters are cast to the column type too" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE pcast (i INT64, ts TIMESTAMP)", &.{}, .{});
+
+    var stmt = try db.prepare("INSERT INTO pcast (i, ts) VALUES (?, ?)", .{});
+    defer stmt.deinit();
+    try stmt.exec(&.{
+        .{ .value = .{ .string = "7" } },
+        .{ .value = .{ .string = "2024-01-02T03:04:05Z" } },
+    });
+
+    var rows = try db.query("SELECT i, ts FROM pcast", &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 7), row[0].int);
+    try testing.expectEqualStrings("1704164645.0", row[1].timestamp);
+}
+
+test "prepare rejects scripts and statements with no reusable form" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE only (a INT64)", &.{}, .{});
+
+    try testing.expectError(
+        error.Unimplemented,
+        db.prepare("SELECT 1; SELECT 2", .{}),
+    );
+    try testing.expectEqualStrings("cannot prepare a multi-statement script", db.lastError());
+
+    // DDL mutates the catalog as its execution; there is nothing to hold.
+    try testing.expectError(
+        error.Unimplemented,
+        db.prepare("CREATE TABLE ddl (a INT64)", .{}),
+    );
+    try testing.expectError(
+        error.Unimplemented,
+        db.prepare("DROP TABLE only", .{}),
+    );
+}
+
+test "a prepared query statement can be exec'd" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE q (a INT64)", &.{}, .{});
+    try db.exec("INSERT INTO q (a) VALUES (1)", &.{}, .{});
+
+    // Rows are discarded, as Go's ExecContext does; the columns are still
+    // reported so a future Rows-returning variant has them.
+    var stmt = try db.prepare("SELECT a FROM q WHERE a = ?", .{});
+    defer stmt.deinit();
+    try testing.expectEqual(@as(usize, 1), stmt.columns.len);
+    try testing.expectEqualStrings("a", stmt.columns[0].name);
+    try stmt.exec(&.{.{ .value = .{ .int = 1 } }});
 }
 
 test "BEGIN..END block is flattened before analysis" {

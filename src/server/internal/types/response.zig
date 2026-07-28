@@ -49,8 +49,11 @@ fn writeCellValue(
         .bool => |v| try errors.writeJsonString(arena, out, govalue.formatBool(v)),
         // BYTES arrive already base64-encoded and NUMERIC as decimal text,
         // both as .string from the driver — see driver.zig's Cell docs.
+        // `.json` is bind-only — the driver hands a JSON column back as
+        // `.string` — but it renders the same way if one ever arrives.
         .string,
         .bytes,
+        .json,
         .date,
         .timestamp,
         .datetime,
@@ -148,7 +151,7 @@ fn cellByteLen(arena: std.mem.Allocator, cell: driver.Cell) std.mem.Allocator.Er
         .int => |v| (try govalue.formatInt(arena, v)).len,
         .float => |v| (try govalue.formatFloat(arena, v)).len,
         .bool => |v| govalue.formatBool(v).len,
-        .string, .bytes, .date, .timestamp, .datetime, .time, .interval => |v| v.len,
+        .string, .bytes, .json, .date, .timestamp, .datetime, .time, .interval => |v| v.len,
         .array => |items| blk: {
             var n: usize = 0;
             for (items) |it| n += try cellByteLen(arena, it);

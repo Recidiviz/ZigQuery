@@ -5,6 +5,7 @@
 //!   same defaults, same required-ness.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const bqserver = @import("bqserver");
 const http_server = bqserver.http_server;
 
@@ -26,9 +27,20 @@ const Options = struct {
 };
 
 pub fn main(init: std.process.Init) !void {
-    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
+    // DebugAllocator's bookkeeping is not free, and the server leans on the
+    // allocator hard — a request arena refills from it on every request.
+    // Release builds use c_allocator, which is what the Zig docs point to
+    // when the program links libc, as this one does for SQLite and the
+    // analyzer shim. Debug builds keep the checked allocator, where leak
+    // detection is the point.
+    var debug_state: std.heap.DebugAllocator(.{}) = .init;
+    defer if (builtin.mode == .Debug) {
+        _ = debug_state.deinit();
+    };
+    const gpa = if (builtin.mode == .Debug)
+        debug_state.allocator()
+    else
+        std.heap.c_allocator;
 
     var stderr_buf: [4096]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writerStreaming(init.io, &stderr_buf);

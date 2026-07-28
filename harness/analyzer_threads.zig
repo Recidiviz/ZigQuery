@@ -217,7 +217,7 @@ fn hashCell(h: *std.hash.Wyhash, cell: driver.Cell) void {
         .int => |v| h.update(std.mem.asBytes(&v)),
         .float => |v| h.update(std.mem.asBytes(&v)),
         .bool => |v| h.update(std.mem.asBytes(&v)),
-        .string, .bytes, .date, .timestamp, .datetime, .time, .interval => |v| h.update(v),
+        .string, .bytes, .json, .date, .timestamp, .datetime, .time, .interval => |v| h.update(v),
         .array => |items| for (items) |it| hashCell(h, it),
         .struct_ => |fields| for (fields) |f| {
             h.update(f.name);

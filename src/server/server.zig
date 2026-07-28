@@ -29,7 +29,9 @@ const discovery = @import("discovery.zig");
 const jobs_handler = @import("handler/jobs.zig");
 const datasets_handler = @import("handler/datasets.zig");
 const tables_handler = @import("handler/tables.zig");
+const tabledata_handler = @import("handler/tabledata.zig");
 const metadata = @import("internal/metadata/repository.zig");
+const contentdata = @import("internal/contentdata/repository.zig");
 const phase = zetasqlite.phase;
 const schema_mod = @import("internal/types/schema.zig");
 const stats_mod = @import("stats.zig");
@@ -230,6 +232,13 @@ pub const Server = struct {
                 m.captures.get(2),
             ),
             .tables_delete => s.handleTablesDelete(
+                req,
+                m.captures.get(0),
+                m.captures.get(1),
+                m.captures.get(2),
+            ),
+
+            .tabledata_insert_all => s.handleTabledataInsertAll(
                 req,
                 m.captures.get(0),
                 m.captures.get(1),
@@ -531,11 +540,33 @@ pub const Server = struct {
         project_id: []const u8,
         dataset_id: []const u8,
     ) !http_server.Response {
+        const arena = req.arena;
         // deleteContents drops the tables too; without it Go errors when the
         // dataset is non-empty. The emulator is permissive here.
+        //
+        // They have to leave the content database as well, exactly as
+        // tables.delete does: tables.get falls back to the engine catalog when
+        // the metadata store misses, so a table dropped from metadata alone
+        // stays visible and the next CREATE reports it already exists.
+        //
+        // The engine is asked rather than the metadata store, because it is
+        // the one that knows about objects created by SQL — a CTAS or a
+        // CREATE VIEW run as a query job never reaches tables.insert.
+        for (try s.db.catalogTablesIn(arena, project_id, dataset_id)) |table_spec| {
+            const ddl = try std.fmt.allocPrint(
+                arena,
+                "DROP {s} IF EXISTS `{s}.{s}.{s}`",
+                .{
+                    if (table_spec.is_view) "VIEW" else "TABLE",
+                    project_id,
+                    dataset_id,
+                    table_spec.name_path[2],
+                },
+            );
+            s.db.exec(ddl, &.{}, .{}) catch {};
+        }
         try s.repo.deleteTablesInDataset(project_id, dataset_id);
         try s.repo.deleteDataset(project_id, dataset_id);
-        _ = req;
         return .{ .body = "" };
     }
 
@@ -741,6 +772,62 @@ pub const Server = struct {
         s.db.exec(ddl, &.{}, .{}) catch {};
         try s.repo.deleteTable(project_id, dataset_id, table_id);
         return .{ .body = "" };
+    }
+
+    /// server/handler.go tabledataInsertAllHandler (:2969-3088).
+    ///
+    /// The batch is all-or-nothing: an unknown top-level field in any row
+    /// rejects every row, answered 200 with per-row insertErrors, and no
+    /// other failure produces insertErrors at all — Go maps them to 500
+    /// internalError. See handler/tabledata.zig.
+    fn handleTabledataInsertAll(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        table_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch {
+            return badRequest(arena, "failed to decode request body");
+        };
+
+        // Go resolves the table in withTableMiddleware, before the handler
+        // runs, and 404s from the metadata store alone.
+        const stored = (try s.repo.findTable(arena, project_id, dataset_id, table_id)) orelse
+            return notFound(arena, try std.fmt.allocPrint(
+                arena,
+                "table {s} is not found",
+                .{table_id},
+            ));
+        const meta = std.json.parseFromSliceLeaky(std.json.Value, arena, stored, .{}) catch
+            return internalError(arena, "failed to decode metadata to table");
+        const fields = tabledata_handler.schemaFieldsOf(meta) orelse
+            return internalError(arena, try std.fmt.allocPrint(
+                arena,
+                "table {s} has no schema",
+                .{table_id},
+            ));
+
+        const rows = tabledata_handler.rowsFromBody(arena, parsed) catch
+            return badRequest(arena, "failed to decode request body");
+
+        const validation = try tabledata_handler.validateAgainstSchema(arena, fields, rows);
+        if (validation.len > 0) {
+            // Nothing is written, and the status stays 200: the errors are
+            // the response body, not an HTTP failure.
+            var out: std.ArrayList(u8) = .empty;
+            try tabledata_handler.writeInsertErrors(arena, &out, validation, rows.len);
+            return .{ .body = out.items };
+        }
+
+        var repo = contentdata.Repository{ .arena = arena, .db = s.db };
+        repo.addTableData(project_id, dataset_id, table_id, fields, rows) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return internalError(arena, repo.message),
+        };
+
+        return .{ .body = "{}" };
     }
 
     /// server/handler.go jobsInsertHandler.
@@ -973,6 +1060,15 @@ fn badRequest(arena: std.mem.Allocator, msg: []const u8) !http_server.Response {
     return .{ .status = .bad_request, .body = try errors.body(arena, .invalid, msg) };
 }
 
+/// Go errInternalError: what every non-validation failure of a handler
+/// becomes, including ones a stricter API would call a 400.
+fn internalError(arena: std.mem.Allocator, msg: []const u8) !http_server.Response {
+    return .{
+        .status = .internal_server_error,
+        .body = try errors.body(arena, .internal_error, msg),
+    };
+}
+
 const testing = std.testing;
 
 /// Tests never touch the filesystem through this, so a threaded Io that is
@@ -1112,4 +1208,217 @@ test "state persists across requests on the same connection" {
     );
     try testing.expectEqual(std.http.Status.ok, res.status);
     try testing.expect(std.mem.indexOf(u8, res.body, "{\"v\":\"7\"}") != null);
+}
+
+test "deleting a dataset takes its tables out of the engine too" {
+    // The Python suite wipes the emulator between tests with
+    // delete_dataset(delete_contents=True); leaving the tables in the content
+    // database made every test after the first report "already exists",
+    // because tables.get falls back to the engine catalog.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "gone");
+    _ = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"CREATE OR REPLACE VIEW `test.ds1.gone_view` AS SELECT 1 AS a"}
+    );
+
+    // The query string is split off before dispatch, and deleteContents is
+    // implied: the emulator always drops the contents.
+    _ = try request(s, arena, .DELETE, "/projects/test/datasets/ds1", "");
+
+    for ([_][]const u8{ "gone", "gone_view" }) |table_id| {
+        const res = try request(s, arena, .GET, try std.fmt.allocPrint(
+            arena,
+            "/projects/test/datasets/ds1/tables/{s}",
+            .{table_id},
+        ), "");
+        try testing.expectEqual(std.http.Status.not_found, res.status);
+    }
+}
+
+// ---- tabledata.insertAll ----
+
+/// tables.insert with a two-column schema, the shape a client creates before
+/// it streams into a table.
+fn createStreamTable(s: *Server, arena: std.mem.Allocator, table_id: []const u8) !void {
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables", try std.fmt.allocPrint(
+        arena,
+        \\{{"tableReference":{{"projectId":"test","datasetId":"ds1","tableId":"{s}"}},
+        \\ "schema":{{"fields":[{{"name":"name","type":"STRING"}},{{"name":"age","type":"INTEGER"}}]}}}}
+    ,
+        .{table_id},
+    ));
+}
+
+test "insertAll writes rows that a later query can read" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "streamed");
+
+    // `age` arrives as a JSON string, which is what google-cloud-bigquery's
+    // insert_rows sends for an INTEGER column.
+    const res = try request(
+        s,
+        arena,
+        .POST,
+        "/projects/test/datasets/ds1/tables/streamed/insertAll",
+        \\{"kind":"bigquery#tableDataInsertAllRequest","rows":[
+        \\  {"insertId":"a","json":{"name":"Alice","age":"30"}},
+        \\  {"insertId":"b","json":{"name":"Bob","age":"25"}}
+        \\]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings("{}", res.body);
+
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT name FROM `test.ds1.streamed` WHERE age > 27"}
+    );
+    try testing.expectEqual(std.http.Status.ok, q.status);
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"Alice\"}") != null);
+    try testing.expect(std.mem.indexOf(u8, q.body, "Bob") == null);
+}
+
+test "insertAll under the /bigquery/v2 prefix reaches the same handler" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "prefixed");
+
+    const res = try request(
+        s,
+        arena,
+        .POST,
+        "/bigquery/v2/projects/test/datasets/ds1/tables/prefixed/insertAll",
+        \\{"rows":[{"json":{"name":"x","age":1}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings("{}", res.body);
+}
+
+test "insertAll into a missing table is a 404" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+
+    const res = try request(
+        s,
+        arena,
+        .POST,
+        "/projects/test/datasets/ds1/tables/nope/insertAll",
+        \\{"rows":[{"json":{"a":1}}]}
+    );
+    try testing.expectEqual(std.http.Status.not_found, res.status);
+    try testing.expectEqualStrings(
+        \\{"error":{"errors":[{"reason":"notFound","location":"","debugInfo":"","message":"table nope is not found"}],"code":404,"message":"table nope is not found"}}
+    , res.body);
+}
+
+test "an unknown field rejects the whole batch with 200 and insertErrors" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "rejected");
+
+    // emulator_test.py test_insert_unknown_fields_mixed_valid_and_invalid:
+    // rows 1 and 3 are invalid, and rows 0 and 2 report `stopped` after them.
+    const res = try request(
+        s,
+        arena,
+        .POST,
+        "/projects/test/datasets/ds1/tables/rejected/insertAll",
+        \\{"rows":[
+        \\  {"json":{"name":"ok1","age":1}},
+        \\  {"json":{"name":"bad1","bad_field":"x"}},
+        \\  {"json":{"name":"ok2","age":2}},
+        \\  {"json":{"name":"bad2","bad1":"y"}}
+        \\]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"bad_field","message":"no such field: bad_field.","reason":"invalid"}],"index":1},{"errors":[{"debugInfo":"","location":"bad1","message":"no such field: bad1.","reason":"invalid"}],"index":3},{"errors":[{"debugInfo":"","location":"","message":"","reason":"stopped"}],"index":0},{"errors":[{"debugInfo":"","location":"","message":"","reason":"stopped"}],"index":2}]}
+    , res.body);
+
+    // Nothing was written, including the rows that were themselves valid.
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.rejected`"}
+    );
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"0\"}") != null);
+}
+
+test "insertAll surfaces a bad value as a 500, not as insertErrors" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "badvalue");
+
+    // Go maps every storage-layer failure to errInternalError.
+    const res = try request(
+        s,
+        arena,
+        .POST,
+        "/projects/test/datasets/ds1/tables/badvalue/insertAll",
+        \\{"rows":[{"json":{"name":"a","age":"not a number"}}]}
+    );
+    try testing.expectEqual(std.http.Status.internal_server_error, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "\"reason\":\"internalError\"") != null);
+}
+
+test "insertAll with no rows is a no-op" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "empty");
+
+    const res = try request(
+        s,
+        arena,
+        .POST,
+        "/projects/test/datasets/ds1/tables/empty/insertAll",
+        \\{"kind":"bigquery#tableDataInsertAllRequest"}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings("{}", res.body);
+}
+
+test "insertAll rejects a malformed body with 400" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "malformed");
+
+    const res = try request(
+        s,
+        arena,
+        .POST,
+        "/projects/test/datasets/ds1/tables/malformed/insertAll",
+        "{not json",
+    );
+    try testing.expectEqual(std.http.Status.bad_request, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "\"reason\":\"invalid\"") != null);
 }

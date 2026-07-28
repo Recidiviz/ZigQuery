@@ -678,6 +678,157 @@
           "message": "job <JOBID> is not found"
         }
       }
+    },
+    {
+      "name": "insert_all_ok",
+      "rows": [
+        {
+          "insertId": "a",
+          "json": {
+            "name": "Alice",
+            "age": "30"
+          }
+        },
+        {
+          "insertId": "b",
+          "json": {
+            "name": "Bob",
+            "age": "25"
+          }
+        }
+      ],
+      "status": 200,
+      "response": {}
+    },
+    {
+      "name": "insert_all_no_rows",
+      "rows": [],
+      "status": 200,
+      "response": {}
+    },
+    {
+      "name": "insert_all_unknown_field",
+      "rows": [
+        {
+          "json": {
+            "name": "Bob",
+            "age": "25",
+            "unknown_field": "value"
+          }
+        }
+      ],
+      "status": 200,
+      "response": {
+        "insertErrors": [
+          {
+            "errors": [
+              {
+                "debugInfo": "",
+                "location": "unknown_field",
+                "message": "no such field: unknown_field.",
+                "reason": "invalid"
+              }
+            ],
+            "index": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "insert_all_mixed",
+      "rows": [
+        {
+          "json": {
+            "name": "ok1",
+            "age": "1"
+          }
+        },
+        {
+          "json": {
+            "name": "bad1",
+            "bad_field": "x"
+          }
+        },
+        {
+          "json": {
+            "name": "ok2",
+            "age": "2"
+          }
+        },
+        {
+          "json": {
+            "name": "bad2",
+            "bad1": "y"
+          }
+        }
+      ],
+      "status": 200,
+      "response": {
+        "insertErrors": [
+          {
+            "errors": [
+              {
+                "debugInfo": "",
+                "location": "bad_field",
+                "message": "no such field: bad_field.",
+                "reason": "invalid"
+              }
+            ],
+            "index": 1
+          },
+          {
+            "errors": [
+              {
+                "debugInfo": "",
+                "location": "bad1",
+                "message": "no such field: bad1.",
+                "reason": "invalid"
+              }
+            ],
+            "index": 3
+          },
+          {
+            "errors": [
+              {
+                "debugInfo": "",
+                "location": "",
+                "message": "",
+                "reason": "stopped"
+              }
+            ],
+            "index": 0
+          },
+          {
+            "errors": [
+              {
+                "debugInfo": "",
+                "location": "",
+                "message": "",
+                "reason": "stopped"
+              }
+            ],
+            "index": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "insert_all_table_not_found",
+      "status": 404,
+      "response": {
+        "error": {
+          "errors": [
+            {
+              "reason": "notFound",
+              "location": "",
+              "debugInfo": "",
+              "message": "table nope is not found"
+            }
+          ],
+          "code": 404,
+          "message": "table nope is not found"
+        }
+      }
     }
   ]
 }
