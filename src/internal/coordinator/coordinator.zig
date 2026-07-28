@@ -332,7 +332,13 @@ pub const QueryCoordinator = struct {
         const select_list = try self.alloc.alloc(*sqlbuilder.SelectListItem, result.columns.len);
         for (result.columns, 0..) |col, i| {
             const alias = try context.generateIDBasedAlias(self.alloc, col.name, col.id);
-            const expr = fc.takePending(col.id) orelse
+            // Read pending without consuming it: a scan's column_list may name
+            // the same column more than once (`SELECT date_effective AS
+            // start_date, ... date_effective ...` resolves to one ResolvedColumn
+            // listed twice), and consuming here would leave the second
+            // occurrence resolvable by neither route. Retirement happens once,
+            // after the whole list, in materializeScan/finishScan.
+            const expr = fc.getPending(col.id) orelse
                 try fc.getQualifiedColumnExpression(col.id);
             const item = try self.alloc.create(sqlbuilder.SelectListItem);
             item.* = .{ .expression = expr, .alias = alias };
@@ -518,6 +524,34 @@ test "transformStatementNode transforms SELECT 1 AS x end-to-end" {
     );
     // Scope bookkeeping unwinds cleanly.
     try testing.expectEqualStrings("0", ctx.fragmentContext().getID());
+}
+
+test "a column listed twice in one scan resolves at both occurrences" {
+    // Regression: addSelectListIfNeeded used to *consume* the pending entry, so
+    // the second occurrence of a column found neither a pending expression nor
+    // a registered scope and the transform failed with ColumnNotFound. A scan's
+    // column_list naming one ResolvedColumn twice is ordinary — `SELECT d AS s,
+    // d AS e` is enough — but it only reaches this path when the scan is
+    // materialized rather than projecting itself, which is why the corpus (all
+    // of whose duplicate-column cases project directly) did not catch it. It
+    // took out 15 views of the Recidiviz view graph.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const analyzed = try analyzer_ffi.analyzeNextStatement(
+        alloc,
+        "SELECT a AS x, MIN(a) OVER (PARTITION BY a) AS m FROM UNNEST([2, 1]) AS a",
+        0,
+        "{}",
+    );
+    const config = context.TransformConfig{};
+    const ctx = try TransformContext.init(alloc, &config);
+    var coordinator = QueryCoordinator.init(alloc);
+
+    const sql = try (try coordinator.transformStatementNode(analyzed.node, ctx)).toString(alloc);
+    // Both occurrences of `a` resolve to the UNNEST element, not to nothing.
+    try testing.expect(std.mem.indexOf(u8, sql, "`value`") != null);
 }
 
 test "transformScan rejects WITH-entry data" {

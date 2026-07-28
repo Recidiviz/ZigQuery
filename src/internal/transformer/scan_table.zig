@@ -69,7 +69,9 @@ pub fn transform(
         // Synthetic columns present: project the real ones alongside them.
         var full: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;
         for (data.column_list) |col| {
-            const expr = ctx.fragmentContext().takePending(col.id) orelse continue;
+            // Non-consuming, for the same reason as
+            // coordinator.addSelectListIfNeeded: a column may be listed twice.
+            const expr = ctx.fragmentContext().getPending(col.id) orelse continue;
             const item = try alloc.create(sqlbuilder.SelectListItem);
             item.* = .{
                 .expression = expr,
