@@ -10,7 +10,9 @@
 //!   A connection pool was built on a shared catalog and measured: it is
 //!   correct, but on the view-graph workload it cost 833 s and 35 failed views
 //!   against 58 s and none serially, because SQLite's in-memory VFS cannot
-//!   execute concurrently (see storage.zig).
+//!   execute concurrently (see storage.zig). /debug/stats reports a `phases`
+//!   block so the analysis-versus-SQLite split is a number rather than a
+//!   guess before that is attempted again.
 //! - Route dispatch is a switch over Route.Id rather than one http.Handler
 //!   type per route (server/handler_gen.go's 39 empty structs).
 
@@ -28,6 +30,7 @@ const jobs_handler = @import("handler/jobs.zig");
 const datasets_handler = @import("handler/datasets.zig");
 const tables_handler = @import("handler/tables.zig");
 const metadata = @import("internal/metadata/repository.zig");
+const phase = zetasqlite.phase;
 const schema_mod = @import("internal/types/schema.zig");
 const stats_mod = @import("stats.zig");
 const source_mod = @import("source.zig");
@@ -133,6 +136,10 @@ pub const Server = struct {
                 .{ stats.projects, stats.datasets, stats.tables, stats.failed_tables, path },
             );
         }
+        // Startup loading is engine work but not request work, and counting it
+        // would put analysis and SQLite time in the phase totals that never
+        // appears in totalHandleMs — inflating both fractions past 1.0.
+        phase.reset();
         return s;
     }
 
@@ -287,6 +294,57 @@ pub const Server = struct {
                 if (wait_ms + handle_ms == 0) 0 else wait_ms / (wait_ms + handle_ms),
                 http_server.stat_waiters_max.load(.monotonic),
                 http_server.stat_waiters_now.load(.monotonic),
+            });
+        // Where engine time goes. `analysisFraction` is the number that
+        // decides whether running analysis concurrently is worth anything:
+        // wall time under N parallel analyzers is bounded by (1-f) + f/N, and
+        // SQLite on an in-memory database cannot overlap at all (see
+        // storage.zig). Measured against total handle time, so the remainder
+        // is HTTP, JSON and glue.
+        const ms = struct {
+            fn of(ns: u64) f64 {
+                return @as(f64, @floatFromInt(ns)) / 1e6;
+            }
+        }.of;
+        const analyze_ms = ms(phase.totalNs(.analyze));
+        const transform_ms = ms(phase.totalNs(.transform));
+        const sqlite_ms = ms(phase.sqliteTotalNs());
+        try out.print(arena,
+            ",\"phases\":{{\"analyzeMs\":{d:.1},\"analyzeCount\":{d}," ++
+                "\"transformMs\":{d:.1},\"transformCount\":{d}," ++
+                "\"sqliteMs\":{d:.1}," ++
+                "\"sqlite\":{{" ++
+                "\"prepareMs\":{d:.1},\"prepareCount\":{d}," ++
+                "\"stepMs\":{d:.1},\"stepCount\":{d}," ++
+                "\"execMs\":{d:.1},\"execCount\":{d}," ++
+                "\"engineMs\":{d:.1},\"catalogMs\":{d:.1},\"metadataMs\":{d:.1}," ++
+                "\"catalogPrepareMs\":{d:.1},\"catalogPrepareCount\":{d}," ++
+                "\"catalogStepMs\":{d:.1}}}," ++
+                "\"preparedSqlBytes\":{d},\"codecMs\":{d:.1},\"codecCount\":{d}," ++
+                "\"analysisFraction\":{d:.3},\"sqliteFraction\":{d:.3}}}",
+            .{
+                analyze_ms,
+                phase.count(.analyze),
+                transform_ms,
+                phase.count(.transform),
+                sqlite_ms,
+                ms(phase.totalNs(.sqlite_prepare)),
+                phase.count(.sqlite_prepare),
+                ms(phase.totalNs(.sqlite_step)),
+                phase.count(.sqlite_step),
+                ms(phase.totalNs(.sqlite_exec)),
+                phase.count(.sqlite_exec),
+                ms(phase.sqliteTotalNsFrom(.engine)),
+                ms(phase.sqliteTotalNsFrom(.catalog)),
+                ms(phase.sqliteTotalNsFrom(.metadata)),
+                ms(phase.totalNsFrom(.sqlite_prepare, .catalog)),
+                phase.countFrom(.sqlite_prepare, .catalog),
+                ms(phase.totalNsFrom(.sqlite_step, .catalog)),
+                phase.preparedBytes(),
+                ms(phase.totalNs(.codec)),
+                phase.count(.codec),
+                if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
+                if (handle_ms == 0) 0 else sqlite_ms / handle_ms,
             });
         try out.appendSlice(arena, ",\"routes\":[");
 

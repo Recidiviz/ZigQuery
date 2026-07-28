@@ -20,6 +20,28 @@ const driver = zetasqlite.driver;
 const corpus_path = "testdata/corpus.json";
 const baseline_path = "testdata/baseline.txt";
 
+// ----------------------------------------------------------------------
+// SQL snapshot (DUMP_SQL=<path>)
+// ----------------------------------------------------------------------
+//
+// Captures every engine statement handed to sqlite3_prepare_v2, grouped by
+// corpus case, so a change to the SQL builder can be reviewed as a diff
+// instead of as a delta in one aggregate byte count. Analyse a snapshot (or
+// two) with tools/sql_stats.py.
+//
+// The sink is a bare function pointer with no context argument, so the buffer
+// it appends to is file-global. That is fine here and nowhere else: the runner
+// is single-threaded and runs one case at a time.
+
+var snapshot_buf: std.ArrayList(u8) = .empty;
+var snapshot_alloc: ?std.mem.Allocator = null;
+
+fn snapshotSink(sql: []const u8) void {
+    const alloc = snapshot_alloc orelse return;
+    snapshot_buf.appendSlice(alloc, sql) catch return;
+    snapshot_buf.appendSlice(alloc, ";\n") catch return;
+}
+
 const Outcome = enum { pass, fail, skip, errmsg_mismatch };
 
 const CaseResult = struct {
@@ -61,10 +83,22 @@ pub fn main(init: std.process.Init) !void {
     var results: std.ArrayList(CaseResult) = .empty;
     var counts = std.enums.EnumArray(Outcome, usize).initFill(0);
 
+    // Snapshot capture: per-case SQL, written after the run. Timings are
+    // meaningless with it on (every prepare copies its SQL into the buffer),
+    // so it is opt-in rather than always recorded.
+    const snapshot_path = init.environ_map.get("DUMP_SQL");
+    var snapshot: std.ArrayList(u8) = .empty;
+    if (snapshot_path != null) {
+        snapshot_alloc = arena;
+        zetasqlite.phase.setPreparedSqlSink(snapshotSink);
+    }
+    defer zetasqlite.phase.setPreparedSqlSink(null);
+
     for (cases) |case_val| {
         const case = case_val.object;
         const name = case.get("name").?.string;
         const idx: usize = @intCast(case.get("idx").?.integer);
+        snapshot_buf.clearRetainingCapacity();
         const t0 = std.Io.Clock.awake.now(init.io);
         const result = runCase(arena, db, case, fixed_now_micros);
         const elapsed_ns = t0.durationTo(std.Io.Clock.awake.now(init.io)).nanoseconds;
@@ -76,6 +110,20 @@ pub fn main(init: std.process.Init) !void {
             .detail = result.detail,
             .ms = @as(f64, @floatFromInt(@as(i64, @intCast(elapsed_ns)))) / 1_000_000.0,
         });
+        if (snapshot_path != null) {
+            // Every case gets a header even when it emitted nothing (SKIP, or
+            // a failure before prepare), so the snapshot stays aligned with
+            // the corpus and a case that stops emitting SQL shows up as a
+            // diff rather than as a silent shift of everything below it.
+            try snapshot.print(arena, "### {d}\t{s}\n", .{ idx, name });
+            try snapshot.appendSlice(arena, snapshot_buf.items);
+            try snapshot.append(arena, '\n');
+        }
+    }
+
+    if (snapshot_path) |path| {
+        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = snapshot.items });
+        try out.print("wrote SQL snapshot: {s} ({d} bytes)\n", .{ path, snapshot.items.len });
     }
 
     // Report.
@@ -89,6 +137,14 @@ pub fn main(init: std.process.Init) !void {
             cases.len,
         },
     );
+    // Bytes handed to sqlite3_prepare_v2: what the SQL builder actually costs
+    // SQLite to parse, and the number to watch when trimming its output.
+    try out.print("prepared SQL: {d} bytes over {d} statements ({d:.0} B each)\n", .{
+        zetasqlite.phase.preparedBytes(),
+        zetasqlite.phase.count(.sqlite_prepare),
+        if (zetasqlite.phase.count(.sqlite_prepare) == 0) 0.0 else @as(f64, @floatFromInt(zetasqlite.phase.preparedBytes())) /
+            @as(f64, @floatFromInt(zetasqlite.phase.count(.sqlite_prepare))),
+    });
 
     // Optional: dump every FAIL detail (invoke with any extra arg).
     if (init.environ_map.get("DUMP_FAILS") != null) {

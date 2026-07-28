@@ -4,6 +4,7 @@
 //! the one part of the port that is redesigned rather than mirrored.
 
 const std = @import("std");
+const phase = @import("internal/phase.zig");
 
 pub const c = @cImport({
     @cInclude("sqlite3.h");
@@ -66,6 +67,8 @@ pub const Db = struct {
 
     /// Executes SQL that produces no result rows (DDL, DML).
     pub fn exec(db: *Db, sql: [:0]const u8) Error!void {
+        var t = phase.Timer.begin(.sqlite_exec);
+        defer t.end();
         if (c.sqlite3_exec(db.handle, sql.ptr, null, null, null) != c.SQLITE_OK) {
             return error.SQLite;
         }
@@ -89,6 +92,9 @@ pub const Db = struct {
     /// compiling", not "this statement is wrong" — so it is retried rather
     /// than reported.
     pub fn prepare(db: *Db, sql: []const u8) Error!Stmt {
+        var t = phase.Timer.begin(.sqlite_prepare);
+        defer t.end();
+        phase.notePreparedSql(sql);
         var attempt: usize = 0;
         while (true) : (attempt += 1) {
             var stmt: ?*c.sqlite3_stmt = null;
@@ -235,6 +241,8 @@ pub const Stmt = struct {
 
     /// Returns true while a row is available; false when done.
     pub fn step(s: *Stmt) Error!bool {
+        var t = phase.Timer.begin(.sqlite_step);
+        defer t.end();
         return switch (c.sqlite3_step(s.handle)) {
             c.SQLITE_ROW => true,
             c.SQLITE_DONE => false,

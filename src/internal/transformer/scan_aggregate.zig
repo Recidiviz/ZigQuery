@@ -24,6 +24,7 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const query_expr = @import("../sqlbuilder/query_expr.zig");
 
 const Error = interfaces.Error;
 const SQLExpression = sqlbuilder.SQLExpression;
@@ -33,14 +34,19 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) Error!*sqlbuilder.FromItem {
+) Error!*sqlbuilder.SelectStatement {
     // Go: "expected aggregate scan data, got type %v"
     if (data.type != .aggregate) return error.UnsupportedNode;
     const agg_data = data.aggregate_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
-    // Transform the input scan.
-    const input_from_item = try coord.transformScan(agg_data.input_scan, ctx);
+    // GROUP BY must not see a projection, so it needs the input's select slot
+    // still free; when it is not, spend a level.
+    const input = try coord.transformScan(agg_data.input_scan, ctx);
+    const q = if (query_expr.canSetGroupBy(input.query))
+        input.query
+    else
+        try coord.wrapScan(input, ctx);
 
     // Process aggregate expressions.
     var aggregate_map = std.AutoHashMap(i64, *SQLExpression).init(alloc);
@@ -89,24 +95,31 @@ pub fn transform(
         return buildGroupingSetsQuery(
             alloc,
             agg_data,
-            input_from_item,
+            q.from_clause.?,
             data.column_list,
             select_list.items,
             &group_by_map,
-            ctx,
         );
     }
 
-    const select_stmt = try alloc.create(sqlbuilder.SelectStatement);
-    select_stmt.* = .{
-        .select_list = try select_list.toOwnedSlice(alloc),
-        .from_clause = input_from_item,
-        .group_by_list = try group_by_exprs.toOwnedSlice(alloc),
-    };
+    // Aggregation is a hard materialization boundary: the outputs are
+    // projected here and never left pending, or a projection above would
+    // inline an aggregate into an outer aggregate.
+    q.select_list = try select_list.toOwnedSlice(alloc);
+    q.group_by_list = try group_by_exprs.toOwnedSlice(alloc);
+    for (data.column_list) |col| _ = ctx.fragmentContext().takePending(col.id);
+    for (data.column_list) |col| {
+        try ctx.fragmentContext().setPending(
+            col.id,
+            try sqlbuilder.newColumnExpression(
+                alloc,
+                try context.generateIDBasedAlias(alloc, col.name, col.id),
+                null,
+            ),
+        );
+    }
 
-    const from_item = try alloc.create(sqlbuilder.FromItem);
-    from_item.* = .{ .type = .subquery, .subquery = select_stmt };
-    return from_item;
+    return q;
 }
 
 /// Go buildGroupingSetsQuery: ROLLUP/GROUPING SETS as a UNION ALL of one
@@ -119,8 +132,7 @@ fn buildGroupingSetsQuery(
     column_data: []const *types_data.ColumnData,
     output_columns: []const *sqlbuilder.SelectListItem,
     group_by_map: *std.AutoHashMap(i64, *SQLExpression),
-    ctx: *context.TransformContext,
-) Error!*sqlbuilder.FromItem {
+) Error!*sqlbuilder.SelectStatement {
     var statements: std.ArrayList(*sqlbuilder.SelectStatement) = .empty;
     try statements.ensureTotalCapacity(alloc, agg_data.grouping_sets.len);
 
@@ -171,15 +183,7 @@ fn buildGroupingSetsQuery(
         try statements.append(alloc, stmt);
     }
 
-    const alias = try std.fmt.allocPrint(
-        alloc,
-        "aggregate_grouping_sets_scan_{s}",
-        .{ctx.fragmentContext().getID()},
-    );
-
-    if (statements.items.len == 1) {
-        return sqlbuilder.newSubqueryFromItem(alloc, statements.items[0], alias);
-    }
+    if (statements.items.len == 1) return statements.items[0];
 
     const set_operation = try alloc.create(sqlbuilder.SetOperation);
     set_operation.* = .{
@@ -227,7 +231,7 @@ fn buildGroupingSetsQuery(
         .from_clause = try sqlbuilder.newSubqueryFromItem(alloc, union_stmt, "set_op_scan_inner"),
     };
 
-    return sqlbuilder.newSubqueryFromItem(alloc, statement, alias);
+    return statement;
 }
 
 // ----------------------------------------------------------------------

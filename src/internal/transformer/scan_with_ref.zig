@@ -17,7 +17,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected with ref scan data, got type %v"
     if (data.type != .with_ref) return error.UnsupportedNode;
     const with_ref_data = data.with_ref_scan orelse return error.UnsupportedNode;
@@ -41,21 +41,17 @@ pub fn transform(
     // Go: "incorrect number of columns found for query %v"
     if (mapping.len != with_ref_data.column_list.len) return error.ValidationFailed;
 
-    // Add SELECT items for each column.
-    const select_list = try alloc.alloc(*sqlbuilder.SelectListItem, with_ref_data.column_list.len);
+    // Leave each column pending as `wrsN`.`<cte column>`: the CTE reference is
+    // already a FROM item, so re-aliasing them here would cost a subquery
+    // level to say nothing the consumer cannot say itself.
     for (with_ref_data.column_list, 0..) |column, i| {
-        const item = try alloc.create(sqlbuilder.SelectListItem);
-        item.* = .{
-            .expression = try sqlbuilder.newColumnExpression(alloc, mapping[i], table_alias),
-            .alias = try context.generateIDBasedAlias(alloc, column.name, column.id),
-        };
-        select_list[i] = item;
+        try ctx.fragmentContext().setPending(
+            column.id,
+            try sqlbuilder.newColumnExpression(alloc, mapping[i], table_alias),
+        );
     }
-    select_statement.select_list = select_list;
 
-    const from_item = try alloc.create(sqlbuilder.FromItem);
-    from_item.* = .{ .type = .subquery, .subquery = select_statement };
-    return from_item;
+    return select_statement;
 }
 
 // ----------------------------------------------------------------------

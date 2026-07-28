@@ -95,6 +95,20 @@ pub const FragmentContext = struct {
     count: usize,
     /// Maps column ID to scope alias.
     column_id_to_scope: std.AutoHashMap(i64, []const u8),
+    /// Column ID -> the expression that computes it, not yet projected into
+    /// any SELECT list. GoogleSQL SQLBuilder::pending_columns_ (sql_builder.h).
+    ///
+    /// A scan that is only a row source (a table, a WITH reference, an UNNEST)
+    /// leaves its columns here instead of spending a subquery level to alias
+    /// them, and whoever consumes them either references them in place or
+    /// projects them when it materializes.
+    ///
+    /// **Invariant:** a column is pending *xor* resolvable through
+    /// `column_id_to_scope` — never both, never neither. `takePending` is the
+    /// only transition, and its callers must register the scope in the same
+    /// step. Breaking this reads a column against the wrong scope, which is
+    /// wrong results rather than a compile error.
+    pending: std.AutoHashMap(i64, *sqlbuilder.SQLExpression),
 
     pub fn init(alloc: std.mem.Allocator) error{OutOfMemory}!*FragmentContext {
         const fc = try alloc.create(FragmentContext);
@@ -106,8 +120,31 @@ pub const FragmentContext = struct {
             .scopes = .empty,
             .count = 0,
             .column_id_to_scope = std.AutoHashMap(i64, []const u8).init(alloc),
+            .pending = std.AutoHashMap(i64, *sqlbuilder.SQLExpression).init(alloc),
         };
         return fc;
+    }
+
+    /// Records the expression computing `column_id`, to be projected later (or
+    /// referenced in place).
+    pub fn setPending(
+        self: *FragmentContext,
+        column_id: i64,
+        expr: *sqlbuilder.SQLExpression,
+    ) error{OutOfMemory}!void {
+        try self.pending.put(column_id, expr);
+    }
+
+    pub fn getPending(self: *const FragmentContext, column_id: i64) ?*sqlbuilder.SQLExpression {
+        return self.pending.get(column_id);
+    }
+
+    /// Consumes a pending expression: the caller is projecting it, so it stops
+    /// being pending. See the invariant on `pending` — the caller must register
+    /// the column's new scope in the same step.
+    pub fn takePending(self: *FragmentContext, column_id: i64) ?*sqlbuilder.SQLExpression {
+        if (self.pending.fetchRemove(column_id)) |kv| return kv.value;
+        return null;
     }
 
     /// AddAvailableColumn adds a column to the available columns map.

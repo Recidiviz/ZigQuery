@@ -14,12 +14,14 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     _ = ctx;
     // Go: "expected single row scan data, got type %v"
     if (data.type != .single_row) return error.UnsupportedNode;
 
     const item = try coord.alloc.create(sqlbuilder.FromItem);
     item.* = .{ .type = .single_row };
-    return item;
+    const stmt = try sqlbuilder.newSelectStatement(coord.alloc);
+    stmt.from_clause = item;
+    return stmt;
 }

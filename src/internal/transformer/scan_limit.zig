@@ -10,6 +10,7 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const query_expr = @import("../sqlbuilder/query_expr.zig");
 
 /// Go LimitScanTransformer.Transform (wrapInSubqueryWithLimit +
 /// addLimitToSelect inlined; they are only called in this sequence).
@@ -17,16 +18,20 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected limit scan data, got type %v"
     if (data.type != .limit) return error.UnsupportedNode;
     const limit_data = data.limit_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
-    const inner_from_item = try coord.transformScan(limit_data.input_scan, ctx);
+    const input = try coord.transformScan(limit_data.input_scan, ctx);
 
-    // Create SELECT * FROM (complex_query) LIMIT count OFFSET offset.
-    const select_stmt = try sqlbuilder.newSelectStarStatement(alloc, inner_from_item);
+    // LIMIT applies after everything else on its level, so it fits onto the
+    // input's query unless that already carries one.
+    const select_stmt = if (query_expr.canSetLimit(input.query))
+        input.query
+    else
+        try coord.wrapScan(input, ctx);
 
     // Transform count expression.
     const count_expr = try coord.transformExpression(limit_data.count, ctx);
@@ -40,15 +45,7 @@ pub fn transform(
 
     select_stmt.limit_clause = limit_clause;
 
-    const from_item = try alloc.create(sqlbuilder.FromItem);
-    from_item.* = .{
-        .type = .subquery,
-        .subquery = select_stmt,
-        // Go sets "limit_scan_<id>" here; the coordinator overwrites the
-        // alias with its own scope id right after (mirrored for fidelity).
-        .alias = try std.fmt.allocPrint(alloc, "limit_scan_{s}", .{ctx.fragmentContext().getID()}),
-    };
-    return from_item;
+    return select_stmt;
 }
 
 // ----------------------------------------------------------------------

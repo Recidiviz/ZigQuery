@@ -1,11 +1,13 @@
-//! Faithful port of go-zetasqlite internal/transformer_with_entry.go.
+//! Port of go-zetasqlite internal/transformer_with_entry.go.
 //!
 //! Transforms one CTE definition: transforms its subquery, registers the
 //! position-based column mapping under the CTE name (before the subquery
 //! for recursive CTEs so the recursive reference can see the columns, after
-//! for non-recursive ones), and wraps the result in a WithClause. The
-//! recursive branch is mirrored even though scan_with.zig currently gates
-//! recursive WITH scans behind error.Unimplemented.
+//! for non-recursive ones), and wraps the result in a WithClause.
+//!
+//! Deliberate divergence from Go: the CTE body is the transformed subquery's
+//! SELECT, not a `SELECT * FROM (...)` around it. See the comment at the
+//! branch below.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -41,7 +43,10 @@ pub fn transform(
     }
 
     // Transform the subquery.
-    const subquery_from_item = try coord.transformScan(with_entry_data.with_subquery, ctx);
+    const subquery_from_item = try coord.materializeScan(
+        try coord.transformScan(with_entry_data.with_subquery, ctx),
+        ctx,
+    );
 
     // For non-recursive CTEs, register column mappings AFTER transforming.
     if (!is_recursive) {
@@ -52,13 +57,15 @@ pub fn transform(
         );
     }
 
-    // For recursive CTEs, use the subquery directly to preserve the
-    // UNION ALL structure; for non-recursive CTEs, wrap in a SELECT *.
+    // Use the transformed subquery's SELECT directly as the CTE body. Go
+    // does this only for recursive CTEs (to preserve the UNION ALL structure
+    // SQLite's recursive CTE support requires) and wraps every other body in
+    // a `SELECT * FROM (...)`. That wrapper carries nothing: the inner SELECT
+    // already is the body, and its id-based aliases are exactly what the
+    // position mapping registered above refers to. Dropping it removes one
+    // subquery level per CTE — 3.0% of the corpus's prepared bytes.
     var query_statement: *sqlbuilder.SelectStatement = undefined;
-    if (is_recursive and subquery_from_item.type == .subquery and
-        subquery_from_item.subquery != null)
-    {
-        // Use the inner SelectStatement directly.
+    if (subquery_from_item.type == .subquery and subquery_from_item.subquery != null) {
         query_statement = subquery_from_item.subquery.?;
     } else {
         query_statement = try sqlbuilder.newSelectStarStatement(alloc, subquery_from_item);

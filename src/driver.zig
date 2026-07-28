@@ -31,6 +31,7 @@ const context_mod = @import("internal/coordinator/context.zig");
 const function = @import("internal/function/register.zig");
 const catalog_mod = @import("internal/catalog.zig");
 const shared_catalog = @import("internal/shared_catalog.zig");
+const phase = @import("internal/phase.zig");
 
 pub const Error = error{
     Unimplemented,
@@ -491,6 +492,10 @@ pub const Db = struct {
     /// buffer, so each row is valid only until the next next() call — copy
     /// anything that must outlive it.
     pub fn rawQuery(db: *Db, sql: [:0]const u8, args: []const RawArg) Error!RawRows {
+        // Everything reached from here is emulator bookkeeping, not the
+        // caller's query; RawRows.next re-enters the scope for the same reason.
+        var scope = phase.SourceScope.begin(.metadata);
+        defer scope.end();
         const entry = try db.acquireRawStmt(sql);
         errdefer db.releaseRawStmt(entry);
 
@@ -746,6 +751,8 @@ pub const Db = struct {
             // Re-rendered per statement: DDL/DML actions mutate the
             // catalog between statements of one script.
             const analyzed = blk: {
+            var analyze_timer = phase.Timer.begin(.analyze);
+            defer analyze_timer.end();
             // Re-read the handle from `db` *after* syncing: a catalog
             // removal forces a rebuild, which destroys the old handle. Using
             // the pointer captured before the sync is a use-after-free.
@@ -1574,6 +1581,8 @@ fn transformStatementFragment(
     node: *pb.AnyResolvedNodeProto,
     opts: QueryOptions,
 ) Error!sqlbuilder.SQLFragment {
+    var timer = phase.Timer.begin(.transform);
+    defer timer.end();
     const config = try arena.create(context_mod.TransformConfig);
     config.* = context_mod.defaultTransformConfig();
     const ctx = try context_mod.TransformContext.init(arena, config);
@@ -1978,6 +1987,8 @@ pub const RawRows = struct {
     /// into SQLite's storage — copy before calling next() again.
     pub fn next(r: *RawRows) Error!?[]const Db.RawValue {
         if (r.done) return null;
+        var scope = phase.SourceScope.begin(.metadata);
+        defer scope.end();
         const has_row = r.entry.stmt.step() catch {
             r.done = true;
             r.db.setLastSqliteError();
@@ -2096,7 +2107,7 @@ test "generated SQL golden: SELECT 1 AS x" {
     const stmts = try translate(arena.allocator(), "SELECT 1 AS x", .{});
     try testing.expectEqual(@as(usize, 1), stmts.len);
     try testing.expectEqualStrings(
-        "SELECT\n`x__1` AS `x`\nFROM (\nSELECT  \n1 AS `x__1`\n) AS `project_scan_3`",
+        "SELECT\n1 AS `x`",
         stmts[0],
     );
 }

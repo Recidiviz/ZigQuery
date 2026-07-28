@@ -136,6 +136,19 @@ pub fn build(b: *std.Build) void {
     b.step("shared-catalog-threads", "Shared-catalog coherence under a pool")
         .dependOn(&run_sc_threads.step);
 
+    const codec_exe = b.addExecutable(.{
+        .name = "codec-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/codec_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| codec_exe.step.dependOn(&bz.step);
+    const run_codec = b.addRunArtifact(codec_exe);
+    b.step("codec-bench", "Value codec cost with real rows").dependOn(&run_codec.step);
+
     // Per-query cost vs catalog size: the baseline the server's caching work
     // has to beat.
     const bench_exe = b.addExecutable(.{

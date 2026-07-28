@@ -19,28 +19,26 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected table scan data, got type %v"
     if (data.type != .table) return error.UnsupportedNode;
     const table_data = data.table_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
-    // Explicit column list from the scan's ColumnList: proper column
-    // validation and ID-based alias matching.
-    var select_list: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;
+    // Each output column is the raw SQLite column, left pending: whoever
+    // consumes this scan either references it in place or projects it under
+    // its id-based alias when it materializes. Projecting here unconditionally
+    // is what used to make every table scan cost a subquery level.
     for (data.column_list) |col| {
         const column_expr = try alloc.create(sqlbuilder.SQLExpression);
         column_expr.* = .{ .type = .column, .value = col.name };
-        const item = try alloc.create(sqlbuilder.SelectListItem);
-        item.* = .{
-            .expression = column_expr,
-            .alias = try context.generateIDBasedAlias(alloc, col.name, col.id),
-        };
-        try select_list.append(alloc, item);
+        try ctx.fragmentContext().setPending(col.id, column_expr);
     }
 
     // Synthetic columns (wildcard tables): expression stands in for a
-    // column the matched table lacks.
+    // column the matched table lacks. These carry their own alias rather than
+    // an id-based one, so they are projected here and the scan takes a level.
+    var select_list: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;
     for (table_data.synthetic_columns) |item_data| {
         if (item_data.expression.type == .column) {
             if (item_data.expression.column) |column| {
@@ -64,18 +62,24 @@ pub fn transform(
         .alias = table_data.alias,
     };
 
-    // SELECT statement that explicitly lists the columns.
     const select_statement = try sqlbuilder.newSelectStatement(alloc);
     select_statement.select_type = .standard;
     select_statement.from_clause = table_from_item;
-    select_statement.select_list = try select_list.toOwnedSlice(alloc);
+    if (select_list.items.len > 0) {
+        // Synthetic columns present: project the real ones alongside them.
+        var full: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;
+        for (data.column_list) |col| {
+            const expr = ctx.fragmentContext().takePending(col.id) orelse continue;
+            const item = try alloc.create(sqlbuilder.SelectListItem);
+            item.* = .{
+                .expression = expr,
+                .alias = try context.generateIDBasedAlias(alloc, col.name, col.id),
+            };
+            try full.append(alloc, item);
+        }
+        try full.appendSlice(alloc, select_list.items);
+        select_statement.select_list = try full.toOwnedSlice(alloc);
+    }
 
-    // Return as a subquery to ensure proper column validation.
-    const from_item = try alloc.create(sqlbuilder.FromItem);
-    from_item.* = .{
-        .type = .subquery,
-        .subquery = select_statement,
-        .alias = table_data.alias,
-    };
-    return from_item;
+    return select_statement;
 }

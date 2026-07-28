@@ -17,7 +17,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected recursive ref scan data, got type %v"
     if (data.type != .recursive_ref) return error.UnsupportedNode;
     const recursive_ref_scan = data.recursive_ref_scan orelse return error.UnsupportedNode;
@@ -41,20 +41,14 @@ pub fn transform(
     // Go: "incorrect number of columns found for recursive CTE %v"
     if (mapping.len != recursive_ref_scan.column_list.len) return error.ValidationFailed;
 
-    // Add SELECT items for each column.
-    const select_list = try alloc.alloc(*sqlbuilder.SelectListItem, recursive_ref_scan.column_list.len);
+    // Leave each column pending, like scan_with_ref: the recursive CTE
+    // reference is already a FROM item.
     for (recursive_ref_scan.column_list, 0..) |column, i| {
-        const alias = try context.generateIDBasedAlias(alloc, column.name, column.id);
-        const item = try alloc.create(sqlbuilder.SelectListItem);
-        item.* = .{
-            .expression = try sqlbuilder.newColumnExpression(alloc, mapping[i], table_alias),
-            .alias = alias,
-        };
-        select_list[i] = item;
+        try ctx.fragmentContext().setPending(
+            column.id,
+            try sqlbuilder.newColumnExpression(alloc, mapping[i], table_alias),
+        );
     }
-    select_statement.select_list = select_list;
 
-    const result = try alloc.create(sqlbuilder.FromItem);
-    result.* = .{ .type = .subquery, .subquery = select_statement };
-    return result;
+    return select_statement;
 }

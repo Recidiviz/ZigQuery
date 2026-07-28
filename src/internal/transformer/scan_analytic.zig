@@ -17,6 +17,7 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const query_expr = @import("../sqlbuilder/query_expr.zig");
 
 const Error = interfaces.Error;
 const SQLExpression = sqlbuilder.SQLExpression;
@@ -26,14 +27,17 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) Error!*sqlbuilder.FromItem {
+) Error!*sqlbuilder.SelectStatement {
     // Go: "expected analytic scan data, got type %v"
     if (data.type != .analytic) return error.UnsupportedNode;
     const analytic_data = data.analytic_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
     // Transform the input scan recursively.
-    const input_from_item = try coord.transformScan(analytic_data.input_scan, ctx);
+    const input_from_item = try coord.materializeScan(
+        try coord.transformScan(analytic_data.input_scan, ctx),
+        ctx,
+    );
 
     // Pre-transform all window function expressions BEFORE registering
     // output columns, so window function references resolve to input
@@ -107,7 +111,7 @@ pub fn transform(
     };
 
     // Return as a subquery FROM item (the coordinator assigns the alias).
-    return sqlbuilder.newSubqueryFromItem(alloc, select_stmt, "");
+    return select_stmt;
 }
 
 // ----------------------------------------------------------------------

@@ -19,6 +19,32 @@
 //!   with sampling showing the threads stacked in sqlite3LockAndPrepare at
 //!   roughly one core. Extra connections bought contention, not throughput.
 //!
+//!   How much is there to win by running analysis concurrently instead? The
+//!   `phases` block in /debug/stats answers it. Over a Staging view-graph run
+//!   (22.4k requests, 15.0 s of handle time):
+//!
+//!     sqlite3_step         5.50 s  36.6%   38.0k calls  0.145 ms each
+//!     GoogleSQL analyze    4.70 s  31.3%   10.5k calls  0.450 ms each
+//!     sqlite3_prepare_v2   3.30 s  22.0%   19.1k calls  0.173 ms each
+//!     transform            0.64 s   4.3%    9.1k calls  0.071 ms each
+//!     HTTP/JSON/glue       0.87 s   5.8%
+//!
+//!   By caller, SQLite splits 56.6% the caller's own SQL, 0.9% the
+//!   `zetasqlite_catalog` upserts and 1.1% the metadata tables — so the cost
+//!   is real query work, not the emulator's bookkeeping. Re-preparing the
+//!   fixed upsert SQL on every catalog write, which looks wasteful, measures
+//!   0.011 ms a call and 0.4% of handle: not worth caching.
+//!
+//!   Note prepare is nearly as expensive as analysis. Compiling the SQL the
+//!   transformer emits costs 0.17 ms a statement against 0.011 ms for a small
+//!   one, which says the generated SQL is large; shrinking it would pay off in
+//!   both phases at once.
+//!
+//!   Only the 35.6% that is analyze+transform can overlap, so `(1-f) + f/N`
+//!   caps a parallel-analysis design at 1.21x on 2 threads, 1.35x on 4 and
+//!   1.43x on 8 — before any of the contention the pool experiment ran into.
+//!   Worth revisiting only alongside a storage layer that admits concurrency
+//!   (file + WAL, or sharding), which is what would move the other 58%.
 //! - Pragmas are applied as statements via Db.openWith rather than through
 //!   DSN `_pragma=` parameters, which are a modernc.org/sqlite extension the
 //!   C API does not have.

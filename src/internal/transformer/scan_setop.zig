@@ -23,7 +23,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected set operation scan data, got type %v"
     if (data.type != .set_op) return error.UnsupportedNode;
     const set_op_data = data.set_operation_scan orelse return error.UnsupportedNode;
@@ -64,26 +64,30 @@ pub fn transform(
     }
     set_statement.with_clauses = try with_clauses.toOwnedSlice(alloc);
 
-    // Create a subquery to introduce the new logical columns into the query.
-    const statement = try sqlbuilder.newSelectStatement(alloc);
-    const select_list = try alloc.alloc(*sqlbuilder.SelectListItem, data.column_list.len);
+    // Introduce the set operation's own output columns by renaming each
+    // branch's SELECT items in place, rather than by projecting the whole set
+    // operation through an extra level to rename them. Go emits both levels;
+    // GoogleSQL renames in place too (QueryExpression::SetAliasForSelectColumn).
+    //
+    // SQLite takes a compound SELECT's column names from its first branch, so
+    // only branch 0's aliases are load-bearing; the rest are renamed to match
+    // because a compound arm that disagrees with its siblings about what a
+    // column is called is a trap for the next reader.
     for (data.column_list, 0..) |column, i| {
-        // Retrieve column name from the first item (Go indexes without a
-        // bounds check and would panic; the port errors instead).
-        if (i >= select_statements[0].select_list.len) return error.ValidationFailed;
-        const item_column = select_statements[0].select_list[i];
-        const item = try alloc.create(sqlbuilder.SelectListItem);
-        item.* = .{
-            .expression = try sqlbuilder.newColumnExpression(alloc, item_column.alias, null),
-            .alias = try context.generateIDBasedAlias(alloc, column.name, column.id),
-        };
-        select_list[i] = item;
+        const alias = try context.generateIDBasedAlias(alloc, column.name, column.id);
+        for (select_statements) |branch| {
+            // Go indexes the first item list without a bounds check and would
+            // panic; the port errors instead.
+            if (i >= branch.select_list.len) return error.ValidationFailed;
+            const item = branch.select_list[i];
+            // A `SELECT *` arm has no alias to rename; leave it and let the
+            // star's own names carry through.
+            if (item.is_star_expansion) continue;
+            item.alias = alias;
+        }
     }
-    statement.select_list = select_list;
-    statement.from_clause = try sqlbuilder.newSubqueryFromItem(alloc, set_statement, "set_op_scan_inner");
 
-    // Wrap in a subquery FromItem (alias overwritten by the coordinator).
-    return sqlbuilder.newSubqueryFromItem(alloc, statement, "set_op_scan_outer");
+    return set_statement;
 }
 
 // ----------------------------------------------------------------------

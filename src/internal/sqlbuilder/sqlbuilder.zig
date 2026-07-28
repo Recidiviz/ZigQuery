@@ -1,15 +1,46 @@
 //! Object-based SQL generation layer, a faithful port of go-zetasqlite's
 //! internal/sqlbuilder_sqlbuilder.go ("SQLFragment" object model + SQLWriter).
 //!
-//! All rendering is byte-identical to the Go original, including its quirks:
-//! WriteLine emits the indent prefix wherever the cursor currently is (which
-//! produces trailing "  " runs before newlines mid-statement), WithClause
-//! always emits " AS MATERIALIZED \t(" (literal tab, regardless of the
-//! `materialized` field), and ExpressionType.cast renders nothing (the Go
-//! switch has no case for it).
+//! Rendering matches the Go original, including its quirks: WriteLine emits
+//! the indent prefix wherever the cursor currently is (which produces trailing
+//! "  " runs before newlines mid-statement), and ExpressionType.cast renders
+//! nothing (the Go switch has no case for it).
+//!
+//! One deliberate divergence. Go's WithClause always writes
+//! " AS MATERIALIZED \t(" and never reads its own `materialized` field; this
+//! honours the field, so a CTE is materialized only when something asks for
+//! it. Since 3.35 SQLite already applies the right heuristic on its own —
+//! materialize a CTE referenced more than once, inline it otherwise — and
+//! forcing the keyword takes that away. For a single-use CTE it is the
+//! difference between an index seek and a full scan plus a materialization:
+//!
+//!     WITH c AS MATERIALIZED (SELECT a AS a1 FROM t) SELECT * FROM c WHERE a1 = 5
+//!       |--MATERIALIZE c / |  `--SCAN t / `--SCAN c
+//!     WITH c AS            (SELECT a AS a1 FROM t) SELECT * FROM c WHERE a1 = 5
+//!       `--SEARCH t USING INDEX ta (a=?)
+//!
+//! The corpus cannot show this (tiny unindexed in-memory tables) and its
+//! timing is unchanged; the evidence is the plan.
 //!
 //! All allocation goes through a caller-provided allocator (an arena in
 //! practice); no deinit methods are provided.
+//!
+//! One measurement, so the obvious optimization is not re-attempted: rendering
+//! compactly (no indentation, no newlines — the writer supports it already via
+//! use_newlines) removed 13.2% of the bytes and changed prepare time by +0.2%,
+//! i.e. nothing. Whitespace is free to tokenize, so the quirks above cost
+//! readability of the output and nothing else.
+//!
+//! Prepare cost is per subquery *level*, not per byte. Trimming text is
+//! worthless; removing nesting works — and that is no longer this file's
+//! problem. The transformer used to emit one SELECT per resolved scan; it now
+//! writes each scan into a free clause slot of the query being built and takes
+//! a level only when the slot it needs is occupied. See
+//! src/internal/sqlbuilder/query_expr.zig for the rules and
+//! docs/SLOT_MODEL_PLAN.md for what that bought (-40% levels, -34% bytes).
+//!
+//! So: a change here that trades output size for anything at all is very
+//! probably not worth it. A change that removes a *level* still is.
 
 const std = @import("std");
 
@@ -722,8 +753,8 @@ pub const OrderByItem = struct {
 /// WithClause represents CTE (Common Table Expression) definitions.
 pub const WithClause = struct {
     name: []const u8 = "",
-    /// NOTE: like the Go original, writeSql always emits AS MATERIALIZED
-    /// regardless of this field.
+    /// Emits `AS MATERIALIZED` when set. The Go original ignores this field
+    /// and always materializes; see the note in the module header.
     materialized: bool = false,
     recursive: bool = false,
     columns: []const []const u8 = &.{},
@@ -742,7 +773,7 @@ pub const WithClause = struct {
             try writer.write(")");
         }
         // The Go source contains a literal tab here: " AS MATERIALIZED \t(".
-        try writer.write(" AS MATERIALIZED \t(");
+        try writer.write(if (self.materialized) " AS MATERIALIZED \t(" else " AS \t(");
         try writer.writeLine("");
         writer.indent();
         if (self.query) |query| {
@@ -1701,7 +1732,7 @@ test "simple CASE expression with operand, no ELSE" {
     try testing.expectEqualStrings("CASE `x` WHEN 1 THEN 'one' END", try expr.toString(a));
 }
 
-test "WITH clause with two entries" {
+test "WITH clause with two entries, one materialized" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -1716,16 +1747,17 @@ test "WITH clause with two entries" {
     });
     const stmt = try create(a, SelectStatement{
         .with_clauses = &.{
-            try create(a, WithClause{ .name = "t1", .query = q1 }),
+            try create(a, WithClause{ .name = "t1", .materialized = true, .query = q1 }),
             try create(a, WithClause{ .name = "t2", .query = q2 }),
         },
         .select_list = &.{try testSelectItem(a, try newStarExpression(a, null))},
         .from_clause = try testTable(a, "t1"),
     });
 
+    // `materialized` is honoured per clause; Go emits the keyword for both.
     try testing.expectEqualStrings(
         "WITH `t1` AS MATERIALIZED \t(\nSELECT  \n`a`  \nFROM `x`)\n" ++
-            ", \n`t2` AS MATERIALIZED \t(\nSELECT  \n`b`  \nFROM `y`)\n" ++
+            ", \n`t2` AS \t(\nSELECT  \n`b`  \nFROM `y`)\n" ++
             "\nSELECT\n*\nFROM `t1`",
         try stmt.toString(a),
     );
@@ -1748,7 +1780,7 @@ test "WITH RECURSIVE keyword when any clause is recursive" {
     });
 
     try testing.expectEqualStrings(
-        "WITH RECURSIVE `r` AS MATERIALIZED \t(\nSELECT  \n1)\n\nSELECT\n*\nFROM `r`",
+        "WITH RECURSIVE `r` AS \t(\nSELECT  \n1)\n\nSELECT\n*\nFROM `r`",
         try stmt.toString(a),
     );
 }

@@ -52,7 +52,10 @@ fn transformInsert(
     if (insert_data.query) |query| {
         // INSERT ... SELECT.
         const from_clause = query.from_clause orelse return error.InvalidAST;
-        const from_item = try coord.transformScan(from_clause.*, ctx);
+        const from_item = try coord.materializeScan(
+            try coord.transformScan(from_clause.*, ctx),
+            ctx,
+        );
 
         const select_stmt = try sqlbuilder.newSelectStatement(alloc);
         select_stmt.from_clause = from_item;
@@ -116,7 +119,10 @@ fn transformUpdate(
     // FROM clause (for JOINs in UPDATE) first: makes its columns available
     // to the SetItems / WhereClause, like Go.
     if (update_data.from_clause) |from_clause| {
-        update_stmt.from_clause = try coord.transformScan(from_clause.*, ctx);
+        update_stmt.from_clause = try coord.materializeScan(
+            try coord.transformScan(from_clause.*, ctx),
+            ctx,
+        );
     }
 
     const set_items = try alloc.alloc(*sqlbuilder.SetItem, update_data.set_items.len);

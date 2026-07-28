@@ -26,13 +26,16 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected order by scan data, got type %v"
     if (data.type != .order_by) return error.UnsupportedNode;
     const order_by_data = data.order_by_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
-    const inner_from_item = try coord.transformScan(order_by_data.input_scan, ctx);
+    const inner_from_item = try coord.materializeScan(
+        try coord.transformScan(order_by_data.input_scan, ctx),
+        ctx,
+    );
 
     // Transform ORDER BY expressions (Go transformOrderByItems).
     var order_by_items: std.ArrayList(*sqlbuilder.OrderByItem) = .empty;
@@ -60,9 +63,7 @@ pub fn transform(
     }
     select_statement.select_list = select_list;
 
-    const from_item = try alloc.create(sqlbuilder.FromItem);
-    from_item.* = .{ .type = .subquery, .subquery = select_statement };
-    return from_item;
+    return select_statement;
 }
 
 // ----------------------------------------------------------------------

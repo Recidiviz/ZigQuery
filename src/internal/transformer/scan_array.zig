@@ -18,7 +18,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected array scan data, got type %v"
     if (data.type != .array) return error.UnsupportedNode;
     const array_data = data.array_scan orelse return error.UnsupportedNode;
@@ -27,7 +27,10 @@ pub fn transform(
     // Handle input scan for correlated arrays.
     var inner_from_item: ?*sqlbuilder.FromItem = null;
     if (array_data.input_scan) |input_scan| {
-        inner_from_item = try coord.transformScan(input_scan.*, ctx);
+        inner_from_item = try coord.materializeScan(
+            try coord.transformScan(input_scan.*, ctx),
+            ctx,
+        );
     }
 
     // Transform the array expression to UNNEST.
@@ -80,26 +83,21 @@ pub fn transform(
         try ctx.fragmentContext().registerColumnScope(offset_column.id, json_each_from_item.alias);
     }
 
-    // Create a subquery that selects the proper column names.
     const unnest_select = try sqlbuilder.newSelectStatement(alloc);
     unnest_select.from_clause = json_each_from_item;
 
-    const select_list = try alloc.alloc(*sqlbuilder.SelectListItem, data.column_list.len);
-    for (data.column_list, 0..) |col, i| {
+    // json_each's `value`/`key` are already qualified by the $array_N alias;
+    // leave them pending rather than spending a level to re-alias them.
+    for (data.column_list) |col| {
         const ref = try ctx.fragmentContext().getQualifiedColumnRef(col.id);
-        const item = try alloc.create(sqlbuilder.SelectListItem);
-        item.* = .{
-            .expression = try sqlbuilder.newColumnExpression(alloc, ref.column_name, ref.table_alias),
-            .alias = try context.generateIDBasedAlias(alloc, col.name, col.id),
-        };
-        select_list[i] = item;
+        try ctx.fragmentContext().setPending(
+            col.id,
+            try sqlbuilder.newColumnExpression(alloc, ref.column_name, ref.table_alias),
+        );
     }
-    unnest_select.select_list = select_list;
 
     // If there's no InputScan we can return the select directly.
-    if (array_data.input_scan == null) {
-        return sqlbuilder.newSubqueryFromItem(alloc, unnest_select, "");
-    }
+    if (array_data.input_scan == null) return unnest_select;
 
     // Determine join type based on the is_outer flag.
     var join_type: sqlbuilder.JoinType = if (array_data.is_outer) .left else .inner;
@@ -124,8 +122,7 @@ pub fn transform(
     const join_from_item = try alloc.create(sqlbuilder.FromItem);
     join_from_item.* = .{ .type = .join, .join = join_clause };
     unnest_select.from_clause = join_from_item;
-
-    return sqlbuilder.newSubqueryFromItem(alloc, unnest_select, "");
+    return unnest_select;
 }
 
 // ----------------------------------------------------------------------

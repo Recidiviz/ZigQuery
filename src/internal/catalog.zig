@@ -32,6 +32,7 @@ const sqlite = @import("../sqlite.zig");
 const spec = @import("spec.zig");
 const pb = @import("../proto/resolved_ast.zig");
 const value_mod = @import("value.zig");
+const phase = @import("phase.zig");
 
 pub const Error = error{
     OutOfMemory,
@@ -419,6 +420,8 @@ pub const Catalog = struct {
 
     /// Go saveTableSpec: the upsert. `encoded` is the spec's JSON.
     fn saveTableSpec(c: *Catalog, db: *sqlite.Db, table_spec: *const spec.TableSpec, encoded: []const u8) Error!void {
+        var scope = phase.SourceScope.begin(.catalog);
+        defer scope.end();
         const arena = c.arena_state.allocator();
         const now = try nowTimestamps(arena);
         const kind: []const u8 = if (table_spec.is_view) view_spec_kind else table_spec_kind;
@@ -452,6 +455,8 @@ pub const Catalog = struct {
     pub fn deleteTableSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
         try c.forgetTableSpec(name);
 
+        var scope = phase.SourceScope.begin(.catalog);
+        defer scope.end();
         var stmt = try db.prepare(delete_catalog_query);
         defer stmt.finalize();
         try stmt.bindText(1, name);
@@ -504,6 +509,8 @@ pub const Catalog = struct {
 
     /// Go saveFunctionSpec: the shared catalog upsert with kind='function'.
     fn saveFunctionSpec(c: *Catalog, db: *sqlite.Db, fs: *const spec.FunctionSpec, encoded: []const u8) Error!void {
+        var scope = phase.SourceScope.begin(.catalog);
+        defer scope.end();
         const arena = c.arena_state.allocator();
         const now = try nowTimestamps(arena);
         var stmt = try db.prepare(upsert_catalog_query);
@@ -536,6 +543,8 @@ pub const Catalog = struct {
     pub fn deleteFunctionSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
         try c.forgetFunctionSpec(name);
 
+        var scope = phase.SourceScope.begin(.catalog);
+        defer scope.end();
         var stmt = try db.prepare(delete_catalog_query);
         defer stmt.finalize();
         try stmt.bindText(1, name);

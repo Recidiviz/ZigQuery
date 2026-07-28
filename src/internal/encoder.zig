@@ -8,6 +8,7 @@
 const std = @import("std");
 const value_mod = @import("value.zig");
 const codec = @import("codec_binary.zig");
+const phase = @import("phase.zig");
 
 pub const Value = value_mod.Value;
 pub const ValueError = value_mod.ValueError;
@@ -23,6 +24,8 @@ pub const SqliteRepr = union(enum) {
 /// Go EncodeValue: scalar kinds pass through natively; the rest become
 /// base64(binary codec).
 pub fn EncodeValue(alloc: std.mem.Allocator, v: Value) ValueError!SqliteRepr {
+    var t = phase.Timer.begin(.codec);
+    defer t.end();
     switch (v) {
         .@"null" => return .@"null",
         .int => |i| return .{ .int = i },
@@ -74,6 +77,8 @@ pub fn LiteralFromValue(alloc: std.mem.Allocator, v: Value) ValueError![]u8 {
 /// Legacy payloads are base64(JSON{header,body}) and begin with '{'; this
 /// engine never produces them, so they surface error.Unimplemented.
 pub fn DecodeValue(alloc: std.mem.Allocator, repr: SqliteRepr) ValueError!Value {
+    var t = phase.Timer.begin(.codec);
+    defer t.end();
     switch (repr) {
         .@"null" => return Value.@"null",
         .int => |i| return Value{ .int = i },

@@ -16,13 +16,14 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const query_expr = @import("../sqlbuilder/query_expr.zig");
 
 /// Go WithScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected with scan data, got type %v"
     if (data.type != .with) return error.UnsupportedNode;
     const with_scan_data = data.with_scan orelse return error.UnsupportedNode;
@@ -57,16 +58,16 @@ pub fn transform(
         }
     }
 
-    // Transform the main query that uses the CTEs.
-    const query_from_item = try coord.transformScan(with_scan_data.query, ctx);
+    // Transform the main query that uses the CTEs, then hang the CTEs off it
+    // rather than off a `SELECT * FROM (...)` wrapper around it.
+    const input = try coord.transformScan(with_scan_data.query, ctx);
+    const q = if (query_expr.canSetWith(input.query))
+        input.query
+    else
+        try coord.wrapScan(input, ctx);
 
-    // Create SELECT statement with WITH clauses.
-    const select_statement = try sqlbuilder.newSelectStarStatement(alloc, query_from_item);
-    select_statement.with_clauses = try with_clauses.toOwnedSlice(alloc);
-
-    const from_item = try alloc.create(sqlbuilder.FromItem);
-    from_item.* = .{ .type = .subquery, .subquery = select_statement };
-    return from_item;
+    q.with_clauses = try with_clauses.toOwnedSlice(alloc);
+    return q;
 }
 
 // ----------------------------------------------------------------------

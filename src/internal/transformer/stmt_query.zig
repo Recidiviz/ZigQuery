@@ -9,6 +9,7 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const query_expr = @import("../sqlbuilder/query_expr.zig");
 
 /// Go QueryStmtTransformer.Transform.
 pub fn transform(
@@ -23,11 +24,16 @@ pub fn transform(
 
     // Go dereferences *selectData.FromClause unconditionally.
     const from_clause = select_data.from_clause orelse return error.InvalidAST;
-    const from_item = try coord.transformScan(from_clause.*, ctx);
+    const input = try coord.transformScan(from_clause.*, ctx);
 
-    // Create the SELECT statement.
-    const select_statement = try sqlbuilder.newSelectStatement(alloc);
-    select_statement.from_clause = from_item;
+    // The statement's own output list is a projection like any other: claim
+    // the scan's select slot when it is free rather than always spending a
+    // level to rename id-based aliases to the user's. This is the outermost
+    // SELECT of every query, so it is one level per statement.
+    const select_statement = if (query_expr.canSetSelect(input.query))
+        input.query
+    else
+        try coord.wrapScan(input, ctx);
 
     // Transform each output column using pure data.
     var select_list: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;

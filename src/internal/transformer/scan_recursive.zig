@@ -19,7 +19,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected recursive scan data, got type %v"
     if (data.type != .recursive) return error.UnsupportedNode;
     const recursive_scan_data = data.recursive_scan orelse return error.UnsupportedNode;
@@ -90,7 +90,7 @@ pub fn transform(
     }
     set_statement.with_clauses = try with_clauses.toOwnedSlice(alloc);
 
-    return sqlbuilder.newSubqueryFromItem(alloc, set_statement, "recursive_scan");
+    return set_statement;
 }
 
 // ----------------------------------------------------------------------

@@ -47,8 +47,14 @@ pub fn transform(
     const source_scan_data = merge_data.source_scan orelse return error.UnsupportedNode;
 
     // Transform target and source scans.
-    const target_table = try coord.transformScan(target_scan_data.*, ctx);
-    const source_table = try coord.transformScan(source_scan_data.*, ctx);
+    const target_table = try coord.materializeScan(
+        try coord.transformScan(target_scan_data.*, ctx),
+        ctx,
+    );
+    const source_table = try coord.materializeScan(
+        try coord.transformScan(source_scan_data.*, ctx),
+        ctx,
+    );
 
     // Transform merge expression (join condition).
     const merge_expr = try coord.transformExpression(merge_data.merge_expr, ctx);

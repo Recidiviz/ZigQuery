@@ -22,14 +22,20 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected join scan data, got type %v"
     if (data.type != .join) return error.UnsupportedNode;
     const join_scan_data = data.join_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
-    const left_from_item = try coord.transformScan(join_scan_data.left_scan, ctx);
-    const right_from_item = try coord.transformScan(join_scan_data.right_scan, ctx);
+    const left_from_item = try coord.materializeScan(
+        try coord.transformScan(join_scan_data.left_scan, ctx),
+        ctx,
+    );
+    const right_from_item = try coord.materializeScan(
+        try coord.transformScan(join_scan_data.right_scan, ctx),
+        ctx,
+    );
 
     // Transform the join condition if present.
     var join_condition: ?*sqlbuilder.SQLExpression = null;
@@ -39,12 +45,6 @@ pub fn transform(
 
     // Convert ZetaSQL join type to the sqlbuilder join type.
     const join_type = convertJoinType(join_scan_data.join_type);
-
-    // Create the SELECT * statement with the JOIN clause.
-    const star_item = try alloc.create(sqlbuilder.SelectListItem);
-    star_item.* = .{ .expression = try sqlbuilder.newStarExpression(alloc, null) };
-    const select_list = try alloc.alloc(*sqlbuilder.SelectListItem, 1);
-    select_list[0] = star_item;
 
     const join_clause = try alloc.create(sqlbuilder.JoinClause);
     join_clause.* = .{
@@ -56,15 +56,12 @@ pub fn transform(
     const join_from_item = try alloc.create(sqlbuilder.FromItem);
     join_from_item.* = .{ .type = .join, .join = join_clause };
 
+    // The join is a row source, not a query: leave the select slot free so the
+    // projection above it lands here instead of one level up. Go always emits
+    // `SELECT * FROM (L) JOIN (R)`.
     const select_statement = try alloc.create(sqlbuilder.SelectStatement);
-    select_statement.* = .{
-        .select_list = select_list,
-        .from_clause = join_from_item,
-    };
-
-    const from_item = try alloc.create(sqlbuilder.FromItem);
-    from_item.* = .{ .type = .subquery, .subquery = select_statement };
-    return from_item;
+    select_statement.* = .{ .from_clause = join_from_item };
+    return select_statement;
 }
 
 /// Go convertJoinType (default: INNER).

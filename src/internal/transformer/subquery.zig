@@ -26,14 +26,16 @@ pub fn transform(
     const subquery_data = data.subquery orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
-    // Transform the subquery scan into a SELECT statement.
-    const subquery_fragment = try coord.transformScan(subquery_data.query, ctx);
+    const scan = try coord.transformScan(subquery_data.query, ctx);
+
+    // SCALAR / EXISTS / IN consume the subquery as a value: nothing outside
+    // names its columns, so it can be the query itself rather than a
+    // `SELECT * FROM (query)` around it. ARRAY is different — it reaches back
+    // for the first output column by name — and takes the level.
+    const scalar_query = try coord.finishScan(scan, ctx);
 
     const expression = try alloc.create(sqlbuilder.SQLExpression);
-    expression.* = .{
-        .type = .subquery,
-        .subquery = try sqlbuilder.newSelectStarStatement(alloc, subquery_fragment),
-    };
+    expression.* = .{ .type = .subquery, .subquery = scalar_query };
 
     // Wrap the subquery in parentheses and handle the subquery type.
     switch (subquery_data.subquery_type) {
@@ -41,6 +43,12 @@ pub fn transform(
         .ARRAY => {
             // Go: "failed to find computed column names for array subquery"
             if (subquery_data.query.column_list.len == 0) return error.InvalidAST;
+            const subquery_fragment = try sqlbuilder.newSubqueryFromItem(
+                alloc,
+                scalar_query,
+                scan.alias,
+            );
+            try ctx.fragmentContext().registerColumnScopeMapping(scan.alias, scan.columns);
             const select_statement = try sqlbuilder.newSelectStatement(alloc);
             const args = try alloc.alloc(*sqlbuilder.SQLExpression, 1);
             args[0] = try ctx.fragmentContext().getQualifiedColumnExpression(
@@ -59,10 +67,7 @@ pub fn transform(
         .EXISTS => {
             // EXISTS subquery: EXISTS (SELECT ...). Go builds a second
             // SelectStarStatement here.
-            return sqlbuilder.newExistsExpression(
-                alloc,
-                try sqlbuilder.newSelectStarStatement(alloc, subquery_fragment),
-            );
+            return sqlbuilder.newExistsExpression(alloc, scalar_query);
         },
         .IN => {
             // IN subquery: expr IN (SELECT ...). Go dereferences InExpr

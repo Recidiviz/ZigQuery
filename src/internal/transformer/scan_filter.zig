@@ -1,8 +1,8 @@
-//! Faithful port of go-zetasqlite internal/transformer_scan_filter.go.
+//! Port of go-zetasqlite internal/transformer_scan_filter.go.
 //!
-//! Recursively transforms the input scan, transforms the filter expression,
-//! and wraps the result in SELECT * FROM (...) WHERE <condition>. The
-//! coordinator assigns the scan alias afterwards.
+//! Transforms the input scan and writes the filter into its WHERE slot,
+//! spending a subquery level only when that slot is unavailable. Go always
+//! emits `SELECT * FROM (...) WHERE <condition>`.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -10,29 +10,31 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const query_expr = @import("../sqlbuilder/query_expr.zig");
 
 /// Go FilterScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.FromItem {
+) interfaces.Error!*sqlbuilder.SelectStatement {
     // Go: "expected filter scan data, got type %v"
     if (data.type != .filter) return error.UnsupportedNode;
     const filter_data = data.filter_scan orelse return error.UnsupportedNode;
-    const alloc = coord.alloc;
+    const input = try coord.transformScan(filter_data.input_scan, ctx);
 
-    const inner_from_item = try coord.transformScan(filter_data.input_scan, ctx);
+    // Write the WHERE into the input's own query when its select list is still
+    // free; otherwise the filter would read as "after the projection", which
+    // is not what the resolved AST said, so spend a level.
+    const q = if (query_expr.canSetWhere(input.query))
+        input.query
+    else
+        try coord.wrapScan(input, ctx);
 
-    // Transform the filter expression.
-    const filter_expr = try coord.transformExpression(filter_data.filter_expr, ctx);
-
-    const select_stmt = try sqlbuilder.newSelectStarStatement(alloc, inner_from_item);
-    select_stmt.where_clause = filter_expr;
-
-    const from_item = try alloc.create(sqlbuilder.FromItem);
-    from_item.* = .{ .type = .subquery, .subquery = select_stmt };
-    return from_item;
+    // After the wrap decision: the filter's column references have to resolve
+    // against whichever scope the input ended up in.
+    q.where_clause = try coord.transformExpression(filter_data.filter_expr, ctx);
+    return q;
 }
 
 // ----------------------------------------------------------------------
