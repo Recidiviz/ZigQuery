@@ -30,6 +30,7 @@ pub fn main(init: std.process.Init) !void {
 
     var print_sql = false;
     var explain = false;
+    var show_stats = false;
     var script_path: ?[]const u8 = null;
     var sql: ?[]const u8 = null;
     var args_it = std.process.Args.Iterator.init(init.minimal.args);
@@ -39,6 +40,8 @@ pub fn main(init: std.process.Init) !void {
             print_sql = true;
         } else if (std.mem.eql(u8, arg, "--explain")) {
             explain = true;
+        } else if (std.mem.eql(u8, arg, "--stats")) {
+            show_stats = true;
         } else if (std.mem.eql(u8, arg, "--file")) {
             script_path = args_it.next() orelse {
                 try out.writeAll("error: --file needs a path\n");
@@ -89,9 +92,9 @@ pub fn main(init: std.process.Init) !void {
             try out.flush();
             std.process.exit(1);
         };
+        const stmts = try driver.splitStatements(arena, bytes);
         var n: usize = 0;
-        var it = statements(bytes);
-        while (it.next()) |stmt| {
+        for (stmts) |stmt| {
             last_from_script = stmt;
             n += 1;
             db.exec(stmt, &.{}, .{}) catch |err| {
@@ -104,6 +107,8 @@ pub fn main(init: std.process.Init) !void {
             };
         }
         try out.print("-- ran {d} statements from {s}\n", .{ n, path });
+        // The script is setup, not the thing being measured.
+        if (show_stats) zetasqlite.phase.reset();
     }
 
     // With no query of its own, --file means "run the script, then explain (or
@@ -113,6 +118,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (explain) {
         try explainQuery(arena, out, db, query);
+        if (show_stats) try printPhases(out);
         try out.flush();
         return;
     }
@@ -141,7 +147,30 @@ pub fn main(init: std.process.Init) !void {
         }
         try out.writeAll("\n");
     }
+    if (show_stats) try printPhases(out);
     try out.flush();
+}
+
+/// Where this statement's time went. Answers "is the plan the problem?" — for
+/// a query over empty tables it usually is not.
+fn printPhases(out: *std.Io.Writer) !void {
+    const phase = zetasqlite.phase;
+    const ms = struct {
+        fn of(ns: u64) f64 {
+            return @as(f64, @floatFromInt(ns)) / 1e6;
+        }
+    }.of;
+    try out.print(
+        "\n-- analyze {d:.2}ms ({d})  transform {d:.2}ms ({d})  prepare {d:.2}ms ({d})  " ++
+            "step {d:.2}ms ({d})  sql {d} bytes\n",
+        .{
+            ms(phase.totalNs(.analyze)),      phase.count(.analyze),
+            ms(phase.totalNs(.transform)),    phase.count(.transform),
+            ms(phase.totalNs(.sqlite_prepare)), phase.count(.sqlite_prepare),
+            ms(phase.totalNs(.sqlite_step)),  phase.count(.sqlite_step),
+            phase.preparedBytes(),
+        },
+    );
 }
 
 /// EXPLAIN QUERY PLAN over the translated SQL, on the raw handle.
@@ -180,78 +209,6 @@ fn explainQuery(
     }
 }
 
-/// Splits a script on `;` at top level, skipping the quoting forms GoogleSQL
-/// allows so a semicolon inside a string, an identifier or a triple-quoted
-/// description does not end a statement.
-fn statements(src: []const u8) StatementIterator {
-    return .{ .src = src };
-}
-
-const StatementIterator = struct {
-    src: []const u8,
-    i: usize = 0,
-
-    fn next(it: *StatementIterator) ?[]const u8 {
-        var start = it.i;
-        // Skip leading whitespace and whole-line comments.
-        while (start < it.src.len) {
-            const c = it.src[start];
-            if (c == ' ' or c == '\t' or c == '\n' or c == '\r') {
-                start += 1;
-            } else if (c == '-' and start + 1 < it.src.len and it.src[start + 1] == '-') {
-                while (start < it.src.len and it.src[start] != '\n') start += 1;
-            } else break;
-        }
-        if (start >= it.src.len) {
-            it.i = start;
-            return null;
-        }
-
-        var i = start;
-        while (i < it.src.len) {
-            const c = it.src[i];
-            if (c == ';') {
-                it.i = i + 1;
-                return std.mem.trim(u8, it.src[start..i], " \t\n\r");
-            }
-            if (c == '-' and i + 1 < it.src.len and it.src[i + 1] == '-') {
-                while (i < it.src.len and it.src[i] != '\n') i += 1;
-                continue;
-            }
-            if (c == '\'' or c == '"' or c == '`') {
-                i = skipQuoted(it.src, i);
-                continue;
-            }
-            i += 1;
-        }
-        it.i = it.src.len;
-        const tail = std.mem.trim(u8, it.src[start..], " \t\n\r");
-        return if (tail.len == 0) null else tail;
-    }
-};
-
-/// Index just past the quoted run starting at `i`. Handles GoogleSQL's
-/// triple-quoted strings, which carry the view descriptions that are full of
-/// apostrophes and semicolons.
-fn skipQuoted(src: []const u8, i: usize) usize {
-    const q = src[i];
-    const triple = i + 2 < src.len and src[i + 1] == q and src[i + 2] == q;
-    const delim_len: usize = if (triple) 3 else 1;
-    var j = i + delim_len;
-    while (j < src.len) {
-        if (src[j] == '\\' and j + 1 < src.len) {
-            j += 2;
-            continue;
-        }
-        if (src[j] == q) {
-            if (!triple) return j + 1;
-            if (j + 2 < src.len and src[j + 1] == q and src[j + 2] == q) return j + 3;
-        }
-        j += 1;
-    }
-    return src.len;
-}
-
 fn printCell(out: *std.Io.Writer, cell: driver.Cell) std.Io.Writer.Error!void {
     switch (cell) {
         .null => try out.writeAll("NULL"),
@@ -286,25 +243,17 @@ fn printCell(out: *std.Io.Writer, cell: driver.Cell) std.Io.Writer.Error!void {
 
 const testing = std.testing;
 
-test "statement splitting ignores semicolons inside quotes and comments" {
-    var it = statements(
+test "replay splitting comes from the driver and survives prose" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const stmts = try driver.splitStatements(arena.allocator(),
         \\-- a comment; with a semicolon
         \\CREATE TABLE `a` (x STRING);
         \\CREATE VIEW `b` OPTIONS(description='''has; a semicolon''') AS SELECT 'x;y';
-        \\SELECT 1
+        \\# hash comment; also semicolons
+        \\CREATE VIEW `c` AS /* block; comment */ SELECT 1;
+        \\SELECT 2
     );
-    try testing.expectEqualStrings("CREATE TABLE `a` (x STRING)", it.next().?);
-    try testing.expectEqualStrings(
-        "CREATE VIEW `b` OPTIONS(description='''has; a semicolon''') AS SELECT 'x;y'",
-        it.next().?,
-    );
-    try testing.expectEqualStrings("SELECT 1", it.next().?);
-    try testing.expect(it.next() == null);
-}
-
-test "statement splitting tolerates a trailing statement with no semicolon" {
-    var it = statements("SELECT 1;\n\n-- trailing comment\nSELECT 2");
-    try testing.expectEqualStrings("SELECT 1", it.next().?);
-    try testing.expectEqualStrings("SELECT 2", it.next().?);
-    try testing.expect(it.next() == null);
+    try testing.expectEqual(@as(usize, 5), stmts.len);
+    try testing.expectEqualStrings("SELECT 2", stmts[4]);
 }

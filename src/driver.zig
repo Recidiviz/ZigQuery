@@ -1506,6 +1506,77 @@ fn hasNamedParam(s: []const u8) bool {
     return false;
 }
 
+/// Splits a script into statements on top-level `;`.
+///
+/// Shares its scanner with stripSQLLiterals below, because the hard part is the
+/// same: a `;` inside a string, a backtick-quoted identifier, a `--`/`#` line
+/// comment or a `/* */` block is not a statement boundary. View definitions
+/// carry prose descriptions in triple-quoted strings and block comments, and
+/// both are full of semicolons and apostrophes.
+///
+/// Trailing text with no final `;` is returned as a statement; empty runs are
+/// skipped.
+pub fn splitStatements(
+    arena: std.mem.Allocator,
+    script: []const u8,
+) error{OutOfMemory}![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var start: usize = 0;
+    var quote: u8 = 0;
+    var triple = false;
+    var in_line_comment = false;
+    var in_block_comment = false;
+    var i: usize = 0;
+    while (i < script.len) : (i += 1) {
+        const c = script[i];
+        if (in_block_comment) {
+            if (c == '*' and i + 1 < script.len and script[i + 1] == '/') {
+                in_block_comment = false;
+                i += 1;
+            }
+            continue;
+        }
+        if (in_line_comment) {
+            if (c == '\n') in_line_comment = false;
+            continue;
+        }
+        if (quote != 0) {
+            if (c == quote) {
+                if (triple) {
+                    if (i + 2 < script.len and script[i + 1] == quote and script[i + 2] == quote) {
+                        quote = 0;
+                        triple = false;
+                        i += 2;
+                    }
+                } else {
+                    quote = 0;
+                }
+            }
+            continue;
+        }
+        if (c == '\'' or c == '"' or c == '`') {
+            quote = c;
+            triple = (i + 2 < script.len and script[i + 1] == c and script[i + 2] == c);
+            if (triple) i += 2;
+        } else if (c == '-' and i + 1 < script.len and script[i + 1] == '-') {
+            in_line_comment = true;
+            i += 1;
+        } else if (c == '#') {
+            in_line_comment = true;
+        } else if (c == '/' and i + 1 < script.len and script[i + 1] == '*') {
+            in_block_comment = true;
+            i += 1;
+        } else if (c == ';') {
+            const stmt = std.mem.trim(u8, script[start..i], " \t\n\r");
+            if (stmt.len > 0) try out.append(arena, stmt);
+            start = i + 1;
+        }
+    }
+    const tail = std.mem.trim(u8, script[start..], " \t\n\r");
+    if (tail.len > 0) try out.append(arena, tail);
+    return out.toOwnedSlice(arena);
+}
+
 /// Go stripSQLLiterals: blanks out single/double/backtick-quoted spans and
 /// `--` line comments so parameter detection ignores `?`/`@` inside them.
 fn stripSQLLiterals(arena: std.mem.Allocator, q: []const u8) error{OutOfMemory}![]const u8 {
