@@ -4,3 +4,5 @@
 
 # Bazel output symlinks (the shim build roots here now)
 /bazel-*
+
+.idea/
