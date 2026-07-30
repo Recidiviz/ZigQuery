@@ -1,3 +1,6 @@
 /.zig-cache/
 /zig-out/
 /tools/venv/
+
+# Bazel output symlinks (the shim build roots here now)
+/bazel-*

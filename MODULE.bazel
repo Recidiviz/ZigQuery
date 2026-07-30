@@ -1,0 +1,34 @@
+# Bazel root module for the GoogleSQL analyzer shim (//shim).
+#
+# googlesql is consumed as a pristine git submodule at //third_party/googlesql
+# — no local patches — so upstream can be bumped by moving the submodule
+# pointer alone. Everything this repo needs from it is expressed here.
+
+module(
+    name = "zetasqlite_zig",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "googlesql", version = "2026.7.4")
+local_path_override(
+    module_name = "googlesql",
+    path = "third_party/googlesql",
+)
+
+# The shim includes absl, protobuf, RE2 and ICU headers directly, so their
+# repo names have to resolve from THIS module — googlesql's own repo mapping
+# does not reach us. Versions and repo_names mirror googlesql's MODULE.bazel
+# so both modules resolve to the same repositories.
+bazel_dep(name = "abseil-cpp", version = "20260107.0", repo_name = "com_google_absl")
+bazel_dep(name = "protobuf", version = "33.4", repo_name = "com_google_protobuf")
+bazel_dep(name = "re2", version = "2025-08-12", repo_name = "com_googlesource_code_re2")
+
+# ICU is deliberately not taken from the BCR: googlesql fetches it with a
+# custom BUILD that links the ICU data statically (see the comment in
+# googlesql's MODULE.bazel). Reuse that same module extension so @icu here is
+# the very same repository the analyzer was built against.
+http_archive_deps = use_extension(
+    "@googlesql//bazel:http_archive_deps.bzl",
+    "googlesql_http_archive_deps",
+)
+use_repo(http_archive_deps, "icu")

@@ -1,0 +1,56 @@
+# C-ABI shim over the GoogleSQL analyzer, plus the RE2/ICU helpers the engine
+# borrows from the same C++ tree.
+#
+# Bazel owns all C++ compilation and code generation (protos, parser
+# templates) for the vendored analyzer; Zig links the resulting
+# self-contained dylib. googlesql itself is the pristine submodule at
+# //third_party/googlesql, wired in as a Bazel module (see MODULE.bazel), so
+# every dependency below is an @googlesql// label.
+
+package(default_visibility = ["//visibility:private"])
+
+cc_binary(
+    name = "libgooglesql_shim.dylib",
+    srcs = ["analyzer_shim.cc"],
+    linkshared = True,
+    # Default install name is a bazel-out-relative path, which dyld resolves
+    # against the CWD; @rpath lets the Zig binary find it via its own rpath.
+    # Exporting only the C entry points lets -dead_strip discard unreachable
+    # code, and -x omits local symbols; together they take the dylib from
+    # ~428MB to a fraction of that (most of it was symbol/string tables).
+    linkopts = [
+        "-Wl,-install_name,@rpath/libgooglesql_shim.dylib",
+        "-Wl,-exported_symbol,_GoogleSQL_AnalyzeNextStatement",
+        "-Wl,-exported_symbol,_GoogleSQL_AnalyzeNextStatementWithCatalog",
+        "-Wl,-exported_symbol,_GoogleSQL_CatalogCreate",
+        "-Wl,-exported_symbol,_GoogleSQL_CatalogAddTables",
+        "-Wl,-exported_symbol,_GoogleSQL_CatalogRemoveTable",
+        "-Wl,-exported_symbol,_GoogleSQL_CatalogDestroy",
+        "-Wl,-exported_symbol,_GoogleSQL_Free",
+        "-Wl,-exported_symbol,_GoogleSQL_RegexpFind",
+        "-Wl,-exported_symbol,_GoogleSQL_RegexpReplace",
+        "-Wl,-exported_symbol,_GoogleSQL_Normalize",
+        "-Wl,-exported_symbol,_GoogleSQL_CaseMap",
+        "-Wl,-dead_strip",
+        "-Wl,-x",
+    ],
+    deps = [
+        "@googlesql//googlesql/proto:simple_catalog_cc_proto",
+        "@googlesql//googlesql/public:analyzer",
+        "@googlesql//googlesql/public:analyzer_options",
+        "@googlesql//googlesql/public:analyzer_output",
+        "@googlesql//googlesql/public:builtin_function",
+        "@googlesql//googlesql/public:language_options",
+        "@googlesql//googlesql/public:parse_resume_location",
+        "@googlesql//googlesql/public:simple_catalog",
+        "@googlesql//googlesql/public:type",
+        "@googlesql//googlesql/resolved_ast:resolved_ast_cc_proto",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_protobuf//:protobuf",
+        "@com_googlesource_code_re2//:re2",
+        "@icu//:common",
+        "@icu//:headers",
+    ],
+)

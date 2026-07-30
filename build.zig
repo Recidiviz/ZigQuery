@@ -11,19 +11,24 @@ pub fn build(b: *std.Build) void {
     };
     const optimize = b.standardOptimizeOption(opts);
 
-    const googlesql_root = b.option(
+    // The shim (//shim) and the googlesql submodule (//third_party/googlesql)
+    // both live in this repo now, so Bazel roots here and the dylib lands in
+    // our own bazel-bin. The option stays for out-of-tree output bases (CI,
+    // a remote cache, a hand-built dylib).
+    const shim_rel = b.option(
         []const u8,
-        "googlesql-root",
-        "Path to the googlesql checkout providing bazel-bin/zig/libgooglesql_shim.dylib",
-    ) orelse "/Users/danhansen/workspace/googlesql";
+        "shim-dylib",
+        "Path to libgooglesql_shim.dylib, relative to the repo root",
+    ) orelse "bazel-bin/shim/libgooglesql_shim.dylib";
     const build_shim = b.option(
         bool,
         "build-shim",
-        "Run `bazel build -c opt //zig:libgooglesql_shim.dylib` in googlesql-root first",
+        "Run `bazel build -c opt //shim:libgooglesql_shim.dylib` first",
     ) orelse false;
 
-    const shim_dylib = b.fmt("{s}/bazel-bin/zig/libgooglesql_shim.dylib", .{googlesql_root});
-    const shim_dir = b.fmt("{s}/bazel-bin/zig", .{googlesql_root});
+    const repo_root = b.build_root.path orelse ".";
+    const shim_dylib = b.pathJoin(&.{ repo_root, shim_rel });
+    const shim_dir = std.fs.path.dirname(shim_dylib) orelse repo_root;
 
     const sqlite_include = "/opt/homebrew/opt/sqlite/include";
     const sqlite_lib = "/opt/homebrew/opt/sqlite/lib";
@@ -42,12 +47,14 @@ pub fn build(b: *std.Build) void {
 
     const maybe_bazel: ?*std.Build.Step.Run = if (build_shim) blk: {
         const bazel = b.addSystemCommand(&.{
-            "bazel",                "build",
-            "-c",                   "opt",
-            "--jobs=HOST_CPUS*.5",  "--local_resources=cpu=HOST_CPUS*.5",
-            "//zig:libgooglesql_shim.dylib",
+            "bazel",       "build",
+            "-c",          "opt",
+            // Explicit on the command line because ~/.bazelrc is read after
+            // the workspace .bazelrc and would otherwise win.
+            "--jobs=4",    "--local_resources=cpu=4",
+            "//shim:libgooglesql_shim.dylib",
         });
-        bazel.setCwd(.{ .cwd_relative = googlesql_root });
+        bazel.setCwd(.{ .cwd_relative = repo_root });
         break :blk bazel;
     } else null;
 

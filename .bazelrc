@@ -1,0 +1,39 @@
+# Only the ROOT module's .bazelrc is read, so googlesql's own flags have to be
+# restated here — without them the vendored analyzer does not compile (it needs
+# C++20 and this exact set of warning suppressions). Copied verbatim from
+# third_party/googlesql/.bazelrc, minus its Go and Java flags: we build only
+# //shim, and its `--@io_bazel_rules_go//...` flag would not even resolve from
+# this module's repo mapping.
+build:clang --action_env=BAZEL_CXXOPTS="-std=c++20"
+build:clang --cxxopt=-std=c++20
+build:clang --cxxopt=-Wno-module-import-in-extern-c
+build:clang --cxxopt=-Wno-deprecated-declarations
+build:clang --cxxopt=-Wno-range-loop-analysis
+build:clang --cxxopt=-Wno-inconsistent-missing-override
+build:clang --cxxopt=-Wno-char-subscripts
+build:clang --cxxopt=-Wno-enum-compare-switch
+build:clang --cxxopt=-Wno-defaulted-function-deleted
+build:clang --cxxopt=-Wno-unused-private-field
+build:clang --cxxopt=-Wno-return-std-move
+build:clang --cxxopt=-Wno-reorder-ctor
+build:clang --cxxopt=-Wno-unused-const-variable
+build:clang --cxxopt=-Wno-unused-function
+build:clang --cxxopt=-Wno-macro-redefined
+build:clang --cxxopt=-Wno-unused-command-line-argument
+build:clang --cxxopt=-Werror=undefined-internal
+build:darwin --cxxopt="-mmacosx-version-min=11.0"
+build:macos --features=-layering_check
+common --enable_platform_specific_config
+build --cxxopt=-std=c++20 --host_cxxopt=-std=c++20 --config=clang
+
+# The shim reaches into googlesql internals that are restricted to its
+# `googlesql_implementation` package group (resolved_ast + proto cc_protos).
+# Turning the check off here is what lets third_party/googlesql stay a pristine
+# submodule; the alternative is a fork carrying a package_group patch.
+common --nocheck_visibility
+
+# This machine OOMs at full parallelism on a tree this size. Note that
+# ~/.bazelrc is read AFTER this file, so a global --jobs there wins over these;
+# pass --jobs on the command line to override both.
+build --jobs=4
+build --local_resources=cpu=4
