@@ -5,15 +5,21 @@
 //! written by go-zetasqlite loads here and vice versa.
 //!
 //! The in-memory side is redesigned per the port plan: where Go builds a
-//! live googlesql.SimpleCatalog through the engine API, this port renders a
-//! `SimpleCatalogProto` in protobuf-JSON form (catalogJson) that the C++
-//! analyzer shim deserializes per statement. Go's dotted-path registration
-//! (addTableSpecRecursive: the full dotted name plus every suffix at the
-//! root, and sub-catalogs per path segment) is mirrored structurally with
-//! nested `catalog` entries; every SimpleTableProto carries
-//! `name`=canonical ("_"-joined SQLite table name, what Table.Name()
-//! reports back through the resolved AST) and `nameInCatalog`=the name it
-//! resolves under.
+//! live googlesql.SimpleCatalog through the engine API, this port renders
+//! `SimpleCatalogProto` in protobuf-JSON form for the C++ analyzer shim to
+//! deserialize. Go's dotted-path registration (addTableSpecRecursive: the
+//! full dotted name plus every suffix at the root, and sub-catalogs per path
+//! segment) is mirrored structurally with nested `catalog` entries; every
+//! SimpleTableProto carries `name`=canonical ("_"-joined SQLite table name,
+//! what Table.Name() reports back through the resolved AST) and
+//! `nameInCatalog`=the name it resolves under.
+//!
+//! That rendering is incremental, not per-statement. The shim holds a
+//! persistent catalog handle and this catalog keeps an append-only change
+//! log; `renderDelta` hands a consumer's `Cursor` just the entries it has not
+//! seen, so a statement analyzed against an unchanged catalog renders nothing
+//! at all. `catalogJson` — the whole tree in one proto — is reserved for
+//! seeding a fresh handle and for the stateless fallback path.
 //!
 //! Function specs (`kind = 'function'`) follow the same pattern: persisted
 //! rows are Go-compatible JSON, and the in-memory side renders
@@ -605,8 +611,8 @@ pub const Catalog = struct {
 
     /// Go addTableSpec's in-memory half. On a duplicate canonical name the
     /// stored spec is replaced (Go only swaps the map entry and leaves the
-    /// engine catalog with the first registration; since this port
-    /// re-renders catalogJson per statement, the replacement becomes
+    /// engine catalog with the first registration; here the change log carries
+    /// the replacement through as a remove followed by an add, so it becomes
     /// visible immediately — a deliberate, strictly-more-correct deviation).
     fn addTableSpecToMemory(c: *Catalog, table_spec: *spec.TableSpec) Error!void {
         const arena = c.arena_state.allocator();
@@ -733,9 +739,12 @@ const Node = struct {
     // answer "is it already here?".
     //
     // Without them, registering N tables costs O(N^2) string comparisons per
-    // render — and the catalog is re-rendered once per statement, so bulk
-    // loading a few thousand source tables became minutes of pure lookup.
-    // All of this is arena-allocated and discarded with the render.
+    // render. Back when every statement re-rendered the whole catalog, that
+    // made bulk loading a few thousand source tables minutes of pure lookup.
+    // Full renders are rare now — seeding a fresh handle, or the stateless
+    // fallback — but they are still the ones that touch every table, so the
+    // sidecars are what keeps that O(N). All of this is arena-allocated and
+    // discarded with the render.
     entry_set: std.StringHashMapUnmanaged(void) = .empty,
     fn_entry_set: std.StringHashMapUnmanaged(void) = .empty,
     sub_map: std.StringHashMapUnmanaged(*Node) = .empty,

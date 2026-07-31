@@ -98,16 +98,25 @@ pub const QueryOptions = struct {
     current_time_unix_micros: ?i64 = null,
     /// How much of the catalog the analyzer is given.
     ///
-    /// The catalog is re-rendered to JSON and re-parsed by the C++ analyzer on
-    /// every statement, so its cost is proportional to catalog size — bulk
-    /// loading N tables is O(N^2), and measurement puts ~90% of that in the
-    /// C++ re-parse rather than the Zig render.
+    /// `.full` goes through the persistent handle when there is one, which is
+    /// synced by delta — so a statement analyzed against an *unchanged*
+    /// catalog pays nothing proportional to catalog size. `bench` measures a
+    /// flat ~0.055 ms/query from 1 table to 14,000. The O(catalog) render is
+    /// the stateless fallback (`statelessCatalogJson`), taken only when no
+    /// handle is available or a delta cannot be applied; there, bulk loading N
+    /// tables is O(N^2) with ~90% of it in the C++ re-parse rather than the
+    /// Zig render.
+    ///
+    /// Mutation is the cost that remains on the `.full` path: each statement
+    /// that changes the catalog leaves a delta for the next one to push, and
+    /// `bench` measures per-CREATE cost growing linearly with the tables
+    /// already present (0.055 ms at 50 tables, 0.46 ms at 14,000).
     ///
     /// A statement that references no existing table (a CREATE TABLE with
     /// explicit columns, say) does not need any of it. `.none` says so, and
-    /// makes such a statement O(1) instead of O(catalog). It is only ever a
-    /// hint: if the statement does reference something, analysis fails and
-    /// the caller can retry with `.full`.
+    /// skips both the delta sync and the render. It is only ever a hint: if
+    /// the statement does reference something, analysis fails and the caller
+    /// can retry with `.full`.
     catalog_scope: enum { full, none } = .full,
 };
 
