@@ -2461,7 +2461,13 @@ fn cellFromValue(
             for (st.keys, 0..) |key, i| {
                 const field_type = typ.field_types[i].type orelse return error.FailedConversion;
                 fields[i] = .{
-                    .name = key,
+                    // Copied, not aliased. `Rows.next` decodes with
+                    // DecodeValueBorrowing, and struct keys are one of the
+                    // payloads that borrows — they point into SQLite's column
+                    // buffer, which the next step() invalidates. Every other arm
+                    // here already copies via toString/toApiString/dupe; this
+                    // one assigned the borrowed slice straight through.
+                    .name = try alloc.dupe(u8, key),
                     .value = try cellFromValue(alloc, st.values[i], field_type),
                 };
             }
@@ -3016,6 +3022,39 @@ test "multi-statement CREATE + INSERT + SELECT in one query() call" {
     try testing.expectEqual(Cell{ .int = 2 }, second[0]);
     try testing.expectEqualStrings("b", second[1].string);
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "struct field names outlive the step that produced them" {
+    // Regression. Rows.next decodes with DecodeValueBorrowing, whose struct
+    // keys alias SQLite's column buffer (see
+    // codec_binary.decodeBinaryValueBorrowing). cellFromValue copied every
+    // payload out of that buffer but not the field *name*, so a caller holding
+    // a row across the next step() read freed memory.
+    //
+    // Nothing caught it because every existing caller reads each row before
+    // stepping again: the CLI prints inside the loop, and the JSON corpus
+    // compares inside the loop. The spec runner collects rows first, and saw
+    // `{<garbage>: 1}`.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        "SELECT STRUCT(x AS n) FROM UNNEST([1, 2]) AS x ORDER BY x",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    const first = (try rows.next()).?;
+    const held = first[0].struct_;
+
+    // Step past it twice: once to the second row, once to exhaustion. Both
+    // invalidate the buffer the first row's name pointed into.
+    _ = try rows.next();
+    _ = try rows.next();
+
+    try testing.expectEqualStrings("n", held[0].name);
+    try testing.expectEqual(Cell{ .int = 1 }, held[0].value);
 }
 
 test "query() over a script ending in DML returns empty rows (Go &Rows{conn})" {
