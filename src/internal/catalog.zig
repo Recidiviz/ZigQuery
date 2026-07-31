@@ -39,6 +39,7 @@ const spec = @import("spec.zig");
 const pb = @import("../proto/resolved_ast.zig");
 const value_mod = @import("value.zig");
 const phase = @import("phase.zig");
+const info_schema_vtab = @import("function/info_schema_vtab.zig");
 
 pub const Error = error{
     OutOfMemory,
@@ -630,6 +631,58 @@ pub const Catalog = struct {
         try c.tables.append(c.gpa, table_spec);
         try c.table_map.put(table_name, c.tables.items.len - 1);
         try c.changes.append(c.gpa, .{ .table_added = table_name });
+        try c.ensureInfoSchema(table_spec.name_path);
+    }
+
+    /// Registers the INFORMATION_SCHEMA views for a table's dataset, once.
+    ///
+    /// Hooked here rather than in the JSON renderers because this is the single
+    /// funnel all three registration paths pass through — including
+    /// `loadTableSpec`, so the views come back on a reopened database — and
+    /// because both the full render and the delta render then pick them up
+    /// without inventing synthetic change entries.
+    ///
+    /// The views are ordinary `TableSpec`s with no backing SQLite object; the
+    /// transformer rewrites a scan of one into a virtual-table call (see
+    /// `function/info_schema_vtab.zig`).
+    fn ensureInfoSchema(c: *Catalog, name_path: []const []const u8) Error!void {
+        // A dataset needs at least <dataset>.<table>.
+        if (name_path.len < 2) return;
+        // Recursion guard: the synthetic specs below re-enter this function.
+        for (name_path) |seg| {
+            if (std.mem.eql(u8, seg, info_schema_vtab.info_schema_segment)) return;
+        }
+        const arena = c.arena_state.allocator();
+        const prefix = name_path[0 .. name_path.len - 1];
+
+        for (&info_schema_vtab.views) |*view| {
+            const path = try arena.alloc([]const u8, prefix.len + 2);
+            for (prefix, 0..) |seg, i| path[i] = try arena.dupe(u8, seg);
+            path[prefix.len] = info_schema_vtab.info_schema_segment;
+            path[prefix.len + 1] = view.view;
+
+            const table_spec = try arena.create(spec.TableSpec);
+            const columns = try arena.alloc(*spec.ColumnSpec, view.columns.len);
+            for (view.columns, 0..) |col_name, i| {
+                const col = try arena.create(spec.ColumnSpec);
+                col.* = .{
+                    .name = col_name,
+                    // ordinal_position is the only non-STRING column.
+                    .type = try spec.newSimpleType(arena, .TYPE_INT64),
+                };
+                if (!std.mem.eql(u8, col_name, "ordinal_position")) {
+                    col.type = try spec.newSimpleType(arena, .TYPE_STRING);
+                }
+                columns[i] = col;
+            }
+            table_spec.* = .{ .name_path = path, .columns = columns };
+
+            const canonical = try table_spec.tableName(arena);
+            if (c.table_map.contains(canonical)) continue;
+            try c.tables.append(c.gpa, table_spec);
+            try c.table_map.put(canonical, c.tables.items.len - 1);
+            try c.changes.append(c.gpa, .{ .table_added = canonical });
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1360,4 +1413,79 @@ fn resolvedTableName(node: *const pb.AnyResolvedNodeProto) ![]const u8 {
             else => return error.TestUnexpectedResult,
         }
     }
+}
+
+test "registering a table injects its dataset's INFORMATION_SCHEMA views" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c = try Catalog.init(testing.allocator);
+    defer c.deinit();
+    try c.createCatalogTablesIfNotExist(&db);
+
+    const views = info_schema_vtab.views.len;
+
+    // One table -> the table plus one view per INFORMATION_SCHEMA view.
+    try c.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "ds", "t1" }));
+    try testing.expectEqual(@as(usize, 1 + views), c.tableCount());
+
+    // A second table in the same dataset reuses them.
+    try c.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "ds", "t2" }));
+    try testing.expectEqual(@as(usize, 2 + views), c.tableCount());
+
+    // A different dataset gets its own set.
+    try c.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "ds2", "t3" }));
+    try testing.expectEqual(@as(usize, 3 + views * 2), c.tableCount());
+
+    // Registered under the canonical `_`-joined name.
+    try testing.expect(c.findTableSpec("ds_INFORMATION_SCHEMA_TABLES") != null);
+    try testing.expect(c.findTableSpec("ds2_INFORMATION_SCHEMA_COLUMNS") != null);
+}
+
+test "a table with no dataset gets no INFORMATION_SCHEMA views" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c = try Catalog.init(testing.allocator);
+    defer c.deinit();
+    try c.createCatalogTablesIfNotExist(&db);
+
+    // A bare `t1` names no dataset, so there is nothing to describe.
+    try c.addNewTableSpec(&db, try testTableSpec(alloc, &.{"t1"}));
+    try testing.expectEqual(@as(usize, 1), c.tableCount());
+}
+
+test "INFORMATION_SCHEMA views come back after a reload" {
+    // They are synthesised, never persisted, so a fresh catalog must rebuild
+    // them from the stored user tables rather than find them in storage.
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c1 = try Catalog.init(testing.allocator);
+    defer c1.deinit();
+    try c1.createCatalogTablesIfNotExist(&db);
+    try c1.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "ds", "t1" }));
+
+    // Only the user table is persisted.
+    {
+        var stmt = try db.prepare("SELECT COUNT(*) FROM zetasqlite_catalog");
+        defer stmt.finalize();
+        try testing.expect(try stmt.step());
+        try testing.expectEqual(@as(i64, 1), stmt.columnInt64(0));
+    }
+
+    var c2 = try Catalog.init(testing.allocator);
+    defer c2.deinit();
+    try c2.loadFromStorage(&db);
+    try testing.expectEqual(@as(usize, 1 + info_schema_vtab.views.len), c2.tableCount());
+    try testing.expect(c2.findTableSpec("ds_INFORMATION_SCHEMA_TABLES") != null);
 }

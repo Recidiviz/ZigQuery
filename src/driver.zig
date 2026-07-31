@@ -602,11 +602,26 @@ pub const Db = struct {
         for (try g.catalog.liveTableSpecs(arena)) |table_spec| {
             const path = table_spec.name_path;
             if (path.len != 3) continue;
+            // A 2-part dataset yields a 3-part synthetic
+            // `ds.INFORMATION_SCHEMA.TABLES`, which would otherwise pass the
+            // length filter and surface in datasets.list / datasets.delete.
+            if (std.mem.eql(u8, path[1], function.info_schema_vtab.info_schema_segment)) continue;
             if (!std.mem.eql(u8, path[0], project_id)) continue;
             if (!std.mem.eql(u8, path[1], dataset_id)) continue;
             try out.append(arena, table_spec);
         }
         return out.toOwnedSlice(arena);
+    }
+
+    /// Snapshots the live table specs for the INFORMATION_SCHEMA vtabs.
+    ///
+    /// The TEMP overlay is deliberately not merged in: those views report
+    /// persistent objects, and `info_schema_vtab` filters temps out anyway.
+    fn publishInfoSchemaSnapshot(db: *Db, arena: std.mem.Allocator) Error!void {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        db.udf_state.info_schema.info_schema = g.catalog.liveTableSpecs(arena) catch
+            return error.OutOfMemory;
     }
 
     /// Exclusive access to this connection's persistent catalog. Blocks while
@@ -1010,6 +1025,19 @@ pub const Db = struct {
         const flattened_sql = try flattenBeginEndBlocks(arena, sql);
         const sqlz = try arena.dupeZ(u8, flattened_sql);
         var offset: usize = 0;
+
+        // Publish the catalog snapshot the INFORMATION_SCHEMA vtabs read.
+        // Taken here, under the lock and before any stepping: those callbacks
+        // run inside sqlite3_step, where acquiring the catalog lock would
+        // invert the ordering shared_catalog.zig requires and can deadlock a
+        // connection pool.
+        //
+        // Deliberately not cleared on the way out. In `.query` mode this
+        // function only *prepares* — Rows.next does the stepping afterwards —
+        // so releasing here would empty the snapshot before a single row was
+        // read. It lives in the query arena, which becomes Rows.arena, so it
+        // stays valid exactly as long as the rows do; Rows.deinit clears it.
+        try db.publishInfoSchemaSnapshot(arena);
 
         // Go getParameterMode: scan the (literal-stripped) query for `?`
         // (positional) vs `@name` (named); mixing is rejected.
@@ -2684,6 +2712,10 @@ pub const Rows = struct {
     pub fn deinit(r: *Rows) void {
         if (r.stmt) |*stmt| stmt.finalize();
         r.stmt = null;
+        // The INFORMATION_SCHEMA snapshot lives in the arena released below,
+        // so it must not outlive it. Every statement republishes, so an empty
+        // slice between queries is correct rather than merely safe.
+        r.db.udf_state.info_schema.info_schema = &.{};
         // Drop temp tables created by this query (Go Cleanup) before the
         // arena (which backs the name strings) is released.
         if (r.temp_tables.len > 0) {
@@ -3078,6 +3110,90 @@ fn indexNamesFor(db: *Db, gpa: std.mem.Allocator, table: [:0]const u8) ![]const 
         try names.append(gpa, try gpa.dupe(u8, row[0].text));
     }
     return names.toOwnedSlice(gpa);
+}
+
+test "INFORMATION_SCHEMA.TABLES lists the dataset's tables and views" {
+    // End-to-end on purpose: the vtab must emit encoded values, because
+    // Rows.next rejects a TEXT column as CorruptData. A unit test on the row
+    // builders alone would not catch that.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE isd.t_a (x INT64, y STRING)", &.{}, .{});
+    try db.exec("CREATE TABLE isd.t_b (z FLOAT64)", &.{}, .{});
+    try db.exec("CREATE VIEW isd.v_a AS SELECT 1 AS n", &.{}, .{});
+
+    var rows = try db.query(
+        \\SELECT table_name, table_type FROM isd.INFORMATION_SCHEMA.TABLES
+        \\ORDER BY table_name
+    , &.{}, .{});
+    defer rows.deinit();
+
+    const want = [_]struct { name: []const u8, kind: []const u8 }{
+        .{ .name = "t_a", .kind = "BASE TABLE" },
+        .{ .name = "t_b", .kind = "BASE TABLE" },
+        .{ .name = "v_a", .kind = "VIEW" },
+    };
+    var i: usize = 0;
+    while (try rows.next()) |row| : (i += 1) {
+        try testing.expectEqualStrings(want[i].name, row[0].string);
+        try testing.expectEqualStrings(want[i].kind, row[1].string);
+    }
+    try testing.expectEqual(want.len, i);
+}
+
+test "INFORMATION_SCHEMA.COLUMNS reports columns in declaration order" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE cd.tbl (col_a INT64, col_b STRING, col_c FLOAT64)", &.{}, .{});
+
+    var rows = try db.query(
+        \\SELECT column_name, ordinal_position, data_type
+        \\FROM cd.INFORMATION_SCHEMA.COLUMNS
+        \\WHERE table_name = 'tbl' ORDER BY ordinal_position
+    , &.{}, .{});
+    defer rows.deinit();
+
+    const want = [_][]const u8{ "col_a", "col_b", "col_c" };
+    var i: usize = 0;
+    while (try rows.next()) |row| : (i += 1) {
+        try testing.expectEqualStrings(want[i], row[0].string);
+        try testing.expectEqual(Cell{ .int = @intCast(i + 1) }, row[1]);
+    }
+    try testing.expectEqual(want.len, i);
+}
+
+test "INFORMATION_SCHEMA.SCHEMATA names the dataset" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE sd.tbl (x INT64)", &.{}, .{});
+
+    var rows = try db.query(
+        "SELECT schema_name FROM sd.INFORMATION_SCHEMA.SCHEMATA",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqualStrings("sd", row[0].string);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "an unfiltered INFORMATION_SCHEMA scan is legal" {
+    // Exercises the xBestIndex path where the hidden schema constraint is
+    // absent: unnest rejects that with SQLITE_CONSTRAINT, these views must not.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE ud.tbl (x INT64)", &.{}, .{});
+
+    var rows = try db.query(
+        "SELECT COUNT(*) FROM ud.INFORMATION_SCHEMA.TABLES",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 1 }, row[0]);
 }
 
 test "a NOT ENFORCED primary key constrains nothing" {

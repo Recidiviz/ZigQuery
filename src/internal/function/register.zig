@@ -24,6 +24,12 @@ const Value = bind.Value;
 pub const State = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
+    /// Catalog snapshot for the INFORMATION_SCHEMA vtabs, published by the
+    /// driver before each statement. Kept here rather than read from the
+    /// catalog inside the vtab because those callbacks run inside
+    /// sqlite3_step, where taking the catalog lock would invert the ordering
+    /// shared_catalog.zig requires.
+    info_schema: info_schema_vtab.SharedState = .{},
 
     pub fn deinit(state: *State) void {
         const gpa = state.gpa;
@@ -54,6 +60,7 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
     }
 
     try unnest_vtab.register(db, gpa);
+    try info_schema_vtab.register(db, gpa, &state.info_schema);
     try db.createScalarFunction("zetasqlite_group_by", -1, state, groupByTramp, true);
 
     // Aggregate UDFs + option marker functions (Go: aggregateFuncs plus the
@@ -69,6 +76,7 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
 const aggregate = @import("aggregate.zig");
 const window = @import("window.zig");
 const unnest_vtab = @import("unnest_vtab.zig");
+pub const info_schema_vtab = @import("info_schema_vtab.zig");
 
 // ----------------------------------------------------------------------
 // Generic scalar trampoline (Go setupNormalFuncMap closure equivalent)

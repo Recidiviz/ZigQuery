@@ -363,12 +363,19 @@ googlesql/functions/window/percentile_cont	continuous median of [1, 2, 3] is 2.0
 googlesql/functions/window/percentile_disc	median of 1, 2, 3 is 2
 googlesql/functions/window/rank	rank with ties
 googlesql/functions/window/row_number	row_number over ordered values
+googlesql/information_schema/columns	COLUMNS lists every user-declared column of a table
+googlesql/information_schema/schemata	SCHEMATA lists every dataset with at least one table
+googlesql/information_schema/tables	TABLES lists every table in the dataset
 googlesql/syntax/cte/with_recursive	count 1..5 with recursive CTE
 googlesql/syntax/cte/with_recursive	count down with recursive CTE
 googlesql/syntax/cte/with_recursive	factorial via recursive CTE
+googlesql/syntax/ddl/create_or_replace_table	CREATE OR REPLACE replaces the existing table's schema
 googlesql/syntax/ddl/create_or_replace_view	CREATE OR REPLACE VIEW substitutes the new definition
+googlesql/syntax/ddl/create_table	create a base table and read columns via INFORMATION_SCHEMA
 googlesql/syntax/ddl/create_table_as_select	CTAS materialises the query result
 googlesql/syntax/ddl/create_view	CREATE VIEW produces a queryable virtual table
+googlesql/syntax/ddl/drop_table	DROP TABLE removes the dropped table from INFORMATION_SCHEMA
+googlesql/syntax/ddl/drop_view	DROP VIEW removes the view from INFORMATION_SCHEMA
 googlesql/syntax/dml/delete	DELETE removes rows matching a WHERE predicate
 googlesql/syntax/dml/delete	DELETE WHERE TRUE removes every row
 googlesql/syntax/dml/insert	INSERT a single row via VALUES
@@ -378,6 +385,7 @@ googlesql/syntax/dml/merge	MERGE WHEN MATCHED THEN DELETE
 googlesql/syntax/dml/merge	MERGE INTO + explicit AS alias on both sides
 googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED THEN INSERT VALUES (no column list)
 googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED THEN INSERT ROW
+googlesql/syntax/dml/truncate_table	TRUNCATE TABLE empties rows but keeps the schema
 googlesql/syntax/dml/truncate_table	TRUNCATE TABLE — 2-segment dataset.table path
 googlesql/syntax/dml/truncate_table	TRUNCATE TABLE — 3-segment project.dataset.table path
 googlesql/syntax/dml/truncate_table	TRUNCATE TABLE — backquoted compound path

@@ -12,6 +12,33 @@ const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
+const info_schema_vtab = @import("../function/info_schema_vtab.zig");
+
+/// The canonical prefix out of `<prefix>_INFORMATION_SCHEMA_<VIEW>` — i.e. the
+/// `_`-joined path of the dataset the view belongs to.
+///
+/// The prefix, not the bare dataset name: canonical names are `_`-joined and
+/// dataset names legitimately contain underscores, so `demo_ds_INFORMATION_
+/// SCHEMA_TABLES` cannot be split back into (dataset `demo_ds`) versus
+/// (project `demo`, dataset `ds`). Comparing whole prefixes sidesteps that —
+/// a table and its dataset's views always share one.
+fn infoSchemaPrefix(canonical: []const u8) []const u8 {
+    const marker = "_" ++ info_schema_vtab.info_schema_segment ++ "_";
+    const at = std.mem.lastIndexOf(u8, canonical, marker) orelse return "";
+    return canonical[0..at];
+}
+
+/// A SQL string literal, single quotes doubled.
+fn quoteLiteral(alloc: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    try buf.append(alloc, '\'');
+    for (s) |ch| {
+        if (ch == '\'') try buf.append(alloc, '\'');
+        try buf.append(alloc, ch);
+    }
+    try buf.append(alloc, '\'');
+    return buf.toOwnedSlice(alloc);
+}
 
 /// Go TableScanTransformer.Transform.
 pub fn transform(
@@ -53,13 +80,33 @@ pub fn transform(
         try select_list.append(alloc, item);
     }
 
-    // The table FROM item.
+    // The table FROM item. An INFORMATION_SCHEMA view has no backing SQLite
+    // object — the catalog registers it so the analyzer resolves the path, and
+    // the scan is rewritten here into a call on the matching virtual table,
+    // with the dataset passed through its hidden `schema` column. Recognition
+    // is lexical because the extractor hands us the catalog's canonical name
+    // verbatim.
     const table_from_item = try alloc.create(sqlbuilder.FromItem);
-    table_from_item.* = .{
-        .type = .table,
-        .table_name = table_data.table_name,
-        .alias = table_data.alias,
-    };
+    if (info_schema_vtab.viewForCanonicalName(table_data.table_name)) |view| {
+        const prefix = infoSchemaPrefix(table_data.table_name);
+        const arg = try alloc.create(sqlbuilder.SQLExpression);
+        arg.* = .{ .type = .literal, .value = try quoteLiteral(alloc, prefix) };
+        const args = try alloc.alloc(*sqlbuilder.SQLExpression, 1);
+        args[0] = arg;
+        const table_function = try alloc.create(sqlbuilder.TableFunction);
+        table_function.* = .{ .name = view.module, .arguments = args };
+        table_from_item.* = .{
+            .type = .table_function,
+            .table_function = table_function,
+            .alias = table_data.alias,
+        };
+    } else {
+        table_from_item.* = .{
+            .type = .table,
+            .table_name = table_data.table_name,
+            .alias = table_data.alias,
+        };
+    }
 
     const select_statement = try sqlbuilder.newSelectStatement(alloc);
     select_statement.select_type = .standard;
