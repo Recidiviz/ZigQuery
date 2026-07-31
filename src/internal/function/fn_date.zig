@@ -129,7 +129,14 @@ pub fn lastDay(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (std.mem.eql(u8, part, "WEEK_THURSDAY")) return tu.dateValue(bt.addDate(0, 0, 10 - wd));
     if (std.mem.eql(u8, part, "WEEK_FRIDAY")) return tu.dateValue(bt.addDate(0, 0, 11 - wd));
     if (std.mem.eql(u8, part, "WEEK_SATURDAY")) return tu.dateValue(bt.addDate(0, 0, 12 - wd));
-    if (std.mem.eql(u8, part, "QUARTER")) return bind.fail("LAST_DAY: unimplemented QUARTER part", .{}, error.UnsupportedOperation);
+    if (std.mem.eql(u8, part, "QUARTER")) {
+        // Same shape as the MONTH arm above, over the quarter's start month:
+        // step to the first of the following quarter, then back one day.
+        // LAST_DAY(DATE '2024-02-15', QUARTER) = 2024-03-31.
+        const qm = @divTrunc(c.month - 1, 3) * 3 + 1;
+        const q_start = tu.BrokenTime{ .civ = tu.compose(c.year, qm, 1, 0, 0, 0, 0) };
+        return tu.dateValue(q_start.addDate(0, 3, -1));
+    }
     return bind.fail("LAST_DAY: unexpected part {s}", .{part}, error.UnsupportedOperation);
 }
 

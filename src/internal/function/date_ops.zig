@@ -55,22 +55,28 @@ pub fn addYear(bt: BrokenTime, y: i64) BrokenTime {
     return bt.addDate(y, 0, 0);
 }
 
-/// DATE_ADD: DAY/WEEK/MONTH/YEAR/QUARTER (QUARTER always +3 months, per Go).
+/// DATE_ADD: DAY/WEEK/MONTH/YEAR/QUARTER.
 pub fn dateAdd(bt: BrokenTime, v: i64, part: []const u8) Error!BrokenTime {
     if (std.mem.eql(u8, part, "DAY")) return bt.addDate(0, 0, v);
     if (std.mem.eql(u8, part, "WEEK")) return bt.addDate(0, 0, v * 7);
     if (std.mem.eql(u8, part, "MONTH")) return addMonth(bt, v);
     if (std.mem.eql(u8, part, "YEAR")) return addYear(bt, v);
-    if (std.mem.eql(u8, part, "QUARTER")) return addMonth(bt, 3); // Go ignores v
+    // Go hardcodes +3 months here, ignoring `v`, so INTERVAL 2 QUARTER silently
+    // advanced by one. BigQuery honours the interval:
+    // DATE_ADD(DATE '2024-01-15', INTERVAL 2 QUARTER) = 2024-07-15.
+    if (std.mem.eql(u8, part, "QUARTER")) return addMonth(bt, v * 3);
     return unexpectedPart(part);
 }
 
-/// DATE_SUB: DAY/WEEK/MONTH/YEAR (no QUARTER, per Go).
+/// DATE_SUB: DAY/WEEK/MONTH/YEAR/QUARTER.
 pub fn dateSub(bt: BrokenTime, v: i64, part: []const u8) Error!BrokenTime {
     if (std.mem.eql(u8, part, "DAY")) return bt.addDate(0, 0, -v);
     if (std.mem.eql(u8, part, "WEEK")) return bt.addDate(0, 0, -v * 7);
     if (std.mem.eql(u8, part, "MONTH")) return addMonth(bt, -v);
     if (std.mem.eql(u8, part, "YEAR")) return addYear(bt, -v);
+    // addMonth already clamps the day of month, which is what BigQuery does:
+    // DATE_SUB(DATE '2024-08-31', INTERVAL 1 QUARTER) = 2024-05-31.
+    if (std.mem.eql(u8, part, "QUARTER")) return addMonth(bt, -v * 3);
     return unexpectedPart(part);
 }
 
@@ -126,12 +132,23 @@ pub fn dateDiff(a: BrokenTime, b: BrokenTime, part: []const u8) Error!i64 {
         const cb = b.parts();
         return (ca.year * 12 + ca.month) - (cb.year * 12 + cb.month);
     }
+    // Quarter boundaries crossed, signed — the MONTH arm above, bucketed by
+    // three. Verified against BigQuery: 2024-04-01 vs 2024-01-01 is 1, the
+    // reverse is -1, 2024-03-31 vs 2024-01-01 is 0 (same quarter), and
+    // 2025-01-01 vs 2024-02-15 is 4. One arm serves DATE_DIFF, DATETIME_DIFF
+    // and TIMESTAMP_DIFF, which all funnel here.
+    if (std.mem.eql(u8, part, "QUARTER")) {
+        const ca = a.parts();
+        const cb = b.parts();
+        return @divFloor(ca.year * 12 + ca.month - 1, 3) -
+            @divFloor(cb.year * 12 + cb.month - 1, 3);
+    }
     if (std.mem.eql(u8, part, "YEAR")) return a.parts().year - b.parts().year;
     if (std.mem.eql(u8, part, "ISOYEAR")) return iso_a.year - iso_b.year;
     return unexpectedPart(part);
 }
 
-var quarter_start_months = [_]i64{ 1, 4, 7, 10 };
+const quarter_start_months = [_]i64{ 1, 4, 7, 10 };
 
 /// DATE_TRUNC: returns midnight of the truncated civil date.
 pub fn dateTrunc(bt: BrokenTime, part: []const u8) Error!BrokenTime {
@@ -182,11 +199,11 @@ pub fn extractPart(bt: BrokenTime, part: []const u8) Error!Value {
     if (std.mem.eql(u8, part, "DAY")) return .{ .int = c.day };
     if (std.mem.eql(u8, part, "DAYOFYEAR")) return .{ .int = bt.yearDay() };
     if (std.mem.eql(u8, part, "DAYOFWEEK")) return .{ .int = bt.weekday() + 1 };
-    if (std.mem.eql(u8, part, "QUARTER")) {
-        const day = bt.yearDay();
-        const q: i64 = if (day <= 91) 1 else if (day <= 182) 2 else if (day <= 273) 3 else 4;
-        return .{ .int = q };
-    }
+    // From the month, not the day of year: the old day-of-year thresholds
+    // (91/182/273) cannot hold for both leap and common years, and were wrong
+    // on the first day of Q2 and Q3 in a common year (2023-04-01 gave 1,
+    // 2023-07-01 gave 2) and on 2024-09-30 (gave 4).
+    if (std.mem.eql(u8, part, "QUARTER")) return .{ .int = @divTrunc(c.month - 1, 3) + 1 };
     if (std.mem.eql(u8, part, "HOUR")) return .{ .int = c.hour };
     if (std.mem.eql(u8, part, "MINUTE")) return .{ .int = c.minute };
     if (std.mem.eql(u8, part, "SECOND")) return .{ .int = c.second };
@@ -196,4 +213,73 @@ pub fn extractPart(bt: BrokenTime, part: []const u8) Error!Value {
     if (std.mem.eql(u8, part, "DATETIME")) return tu.datetimeValue(bt);
     if (std.mem.eql(u8, part, "TIME")) return tu.timeValue(bt);
     return bind.fail("EXTRACT: unexpected part {s} for data/datetime/time/timestamp", .{part}, error.UnsupportedOperation);
+}
+
+// ---- tests ----
+//
+// Every expectation below was taken from real BigQuery
+// (recidiviz-bigquery-sandbox), not derived from this implementation — QUARTER
+// had three silent bugs precisely because this module had no tests and the
+// only coverage was a handful of corpus cases that all used an interval of 1.
+
+const testing = std.testing;
+
+fn at(year: i64, month: i64, day: i64) BrokenTime {
+    return .{ .civ = tu.compose(year, month, day, 0, 0, 0, 0) };
+}
+
+fn ymd(bt: BrokenTime) struct { y: i64, m: i64, d: i64 } {
+    const c = bt.parts();
+    return .{ .y = c.year, .m = c.month, .d = c.day };
+}
+
+test "DATE_DIFF by QUARTER counts boundaries crossed, signed" {
+    try testing.expectEqual(@as(i64, 1), try dateDiff(at(2024, 4, 1), at(2024, 1, 1), "QUARTER"));
+    try testing.expectEqual(@as(i64, -1), try dateDiff(at(2024, 1, 1), at(2024, 4, 1), "QUARTER"));
+    // Same quarter, 90 days apart: still zero boundaries.
+    try testing.expectEqual(@as(i64, 0), try dateDiff(at(2024, 3, 31), at(2024, 1, 1), "QUARTER"));
+    try testing.expectEqual(@as(i64, 4), try dateDiff(at(2025, 1, 1), at(2024, 2, 15), "QUARTER"));
+}
+
+test "DATE_ADD and DATE_SUB by QUARTER honour the interval" {
+    // Go hardcoded +3 months and ignored the interval, so this returned
+    // 2024-04-15.
+    const added = ymd(try dateAdd(at(2024, 1, 15), 2, "QUARTER"));
+    try testing.expectEqual(@as(i64, 2024), added.y);
+    try testing.expectEqual(@as(i64, 7), added.m);
+    try testing.expectEqual(@as(i64, 15), added.d);
+
+    const subbed = ymd(try dateSub(at(2024, 8, 31), 1, "QUARTER"));
+    try testing.expectEqual(@as(i64, 2024), subbed.y);
+    try testing.expectEqual(@as(i64, 5), subbed.m);
+    try testing.expectEqual(@as(i64, 31), subbed.d);
+
+    // Clamps the day of month when the target quarter is shorter:
+    // 2024-05-31 back one quarter lands in February.
+    const clamped = ymd(try dateSub(at(2024, 5, 31), 1, "QUARTER"));
+    try testing.expectEqual(@as(i64, 2), clamped.m);
+    try testing.expectEqual(@as(i64, 29), clamped.d); // 2024 is a leap year
+}
+
+test "EXTRACT QUARTER is derived from the month, not the day of year" {
+    // The three the old day-of-year thresholds got wrong.
+    try testing.expectEqual(@as(i64, 2), (try extractPart(at(2023, 4, 1), "QUARTER")).int);
+    try testing.expectEqual(@as(i64, 3), (try extractPart(at(2023, 7, 1), "QUARTER")).int);
+    try testing.expectEqual(@as(i64, 3), (try extractPart(at(2024, 9, 30), "QUARTER")).int);
+    // And the boundaries either side of every quarter.
+    try testing.expectEqual(@as(i64, 1), (try extractPart(at(2024, 1, 1), "QUARTER")).int);
+    try testing.expectEqual(@as(i64, 1), (try extractPart(at(2024, 3, 31), "QUARTER")).int);
+    try testing.expectEqual(@as(i64, 4), (try extractPart(at(2024, 10, 1), "QUARTER")).int);
+    try testing.expectEqual(@as(i64, 4), (try extractPart(at(2024, 12, 31), "QUARTER")).int);
+}
+
+test "DATE_TRUNC by QUARTER lands on the quarter start" {
+    for ([_][3]i64{
+        .{ 2024, 2, 1 }, .{ 2024, 5, 4 }, .{ 2024, 8, 7 }, .{ 2024, 11, 10 },
+    }) |c| {
+        const got = ymd(try dateTrunc(at(c[0], c[1], 15), "QUARTER"));
+        try testing.expectEqual(c[0], got.y);
+        try testing.expectEqual(c[2], got.m);
+        try testing.expectEqual(@as(i64, 1), got.d);
+    }
 }

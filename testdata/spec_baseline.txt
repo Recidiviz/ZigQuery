@@ -98,6 +98,7 @@ googlesql/functions/date/date_diff	upstream example — successive-day WEEK boun
 googlesql/functions/date/date_diff	upstream example — YEAR vs ISOYEAR
 googlesql/functions/date/date_diff	month-end-of-month boundary (1/31 → 2/28)
 googlesql/functions/date/date_diff	year-end boundary (12/31 → 1/1)
+googlesql/functions/date/date_diff	QUARTER boundary
 googlesql/functions/date/date_diff	negative direction
 googlesql/functions/date/date_diff	multi-decade DAY count (8 leap years in 2000–2030)
 googlesql/functions/date/date_diff	NULL input propagates
@@ -111,6 +112,8 @@ googlesql/functions/date/last_day	last day of month
 googlesql/functions/date/parse_date	ISO format
 googlesql/functions/date/unix_date	1970-01-01 is unix day 0
 googlesql/functions/datetime/current_datetime	current_datetime is non-null
+googlesql/functions/datetime/datetime	construct datetime
+googlesql/functions/datetime/datetime_add	add interval
 googlesql/functions/datetime/datetime_diff	HOUR diff within the same calendar day
 googlesql/functions/datetime/datetime_diff	MINUTE diff
 googlesql/functions/datetime/datetime_diff	SECOND diff
@@ -118,11 +121,15 @@ googlesql/functions/datetime/datetime_diff	MICROSECOND diff at sub-second precis
 googlesql/functions/datetime/datetime_diff	DAY boundary (midnight to next midnight)
 googlesql/functions/datetime/datetime_diff	month-end-of-month MONTH boundary (1/31 → 2/28)
 googlesql/functions/datetime/datetime_diff	year boundary across the last second of the year
+googlesql/functions/datetime/datetime_diff	QUARTER boundary
 googlesql/functions/datetime/datetime_diff	negative direction
 googlesql/functions/datetime/datetime_diff	NULL input propagates
+googlesql/functions/datetime/datetime_sub	subtract interval
+googlesql/functions/datetime/datetime_trunc	trunc to hour
 googlesql/functions/datetime/extract	EXTRACT(HOUR FROM DATETIME)
 googlesql/functions/datetime/format_datetime	ISO-style formatting
 googlesql/functions/datetime/last_day	last day of month from datetime
+googlesql/functions/datetime/parse_datetime	ISO datetime
 googlesql/functions/debug/error	default_error_no_rows
 googlesql/functions/debug/error	if_no_error
 googlesql/functions/hash/farm_fingerprint	empty string fingerprint is non-null
