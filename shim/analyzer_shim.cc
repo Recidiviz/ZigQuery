@@ -51,6 +51,20 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     googlesql::FEATURE_BIGNUMERIC_TYPE,
     googlesql::FEATURE_DECIMAL_ALIAS,
     googlesql::FEATURE_CREATE_TABLE_NOT_NULL,
+    // `PRIMARY KEY ... NOT ENFORCED`, which is the only form BigQuery accepts:
+    // there a primary key is optimizer metadata (join elimination), never a
+    // uniqueness guarantee. Without this the analyzer rejects the syntax
+    // outright, so the whole primary-key path below it was unreachable —
+    // TableSpec.primary_key, its `PRIMARY KEY (...) WITHOUT ROWID` DDL
+    // (internal/spec.zig) and the `primaryKey` catalog field were all dead for
+    // BigQuery DDL.
+    //
+    // Note the asymmetry this introduces: SQLite enforces what BigQuery does
+    // not, so a duplicate or NULL key that BigQuery accepts is rejected here.
+    // That is the same trade the Go original makes, and it is the safe
+    // direction for an emulator only insofar as the schema is honest; see
+    // Db.storage_format_version for the format the key is persisted under.
+    googlesql::FEATURE_UNENFORCED_PRIMARY_KEYS,
     googlesql::FEATURE_PARAMETERIZED_TYPES,
     googlesql::FEATURE_TABLESAMPLE,
     googlesql::FEATURE_TIMESTAMP_NANOS,

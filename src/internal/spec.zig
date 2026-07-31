@@ -223,18 +223,18 @@ pub const TableSpec = struct {
         for (self.columns) |c| {
             try columns.append(alloc, try c.sqliteSchema(alloc));
         }
-        if (self.primary_key.len != 0) {
-            const primary_keys = try alloc.alloc([]const u8, self.primary_key.len);
-            for (self.primary_key, 0..) |key, i| {
-                primary_keys[i] = try alloc.dupe(u8, key);
-            }
-            try columns.append(alloc, try std.fmt.allocPrint(
-                alloc,
-                "PRIMARY KEY ({s})",
-                .{try std.mem.join(alloc, ",", primary_keys)},
-            ));
-        }
-        const clustering: []const u8 = if (self.primary_key.len > 0) "WITHOUT ROWID" else "";
+        // No PRIMARY KEY clause, deliberately. BigQuery only accepts
+        // `PRIMARY KEY ... NOT ENFORCED`: the key is optimizer metadata for
+        // join elimination, never a uniqueness or non-null guarantee, and
+        // duplicate and NULL keys are both legal there. Emitting a real SQLite
+        // primary key would make the emulator reject rows production accepts,
+        // which is the wrong direction for an emulator to be wrong in.
+        //
+        // The key is not discarded: it stays on the TableSpec, round-trips
+        // through the catalog's `primaryKey` field, and becomes a non-unique
+        // index (see pkIndexSchema) so SQLite's planner gets the same hint
+        // BigQuery's does.
+        const clustering: []const u8 = "";
         const stmt: []const u8 = switch (self.create_mode) {
             create_mode_create_default, create_mode_create_or_replace => "CREATE TABLE",
             create_mode_create_if_not_exists => "CREATE TABLE IF NOT EXISTS",
@@ -246,6 +246,32 @@ pub const TableSpec = struct {
             try std.mem.join(alloc, ",", columns.items),
             clustering,
         });
+    }
+
+    /// The declared primary key as a **non-unique** index, or null when there
+    /// is none.
+    ///
+    /// This is the half of a BigQuery primary key that does carry over. The
+    /// constraint half does not (see sqliteSchema), but the planner hint does:
+    /// BigQuery uses the key for join elimination, and a plain index gives
+    /// SQLite's query planner the same lookup path without enforcing
+    /// uniqueness or non-nullness that BigQuery never promised.
+    ///
+    /// Named `<table>.pk`. Index names share one namespace per database, so the
+    /// table name has to be in there; it is already unique and already contains
+    /// dots (`project.dataset.table`), which the backticks cover.
+    pub fn pkIndexSchema(self: *const TableSpec, alloc: std.mem.Allocator) Error!?[]u8 {
+        if (self.is_view or self.primary_key.len == 0) return null;
+        const table_name = try self.tableName(alloc);
+        const quoted = try alloc.alloc([]const u8, self.primary_key.len);
+        for (self.primary_key, 0..) |key, i| {
+            quoted[i] = try std.fmt.allocPrint(alloc, "`{s}`", .{key});
+        }
+        return try std.fmt.allocPrint(
+            alloc,
+            "CREATE INDEX IF NOT EXISTS `{s}.pk` ON `{s}` ({s})",
+            .{ table_name, table_name, try std.mem.join(alloc, ",", quoted) },
+        );
     }
 
     /// Go viewSQLiteSchema.
@@ -763,12 +789,13 @@ test "SQLiteSchema golden strings" {
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
 
-    // With PRIMARY KEY: WITHOUT ROWID, and no COLLATE — the encodings order
-    // correctly as bytes, so there is no collation to name.
+    // A primary key changes nothing here: BigQuery keys are NOT ENFORCED, so
+    // the table carries no constraint and the text matches the no-key case
+    // exactly, trailing space included. The key becomes an index instead —
+    // see pkIndexSchema and the tests below.
     const with_pk = try makeGoShapeSpec(alloc);
     try testing.expectEqualStrings(
-        "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT," ++
-            "PRIMARY KEY (a)) WITHOUT ROWID",
+        "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT) ",
         try with_pk.sqliteSchema(alloc),
     );
 
@@ -801,4 +828,40 @@ test "SQLiteSchema golden strings" {
     const ctas = try makeGoShapeSpec(alloc);
     ctas.query = "SELECT 1 AS a";
     try testing.expectEqualStrings("CREATE TABLE `t1` AS SELECT 1 AS a", try ctas.sqliteSchema(alloc));
+}
+
+test "pkIndexSchema lowers a primary key to a non-unique index" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // Non-unique on purpose: BigQuery keys are NOT ENFORCED, so this is a
+    // planner hint and must not reject duplicates or NULLs.
+    const one = try makeGoShapeSpec(alloc);
+    try testing.expectEqualStrings(
+        "CREATE INDEX IF NOT EXISTS `t1.pk` ON `t1` (`a`)",
+        (try one.pkIndexSchema(alloc)).?,
+    );
+
+    // Composite keys keep declaration order — an index on (a, b) does not
+    // serve a lookup on b alone, so the order is load-bearing.
+    const many = try makeGoShapeSpec(alloc);
+    many.primary_key = &.{ "a", "b" };
+    try testing.expectEqualStrings(
+        "CREATE INDEX IF NOT EXISTS `t1.pk` ON `t1` (`a`,`b`)",
+        (try many.pkIndexSchema(alloc)).?,
+    );
+
+    const no_pk = try makeGoShapeSpec(alloc);
+    no_pk.primary_key = &.{};
+    try testing.expectEqual(@as(?[]u8, null), try no_pk.pkIndexSchema(alloc));
+
+    const view = try alloc.create(TableSpec);
+    view.* = .{
+        .is_view = true,
+        .name_path = &.{ "ds", "v1" },
+        .primary_key = &.{"a"},
+        .query = "SELECT 1",
+    };
+    try testing.expectEqual(@as(?[]u8, null), try view.pkIndexSchema(alloc));
 }

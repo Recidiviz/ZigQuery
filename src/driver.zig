@@ -324,7 +324,8 @@ pub const Db = struct {
     /// Refusing is the only defence available, because a mismatch fails
     /// silently rather than loudly: TEXT and BLOB never compare equal in SQLite,
     /// so a database holding the older shape would not error — it would quietly
-    /// stop deduplicating in DISTINCT, UNION and WITHOUT ROWID primary keys.
+    /// stop deduplicating in DISTINCT and UNION, and stop matching in index
+    /// lookups.
     pub const storage_format_version: i64 = 3;
 
     /// Refuses a database this build cannot read, and stamps a new one.
@@ -1193,6 +1194,25 @@ pub const Db = struct {
         return consumed;
     }
 
+    /// Creates the index backing a declared primary key, if the spec has one.
+    ///
+    /// A separate statement rather than part of the CREATE TABLE, because
+    /// `execSql` prepares exactly one statement and would silently discard
+    /// anything after a `;`. Routed through `execSql` rather than
+    /// `sqlite_db.exec` so the index shows up in `DUMP_SQL` snapshots beside
+    /// the table DDL it belongs to.
+    fn execPkIndex(
+        db: *Db,
+        arena: std.mem.Allocator,
+        table_spec: *const spec.TableSpec,
+    ) Error!void {
+        const idx = (table_spec.pkIndexSchema(arena) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.TransformFailed,
+        }) orelse return;
+        _ = try db.execSql(arena, idx, &.{});
+    }
+
     fn failCatalog(db: *Db, err: catalog_mod.Error) Error {
         if (err == error.OutOfMemory) return error.OutOfMemory;
         db.setLastError(@errorName(err));
@@ -1463,6 +1483,14 @@ pub const Db = struct {
             );
             _ = try db.execSql(arena, rename, &.{});
 
+            // No execPkIndex here, deliberately: a CTAS cannot carry a primary
+            // key, because declaring one needs a column definition list and the
+            // analyzer rejects that outright ("CREATE TABLE AS SELECT with
+            // column definition list is unsupported"). If that ever becomes
+            // supported, this branch needs the index — and it must be created
+            // *after* the rename above, since SQLite's ALTER TABLE ... RENAME
+            // leaves index names alone and it would otherwise stay called
+            // `<t>__zetasqlite_replace.pk`.
             db.registerTableSpec(table_spec) catch |err|
                 return db.failCatalog(err);
             return consumed;
@@ -1477,6 +1505,11 @@ pub const Db = struct {
             else => return error.TransformFailed,
         };
         const consumed = try db.execSql(arena, schema, args);
+
+        // Before the IF NOT EXISTS early return below, which would otherwise
+        // skip it for an already-registered table. CREATE INDEX IF NOT EXISTS
+        // is the right no-op in that case.
+        try db.execPkIndex(arena, table_spec);
 
         // Temp tables are dropped once the query completes (Go Cleanup);
         // record them so a later statement/query can re-create the name.
@@ -3022,6 +3055,107 @@ test "multi-statement CREATE + INSERT + SELECT in one query() call" {
     try testing.expectEqual(Cell{ .int = 2 }, second[0]);
     try testing.expectEqualStrings("b", second[1].string);
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+/// Names of the SQLite indexes attached to `table`, for the primary-key tests.
+fn indexNamesFor(db: *Db, gpa: std.mem.Allocator, table: [:0]const u8) ![]const []const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    var rows = try db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?",
+        &.{.{ .value = .{ .text = table } }},
+    );
+    defer rows.deinit();
+    while (try rows.next()) |row| {
+        try names.append(gpa, try gpa.dupe(u8, row[0].text));
+    }
+    return names.toOwnedSlice(gpa);
+}
+
+test "a NOT ENFORCED primary key constrains nothing" {
+    // BigQuery primary keys are only ever NOT ENFORCED: optimizer metadata for
+    // join elimination, never a uniqueness or non-null guarantee. Both inserts
+    // below succeed in BigQuery, so both must succeed here — lowering the key
+    // to a real SQLite PRIMARY KEY made the emulator reject rows production
+    // accepts, which is the wrong direction for an emulator to be wrong in.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        "CREATE TABLE pk_t (id INT64 PRIMARY KEY NOT ENFORCED, v STRING)",
+        &.{},
+        .{},
+    );
+    try db.exec("INSERT INTO pk_t VALUES (1, 'a'), (1, 'b')", &.{}, .{});
+    try db.exec("INSERT INTO pk_t VALUES (NULL, 'c')", &.{}, .{});
+
+    var rows = try db.query("SELECT COUNT(*) FROM pk_t", &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 3 }, row[0]);
+}
+
+test "a NOT ENFORCED primary key still becomes an index" {
+    // The half of the key that does carry over: BigQuery uses it to plan, and
+    // so should SQLite.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        "CREATE TABLE pk_idx (id INT64 PRIMARY KEY NOT ENFORCED, v STRING)",
+        &.{},
+        .{},
+    );
+
+    const names = try indexNamesFor(db, testing.allocator, "pk_idx");
+    defer {
+        for (names) |n| testing.allocator.free(n);
+        testing.allocator.free(names);
+    }
+    try testing.expectEqual(@as(usize, 1), names.len);
+    try testing.expectEqualStrings("pk_idx.pk", names[0]);
+}
+
+test "CREATE OR REPLACE re-creates the primary-key index" {
+    // The replace path drops the table first, which takes its indexes with it,
+    // so the recreate has to put the index back. Exercises that DROP/CREATE
+    // round trip rather than trusting it.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        "CREATE TABLE pk_rep (id INT64 PRIMARY KEY NOT ENFORCED, v STRING)",
+        &.{},
+        .{},
+    );
+    try db.exec(
+        "CREATE OR REPLACE TABLE pk_rep (id INT64 PRIMARY KEY NOT ENFORCED, w STRING)",
+        &.{},
+        .{},
+    );
+
+    const names = try indexNamesFor(db, testing.allocator, "pk_rep");
+    defer {
+        for (names) |n| testing.allocator.free(n);
+        testing.allocator.free(names);
+    }
+    try testing.expectEqual(@as(usize, 1), names.len);
+    try testing.expectEqualStrings("pk_rep.pk", names[0]);
+}
+
+test "CREATE TABLE AS SELECT cannot declare a primary key" {
+    // Pins the assumption the swap branch in execCreateTableAction relies on:
+    // it skips index creation because a CTAS spec can never carry a key. If
+    // this test ever starts failing, that branch needs an execPkIndex call.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE ctas_src (id INT64)", &.{}, .{});
+    try testing.expectError(error.AnalyzeFailed, db.exec(
+        "CREATE OR REPLACE TABLE ctas_pk (id INT64 PRIMARY KEY NOT ENFORCED) " ++
+            "AS SELECT id FROM ctas_src",
+        &.{},
+        .{},
+    ));
 }
 
 test "struct field names outlive the step that produced them" {
