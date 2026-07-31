@@ -1,0 +1,485 @@
+# Cases that must keep passing. Regenerate: zig build spec -- --update-baseline
+bigquery/functions/aggregate/max_by	returns value at the maximum key
+bigquery/functions/aggregate/max_by	tie on the by-value — first-encountered row wins
+bigquery/functions/aggregate/max_by	NULL keys are skipped, returns value at the highest non-NULL key
+bigquery/functions/aggregate/max_by	MAX_BY inside a GROUP BY query
+bigquery/functions/aggregate/max_by	MAX_BY with a WHERE filter (precondition for HAVING-style usage)
+bigquery/functions/aggregate/min_by	returns value at the minimum key
+bigquery/functions/aggregate/min_by	tie on the by-value — first-encountered row wins
+bigquery/functions/aggregate/min_by	NULL by-value is skipped — picks the smallest non-NULL key
+bigquery/functions/aggregate/min_by	MIN_BY inside a GROUP BY query
+bigquery/functions/aggregate/min_by	MIN_BY with a WHERE filter (precondition for HAVING-style usage)
+bigquery/functions/json/float64	integer JSON value
+bigquery/functions/json/float64	floating-point JSON value
+bigquery/functions/json/float64	NULL JSON returns NULL
+bigquery/functions/string/contains_substr	simple substring match returns TRUE
+bigquery/functions/string/contains_substr	case-insensitive match
+bigquery/functions/string/contains_substr	substring absent
+bigquery/functions/utility/generate_uuid	returns a UUID in canonical 8-4-4-4-12 form
+bigquery/functions/utility/generate_uuid	distinct rows get distinct UUIDs
+googlesql/functions/aggregate/any_value	returns the only value
+googlesql/functions/aggregate/any_value	upstream Example — ANY_VALUE returns one row from the group
+googlesql/functions/aggregate/any_value	HAVING MAX picks the value associated with the largest sold count
+googlesql/functions/aggregate/any_value	HAVING MIN picks the value associated with the smallest sold count
+googlesql/functions/aggregate/any_value	empty input returns NULL
+googlesql/functions/aggregate/any_value	all-NULL input returns NULL
+googlesql/functions/aggregate/any_value	NULLs are skipped when at least one non-NULL value exists
+googlesql/functions/aggregate/any_value	ANY_VALUE inside a GROUP BY query
+googlesql/functions/aggregate/approximate/approx_count_distinct	approx_count_distinct returns positive value
+googlesql/functions/aggregate/approximate/approx_quantiles	approx_quantiles returns non-null array
+googlesql/functions/aggregate/approximate/approx_top_count	approx_top_count returns array of structs
+googlesql/functions/aggregate/approximate/approx_top_sum	approx_top_sum runs over weighted inputs
+googlesql/functions/aggregate/array_agg	aggregate ints into array
+googlesql/functions/aggregate/array_concat_agg	concat arrays preserves order
+googlesql/functions/aggregate/avg	avg of three
+googlesql/functions/aggregate/avg	empty input returns NULL
+googlesql/functions/aggregate/bit_and	bit_and over integers
+googlesql/functions/aggregate/bit_or	bit_or over integers
+googlesql/functions/aggregate/bit_xor	BIT_XOR of 0xF0, 0x0F, 0x55 is 0xAA
+googlesql/functions/aggregate/count	count integers
+googlesql/functions/aggregate/count	count star
+googlesql/functions/aggregate/count	count of empty input is zero
+googlesql/functions/aggregate/count	count star of empty input is zero
+googlesql/functions/aggregate/countif	count truthy values
+googlesql/functions/aggregate/countif	countif of empty input is zero
+googlesql/functions/aggregate/logical_and	all true
+googlesql/functions/aggregate/logical_and	one false
+googlesql/functions/aggregate/logical_or	one true
+googlesql/functions/aggregate/logical_or	all false
+googlesql/functions/aggregate/max	max of integers
+googlesql/functions/aggregate/max	empty input returns NULL
+googlesql/functions/aggregate/min	min of integers
+googlesql/functions/aggregate/min	empty input returns NULL
+googlesql/functions/aggregate/statistical/corr	corr of identical sequences is 1.0
+googlesql/functions/aggregate/statistical/covar_pop	covar_pop returns a finite value for non-trivial input
+googlesql/functions/aggregate/statistical/covar_samp	covar_samp returns a finite value
+googlesql/functions/aggregate/statistical/stddev	stddev (alias for stddev_samp) of two values
+googlesql/functions/aggregate/statistical/stddev_pop	stddev_pop of constant is 0
+googlesql/functions/aggregate/statistical/stddev_samp	stddev_samp of two values
+googlesql/functions/aggregate/statistical/var_pop	var_pop of two values
+googlesql/functions/aggregate/statistical/var_samp	var_samp of two values
+googlesql/functions/aggregate/statistical/variance	variance (alias for var_samp) of two values
+googlesql/functions/aggregate/string_agg	comma-join strings
+googlesql/functions/aggregate/string_agg	empty input returns NULL
+googlesql/functions/aggregate/sum	sum integers
+googlesql/functions/aggregate/sum	empty unnest sum is null
+googlesql/functions/array/array	ARRAY() constructs a single-element array
+googlesql/functions/array/array_concat	concat two int arrays
+googlesql/functions/array/array_first	array_first basic input
+googlesql/functions/array/array_includes	array_includes basic input
+googlesql/functions/array/array_includes_all	array_includes_all basic input
+googlesql/functions/array/array_includes_any	array_includes_any basic input
+googlesql/functions/array/array_last	array_last basic input
+googlesql/functions/array/array_length	length of three-element array
+googlesql/functions/array/array_length	empty array
+googlesql/functions/array/array_max	array_max basic input
+googlesql/functions/array/array_min	array_min basic input
+googlesql/functions/array/array_reverse	reverse three-element array
+googlesql/functions/array/array_slice	slice middle of array
+googlesql/functions/array/array_to_string	join with comma
+googlesql/functions/array/generate_array	1 to 5 step 1
+googlesql/functions/array/generate_array	1 to 10 step 3
+googlesql/functions/array/generate_date_array	array length matches inclusive day range
+googlesql/functions/array/generate_timestamp_array	hourly bucket from 00:00 to 03:00 has 4 entries
+googlesql/functions/bit/bit_count	count set bits
+googlesql/functions/bit/bit_count	zero is zero bits
+googlesql/functions/conversion/cast	int to string
+googlesql/functions/conversion/cast	string to int
+googlesql/functions/conversion/cast	int to float
+googlesql/functions/conversion/parse_bignumeric	parse plain decimal
+googlesql/functions/conversion/parse_numeric	parse plain decimal
+googlesql/functions/conversion/safe_cast	valid cast
+googlesql/functions/conversion/safe_cast	invalid cast returns NULL
+googlesql/functions/date/current_date	current_date is non-null
+googlesql/functions/date/date	date from y/m/d
+googlesql/functions/date/date_add	add 5 days
+googlesql/functions/date/date_diff	upstream example — days between two arbitrary dates
+googlesql/functions/date/date_diff	upstream example — successive-day WEEK boundary (Sat→Sun)
+googlesql/functions/date/date_diff	upstream example — YEAR vs ISOYEAR
+googlesql/functions/date/date_diff	month-end-of-month boundary (1/31 → 2/28)
+googlesql/functions/date/date_diff	year-end boundary (12/31 → 1/1)
+googlesql/functions/date/date_diff	negative direction
+googlesql/functions/date/date_diff	multi-decade DAY count (8 leap years in 2000–2030)
+googlesql/functions/date/date_diff	NULL input propagates
+googlesql/functions/date/date_from_unix_date	epoch day 0 is 1970-01-01
+googlesql/functions/date/date_sub	subtract 5 days
+googlesql/functions/date/date_trunc	truncate to month
+googlesql/functions/date/date_trunc	truncate to year
+googlesql/functions/date/extract	EXTRACT(YEAR FROM DATE)
+googlesql/functions/date/format_date	ISO-style formatting
+googlesql/functions/date/last_day	last day of month
+googlesql/functions/date/parse_date	ISO format
+googlesql/functions/date/unix_date	1970-01-01 is unix day 0
+googlesql/functions/datetime/current_datetime	current_datetime is non-null
+googlesql/functions/datetime/datetime_diff	HOUR diff within the same calendar day
+googlesql/functions/datetime/datetime_diff	MINUTE diff
+googlesql/functions/datetime/datetime_diff	SECOND diff
+googlesql/functions/datetime/datetime_diff	MICROSECOND diff at sub-second precision
+googlesql/functions/datetime/datetime_diff	DAY boundary (midnight to next midnight)
+googlesql/functions/datetime/datetime_diff	month-end-of-month MONTH boundary (1/31 → 2/28)
+googlesql/functions/datetime/datetime_diff	year boundary across the last second of the year
+googlesql/functions/datetime/datetime_diff	negative direction
+googlesql/functions/datetime/datetime_diff	NULL input propagates
+googlesql/functions/datetime/extract	EXTRACT(HOUR FROM DATETIME)
+googlesql/functions/datetime/format_datetime	ISO-style formatting
+googlesql/functions/datetime/last_day	last day of month from datetime
+googlesql/functions/debug/error	default_error_no_rows
+googlesql/functions/debug/error	if_no_error
+googlesql/functions/hash/farm_fingerprint	empty string fingerprint is non-null
+googlesql/functions/hash/md5	md5 of empty bytes
+googlesql/functions/hash/sha1	sha1 of empty bytes
+googlesql/functions/hash/sha256	sha256 of empty bytes
+googlesql/functions/hash/sha512	sha512 of empty bytes
+googlesql/functions/hll/hll_count_extract	HLL_COUNT.EXTRACT through INIT pipeline returns approximate cardinality
+googlesql/functions/hll/hll_count_init	HLL_COUNT.INIT produces a non-empty sketch
+googlesql/functions/hll/hll_count_merge	upstream example 1
+googlesql/functions/interval/extract	extract year from interval
+googlesql/functions/interval/justify_days	JUSTIFY_DAYS executes without error
+googlesql/functions/interval/justify_hours	JUSTIFY_HOURS executes without error
+googlesql/functions/interval/justify_interval	JUSTIFY_INTERVAL executes without error
+googlesql/functions/interval/make_interval	MAKE_INTERVAL executes without error
+googlesql/functions/json/bool	bool basic behaviour
+googlesql/functions/json/double	double basic behaviour
+googlesql/functions/json/int64	int from json
+googlesql/functions/json/json_extract	extract object subtree
+googlesql/functions/json/json_extract_array	extract integer array via path expression
+googlesql/functions/json/json_extract_scalar	extract string field
+googlesql/functions/json/json_extract_scalar	extract nested integer
+googlesql/functions/json/json_extract_string_array	json_extract_string_array basic behaviour
+googlesql/functions/json/json_query	extract scalar value
+googlesql/functions/json/json_query_array	extract array of objects
+googlesql/functions/json/json_type	object type
+googlesql/functions/json/json_type	array type
+googlesql/functions/json/json_type	number type
+googlesql/functions/json/json_value	extract string by JSONPath
+googlesql/functions/json/json_value_array	json_value_array basic behaviour
+googlesql/functions/json/parse_json	parse_json basic behaviour
+googlesql/functions/json/safe_to_json	string passes through
+googlesql/functions/json/safe_to_json	int passes through
+googlesql/functions/json/safe_to_json	null input returns SQL NULL
+googlesql/functions/json/string	string basic behaviour
+googlesql/functions/json/to_json	TO_JSON of an integer
+googlesql/functions/json/to_json_string	basic STRUCT of two fields
+googlesql/functions/json/to_json_string	NULL STRUCT field renders as JSON null
+googlesql/functions/json/to_json_string	NULL ARRAY element renders as JSON null
+googlesql/functions/json/to_json_string	top-level NULL input renders as the JSON null literal
+googlesql/functions/json/to_json_string	nested STRUCT<ARRAY<STRUCT>> with inner NULL
+googlesql/functions/json/to_json_string	ARRAY of STRUCT
+googlesql/functions/json/to_json_string	empty ARRAY
+googlesql/functions/math/abs	negative integer
+googlesql/functions/math/abs	positive integer is unchanged
+googlesql/functions/math/abs	zero
+googlesql/functions/math/abs	negative float
+googlesql/functions/math/abs	null propagates
+googlesql/functions/math/atan	atan(0) is 0
+googlesql/functions/math/atan2	atan2(0, 1) is 0
+googlesql/functions/math/ceil	rounds up positive fraction
+googlesql/functions/math/ceil	rounds toward zero on negative fraction
+googlesql/functions/math/ceil	integer value is unchanged
+googlesql/functions/math/ceil	null propagates
+googlesql/functions/math/ceiling	ceiling positive fraction
+googlesql/functions/math/ceiling	ceiling integer
+googlesql/functions/math/cos	cos(0) is 1
+googlesql/functions/math/div	integer division
+googlesql/functions/math/exp	e^0
+googlesql/functions/math/floor	rounds down positive fraction
+googlesql/functions/math/floor	rounds away from zero on negative fraction
+googlesql/functions/math/floor	integer value is unchanged
+googlesql/functions/math/floor	null propagates
+googlesql/functions/math/greatest	greatest of three
+googlesql/functions/math/ieee_divide	division by zero returns +Infinity
+googlesql/functions/math/ieee_divide	regular division
+googlesql/functions/math/is_inf	is_inf on number
+googlesql/functions/math/is_nan	is_nan on number
+googlesql/functions/math/least	least of three
+googlesql/functions/math/ln	ln(1) is 0
+googlesql/functions/math/log	LOG with no base is natural log
+googlesql/functions/math/log10	log10 of 100
+googlesql/functions/math/mod	positive mod
+googlesql/functions/math/mod	zero mod is the dividend
+googlesql/functions/math/pow	2 to the 3
+googlesql/functions/math/power	2 to the 10
+googlesql/functions/math/round	half rounds away from zero
+googlesql/functions/math/round	round negative
+googlesql/functions/math/safe_add	regular add
+googlesql/functions/math/safe_divide	regular divide
+googlesql/functions/math/safe_divide	divide by zero is NULL
+googlesql/functions/math/safe_multiply	regular multiply
+googlesql/functions/math/safe_negate	negate integer
+googlesql/functions/math/safe_subtract	regular subtract
+googlesql/functions/math/sign	negative
+googlesql/functions/math/sign	zero
+googlesql/functions/math/sign	positive
+googlesql/functions/math/sign	null propagates
+googlesql/functions/math/sin	sin(0) is 0
+googlesql/functions/math/sqrt	square root of perfect square
+googlesql/functions/math/sqrt	zero
+googlesql/functions/math/sqrt	one
+googlesql/functions/math/sqrt	null propagates
+googlesql/functions/math/tan	TAN(0) is 0
+googlesql/functions/math/trunc	truncate positive fraction
+googlesql/functions/math/trunc	truncate negative fraction
+googlesql/functions/net/net_host	net_host extracts the expected piece
+googlesql/functions/net/net_ip_from_string	IPv4 round-trip through bytes and back to string
+googlesql/functions/net/net_ip_net_mask	NET.IP_NET_MASK returns a non-null bytes mask
+googlesql/functions/net/net_ip_to_string	dotted-decimal preserved through byte form
+googlesql/functions/net/net_ip_trunc	NET.IP_TRUNC of an IPv4 to /24 returns the network bytes
+googlesql/functions/net/net_ipv4_from_int64	packed-int round-trip via int64
+googlesql/functions/net/net_ipv4_to_int64	int64 round-trip via packed bytes
+googlesql/functions/net/net_parse_ip	identity round-trip via IP_TO_STRING(IP_FROM_STRING(x))
+googlesql/functions/net/net_public_suffix	net_public_suffix extracts the expected piece
+googlesql/functions/net/net_reg_domain	net_reg_domain extracts the expected piece
+googlesql/functions/net/net_safe_ip_from_string	invalid IP returns NULL
+googlesql/functions/security/session_user	SESSION_USER returns a non-NULL identifier
+googlesql/functions/string/ascii	uppercase letter
+googlesql/functions/string/ascii	lowercase letter
+googlesql/functions/string/ascii	empty string
+googlesql/functions/string/byte_length	ascii byte length
+googlesql/functions/string/byte_length	empty string
+googlesql/functions/string/char_length	ascii char length
+googlesql/functions/string/char_length	empty string
+googlesql/functions/string/character_length	ascii char length synonym
+googlesql/functions/string/chr	ascii uppercase
+googlesql/functions/string/chr	ascii lowercase
+googlesql/functions/string/code_points_to_string	code_points_to_string basic behaviour
+googlesql/functions/string/collate	upstream example 2
+googlesql/functions/string/concat	two strings
+googlesql/functions/string/concat	three strings
+googlesql/functions/string/concat	with empty string
+googlesql/functions/string/concat	single argument
+googlesql/functions/string/ends_with	matches suffix
+googlesql/functions/string/ends_with	does not match
+googlesql/functions/string/format	format basic behaviour
+googlesql/functions/string/from_base32	round-trip BYTES through base32 encoding
+googlesql/functions/string/from_base64	base64 round-trip
+googlesql/functions/string/from_hex	round-trip with TO_HEX
+googlesql/functions/string/initcap	initcap two words
+googlesql/functions/string/left	leftmost three chars
+googlesql/functions/string/left	more than length
+googlesql/functions/string/length	ascii string length
+googlesql/functions/string/length	empty string is zero
+googlesql/functions/string/length	null propagates
+googlesql/functions/string/lower	ascii lowercase
+googlesql/functions/string/lower	already lowercase is unchanged
+googlesql/functions/string/lower	empty string
+googlesql/functions/string/lower	null propagates
+googlesql/functions/string/lpad	pad to length 5
+googlesql/functions/string/lpad	same length is unchanged
+googlesql/functions/string/ltrim	left-trim spaces
+googlesql/functions/string/normalize	NFC normalization is idempotent on ASCII
+googlesql/functions/string/normalize_and_casefold	normalize_and_casefold basic behaviour
+googlesql/functions/string/octet_length	octet_length basic behaviour
+googlesql/functions/string/regexp_contains	simple pattern match
+googlesql/functions/string/regexp_contains	pattern not found
+googlesql/functions/string/regexp_extract	extract first digit run
+googlesql/functions/string/regexp_extract_all	capture-group extraction returns digits
+googlesql/functions/string/regexp_instr	regexp_instr basic behaviour
+googlesql/functions/string/regexp_replace	replace digits
+googlesql/functions/string/regexp_substr	extract the first match of a digit run
+googlesql/functions/string/repeat	repeat thrice
+googlesql/functions/string/repeat	zero repetitions
+googlesql/functions/string/replace	replace all occurrences
+googlesql/functions/string/replace	pattern not found returns original
+googlesql/functions/string/reverse	reverse ascii
+googlesql/functions/string/reverse	empty string
+googlesql/functions/string/right	rightmost three chars
+googlesql/functions/string/rpad	pad to length 5
+googlesql/functions/string/rtrim	right-trim spaces
+googlesql/functions/string/safe_convert_bytes_to_string	valid UTF-8 bytes decode to string
+googlesql/functions/string/soundex	classic SOUNDEX of "Robert"
+googlesql/functions/string/split	split on comma
+googlesql/functions/string/split	split on space
+googlesql/functions/string/starts_with	matches prefix
+googlesql/functions/string/starts_with	does not match
+googlesql/functions/string/strpos	1-indexed position
+googlesql/functions/string/strpos	not found is zero
+googlesql/functions/string/substr	extract from middle
+googlesql/functions/string/substr	from position to end
+googlesql/functions/string/substr	length zero returns empty string
+googlesql/functions/string/substr	null source propagates
+googlesql/functions/string/substring	SUBSTRING from position 1, length 3
+googlesql/functions/string/to_base32	TO_BASE32 of empty bytes is empty
+googlesql/functions/string/to_base64	base64 encode bytes
+googlesql/functions/string/to_code_points	ASCII letters map to their codepoints
+googlesql/functions/string/to_hex	hex-encode bytes
+googlesql/functions/string/translate	upstream example — replaces ASCII characters per position
+googlesql/functions/string/translate	single ASCII character replacement
+googlesql/functions/string/translate	CJK source character substituted with another CJK character
+googlesql/functions/string/translate	surrogate-pair emoji (4-byte UTF-8) replaced by a single ASCII char
+googlesql/functions/string/translate	target shorter than source — extra source characters delete
+googlesql/functions/string/translate	empty target — source characters are removed
+googlesql/functions/string/translate	empty source — input passes through unchanged
+googlesql/functions/string/translate	NULL input propagates as NULL
+googlesql/functions/string/translate	duplicated source character raises an error
+googlesql/functions/string/trim	trim spaces
+googlesql/functions/string/trim	no whitespace
+googlesql/functions/string/unicode	UNICODE returns the codepoint of the first rune
+googlesql/functions/string/upper	ascii uppercase
+googlesql/functions/string/upper	already uppercase is unchanged
+googlesql/functions/string/upper	empty string
+googlesql/functions/string/upper	null propagates
+googlesql/functions/time/current_time	current_time is non-null
+googlesql/functions/time/extract	EXTRACT(MINUTE FROM TIME)
+googlesql/functions/time/format_time	HMS formatting
+googlesql/functions/time/parse_time	HH:MM:SS
+googlesql/functions/time/time	construct time
+googlesql/functions/time/time_add	add 30 minutes
+googlesql/functions/time/time_diff	minute diff
+googlesql/functions/time/time_sub	subtract 30 seconds
+googlesql/functions/time/time_trunc	trunc to hour
+googlesql/functions/timestamp/current_timestamp	current_timestamp is non-null
+googlesql/functions/timestamp/extract	EXTRACT(YEAR FROM TIMESTAMP)
+googlesql/functions/timestamp/format_timestamp	ISO format with explicit UTC
+googlesql/functions/timestamp/parse_timestamp	ISO timestamp with explicit UTC
+googlesql/functions/timestamp/string	STRING returns a formatted timestamp
+googlesql/functions/timestamp/timestamp	timestamp from string round-trips through unix seconds
+googlesql/functions/timestamp/timestamp_add	add 1 hour and check via unix seconds
+googlesql/functions/timestamp/timestamp_diff	diff in hours
+googlesql/functions/timestamp/timestamp_micros	round-trip
+googlesql/functions/timestamp/timestamp_millis	round-trip
+googlesql/functions/timestamp/timestamp_seconds	round-trip
+googlesql/functions/timestamp/timestamp_sub	subtract 1 hour and check via unix seconds
+googlesql/functions/timestamp/timestamp_trunc	trunc to day in UTC
+googlesql/functions/timestamp/unix_micros	epoch micros
+googlesql/functions/timestamp/unix_millis	epoch millis
+googlesql/functions/timestamp/unix_seconds	epoch seconds round-trip
+googlesql/functions/window/cume_dist	cumulative distribution over a 3-row partition
+googlesql/functions/window/dense_rank	dense_rank with ties
+googlesql/functions/window/first_value	first_value over ordered window
+googlesql/functions/window/lag	lag returns prior row
+googlesql/functions/window/last_value	last_value over default frame
+googlesql/functions/window/lead	lead returns next row
+googlesql/functions/window/nth_value	NTH_VALUE retrieves the second ordered element
+googlesql/functions/window/ntile	ntile divides into buckets
+googlesql/functions/window/percent_rank	percent rank produces a finite numeric value
+googlesql/functions/window/percentile_cont	continuous median of [1, 2, 3] is 2.0
+googlesql/functions/window/percentile_disc	median of 1, 2, 3 is 2
+googlesql/functions/window/rank	rank with ties
+googlesql/functions/window/row_number	row_number over ordered values
+googlesql/syntax/cte/with_recursive	count 1..5 with recursive CTE
+googlesql/syntax/cte/with_recursive	count down with recursive CTE
+googlesql/syntax/cte/with_recursive	factorial via recursive CTE
+googlesql/syntax/ddl/create_or_replace_view	CREATE OR REPLACE VIEW substitutes the new definition
+googlesql/syntax/ddl/create_table_as_select	CTAS materialises the query result
+googlesql/syntax/ddl/create_view	CREATE VIEW produces a queryable virtual table
+googlesql/syntax/dml/delete	DELETE removes rows matching a WHERE predicate
+googlesql/syntax/dml/delete	DELETE WHERE TRUE removes every row
+googlesql/syntax/dml/insert	INSERT a single row via VALUES
+googlesql/syntax/dml/insert	INSERT multiple rows via VALUES
+googlesql/syntax/dml/insert	INSERT ... SELECT copies rows from a query
+googlesql/syntax/dml/merge	MERGE WHEN MATCHED THEN DELETE
+googlesql/syntax/dml/merge	MERGE INTO + explicit AS alias on both sides
+googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED THEN INSERT VALUES (no column list)
+googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED THEN INSERT ROW
+googlesql/syntax/dml/truncate_table	TRUNCATE TABLE — 2-segment dataset.table path
+googlesql/syntax/dml/truncate_table	TRUNCATE TABLE — 3-segment project.dataset.table path
+googlesql/syntax/dml/truncate_table	TRUNCATE TABLE — backquoted compound path
+googlesql/syntax/dml/update	UPDATE the row matching a WHERE predicate
+googlesql/syntax/dml/update	UPDATE WHERE TRUE updates every row
+googlesql/syntax/query/array_subscript	OFFSET is zero-based
+googlesql/syntax/query/array_subscript	ORDINAL is one-based
+googlesql/syntax/query/array_subscript	SAFE_OFFSET returns NULL out of range
+googlesql/syntax/query/array_subscript	SAFE_ORDINAL returns NULL out of range
+googlesql/syntax/query/cast	cast string to int64
+googlesql/syntax/query/cast	cast int64 to float64
+googlesql/syntax/query/cast	safe_cast returns NULL on a bad numeric input
+googlesql/syntax/query/cast	cast bool to string emits "true"/"false"
+googlesql/syntax/query/conditional_expressions	CASE picks the first matching branch
+googlesql/syntax/query/conditional_expressions	CASE with value form
+googlesql/syntax/query/conditional_expressions	IF returns then-branch when condition is true
+googlesql/syntax/query/conditional_expressions	IFNULL replaces NULL with the default
+googlesql/syntax/query/conditional_expressions	COALESCE returns the first non-NULL argument
+googlesql/syntax/query/conditional_expressions	NULLIF returns NULL when the arguments are equal
+googlesql/syntax/query/except	EXCEPT DISTINCT removes shared rows
+googlesql/syntax/query/group_by	scalar GROUP BY with COUNT
+googlesql/syntax/query/group_by	GROUP BY on individual STRUCT fields
+googlesql/syntax/query/group_by	NULL becomes its own GROUP BY bucket
+googlesql/syntax/query/group_by	GROUP BY a scalar column that carries an ARRAY field in the row
+googlesql/syntax/query/intersect	INTERSECT DISTINCT keeps the shared values
+googlesql/syntax/query/join	INNER JOIN on equality
+googlesql/syntax/query/join	LEFT JOIN keeps unmatched left-side row
+googlesql/syntax/query/join	CROSS JOIN produces the Cartesian product
+googlesql/syntax/query/join	FULL OUTER JOIN keeps unmatched rows from both sides
+googlesql/syntax/query/operators_arith	integer addition / subtraction / multiplication
+googlesql/syntax/query/operators_arith	integer / float division and MOD
+googlesql/syntax/query/operators_arith	unary minus
+googlesql/syntax/query/operators_bitwise	AND / OR / XOR / NOT
+googlesql/syntax/query/operators_bitwise	shift left / right
+googlesql/syntax/query/operators_compare	relational operators
+googlesql/syntax/query/operators_compare	IS DISTINCT FROM treats NULL like a value
+googlesql/syntax/query/operators_concat	STRING concatenation with ||
+googlesql/syntax/query/operators_concat	NULL propagates in concat
+googlesql/syntax/query/operators_logical	AND / OR / NOT on TRUE and FALSE
+googlesql/syntax/query/operators_logical	NULL propagation in three-valued logic
+googlesql/syntax/query/parameters	positional placeholders bind in order
+googlesql/syntax/query/parameters	named placeholders bind by name
+googlesql/syntax/query/pivot	pivot by category, sum values
+googlesql/syntax/query/predicates	BETWEEN inclusive range
+googlesql/syntax/query/predicates	IN list literal
+googlesql/syntax/query/predicates	NOT IN
+googlesql/syntax/query/predicates	IS NULL / IS NOT NULL
+googlesql/syntax/query/predicates	LIKE wildcard
+googlesql/syntax/query/predicates	EXISTS subquery
+googlesql/syntax/query/qualify	top-1 per partition via QUALIFY
+googlesql/syntax/query/rollup	rollup adds the grand-total row to the regular groupings
+googlesql/syntax/query/struct_array_literals	array literal of integers
+googlesql/syntax/query/struct_array_literals	typed array literal
+googlesql/syntax/query/struct_array_literals	array length via ARRAY_LENGTH
+googlesql/syntax/query/struct_array_literals	struct with named fields, single-value access
+googlesql/syntax/query/struct_array_literals	STRUCT positional construction renders as brace form
+googlesql/syntax/query/subquery_array	ARRAY subquery materialises a column
+googlesql/syntax/query/subquery_scalar	scalar subquery returning one row
+googlesql/syntax/query/subquery_scalar	scalar subquery used inside an expression
+googlesql/syntax/query/union	UNION ALL retains duplicates
+googlesql/syntax/query/union	UNION DISTINCT deduplicates
+googlesql/syntax/query/unnest	UNNEST expands an INT64 array
+googlesql/syntax/query/unnest	UNNEST WITH OFFSET exposes the index
+googlesql/syntax/query/unnest	LEFT JOIN against an empty array preserves the outer row
+googlesql/syntax/query/unnest	LEFT JOIN against a non-empty array fans the outer row
+googlesql/syntax/query/unnest	correlated UNNEST — inner UNNEST references outer column
+googlesql/syntax/query/unnest	UNNEST of STRUCT[] exposes individual fields
+googlesql/syntax/query/unnest	UNNEST of STRUCT[] with WITH OFFSET preserves field access
+googlesql/syntax/query/unpivot	unpivot two columns into value/column-name rows
+googlesql/syntax/query/window_clause	named window via WINDOW clause
+googlesql/syntax/query/with_cte	single CTE referenced in the outer SELECT
+googlesql/syntax/query/with_cte	multiple CTEs referenced together
+googlesql/syntax/script/begin_end	BEGIN / COMMIT brackets a transaction
+googlesql/types/array	upstream example 1
+googlesql/types/array	upstream example 2
+googlesql/types/array	upstream example 3
+googlesql/types/boolean	cast true to BOOL
+googlesql/types/boolean	bool literal true
+googlesql/types/boolean	bool literal false
+googlesql/types/bytes	cast empty bytes literal
+googlesql/types/bytes	bytes hex literal length
+googlesql/types/date	cast string to DATE
+googlesql/types/date	DATE literal
+googlesql/types/datetime	cast string to DATETIME
+googlesql/types/datetime	DATETIME literal
+googlesql/types/enum	cast STRING to dialect-builtin enum kind
+googlesql/types/interval	INTERVAL literal year-month
+googlesql/types/interval	INTERVAL literal day
+googlesql/types/json	JSON literal scalar
+googlesql/types/json	JSON literal string
+googlesql/types/numeric	cast int to NUMERIC
+googlesql/types/numeric	NUMERIC literal
+googlesql/types/string	simple string literal
+googlesql/types/string	single-quoted string literal
+googlesql/types/struct	nested subquery field b
+googlesql/types/struct	nested subquery field a
+googlesql/types/struct	nested subquery expanded columns and computed sum
+googlesql/types/struct	struct with one field
+googlesql/types/struct	struct with anonymous fields of different types
+googlesql/types/struct	struct with anonymous fields of the same type
+googlesql/types/struct	struct containing struct
+googlesql/types/struct	struct containing array
+googlesql/types/struct	struct containing array of struct
+googlesql/types/struct	struct select as value
+googlesql/types/struct	struct cast int64 double
+googlesql/types/struct	struct case requiring coercion
+googlesql/types/struct	struct equality matching
+googlesql/types/struct	struct equality different field names
+googlesql/types/struct	struct access named field
+googlesql/types/time	cast string to TIME
+googlesql/types/time	TIME literal
+googlesql/types/timestamp	FORMAT_TIMESTAMP UTC

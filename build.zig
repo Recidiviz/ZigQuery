@@ -109,6 +109,24 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_corpus.addArgs(args);
     b.step("corpus", "Run the conformance corpus").dependOn(&run_corpus.step);
 
+    // Spec conformance: replays testdata/specs/**.zon, imported from
+    // goccy/googlesqlite by tools/spec_import.py.
+    const spec_exe = b.addExecutable(.{
+        .name = "spec-runner",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/spec_runner.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| spec_exe.step.dependOn(&bz.step);
+    b.installArtifact(spec_exe);
+    const run_spec = b.addRunArtifact(spec_exe);
+    run_spec.setCwd(.{ .cwd_relative = b.build_root.path.? });
+    if (b.args) |args| run_spec.addArgs(args);
+    b.step("spec", "Run the GoogleSQL spec corpus").dependOn(&run_spec.step);
+
     // Concurrency gating experiment: is the analyzer stack safe to drive from
     // several threads, one Db each? Not part of `test` — it is a deliberate
     // experiment, run on demand.

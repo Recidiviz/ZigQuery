@@ -17,6 +17,7 @@ pub const spec = @import("internal/spec.zig");
 pub const catalog = @import("internal/catalog.zig");
 pub const shared_catalog = @import("internal/shared_catalog.zig");
 pub const phase = @import("internal/phase.zig");
+pub const spec_expect = @import("internal/spec_expect.zig");
 pub const io_stats = @import("internal/io_stats.zig");
 pub const coordinator_types = @import("internal/coordinator/types_data.zig");
 pub const coordinator_context = @import("internal/coordinator/context.zig");
