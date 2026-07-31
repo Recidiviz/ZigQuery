@@ -14,7 +14,6 @@ const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const query_expr = @import("../sqlbuilder/query_expr.zig");
 
@@ -23,7 +22,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.SelectStatement {
+) types_data.Error!*sqlbuilder.SelectStatement {
     // Go: "expected with scan data, got type %v"
     if (data.type != .with) return error.UnsupportedNode;
     const with_scan_data = data.with_scan orelse return error.UnsupportedNode;

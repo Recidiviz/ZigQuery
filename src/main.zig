@@ -55,7 +55,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (sql == null and script_path == null) {
         try out.writeAll(
-            "usage: zetasqlite-zig [--sql] [--file <path>] [--explain] [\"SELECT ...\"]\n",
+            "usage: zetasqlite-zig [--sql] [--file <path>] [--stats] [--explain] [\"SELECT ...\"]\n",
         );
         try out.flush();
         std.process.exit(2);
@@ -116,9 +116,14 @@ pub fn main(init: std.process.Init) !void {
     // whole graph was built for.
     const query = sql orelse last_from_script orelse return;
 
+    // Wall clock for the query alone — the script above is setup. The phase
+    // totals partition only the work that is instrumented, so the gap between
+    // them and this is the answer to "what isn't being measured?"
+    const query_start = zetasqlite.phase.nowNs();
+
     if (explain) {
         try explainQuery(arena, out, db, query);
-        if (show_stats) try printPhases(out);
+        if (show_stats) try printPhases(out, zetasqlite.phase.nowNs() -| query_start);
         try out.flush();
         return;
     }
@@ -147,13 +152,16 @@ pub fn main(init: std.process.Init) !void {
         }
         try out.writeAll("\n");
     }
-    if (show_stats) try printPhases(out);
+    if (show_stats) try printPhases(out, zetasqlite.phase.nowNs() -| query_start);
     try out.flush();
 }
 
 /// Where this statement's time went. Answers "is the plan the problem?" — for
 /// a query over empty tables it usually is not.
-fn printPhases(out: *std.Io.Writer) !void {
+///
+/// `total_ns` is measured wall time for the query, row printing included; the
+/// phases below are subsets of it, not a partition of it.
+fn printPhases(out: *std.Io.Writer, total_ns: u64) !void {
     const phase = zetasqlite.phase;
     const ms = struct {
         fn of(ns: u64) f64 {
@@ -161,14 +169,28 @@ fn printPhases(out: *std.Io.Writer) !void {
         }
     }.of;
     try out.print(
-        "\n-- analyze {d:.2}ms ({d})  transform {d:.2}ms ({d})  prepare {d:.2}ms ({d})  " ++
-            "step {d:.2}ms ({d})  sql {d} bytes\n",
+        "\n-- total {d:.2}ms  analyze {d:.2}ms ({d})  transform {d:.2}ms ({d})  prepare {d:.2}ms ({d})  " ++
+            "step {d:.2}ms ({d})  exec {d:.2}ms ({d})  sql {d} bytes\n",
         .{
-            ms(phase.totalNs(.analyze)),      phase.count(.analyze),
-            ms(phase.totalNs(.transform)),    phase.count(.transform),
+            ms(total_ns),
+            ms(phase.totalNs(.analyze)),        phase.count(.analyze),
+            ms(phase.totalNs(.transform)),      phase.count(.transform),
             ms(phase.totalNs(.sqlite_prepare)), phase.count(.sqlite_prepare),
-            ms(phase.totalNs(.sqlite_step)),  phase.count(.sqlite_step),
+            ms(phase.totalNs(.sqlite_step)),    phase.count(.sqlite_step),
+            ms(phase.totalNs(.sqlite_exec)),    phase.count(.sqlite_exec),
             phase.preparedBytes(),
+        },
+    );
+    // Separate line because encode/decode/literal partition `codec`, so the
+    // total is not the sum of the whole line.
+    try out.print(
+        "-- codec {d:.2}ms ({d})  encode {d:.2}ms ({d})  decode {d:.2}ms ({d})  " ++
+            "literal {d:.2}ms ({d})\n",
+        .{
+            ms(phase.codecTotalNs()),          phase.codecCount(),
+            ms(phase.totalNs(.codec_encode)),  phase.count(.codec_encode),
+            ms(phase.totalNs(.codec_decode)),  phase.count(.codec_decode),
+            ms(phase.totalNs(.codec_literal)), phase.count(.codec_literal),
         },
     );
 }

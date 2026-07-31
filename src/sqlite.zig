@@ -204,23 +204,6 @@ pub const Db = struct {
         if (rc != c.SQLITE_OK) return error.SQLite;
     }
 
-    pub fn createCollation(
-        db: *Db,
-        name: [:0]const u8,
-        userdata: ?*anyopaque,
-        compare: *const CompareFn,
-    ) Error!void {
-        const rc = c.sqlite3_create_collation_v2(
-            db.handle,
-            name.ptr,
-            c.SQLITE_UTF8,
-            userdata,
-            compare,
-            null,
-        );
-        if (rc != c.SQLITE_OK) return error.SQLite;
-    }
-
     /// Per-connection allocator counter.
     ///
     /// Read without resetting, so values are cumulative since the connection
@@ -499,6 +482,16 @@ pub fn valueText(v: ?*c.sqlite3_value) []const u8 {
     return p[0..n];
 }
 
+/// Note the accessor order: `sqlite3_value_blob` first, then
+/// `sqlite3_value_bytes`. SQLite documents that calling `_bytes` first can
+/// force a type conversion that invalidates the pointer the other way round.
+pub fn valueBlob(v: ?*c.sqlite3_value) []const u8 {
+    const p = c.sqlite3_value_blob(v) orelse return "";
+    const n: usize = @intCast(c.sqlite3_value_bytes(v));
+    if (n == 0) return "";
+    return @as([*]const u8, @ptrCast(p))[0..n];
+}
+
 pub fn resultNull(ctx: ?*c.sqlite3_context) void {
     c.sqlite3_result_null(ctx);
 }
@@ -593,18 +586,6 @@ fn testSumFinal(ctx: ?*c.sqlite3_context) callconv(.c) void {
     resultInt64(ctx, state.total);
 }
 
-/// Orders by string length only (recognizably different from binary order).
-fn testLenCollation(
-    _: ?*anyopaque,
-    a_len: c_int,
-    _: ?*const anyopaque,
-    b_len: c_int,
-    _: ?*const anyopaque,
-) callconv(.c) c_int {
-    if (a_len < b_len) return -1;
-    if (a_len > b_len) return 1;
-    return 0;
-}
 
 test "open, query, scalar UDF, aggregate, collation" {
     var db = try Db.open(":memory:");
@@ -636,20 +617,5 @@ test "open, query, scalar UDF, aggregate, collation" {
         defer stmt.finalize();
         try std.testing.expect(try stmt.step());
         try std.testing.expectEqual(@as(i64, 6), stmt.columnInt64(0));
-    }
-
-    // Collation: length-ordering puts 'ccc' last regardless of binary order.
-    try db.createCollation("test_len", null, testLenCollation);
-    {
-        var stmt = try db.prepare(
-            "SELECT s FROM (SELECT 'ccc' AS s UNION ALL SELECT 'a' UNION ALL SELECT 'bb') ORDER BY s COLLATE test_len",
-        );
-        defer stmt.finalize();
-        try std.testing.expect(try stmt.step());
-        try std.testing.expectEqualStrings("a", stmt.columnText(0));
-        try std.testing.expect(try stmt.step());
-        try std.testing.expectEqualStrings("bb", stmt.columnText(0));
-        try std.testing.expect(try stmt.step());
-        try std.testing.expectEqualStrings("ccc", stmt.columnText(0));
     }
 }

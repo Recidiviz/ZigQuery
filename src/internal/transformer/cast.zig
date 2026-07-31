@@ -9,12 +9,11 @@ const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const spec = @import("../spec.zig");
 const common = @import("common.zig");
 
-const Error = interfaces.Error;
+const Error = types_data.Error;
 
 /// Go CastTransformer.Transform.
 pub fn transform(
@@ -189,7 +188,8 @@ test "cast transform emits zetasqlite_cast call" {
     try testing.expectEqualStrings("zetasqlite_cast", call.name);
     try testing.expectEqual(@as(usize, 4), call.arguments.len);
     try testing.expectEqualStrings("1", call.arguments[0].value);
-    // Type args are double-quoted base64 payloads; the flag is plain.
-    try testing.expect(call.arguments[1].value[0] == '"');
+    // Type args are JSON type documents, which are STRING values and so render
+    // as X'..' BLOB literals; the flag is plain.
+    try testing.expect(call.arguments[1].value[0] == 'X');
     try testing.expectEqualStrings("false", call.arguments[3].value);
 }

@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const sqlite_include = "/opt/homebrew/opt/sqlite/include";
+const sqlite_lib = "/opt/homebrew/opt/sqlite/lib";
+
 // zetasqlite-zig: GoogleSQL -> SQLite translator, a faithful Zig port of
 // Recidiviz/go-zetasqlite. The GoogleSQL analyzer is consumed as a Bazel-built
 // C-ABI dylib from the googlesql repo (see zig/BUILD there); SQLite comes from
@@ -30,20 +33,28 @@ pub fn build(b: *std.Build) void {
     const shim_dylib = b.pathJoin(&.{ repo_root, shim_rel });
     const shim_dir = std.fs.path.dirname(shim_dylib) orelse repo_root;
 
-    const sqlite_include = "/opt/homebrew/opt/sqlite/include";
-    const sqlite_lib = "/opt/homebrew/opt/sqlite/lib";
+    // The codec phase timers are off by default because they are not free at
+    // codec call volumes: a span costs ~18 ns, and a real workload makes
+    // millions of them (commit a3bb4e3 measured 11.9 M over ~19 k rows, which
+    // is ~210 ms of pure instrumentation). Left always-on they distort the very
+    // path they exist to measure. Turn them on for harness runs only.
+    const codec_timers = b.option(
+        bool,
+        "codec-timers",
+        "Instrument the value codec phases (~18ns/span; needed by codec-bench)",
+    ) orelse false;
+    const build_opts = b.addOptions();
+    build_opts.addOption(bool, "codec_timers", codec_timers);
 
-    const mod = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
+    // The `coverage` step builds a second copy of the module tree at -ODebug,
+    // so the wiring lives in engineModule/serverModule rather than inline.
+    const deps: EngineDeps = .{
         .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    mod.addIncludePath(.{ .cwd_relative = sqlite_include });
-    mod.addLibraryPath(.{ .cwd_relative = sqlite_lib });
-    mod.linkSystemLibrary("sqlite3", .{});
-    mod.addObjectFile(.{ .cwd_relative = shim_dylib });
-    mod.addRPath(.{ .cwd_relative = shim_dir });
+        .build_options = build_opts.createModule(),
+        .shim_dylib = shim_dylib,
+        .shim_dir = shim_dir,
+    };
+    const mod = engineModule(b, deps, optimize);
 
     const maybe_bazel: ?*std.Build.Step.Run = if (build_shim) blk: {
         const bazel = b.addSystemCommand(&.{
@@ -153,7 +164,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
     if (maybe_bazel) |bz| codec_exe.step.dependOn(&bz.step);
+    b.installArtifact(codec_exe);
     const run_codec = b.addRunArtifact(codec_exe);
+    if (b.args) |args| run_codec.addArgs(args);
     b.step("codec-bench", "Value codec cost with real rows").dependOn(&run_codec.step);
 
     // Per-query cost vs catalog size: the baseline the server's caching work
@@ -173,6 +186,25 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_bench.addArgs(args);
     b.step("bench", "Benchmark per-query cost vs catalog size").dependOn(&run_bench.step);
 
+    // The goccy/googlesqlite bench corpus (testdata/bench_corpus), so this
+    // engine can be read against that project's published RESULTS.md.
+    const gsqlbench_exe = b.addExecutable(.{
+        .name = "gsql-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/gsql_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| gsqlbench_exe.step.dependOn(&bz.step);
+    b.installArtifact(gsqlbench_exe);
+    const run_gsqlbench = b.addRunArtifact(gsqlbench_exe);
+    run_gsqlbench.setCwd(.{ .cwd_relative = b.build_root.path.? });
+    if (b.args) |args| run_gsqlbench.addArgs(args);
+    b.step("gsql-bench", "Run the goccy/googlesqlite bench corpus")
+        .dependOn(&run_gsqlbench.step);
+
     const loadbench_exe = b.addExecutable(.{
         .name = "load-bench",
         .root_module = b.createModule(.{
@@ -186,18 +218,30 @@ pub fn build(b: *std.Build) void {
     const run_loadbench = b.addRunArtifact(loadbench_exe);
     b.step("load-bench", "Benchmark bulk CREATE TABLE cost").dependOn(&run_loadbench.step);
 
+    // What an "in-memory" database still writes to disk, and whether
+    // temp_store moves it.
+    const ioprobe_exe = b.addExecutable(.{
+        .name = "io-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/io_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| ioprobe_exe.step.dependOn(&bz.step);
+    b.installArtifact(ioprobe_exe);
+    const run_ioprobe = b.addRunArtifact(ioprobe_exe);
+    if (b.args) |args| run_ioprobe.addArgs(args);
+    b.step("io-probe", "Measure SQLite temp-file traffic on an in-memory db")
+        .dependOn(&run_ioprobe.step);
+
 
     // ---- bigquery-emulator server ----
     //
     // A separate module from the engine so `test` and `corpus` — the engine's
     // regression gates — are unaffected by server work.
-    const server_mod = b.createModule(.{
-        .root_source_file = b.path("src/server/root.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-        .imports = &.{.{ .name = "zetasqlite", .module = mod }},
-    });
+    const server_mod = serverModule(b, target, optimize, mod);
 
     const server_exe = b.addExecutable(.{
         .name = "bigquery-emulator",
@@ -241,4 +285,98 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_insertbench.addArgs(args);
     b.step("insert-bench", "Profile a tabledata.insertAll request body")
         .dependOn(&run_insertbench.step);
+
+    // ---- coverage ----
+    //
+    // kcov (`brew install kcov`) drives a test binary under a debugger and
+    // reads line hits back out of DWARF, so nothing is instrumented at compile
+    // time. The tests are pinned to -ODebug regardless of -Doptimize: once
+    // inlining and dead-code elimination are on, line coverage measures the
+    // optimizer rather than the tests.
+    //
+    // --include-path keeps the report to this repo's own sources; without it
+    // the Zig std lib dominates and the percentage means nothing.
+    const cov_mod = engineModule(b, deps, .Debug);
+    const cov_server_mod = serverModule(b, target, .Debug, cov_mod);
+    const cov_tests = b.addTest(.{ .name = "engine-tests", .root_module = cov_mod });
+    const cov_server_tests = b.addTest(.{ .name = "server-tests", .root_module = cov_server_mod });
+    if (maybe_bazel) |bz| {
+        cov_tests.step.dependOn(&bz.step);
+        cov_server_tests.step.dependOn(&bz.step);
+    }
+
+    const cov_root = b.pathJoin(&.{ b.install_path, "coverage" });
+    const cov_runs = b.pathJoin(&.{ cov_root, "runs" });
+    const cov_report = b.pathJoin(&.{ cov_root, "report" });
+    const cov_include = b.fmt("--include-path={s}", .{b.pathFromRoot("src")});
+
+    // kcov's mkdir of the output directory is not recursive, and it does not
+    // notice until the first periodic flush — mid-run, after minutes of tests.
+    const cov_mkdir = b.addSystemCommand(&.{ "mkdir", "-p", cov_runs, cov_report });
+
+    // --clean drops what the *same* binary recorded last time (the other
+    // binary's directory is left alone), so a test that has since been deleted
+    // stops counting as covered.
+    const kcov_engine = b.addSystemCommand(&.{ "kcov", "--clean", cov_include, cov_runs });
+    kcov_engine.addArtifactArg(cov_tests);
+    kcov_engine.has_side_effects = true;
+    kcov_engine.step.dependOn(&cov_mkdir.step);
+
+    // Ordered, not parallel: both runs rewrite the shared index in cov_runs.
+    const kcov_server = b.addSystemCommand(&.{ "kcov", "--clean", cov_include, cov_runs });
+    kcov_server.addArtifactArg(cov_server_tests);
+    kcov_server.has_side_effects = true;
+    kcov_server.step.dependOn(&kcov_engine.step);
+
+    // Each run only sees the half of the tree its own binary links, so the
+    // headline number has to come from a merge of the two.
+    const kcov_merge = b.addSystemCommand(&.{ "kcov", "--merge", cov_report, cov_runs });
+    kcov_merge.has_side_effects = true;
+    kcov_merge.step.dependOn(&kcov_server.step);
+
+    b.step("coverage", b.fmt("Line coverage for the unit tests -> {s}/index.html", .{cov_report}))
+        .dependOn(&kcov_merge.step);
+}
+
+/// Everything the engine module needs beyond an optimize mode.
+const EngineDeps = struct {
+    target: std.Build.ResolvedTarget,
+    build_options: *std.Build.Module,
+    shim_dylib: []const u8,
+    shim_dir: []const u8,
+};
+
+fn engineModule(
+    b: *std.Build,
+    deps: EngineDeps,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = deps.target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    mod.addImport("build_options", deps.build_options);
+    mod.addIncludePath(.{ .cwd_relative = sqlite_include });
+    mod.addLibraryPath(.{ .cwd_relative = sqlite_lib });
+    mod.linkSystemLibrary("sqlite3", .{});
+    mod.addObjectFile(.{ .cwd_relative = deps.shim_dylib });
+    mod.addRPath(.{ .cwd_relative = deps.shim_dir });
+    return mod;
+}
+
+fn serverModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    engine: *std.Build.Module,
+) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = b.path("src/server/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "zetasqlite", .module = engine }},
+    });
 }

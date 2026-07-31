@@ -25,9 +25,8 @@ const encoder = @import("../encoder.zig");
 const spec = @import("../spec.zig");
 const types_data = @import("types_data.zig");
 const context = @import("context.zig");
-const interfaces = @import("types_interfaces.zig");
 
-pub const Error = interfaces.Error;
+pub const Error = types_data.Error;
 
 const ExpressionData = types_data.ExpressionData;
 const StatementData = types_data.StatementData;

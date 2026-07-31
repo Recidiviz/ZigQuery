@@ -1,16 +1,19 @@
 //! Faithful port of go-zetasqlite internal/transformer_scan_array.go.
 //!
-//! UNNEST via SQLite's json_each table-valued function over
-//! zetasqlite_decode_array(<array expr>): json_each's `value` column is the
-//! array element and `key` the zero-based offset. Correlated arrays join the
-//! transformed input scan against json_each (LEFT when is_outer, INNER with
-//! an ON condition, CROSS when there is no join expression).
+//! UNNEST via the zetasqlite_unnest table-valued function over the encoded
+//! array: its `value` column is the array element and `key` the zero-based
+//! offset. Correlated arrays join the transformed input scan against it (LEFT
+//! when is_outer, INNER with an ON condition, CROSS when there is no join
+//! expression).
+//!
+//! This used to be json_each over zetasqlite_decode_array, which serialised
+//! every element into a JSON array text for SQLite to re-parse. See
+//! function/unnest_vtab.zig for why that had to go.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
 /// Go ArrayScanTransformer.Transform.
@@ -18,7 +21,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.SelectStatement {
+) types_data.Error!*sqlbuilder.SelectStatement {
     // Go: "expected array scan data, got type %v"
     if (data.type != .array) return error.UnsupportedNode;
     const array_data = data.array_scan orelse return error.UnsupportedNode;
@@ -36,57 +39,52 @@ pub fn transform(
     // Transform the array expression to UNNEST.
     const array_expr = try coord.transformExpression(array_data.array_expr, ctx);
 
-    // Create the json_each table function call with zetasqlite_decode_array.
-    const decode_args = try alloc.alloc(*sqlbuilder.SQLExpression, 1);
-    decode_args[0] = array_expr;
+    // zetasqlite_unnest walks the encoded array in place. It exposes the same
+    // `key`/`value` columns json_each did, so everything below is unchanged.
     const table_fn_args = try alloc.alloc(*sqlbuilder.SQLExpression, 1);
-    table_fn_args[0] = try sqlbuilder.newFunctionExpression(
-        alloc,
-        "zetasqlite_decode_array",
-        decode_args,
-    );
+    table_fn_args[0] = array_expr;
     const table_function = try alloc.create(sqlbuilder.TableFunction);
-    table_function.* = .{ .name = "json_each", .arguments = table_fn_args };
-    const json_each_from_item = try alloc.create(sqlbuilder.FromItem);
-    json_each_from_item.* = .{
+    table_function.* = .{ .name = "zetasqlite_unnest", .arguments = table_fn_args };
+    const unnest_from_item = try alloc.create(sqlbuilder.FromItem);
+    unnest_from_item.* = .{
         .type = .table_function,
         .table_function = table_function,
         .alias = try std.fmt.allocPrint(alloc, "$array_{s}", .{ctx.fragmentContext().getID()}),
     };
 
     // The element / key columns must be made available prior to the JoinExpr
-    // being transformed since they reference return values from SQLite's
-    // json_each which do not exist in ZetaSQL. (Go dereferences
+    // being transformed since they reference columns of the table-valued
+    // function, which do not exist in ZetaSQL. (Go dereferences
     // arrayData.ElementColumn unconditionally.)
     const element_column = array_data.element_column orelse return error.InvalidAST;
     const element_info = try alloc.create(context.ColumnInfo);
     element_info.* = .{
         .id = element_column.id,
         .name = "value",
-        // This column name comes from SQLite's table-valued function
-        // json_each (our json_each_from_item).
-        .expression = try sqlbuilder.newColumnExpression(alloc, "value", json_each_from_item.alias),
+        // This column name comes from the zetasqlite_unnest table-valued
+        // function (our unnest_from_item).
+        .expression = try sqlbuilder.newColumnExpression(alloc, "value", unnest_from_item.alias),
     };
     try ctx.fragmentContext().addAvailableColumn(element_column.id, element_info);
-    try ctx.fragmentContext().registerColumnScope(element_column.id, json_each_from_item.alias);
+    try ctx.fragmentContext().registerColumnScope(element_column.id, unnest_from_item.alias);
 
     if (array_data.array_offset_column) |offset_column| {
         const offset_info = try alloc.create(context.ColumnInfo);
         offset_info.* = .{
             .id = offset_column.id,
             .name = "key",
-            // This column name comes from SQLite's table-valued function
-            // json_each (our json_each_from_item).
-            .expression = try sqlbuilder.newColumnExpression(alloc, "key", json_each_from_item.alias),
+            // This column name comes from the zetasqlite_unnest table-valued
+            // function (our unnest_from_item).
+            .expression = try sqlbuilder.newColumnExpression(alloc, "key", unnest_from_item.alias),
         };
         try ctx.fragmentContext().addAvailableColumn(offset_column.id, offset_info);
-        try ctx.fragmentContext().registerColumnScope(offset_column.id, json_each_from_item.alias);
+        try ctx.fragmentContext().registerColumnScope(offset_column.id, unnest_from_item.alias);
     }
 
     const unnest_select = try sqlbuilder.newSelectStatement(alloc);
-    unnest_select.from_clause = json_each_from_item;
+    unnest_select.from_clause = unnest_from_item;
 
-    // json_each's `value`/`key` are already qualified by the $array_N alias;
+    // The `value`/`key` columns are already qualified by the $array_N alias;
     // leave them pending rather than spending a level to re-alias them.
     for (data.column_list) |col| {
         const ref = try ctx.fragmentContext().getQualifiedColumnRef(col.id);
@@ -116,7 +114,7 @@ pub fn transform(
     join_clause.* = .{
         .type = join_type,
         .left = inner_from_item,
-        .right = json_each_from_item,
+        .right = unnest_from_item,
         .condition = join_condition,
     };
     const join_from_item = try alloc.create(sqlbuilder.FromItem);
@@ -146,7 +144,76 @@ test "UNNEST array literal" {
     try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
 }
 
-test "UNNEST WITH OFFSET exposes json_each key" {
+test "UNNEST over empty, NULL and mixed-kind arrays" {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // An empty array and a NULL array both scan as zero rows. Under json_each
+    // that fell out of decode_array returning "[]"; the vtab arranges it
+    // deliberately, in xFilter.
+    {
+        var rows = try db.query("SELECT COUNT(*) AS n FROM UNNEST([]) AS x", &.{}, .{});
+        defer rows.deinit();
+        try testing.expectEqual(driver.Cell{ .int = 0 }, (try rows.next()).?[0]);
+    }
+    {
+        var rows = try db.query(
+            "SELECT COUNT(*) AS n FROM UNNEST(CAST(NULL AS ARRAY<INT64>)) AS x",
+            &.{},
+            .{},
+        );
+        defer rows.deinit();
+        try testing.expectEqual(driver.Cell{ .int = 0 }, (try rows.next()).?[0]);
+    }
+    // NULL elements keep their position: the walker must step over a bare tag
+    // byte the same as a length-prefixed payload.
+    {
+        var rows = try db.query(
+            "SELECT o, x FROM UNNEST([1, NULL, 3]) AS x WITH OFFSET AS o ORDER BY o",
+            &.{},
+            .{},
+        );
+        defer rows.deinit();
+        var row = (try rows.next()).?;
+        try testing.expectEqual(driver.Cell{ .int = 0 }, row[0]);
+        try testing.expectEqual(driver.Cell{ .int = 1 }, row[1]);
+        row = (try rows.next()).?;
+        try testing.expectEqual(driver.Cell{ .int = 1 }, row[0]);
+        try testing.expectEqual(driver.Cell.null, row[1]);
+        row = (try rows.next()).?;
+        try testing.expectEqual(driver.Cell{ .int = 2 }, row[0]);
+        try testing.expectEqual(driver.Cell{ .int = 3 }, row[1]);
+    }
+}
+
+test "UNNEST over struct elements walks nested values" {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Struct elements are the case where a wrong skip desynchronises the walk
+    // silently — every later element would be misread rather than error.
+    var rows = try db.query(
+        \\SELECT e.a, e.b FROM UNNEST([
+        \\  STRUCT(1 AS a, 'x' AS b),
+        \\  STRUCT(2 AS a, 'yy' AS b),
+        \\  STRUCT(3 AS a, 'zzz' AS b)
+        \\]) AS e ORDER BY e.a
+    , &.{}, .{});
+    defer rows.deinit();
+
+    var row = (try rows.next()).?;
+    try testing.expectEqual(driver.Cell{ .int = 1 }, row[0]);
+    try testing.expectEqualStrings("x", row[1].string);
+    row = (try rows.next()).?;
+    try testing.expectEqual(driver.Cell{ .int = 2 }, row[0]);
+    try testing.expectEqualStrings("yy", row[1].string);
+    row = (try rows.next()).?;
+    try testing.expectEqual(driver.Cell{ .int = 3 }, row[0]);
+    try testing.expectEqualStrings("zzz", row[1].string);
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
+}
+
+test "UNNEST WITH OFFSET exposes the element offset" {
     var db = try driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
 

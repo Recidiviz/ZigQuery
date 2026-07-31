@@ -154,7 +154,9 @@ fn decodeArgs(
             .null => Value.@"null",
             .integer => Value{ .int = sqlite.valueInt64(argv[i]) },
             .float => Value{ .float = sqlite.valueDouble(argv[i]) },
-            .text, .blob => try encoder.DecodeValue(alloc, .{ .text = sqlite.valueText(argv[i]) }),
+            // TEXT has no engine meaning since storage format 3.
+            .text => return error.CorruptData,
+            .blob => try encoder.DecodeValue(alloc, .{ .blob = sqlite.valueBlob(argv[i]) }),
         };
     }
     return args;
@@ -165,7 +167,7 @@ fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void
         .@"null" => sqlite.resultNull(ctx),
         .int => |i| sqlite.resultInt64(ctx, i),
         .float => |f| sqlite.resultDouble(ctx, f),
-        .text => |t| sqlite.resultText(ctx, t),
+        .blob => |b| sqlite.resultBlob(ctx, b),
     }
 }
 
@@ -348,9 +350,10 @@ const TestEnv = struct {
         return switch (stmt.columnType(0)) {
             .integer => Value{ .int = stmt.columnInt64(0) },
             .float => Value{ .float = stmt.columnDouble(0) },
-            .text, .blob => blk: {
-                const txt = try env.alloc().dupe(u8, stmt.columnText(0));
-                break :blk try encoder.DecodeValue(env.alloc(), .{ .text = txt });
+            .text => return error.NoRow,
+            .blob => blk: {
+                const b = try env.alloc().dupe(u8, stmt.columnBlob(0));
+                break :blk try encoder.DecodeValue(env.alloc(), .{ .blob = b });
             },
             .null => Value.@"null",
         };
@@ -396,8 +399,9 @@ const TestEnv = struct {
     }
 
     fn enc(env: *TestEnv, v: Value) ![]u8 {
-        const repr = try encoder.EncodeValue(env.alloc(), v);
-        return std.fmt.allocPrint(env.alloc(), "'{s}'", .{repr.text});
+        // LiteralFromValue rather than quoting EncodeValue's output: it is the
+        // one place that knows how each kind renders as SQL.
+        return encoder.LiteralFromValue(env.alloc(), v);
     }
 
     fn encStr(env: *TestEnv, s: []const u8) ![]u8 {

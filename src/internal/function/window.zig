@@ -115,7 +115,9 @@ fn decodeArgs(alloc: std.mem.Allocator, argv: [*c]?*c.sqlite3_value, n: usize) !
             .null => Value.@"null",
             .integer => Value{ .int = sqlite.valueInt64(argv[i]) },
             .float => Value{ .float = sqlite.valueDouble(argv[i]) },
-            .text, .blob => try encoder.DecodeValue(alloc, .{ .text = sqlite.valueText(argv[i]) }),
+            // TEXT has no engine meaning since storage format 3.
+            .text => return error.CorruptData,
+            .blob => try encoder.DecodeValue(alloc, .{ .blob = sqlite.valueBlob(argv[i]) }),
         };
     }
     return args;
@@ -126,7 +128,7 @@ fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void
         .@"null" => sqlite.resultNull(ctx),
         .int => |i| sqlite.resultInt64(ctx, i),
         .float => |f| sqlite.resultDouble(ctx, f),
-        .text => |t| sqlite.resultText(ctx, t),
+        .blob => |b| sqlite.resultBlob(ctx, b),
     }
 }
 
@@ -365,8 +367,9 @@ const TestEnv = struct {
     }
 
     fn encStr(env: *TestEnv, s: []const u8) ![]u8 {
-        const repr = try encoder.EncodeValue(env.alloc(), .{ .string = s });
-        return std.fmt.allocPrint(env.alloc(), "'{s}'", .{repr.text});
+        // LiteralFromValue rather than quoting EncodeValue's output: it is the
+        // one place that knows how each kind renders as SQL.
+        return encoder.LiteralFromValue(env.alloc(), .{ .string = s });
     }
 
     /// Integer literal as the transformer emits it: EncodeValue maps INT64 to
@@ -389,7 +392,8 @@ const TestEnv = struct {
             const v: Value = switch (stmt.columnType(0)) {
                 .integer => .{ .int = stmt.columnInt64(0) },
                 .float => .{ .float = stmt.columnDouble(0) },
-                .text, .blob => try encoder.DecodeValue(env.alloc(), .{ .text = try env.alloc().dupe(u8, stmt.columnText(0)) }),
+                .text => return error.NoRow,
+                .blob => try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) }),
                 .null => .@"null",
             };
             try out.append(env.alloc(), v);

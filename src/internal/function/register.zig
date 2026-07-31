@@ -4,13 +4,15 @@
 //!   zetasqlite_safe_<name> (handler errors -> NULL, Go SafeFunc path;
 //!                           argument decode / result encode errors still
 //!                           raise, exactly like Go's safe wrapper)
-//! plus the specials zetasqlite_decode_array, zetasqlite_group_by and the
-//! zetasqlite_collate collation.
+//! plus the specials zetasqlite_group_by and the zetasqlite_unnest table-valued
+//! function.
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");
 const bind = @import("bind.zig");
 const encoder = @import("../encoder.zig");
+const codec_binary = @import("../codec_binary.zig");
+const phase = @import("../phase.zig");
 const value_mod = bind.value_mod;
 
 const c = sqlite.c;
@@ -51,9 +53,8 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
         try db.createScalarFunction("zetasqlite_safe_" ++ info.name, -1, state, Tramp.safe, info.deterministic);
     }
 
-    try db.createScalarFunction("zetasqlite_decode_array", -1, state, decodeArrayTramp, true);
+    try unnest_vtab.register(db, gpa);
     try db.createScalarFunction("zetasqlite_group_by", -1, state, groupByTramp, true);
-    try db.createCollation("zetasqlite_collate", state, collateCmp);
 
     // Aggregate UDFs + option marker functions (Go: aggregateFuncs plus the
     // distinct/limit/order_by/ignore_nulls/having_* normalFuncs entries).
@@ -67,6 +68,7 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
 
 const aggregate = @import("aggregate.zig");
 const window = @import("window.zig");
+const unnest_vtab = @import("unnest_vtab.zig");
 
 // ----------------------------------------------------------------------
 // Generic scalar trampoline (Go setupNormalFuncMap closure equivalent)
@@ -139,7 +141,9 @@ fn decodeArgs(
             .null => Value.@"null",
             .integer => Value{ .int = sqlite.valueInt64(argv[i]) },
             .float => Value{ .float = sqlite.valueDouble(argv[i]) },
-            .text, .blob => try encoder.DecodeValue(alloc, .{ .text = sqlite.valueText(argv[i]) }),
+            // TEXT has no engine meaning since storage format 3.
+            .text => return error.CorruptData,
+            .blob => try encoder.DecodeValueBorrowing(alloc, .{ .blob = sqlite.valueBlob(argv[i]) }),
         };
     }
     return args;
@@ -150,7 +154,7 @@ fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void
         .@"null" => sqlite.resultNull(ctx),
         .int => |i| sqlite.resultInt64(ctx, i),
         .float => |f| sqlite.resultDouble(ctx, f),
-        .text => |t| sqlite.resultText(ctx, t),
+        .blob => |b| sqlite.resultBlob(ctx, b),
     }
 }
 
@@ -160,54 +164,6 @@ fn errorText(comptime name: []const u8, err: anyerror, buf: []u8) []const u8 {
     if (bind.message) |m| return m;
     if (value_mod.diagnostic) |m| return m;
     return std.fmt.bufPrint(buf, "zetasqlite_" ++ name ++ ": {s}", .{@errorName(err)}) catch name;
-}
-
-// ----------------------------------------------------------------------
-// zetasqlite_decode_array: decode arg0, JSON-array of the elements' encoded
-// (EncodeValue) representations; NULL decodes to "[]" (feeds json_each for
-// UNNEST).
-// ----------------------------------------------------------------------
-
-fn decodeArrayTramp(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
-    const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
-    _ = state.arena.reset(.retain_capacity);
-    const alloc = state.arena.allocator();
-    bind.clearDiagnostics();
-
-    if (argc < 1) {
-        sqlite.resultError(ctx, "zetasqlite_decode_array: invalid argument num");
-        return;
-    }
-    decodeArrayImpl(ctx, alloc, argv[0]) catch |err| {
-        var buf: [96]u8 = undefined;
-        sqlite.resultError(ctx, errorText("decode_array", err, &buf));
-    };
-}
-
-fn decodeArrayImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqlite3_value) !void {
-    const args = try decodeArgs(alloc, ctx, 0, @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})), 1);
-    if (args[0] == .@"null") {
-        sqlite.resultText(ctx, "[]");
-        return;
-    }
-    const arr = try args[0].toArray();
-    var out: std.ArrayList(u8) = .empty;
-    try out.append(alloc, '[');
-    for (arr.values, 0..) |elem, i| {
-        if (i > 0) try out.append(alloc, ',');
-        switch (try encoder.EncodeValue(alloc, elem)) {
-            .@"null" => try out.appendSlice(alloc, "null"),
-            .int => |v| try out.print(alloc, "{d}", .{v}),
-            .float => |f| {
-                var fbuf: [32]u8 = undefined;
-                try out.appendSlice(alloc, value_mod.formatFloatGo(&fbuf, f));
-            },
-            // Encoded text is base64: JSON-safe without escaping.
-            .text => |t| try out.print(alloc, "\"{s}\"", .{t}),
-        }
-    }
-    try out.append(alloc, ']');
-    sqlite.resultText(ctx, out.items);
 }
 
 // ----------------------------------------------------------------------
@@ -286,42 +242,6 @@ fn joinToString(alloc: std.mem.Allocator, values: []const Value) ![]u8 {
 }
 
 // ----------------------------------------------------------------------
-// zetasqlite_collate: base64-decode both operands and compare as Values
-// (Go swallows decode/compare errors, degrading toward "less").
-// ----------------------------------------------------------------------
-
-fn collateCmp(
-    userdata: ?*anyopaque,
-    a_len: c_int,
-    a_ptr: ?*const anyopaque,
-    b_len: c_int,
-    b_ptr: ?*const anyopaque,
-) callconv(.c) c_int {
-    const state: *State = @ptrCast(@alignCast(userdata.?));
-    // The scalar arena may be mid-sort-key computation; use a private one.
-    var arena = std.heap.ArenaAllocator.init(state.gpa);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
-    const a = rawBytes(a_ptr, a_len);
-    const b = rawBytes(b_ptr, b_len);
-    const va = encoder.DecodeValue(alloc, .{ .text = a }) catch Value.@"null";
-    const vb = encoder.DecodeValue(alloc, .{ .text = b }) catch Value.@"null";
-    const ord = value_mod.compareForCollation(va, vb) catch .lt;
-    return switch (ord) {
-        .eq => 0,
-        .gt => 1,
-        .lt => -1,
-    };
-}
-
-fn rawBytes(ptr: ?*const anyopaque, len: c_int) []const u8 {
-    const p = ptr orelse return "";
-    if (len <= 0) return "";
-    return @as([*]const u8, @ptrCast(p))[0..@intCast(len)];
-}
-
-// ----------------------------------------------------------------------
 // Tests
 // ----------------------------------------------------------------------
 
@@ -384,9 +304,10 @@ const TestEnv = struct {
         return switch (stmt.columnType(0)) {
             .integer => Value{ .int = stmt.columnInt64(0) },
             .float => Value{ .float = stmt.columnDouble(0) },
-            .text, .blob => blk: {
-                const txt = try env.alloc().dupe(u8, stmt.columnText(0));
-                break :blk try encoder.DecodeValue(env.alloc(), .{ .text = txt });
+            .text => return error.NoRow,
+            .blob => blk: {
+                const b = try env.alloc().dupe(u8, stmt.columnBlob(0));
+                break :blk try encoder.DecodeValue(env.alloc(), .{ .blob = b });
             },
             .null => Value.@"null",
         };
@@ -442,8 +363,9 @@ const TestEnv = struct {
     /// Renders a Value as a single-quoted encoded SQL literal (the base64
     /// codec text never contains quotes).
     fn enc(env: *TestEnv, v: Value) ![]u8 {
-        const repr = try encoder.EncodeValue(env.alloc(), v);
-        return std.fmt.allocPrint(env.alloc(), "'{s}'", .{repr.text});
+        // LiteralFromValue rather than quoting EncodeValue's output: it is the
+        // one place that knows how each kind renders as SQL.
+        return encoder.LiteralFromValue(env.alloc(), v);
     }
 
     fn encStr(env: *TestEnv, s: []const u8) ![]u8 {
@@ -745,7 +667,7 @@ test "parse_numeric / parse_bignumeric" {
         .{ .func = "zetasqlite_parse_numeric", .in = "12.34E27", .out = "12340000000000000000000000000", .big = false },
         .{ .func = "zetasqlite_parse_numeric", .in = "1.0123456789", .out = "1.012345679", .big = false },
         .{ .func = "zetasqlite_parse_bignumeric", .in = "123.45", .out = "123.45", .big = true },
-        .{ .func = "zetasqlite_parse_bignumeric", .in = "123.456E37", .out = "1234560000000000000000000000000000000000", .big = true },
+
         .{
             .func = "zetasqlite_parse_bignumeric",
             .in = "1.123456789012345678901234567890123456789",
@@ -764,6 +686,21 @@ test "parse_numeric / parse_bignumeric" {
     try env.expectErrorMsg(
         "unexpected numeric literal: abc",
         try env.fmt("SELECT zetasqlite_parse_numeric({s})", .{try env.encStr("abc")}),
+    );
+
+    // A well-formed literal past the type's range is a *range* error, and is
+    // rejected rather than stored. Corpus case 619 used to expect
+    // "123.456E37" (1.23456e39) to parse, which is 2.13x BIGNUMERIC's max of
+    // 5.7896e38 and needs 1.23e77 unscaled, past 2^255. BigQuery rejects it
+    // too; go-zetasqlite accepted it only because it has no bounds check.
+    try env.expectErrorMsg(
+        "BIGNUMERIC value out of range: 123.456E37",
+        try env.fmt("SELECT zetasqlite_parse_bignumeric({s})", .{try env.encStr("123.456E37")}),
+    );
+    // NUMERIC's own bound is 10^38 - 1 unscaled, i.e. just under 1e29.
+    try env.expectErrorMsg(
+        "NUMERIC value out of range: 1e29",
+        try env.fmt("SELECT zetasqlite_parse_numeric({s})", .{try env.encStr("1e29")}),
     );
 }
 
@@ -805,31 +742,6 @@ test "error() raises with its message; safe variant yields NULL" {
     try env.expectNullResult(try env.fmt("SELECT zetasqlite_safe_error({s})", .{try env.encStr("boom")}));
 }
 
-test "decode_array emits JSON of encoded elements" {
-    var env = try TestEnv.init();
-    defer env.deinit();
-
-    try testing.expectEqualStrings(
-        "[1,2,3]",
-        try env.queryText("SELECT zetasqlite_decode_array(zetasqlite_make_array(1, 2, 3))"),
-    );
-    try testing.expectEqualStrings(
-        "[]",
-        try env.queryText("SELECT zetasqlite_decode_array(NULL)"),
-    );
-    // NULL elements and encoded (text) elements round-trip through the JSON.
-    const json = try env.queryText(try env.fmt(
-        "SELECT zetasqlite_decode_array(zetasqlite_make_array(1, NULL, {s}))",
-        .{try env.encStr("hi")},
-    ));
-    try testing.expect(std.mem.startsWith(u8, json, "[1,null,\""));
-    // The quoted element decodes back to "hi".
-    const start = std.mem.indexOfScalar(u8, json, '"').? + 1;
-    const end = std.mem.lastIndexOfScalar(u8, json, '"').?;
-    const decoded = try encoder.DecodeValue(env.alloc(), .{ .text = json[start..end] });
-    try value_mod.expectValueEqual(Value{ .string = "hi" }, decoded);
-}
-
 test "group_by flattens containers and passes scalars through" {
     var env = try TestEnv.init();
     defer env.deinit();
@@ -864,39 +776,42 @@ test "group_by flattens containers and passes scalars through" {
     )));
 }
 
-test "zetasqlite_collate orders by decoded value" {
+test "encoded values order by memcmp, with no collation involved" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    // Binary order of the encoded text puts "b" (shorter payload) before
-    // "aa"; decoded string order must put "aa" first.
-    const enc_b = try env.encStr("b");
-    const enc_aa = try env.encStr("aa");
+    // This test used to rest on the opposite premise: that the binary order of
+    // the *encoded* text put "b" before "aa", so a collation had to decode to
+    // get it right. The encoding is memcomparable now, which is what lets these
+    // values be BLOBs at all — SQLite never consults a collation for a BLOB, so
+    // if the bytes were not ordered this ORDER BY would be silently wrong with
+    // nothing to catch it.
     const sql = try env.fmt(
-        "SELECT v FROM (SELECT {s} AS v UNION ALL SELECT {s}) ORDER BY v COLLATE zetasqlite_collate",
-        .{ enc_b, enc_aa },
+        "SELECT v FROM (SELECT {s} AS v UNION ALL SELECT {s}) ORDER BY v",
+        .{ try env.encStr("b"), try env.encStr("aa") },
     );
     var stmt = try env.db.prepare(sql);
     defer stmt.finalize();
     try testing.expect(try stmt.step());
-    const first = try encoder.DecodeValue(env.alloc(), .{ .text = try env.alloc().dupe(u8, stmt.columnText(0)) });
-    try value_mod.expectValueEqual(Value{ .string = "aa" }, first);
+    try testing.expectEqual(sqlite.Stmt.ColumnType.blob, stmt.columnType(0));
+    var v = try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) });
+    try value_mod.expectValueEqual(Value{ .string = "aa" }, v);
     try testing.expect(try stmt.step());
-    const second = try encoder.DecodeValue(env.alloc(), .{ .text = try env.alloc().dupe(u8, stmt.columnText(0)) });
-    try value_mod.expectValueEqual(Value{ .string = "b" }, second);
+    v = try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) });
+    try value_mod.expectValueEqual(Value{ .string = "b" }, v);
 
-    // Dates compare chronologically.
+    // Dates compare chronologically, including across the epoch, which a naive
+    // big-endian encoding would get wrong (the sign bit sorts negatives high).
     const d1 = try env.enc(Value{ .date = try value_mod.parseDateDays("2021-06-15") });
-    const d2 = try env.enc(Value{ .date = try value_mod.parseDateDays("2021-01-01") });
-    const date_sql = try env.fmt(
-        "SELECT v FROM (SELECT {s} AS v UNION ALL SELECT {s}) ORDER BY v COLLATE zetasqlite_collate",
+    const d2 = try env.enc(Value{ .date = try value_mod.parseDateDays("1930-01-01") });
+    var dstmt = try env.db.prepare(try env.fmt(
+        "SELECT v FROM (SELECT {s} AS v UNION ALL SELECT {s}) ORDER BY v",
         .{ d1, d2 },
-    );
-    var dstmt = try env.db.prepare(date_sql);
+    ));
     defer dstmt.finalize();
     try testing.expect(try dstmt.step());
-    const first_date = try encoder.DecodeValue(env.alloc(), .{ .text = try env.alloc().dupe(u8, dstmt.columnText(0)) });
-    try value_mod.expectValueEqual(Value{ .date = try value_mod.parseDateDays("2021-01-01") }, first_date);
+    const first = try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, dstmt.columnBlob(0)) });
+    try value_mod.expectValueEqual(Value{ .date = try value_mod.parseDateDays("1930-01-01") }, first);
 }
 
 test "min_args guard rejects too few arguments instead of UB" {

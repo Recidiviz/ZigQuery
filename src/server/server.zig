@@ -33,6 +33,7 @@ const tabledata_handler = @import("handler/tabledata.zig");
 const metadata = @import("internal/metadata/repository.zig");
 const contentdata = @import("internal/contentdata/repository.zig");
 const phase = zetasqlite.phase;
+const io_stats = zetasqlite.io_stats;
 const schema_mod = @import("internal/types/schema.zig");
 const stats_mod = @import("stats.zig");
 const source_mod = @import("source.zig");
@@ -107,6 +108,18 @@ pub const Server = struct {
             .pragmas = store.pragmas(),
             .busy_timeout_ms = 5000,
         });
+        // The connection's pragmas, when an environment override changed them.
+        // A comparison run's whole claim rests on the knob having been
+        // applied, and this is the only place that can say so.
+        const applied = store.pragmas();
+        if (io_stats.tempStorePragma() != null or io_stats.cacheSizePragma() != null) {
+            for (applied) |p| std.log.info("connection pragma: {s}", .{p});
+        }
+        if (io_stats.isInstalled()) {
+            std.log.info("io stats: '{s}' VFS installed, wrapping the {s} database", .{
+                io_stats.vfs_name, @tagName(store.kind),
+            });
+        }
         s.repo = try metadata.Repository.init(s.db);
         try s.repo.addProjectIfNotExists(s.project);
 
@@ -225,7 +238,13 @@ pub const Server = struct {
 
             .tables_insert => s.handleTablesInsert(req, m.captures.get(0), m.captures.get(1)),
             .tables_list => s.handleTablesList(req, m.captures.get(0), m.captures.get(1)),
-            .tables_get, .tables_patch => s.handleTablesGet(
+            .tables_get => s.handleTablesGet(
+                req,
+                m.captures.get(0),
+                m.captures.get(1),
+                m.captures.get(2),
+            ),
+            .tables_patch => s.handleTablesPatch(
                 req,
                 m.captures.get(0),
                 m.captures.get(1),
@@ -268,7 +287,16 @@ pub const Server = struct {
         };
 
         const job_id = try query_handler.randomId(arena, &s.rng);
-        const res = try query_handler.runQuery(arena, s.db, project_id, job_id, q.query);
+        // handler.go:2420-2424: the body's formatOptions OR the query string's.
+        const int64_ts = q.use_int64_timestamp or useInt64TimestampParam(req);
+        const res = try query_handler.runQueryFormatted(
+            arena,
+            s.db,
+            project_id,
+            job_id,
+            q.query,
+            int64_ts,
+        );
         if (!res.ok) {
             return .{ .status = .bad_request, .body = res.body };
         }
@@ -333,8 +361,7 @@ pub const Server = struct {
                 "\"engineMs\":{d:.1},\"catalogMs\":{d:.1},\"metadataMs\":{d:.1}," ++
                 "\"catalogPrepareMs\":{d:.1},\"catalogPrepareCount\":{d}," ++
                 "\"catalogStepMs\":{d:.1}}}," ++
-                "\"preparedSqlBytes\":{d},\"codecMs\":{d:.1},\"codecCount\":{d}," ++
-                "\"analysisFraction\":{d:.3},\"sqliteFraction\":{d:.3}}}",
+                "\"preparedSqlBytes\":{d},\"codecMs\":{d:.1},\"codecCount\":{d},",
             .{
                 analyze_ms,
                 phase.count(.analyze),
@@ -354,8 +381,26 @@ pub const Server = struct {
                 phase.countFrom(.sqlite_prepare, .catalog),
                 ms(phase.totalNsFrom(.sqlite_step, .catalog)),
                 phase.preparedBytes(),
-                ms(phase.totalNs(.codec)),
-                phase.count(.codec),
+                ms(phase.codecTotalNs()),
+                phase.codecCount(),
+            });
+        // Split from the print above only because Zig caps a format call at 32
+        // arguments. `codec.*` partitions `codecMs`.
+        try out.print(arena,
+            "\"codec\":{{\"timersEnabled\":{},\"encodeMs\":{d:.1},\"encodeCount\":{d}," ++
+                "\"decodeMs\":{d:.1},\"decodeCount\":{d}," ++
+                "\"literalMs\":{d:.1},\"literalCount\":{d}}}," ++
+                "\"analysisFraction\":{d:.3},\"sqliteFraction\":{d:.3}}}",
+            .{
+                // Zeros below mean "not instrumented" when this is false, not
+                // "no codec work happened". See -Dcodec-timers.
+                phase.codec_timers_enabled,
+                ms(phase.totalNs(.codec_encode)),
+                phase.count(.codec_encode),
+                ms(phase.totalNs(.codec_decode)),
+                phase.count(.codec_decode),
+                ms(phase.totalNs(.codec_literal)),
+                phase.count(.codec_literal),
                 if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
                 if (handle_ms == 0) 0 else sqlite_ms / handle_ms,
             });
@@ -396,6 +441,50 @@ pub const Server = struct {
             alloc.lookaside_used.current,
             alloc.lookaside_used.highwater,
         });
+        // What actually reached a filesystem. The main database is memdb, so
+        // `mainDb` bytes are memcpy; everything else is a file the OS backs,
+        // including on this in-memory server (see internal/io_stats.zig).
+        // Present only with ZQL_IO_STATS set, since the wrapper times every
+        // read and write it forwards.
+        if (io_stats.isInstalled()) {
+            try out.appendSlice(arena, ",\"sqliteIo\":{");
+            var first_kind = true;
+            for (std.enums.values(io_stats.Kind)) |k| {
+                const st = io_stats.kindStats(k);
+                if (!st.touched()) continue;
+                if (!first_kind) try out.append(arena, ',');
+                first_kind = false;
+                try out.print(arena, "\"{s}\":{{\"opens\":{d},\"writes\":{d}," ++
+                    "\"writeBytes\":{d},\"writeMs\":{d:.1},\"reads\":{d}," ++
+                    "\"readBytes\":{d},\"readMs\":{d:.1},\"syncs\":{d}," ++
+                    "\"syncMs\":{d:.1},\"maxOffsetBytes\":{d}}}", .{
+                    k.label(),   st.opens,   st.writes,  st.write_bytes,
+                    st.write_ms, st.reads,   st.read_bytes, st.read_ms,
+                    st.syncs,    st.sync_ms, st.max_offset,
+                });
+            }
+            const t = io_stats.tempTotals();
+            const p = io_stats.probeResult();
+            try out.print(arena, "{s}\"tempTotals\":{{\"opens\":{d},\"writes\":{d}," ++
+                "\"writeBytes\":{d},\"writeMs\":{d:.1},\"reads\":{d}," ++
+                "\"readBytes\":{d},\"readMs\":{d:.1},\"largestFileBytes\":{d}}}," ++
+                "\"fdProbe\":{{\"ran\":{},\"unlinkedRegularFiles\":{d}," ++
+                "\"largestBytes\":{d},\"device\":{d}}}}}", .{
+                if (first_kind) "" else ",",
+                t.opens,
+                t.writes,
+                t.write_bytes,
+                t.write_ms,
+                t.reads,
+                t.read_bytes,
+                t.read_ms,
+                t.max_offset,
+                p.ran,
+                p.unlinked_files,
+                p.largest_bytes,
+                p.device,
+            });
+        }
         try out.appendSlice(arena, ",\"routes\":[");
 
         var first = true;
@@ -592,6 +681,7 @@ pub const Server = struct {
         // A table only becomes queryable once the DDL runs; Go does the same
         // through its content repository.
         var kind: []const u8 = "TABLE";
+        var effective_schema = schema_node;
         if (tables_handler.viewQueryFromBody(parsed)) |view_sql| {
             kind = "VIEW";
             const ddl = try std.fmt.allocPrint(
@@ -609,14 +699,32 @@ pub const Server = struct {
                     ),
                 };
             };
+            // A client posts a view with no schema; the columns are whatever
+            // the SELECT resolves to. Go returns them from CreateView and
+            // assigns them to the resource (handler.go tablesInsertHandler),
+            // which is what google-cloud-bigquery reads off create_table().
+            if (try server.db.catalogTable(arena, project_id, dataset_id, table_id)) |view_spec| {
+                if (try schemaJsonFromSpec(arena, view_spec)) |derived| {
+                    effective_schema = derived;
+                }
+            }
         } else {
-            const ddl = try schema_mod.createTableDdl(
+            const ddl = schema_mod.createTableDdl(
                 arena,
                 project_id,
                 dataset_id,
                 table_id,
                 schema_node,
-            );
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                // Go writes the empty string into the DDL and lets the CREATE
+                // fail; either way the client sees a 400 rather than a column
+                // silently typed STRING.
+                error.UnknownFieldType => return badRequest(
+                    arena,
+                    "schema contains a field with an unsupported type",
+                ),
+            };
             server.db.exec(ddl, &.{}, .{}) catch {
                 return .{
                     .status = .bad_request,
@@ -635,8 +743,9 @@ pub const Server = struct {
             .table_id = table_id,
             .endpoint = server.endpoint,
             .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
-            .schema = schema_node,
+            .schema = effective_schema,
             .kind = kind,
+            .posted = parsed,
         };
         var out: std.ArrayList(u8) = .empty;
         try tables_handler.writeTable(arena, &out, meta);
@@ -699,14 +808,7 @@ pub const Server = struct {
             table_id,
         )) orelse return null;
 
-        var sbuf: std.ArrayList(u8) = .empty;
-        try schema_mod.writeSchemaFromSpec(arena, &sbuf, table_spec);
-        const schema_json = std.json.parseFromSliceLeaky(
-            std.json.Value,
-            arena,
-            sbuf.items,
-            .{},
-        ) catch null;
+        const schema_json = try schemaJsonFromSpec(arena, table_spec);
 
         var out: std.ArrayList(u8) = .empty;
         try tables_handler.writeTable(arena, &out, .{
@@ -719,6 +821,76 @@ pub const Server = struct {
             .kind = if (table_spec.is_view) "VIEW" else "TABLE",
         });
         return out.items;
+    }
+
+    /// server/handler.go tablesPatchHandler: a key-level merge of the posted
+    /// body over the stored resource (metadata.Table.Update is `maps.Copy`
+    /// then override), answering with the merged resource. `schema` is
+    /// rejected outright, as Go does.
+    fn handleTablesPatch(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        table_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        const patch = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch {
+            return badRequest(arena, "failed to decode request body");
+        };
+        if (patch == .object and patch.object.contains("schema")) {
+            return badRequest(arena, "schema updates unsupported");
+        }
+
+        // Fall back to the engine for a table that was created by SQL and has
+        // never been read, exactly as tables.get does.
+        const stored = (try s.repo.findTable(arena, project_id, dataset_id, table_id)) orelse
+            (try s.tableResourceFromEngine(arena, project_id, dataset_id, table_id)) orelse
+            return notFound(arena, try std.fmt.allocPrint(
+                arena,
+                "table {s} is not found",
+                .{table_id},
+            ));
+
+        const current = std.json.parseFromSliceLeaky(std.json.Value, arena, stored, .{}) catch {
+            return .{ .body = stored };
+        };
+
+        var merged: std.json.ObjectMap = .empty;
+        if (current == .object) {
+            var it = current.object.iterator();
+            while (it.next()) |kv| try merged.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+        }
+        if (patch == .object) {
+            var it = patch.object.iterator();
+            while (it.next()) |kv| try merged.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+        }
+
+        var out: std.ArrayList(u8) = .empty;
+        try tables_handler.writeTable(arena, &out, .{
+            .project_id = project_id,
+            .dataset_id = dataset_id,
+            .table_id = table_id,
+            .endpoint = s.endpoint,
+            .created_millis = creationMillisOf(current),
+            .schema = schemaOf(current),
+            .kind = typeOf(current),
+            .posted = .{ .object = merged },
+        });
+        try s.repo.addTable(project_id, dataset_id, table_id, out.items);
+        return .{ .body = out.items };
+    }
+
+    /// A catalog spec's columns as the parsed `schema` node of a table
+    /// resource. Null when the schema will not re-parse, which leaves the
+    /// resource schema-less rather than failing the request.
+    fn schemaJsonFromSpec(
+        arena: std.mem.Allocator,
+        table_spec: *const zetasqlite.spec.TableSpec,
+    ) !?std.json.Value {
+        var sbuf: std.ArrayList(u8) = .empty;
+        try schema_mod.writeSchemaFromSpec(arena, &sbuf, table_spec);
+        return std.json.parseFromSliceLeaky(std.json.Value, arena, sbuf.items, .{}) catch null;
     }
 
     fn handleTablesList(
@@ -747,6 +919,9 @@ pub const Server = struct {
                 .endpoint = s.endpoint,
                 .created_millis = creationMillisOf(v),
                 .kind = typeOf(v),
+                // Go's TableListTables echoes clustering, labels and the
+                // partitioning fields off the stored resource.
+                .posted = v,
             });
         }
         try out.appendSlice(arena, "],\"totalItems\":");
@@ -852,6 +1027,15 @@ pub const Server = struct {
         const job_id = try query_handler.randomId(arena, &s.rng);
         const job_t0 = nowSeed();
 
+        // Go's jobsInsertHandler never calls internaltypes.Format — only
+        // jobs.query, getQueryResults and tabledata.list do. The rendering
+        // chosen here only reaches `res.body`, which jobs.insert discards in
+        // favour of the job resource, so it follows the request rather than
+        // being forced on. Both renderings still land in the stored ResultSet,
+        // because the flag that decides between them rides on the later
+        // getQueryResults call, long after this request's arena is gone.
+        const int64_ts = useInt64TimestampParam(req);
+
         // A query job may carry a destination table: this is how view
         // materialization writes results. Run the DDL form instead of the
         // bare SELECT, then record the resulting table's metadata.
@@ -869,7 +1053,7 @@ pub const Server = struct {
             };
             try s.recordMaterializedTable(arena, dst);
             // Materialization returns no rows of its own.
-            break :blk try query_handler.runQuery(
+            break :blk try query_handler.runQueryFormatted(
                 arena,
                 s.db,
                 project_id,
@@ -877,8 +1061,9 @@ pub const Server = struct {
                 try std.fmt.allocPrint(arena, "SELECT * FROM `{s}.{s}.{s}` LIMIT 0", .{
                     dst.project_id, dst.dataset_id, dst.table_id,
                 }),
+                int64_ts,
             );
-        } else try query_handler.runQuery(arena, s.db, project_id, job_id, sql);
+        } else try query_handler.runQueryFormatted(arena, s.db, project_id, job_id, sql, int64_ts);
         s.slow_queries.record(nowSeed() -| job_t0, sql);
 
         if (!res.ok) {
@@ -901,7 +1086,7 @@ pub const Server = struct {
             .unix_seconds = @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000),
         });
 
-        try s.jobs.put(project_id, job_id, res.body, resource.items);
+        try s.jobs.put(project_id, job_id, res.set.?, resource.items);
         return .{ .body = resource.items };
     }
 
@@ -1013,12 +1198,53 @@ pub const Server = struct {
         project_id: []const u8,
         job_id: []const u8,
     ) !http_server.Response {
-        _ = project_id;
         const arena = req.arena;
         const job = s.jobs.get(job_id) orelse return notFoundJob(arena, job_id);
-        return .{ .body = try arena.dupe(u8, job.body) };
+        // handler.go:1497-1498 takes both from the query string only, and Go
+        // honours formatOptions here. We always render int64 microseconds
+        // instead, whether or not the flag came through.
+        //
+        // Go can respect an absent flag because its maxResults=0 probe returns
+        // no rows at all, so nothing unreadable reaches the client: it re-reads
+        // through the Storage Read API over gRPC. We do not serve that API, so
+        // the rows on that probe ARE what the client parses, and every branch
+        // of _is_almost_completely_cached (table.py:1908-1935) that would make
+        // it ask again also routes it to Storage. Since
+        // CellDataParser.timestamp_to_py applies a bare int(value), a
+        // "sec.microRemainder" cell is unreadable to any client at top level —
+        // there is no format here that is both faithful and usable.
+        //
+        // Scoped deliberately to this endpoint. jobs.query is under no such
+        // constraint and still honours the flag, which is what keeps
+        // testdata/golden.json (captured from /queries) byte-exact. Revert to
+        // useInt64TimestampParam(req) if the Storage Read API ever lands.
+        var out: std.ArrayList(u8) = .empty;
+        try query_handler.writeResultSet(
+            arena,
+            &out,
+            project_id,
+            job_id,
+            job.set,
+            maxResultsParam(req),
+            true,
+        );
+        return .{ .body = out.items };
     }
 };
+
+/// `formatOptions.useInt64Timestamp` from the query string
+/// (handler.go isFormatOptionsUseInt64Timestamp).
+/// `maxResults` from the query string, defaulting to Go's -1 ("every row").
+/// A value Go's ParseInt rejects also falls back to the default.
+fn maxResultsParam(req: *const http_server.Request) i64 {
+    const v = req.queryParam("maxResults") orelse return query_handler.max_results_default;
+    return std.fmt.parseInt(i64, v, 10) catch query_handler.max_results_default;
+}
+
+fn useInt64TimestampParam(req: *const http_server.Request) bool {
+    const v = req.queryParam("formatOptions.useInt64Timestamp") orelse return false;
+    return query_handler.parseGoBool(v);
+}
 
 fn tableIdOf(v: std.json.Value) ?[]const u8 {
     if (v != .object) return null;
@@ -1039,6 +1265,11 @@ fn typeOf(v: std.json.Value) []const u8 {
     if (v != .object) return "TABLE";
     const t = v.object.get("type") orelse return "TABLE";
     return if (t == .string) t.string else "TABLE";
+}
+
+fn schemaOf(v: std.json.Value) ?std.json.Value {
+    if (v != .object) return null;
+    return v.object.get("schema");
 }
 
 fn notFound(arena: std.mem.Allocator, msg: []const u8) !http_server.Response {
@@ -1086,14 +1317,40 @@ fn request(
     path: []const u8,
     body: []const u8,
 ) !http_server.Response {
+    return requestQuery(s, arena, method, path, "", body);
+}
+
+/// request(), with a query string — the format options and maxResults that
+/// clients pass there change the response, so tests need to set them.
+fn requestQuery(
+    s: *Server,
+    arena: std.mem.Allocator,
+    method: std.http.Method,
+    path: []const u8,
+    query: []const u8,
+    body: []const u8,
+) !http_server.Response {
     const req = http_server.Request{
         .method = method,
         .path = path,
-        .query = "",
+        .query = query,
         .body = body,
         .arena = arena,
     };
     return s.handler().func(s.handler().ctx, &req);
+}
+
+/// `jobReference.jobId` out of a jobs.insert response.
+fn jobIdOf(arena: std.mem.Allocator, body: []const u8) ![]const u8 {
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    return v.object.get("jobReference").?.object.get("jobId").?.string;
+}
+
+/// The single cell of a one-row, one-column response.
+fn onlyCell(arena: std.mem.Allocator, body: []const u8) ![]const u8 {
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    return v.object.get("rows").?.array.items[0].object.get("f").?
+        .array.items[0].object.get("v").?.string;
 }
 
 test "jobs.query returns the Go emulator's response bytes" {
@@ -1174,6 +1431,59 @@ test "getQueryResults 404s for an unpersisted jobs.query id" {
     ,
         res.body,
     );
+}
+
+// Regression: the request sequence google-cloud-bigquery actually performs
+// for QueryJob.result() has to hand back a TIMESTAMP the client can parse.
+//
+// The client posts jobs.insert, then probes getQueryResults with
+// `maxResults=0` and NO formatOptions — client.py:2086 only adds
+// `formatOptions.useInt64Timestamp` when page_size > 0. It nevertheless
+// parses whatever rows that response carries: with the `rows` key present and
+// no pageToken it considers the page complete (table.py:1924-1928) and never
+// asks again. CellDataParser.timestamp_to_py then applies a bare int(value),
+// so a "sec.rem" cell raises
+//
+//   ValueError: invalid literal for int() with base 10: '1767268800.0'
+//
+// which is what recidiviz's llm_extraction_results_persister_test
+// ::test_at_least_once_re_persist_appends_duplicate_rows hits on
+// result_datetime_utc — the timestamp used here is that test's own value.
+//
+// Go escapes this by returning no rows at all for maxResults=0, sending the
+// client to the Storage Read API over gRPC. We do not serve that API, so the
+// rows we return on this probe are the ones the client reads, and they have
+// to be int64 microseconds.
+test "getQueryResults maxResults=0 renders TIMESTAMP the client can parse" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"SELECT TIMESTAMP '2026-01-01 12:00:00+00' AS result_datetime_utc",
+        \\"useLegacySql":false}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, insert.status);
+    const job_id = try jobIdOf(arena, insert.body);
+
+    const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+    const res = try requestQuery(s, arena, .GET, path, "maxResults=0&prettyPrint=false", "");
+    try testing.expectEqual(std.http.Status.ok, res.status);
+
+    const cell = try onlyCell(arena, res.body);
+    // int(value) is what the client does, and it rejects "1767268800.0".
+    _ = std.fmt.parseInt(i64, cell, 10) catch {
+        std.debug.print(
+            "TIMESTAMP cell {s} is not int64 micros; the BigQuery client cannot parse it\n",
+            .{cell},
+        );
+        return error.TestExpectedEqual;
+    };
+    try testing.expectEqualStrings("1767268800000000", cell);
 }
 
 test "an unknown path is a 500, matching Go's defaultHandler" {
@@ -1284,6 +1594,196 @@ test "insertAll writes rows that a later query can read" {
     try testing.expectEqual(std.http.Status.ok, q.status);
     try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"Alice\"}") != null);
     try testing.expect(std.mem.indexOf(u8, q.body, "Bob") == null);
+}
+
+test "posted table fields survive a round trip, and patch merges over them" {
+    // source_table_update_manager_test compares clustering_fields between the
+    // table it posted and the table it reads back. The resource used to be
+    // rebuilt from a fixed struct, so clustering never came back and the diff
+    // saw no change; tables.patch was aliased to tables.get, so an update was
+    // silently discarded too. Go stores the posted map and merges into it.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+
+    const created = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"clustered"},
+        \\ "schema":{"fields":[{"name":"name","type":"STRING"},{"name":"age","type":"INTEGER"}]},
+        \\ "clustering":{"fields":["name"]},
+        \\ "labels":{"team":"platform"},
+        \\ "description":"raw data table"}
+    );
+    try testing.expectEqual(std.http.Status.ok, created.status);
+    try testing.expect(std.mem.indexOf(u8, created.body, "\"clustering\":{\"fields\":[\"name\"]}") != null);
+    try testing.expect(std.mem.indexOf(u8, created.body, "\"description\":\"raw data table\"") != null);
+
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/clustered", "");
+    try testing.expectEqualStrings(created.body, got.body);
+
+    // tables.list keeps Go's TableListTables subset: clustering and labels
+    // ride along, schema and selfLink do not.
+    const listed = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables", "");
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"clustering\":{\"fields\":[\"name\"]}") != null);
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"labels\":{\"team\":\"platform\"}") != null);
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"schema\"") == null);
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"description\"") == null);
+
+    // PATCH is a key-level merge: clustering changes, description survives.
+    const patched = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/clustered",
+        \\{"clustering":{"fields":["age"]}}
+    );
+    try testing.expectEqual(std.http.Status.ok, patched.status);
+    try testing.expect(std.mem.indexOf(u8, patched.body, "\"clustering\":{\"fields\":[\"age\"]}") != null);
+    try testing.expect(std.mem.indexOf(u8, patched.body, "\"description\":\"raw data table\"") != null);
+    // The schema the table was created with is untouched by a patch.
+    try testing.expect(std.mem.indexOf(u8, patched.body, "\"name\":\"age\",\"type\":\"INTEGER\"") != null);
+
+    const after = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/clustered", "");
+    try testing.expectEqualStrings(patched.body, after.body);
+}
+
+test "tables.patch refuses to change a schema, as Go does" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "fixed");
+
+    const res = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/fixed",
+        \\{"schema":{"fields":[{"name":"other","type":"STRING"}]}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "schema updates unsupported") != null);
+}
+
+test "creating a view answers with the schema the view resolves to" {
+    // emulator_test.py test_view_schema: a client posts a view with no schema
+    // and reads the resolved columns straight off create_table(). Go returns
+    // them from CreateView; this used to echo the posted (absent) schema, and
+    // persisting that empty resource also poisoned the tables.get fallback
+    // that would otherwise have derived it.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"example_table"},
+        \\ "schema":{"fields":[{"name":"string_field","type":"STRING"}]}}
+    );
+
+    const created = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"example_view"},
+        \\ "view":{"query":"SELECT * FROM `test.ds1.example_table`","useLegacySql":false}}
+    );
+    try testing.expectEqual(std.http.Status.ok, created.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        created.body,
+        \\"schema":{"fields":[{"name":"string_field","type":"STRING"}]}
+    ,
+    ) != null);
+    try testing.expect(std.mem.indexOf(u8, created.body, "\"type\":\"VIEW\"") != null);
+
+    // And the stored resource carries it, so tables.get agrees.
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/example_view", "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expectEqualStrings(created.body, got.body);
+}
+
+test "a WRITE_TRUNCATE job may read the table it is replacing" {
+    // recidiviz's dataflow metric pruning entrypoint replaces each metric
+    // table with a filtered read of itself. The old CREATE OR REPLACE dropped
+    // the destination before preparing the SELECT, so the job died with
+    // "no such table: <project>_<dataset>_<table>".
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"metrics"},
+        \\ "schema":{"fields":[{"name":"job_id","type":"STRING"},{"name":"n","type":"INTEGER"}]}}
+    );
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/metrics/insertAll",
+        \\{"rows":[{"json":{"job_id":"keep","n":"1"}},
+        \\         {"json":{"job_id":"drop","n":"2"}},
+        \\         {"json":{"job_id":"keep","n":"3"}}]}
+    );
+
+    const job = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{
+        \\  "query":"SELECT job_id, n FROM `test.ds1.metrics` WHERE job_id = 'keep'",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"metrics"},
+        \\  "writeDisposition":"WRITE_TRUNCATE","useLegacySql":false}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, job.status);
+
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT SUM(n) AS total, COUNT(*) AS kept FROM `test.ds1.metrics`"}
+    );
+    try testing.expectEqual(std.http.Status.ok, q.status);
+    // 1 + 3 over two surviving rows: the read happened before the truncate.
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"4\"}") != null);
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"2\"}") != null);
+}
+
+test "an INT column is an INT64 column, not a STRING one" {
+    // sentence_inferred_group_projected_dates_mismatch_test declares
+    // SchemaField("person_id", "INT") and SchemaField("sentence_inferred_
+    // group_id", "INTEGER"). Only the second used to survive: "INT" missed the
+    // alias map, fell through to STRING, and the client read back '123'
+    // instead of 123. The response schema is the whole bug — REST always sends
+    // values as strings and the client casts from the reported type.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+
+    const created = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"aliased"},
+        \\ "schema":{"fields":[{"name":"person_id","type":"INT"},
+        \\                     {"name":"sentence_inferred_group_id","type":"INTEGER"}]}}
+    );
+    try testing.expectEqual(std.http.Status.ok, created.status);
+
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT person_id, sentence_inferred_group_id FROM `test.ds1.aliased`"}
+    );
+    try testing.expectEqual(std.http.Status.ok, q.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        q.body,
+        \\{"fields":[{"name":"person_id","type":"INTEGER"},{"name":"sentence_inferred_group_id","type":"INTEGER"}]}
+    ,
+    ) != null);
+}
+
+test "a schema naming an unusable type is a 400, not a STRING column" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"bogus"},
+        \\ "schema":{"fields":[{"name":"a","type":"WIDGET"}]}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "unsupported type") != null);
 }
 
 test "insertAll under the /bigquery/v2 prefix reaches the same handler" {

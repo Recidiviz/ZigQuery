@@ -52,6 +52,7 @@
 const std = @import("std");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
+const io_stats = zetasqlite.io_stats;
 
 pub const Kind = enum { memory, file };
 
@@ -65,17 +66,38 @@ pub const Storage = struct {
     /// arrives with the loader in M3.
     pub fn resolve(arena: std.mem.Allocator, database: ?[]const u8) !Storage {
         const db = database orelse ":memory:";
+        // ZQL_IO_STATS puts a counting VFS in front of whichever VFS the DSN
+        // would otherwise name. memdb serves only the main database from
+        // memory and hands every temp b-tree, sorter spill and statement
+        // journal to the OS VFS beneath it, so "the database is in memory" is
+        // not the same claim as "nothing reaches the disk" — see
+        // internal/io_stats.zig.
+        const vfs = if (io_stats.requested()) blk: {
+            const base: ?[:0]const u8 = if (db.len == 0 or std.mem.eql(u8, db, ":memory:"))
+                "memdb"
+            else
+                null;
+            io_stats.install(base) catch break :blk null;
+            break :blk io_stats.vfs_name;
+        } else null;
+
         if (db.len == 0 or std.mem.eql(u8, db, ":memory:")) {
             // A named memdb database is shared by every connection that opens
             // the same name, which is what a pool needs. The pid keeps
             // concurrently running emulators from colliding.
             const dsn = try std.fmt.allocPrintSentinel(
                 arena,
-                "file:/bqemu-{d}?vfs=memdb",
-                .{std.c.getpid()},
+                "file:/bqemu-{d}?vfs={s}",
+                .{ std.c.getpid(), vfs orelse "memdb" },
                 0,
             );
             return .{ .kind = .memory, .dsn = dsn };
+        }
+        if (vfs) |name| {
+            return .{
+                .kind = .file,
+                .dsn = try std.fmt.allocPrintSentinel(arena, "file:{s}?vfs={s}", .{ db, name }, 0),
+            };
         }
         return .{
             .kind = .file,
@@ -90,22 +112,81 @@ pub const Storage = struct {
     /// (server.go:50-58): the default DELETE+FULL fsyncs on every COMMIT and
     /// a single request issues several independent transactions, so fsync
     /// latency dominated on slow volumes.
+    ///
+    /// cache_size is the one worth revisiting. A page-cache miss on an
+    /// in-memory database still costs a full pager + VFS round trip into
+    /// memdb, and the view graph builds a 350 MiB database behind a 16 MiB
+    /// cache. Measured over the Staging view-graph test with the counting VFS
+    /// of internal/io_stats.zig (7 runs, ZQL_CACHE_SIZE to vary it):
+    ///
+    ///     cache_size   handle    step   cache held | memdb reads
+    ///     -16000        53.4 s  25.9 s     16 MiB  | 29.1 M / 110 GiB, 8.88 s
+    ///     -262144       50.1 s  22.3 s    263 MiB  | -
+    ///     -1048576      48.2 s  20.9 s    372 MiB  | 0.12 M /   0 GiB, 0.01 s
+    ///     -4194304      48.7 s  21.4 s    372 MiB  | 0.13 M /   0 GiB, 0.01 s
+    ///
+    /// (handle/step are means of uninstrumented runs — three at -16000, two at
+    /// -1048576, one each otherwise; the read columns come from runs carrying
+    /// the counting VFS, which costs about 5 s at -16000 and nothing after.
+    /// Spread between repeats of one setting is around 1.5 s, so the -262144
+    /// row is a real improvement on -16000 and the last two rows are a tie.)
+    ///
+    /// A 1 GiB cache holds the whole database and the 110 GiB of re-reads
+    /// disappear: 19% off sqlite3_step, 10% off server handle time, 7% off the
+    /// test's wall clock. Past that the knob stops doing anything — the cache
+    /// saturates at the size of the database, not at its own limit, so 4 GiB
+    /// holds the same 372 MiB and measures the same. It is a ceiling, not a
+    /// reservation, and the useful setting is therefore "somewhat above the
+    /// largest database expected" rather than "as large as affordable".
+    ///
+    /// Not changed here: 356 MiB of the win is resident memory the emulator
+    /// does not otherwise need, and the graph a caller loads decides both the
+    /// database size and where saturation lands.
+    ///
+    /// temp_store is *not* worth setting: the same measurement recorded zero
+    /// temp-file opens of any class over the whole run, and `= MEMORY` came
+    /// out 5% slower over two runs each.
     pub fn pragmas(s: Storage) []const [:0]const u8 {
-        return switch (s.kind) {
-            .file => &.{
-                "PRAGMA journal_mode = WAL",
-                "PRAGMA synchronous = NORMAL",
-                "PRAGMA foreign_keys = OFF",
-                "PRAGMA cache_size = -16000",
-            },
-            .memory => &.{
-                "PRAGMA synchronous = NORMAL",
-                "PRAGMA foreign_keys = OFF",
-                "PRAGMA cache_size = -16000",
-            },
+        const base: []const [:0]const u8 = switch (s.kind) {
+            .file => &file_pragmas,
+            .memory => &memory_pragmas,
         };
+        // ZQL_TEMP_STORE and ZQL_CACHE_SIZE append to the list, so a
+        // comparison run can move where temp b-trees live, or how much of the
+        // database the pager keeps, without a rebuild. A later pragma of the
+        // same name wins, which is why the overrides go last.
+        var n = base.len;
+        @memcpy(overridden[0..n], base);
+        for ([_]?[:0]const u8{
+            io_stats.tempStorePragma(),
+            io_stats.cacheSizePragma(),
+        }) |maybe| {
+            if (maybe) |p| {
+                overridden[n] = p;
+                n += 1;
+            }
+        }
+        return if (n == base.len) base else overridden[0..n];
     }
 };
+
+const file_pragmas = [_][:0]const u8{
+    "PRAGMA journal_mode = WAL",
+    "PRAGMA synchronous = NORMAL",
+    "PRAGMA foreign_keys = OFF",
+    "PRAGMA cache_size = -16000",
+};
+
+const memory_pragmas = [_][:0]const u8{
+    "PRAGMA synchronous = NORMAL",
+    "PRAGMA foreign_keys = OFF",
+    "PRAGMA cache_size = -16000",
+};
+
+/// Scratch for the env-override variant. One setting per process, read at
+/// startup, so a single static buffer is enough — do not call `pragmas` from
+/// several threads at once.
+var overridden: [file_pragmas.len + 2][:0]const u8 = undefined;
 
 const testing = std.testing;
 

@@ -13,7 +13,6 @@ const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
 /// Go WithEntryTransformer.Transform.
@@ -21,7 +20,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.WithClause {
+) types_data.Error!*sqlbuilder.WithClause {
     // Go: "expected with entry data, got type %v"
     if (data.type != .with_entry) return error.UnsupportedNode;
     const with_entry_data = data.with_entry_scan orelse return error.UnsupportedNode;

@@ -8,18 +8,17 @@
 //! - the SELECT list carries both passthrough columns (qualified refs) and
 //!   the computed window functions, all under ID-based aliases
 //! - a result-level ORDER BY is synthesized from each function's PARTITION
-//!   BY + ORDER BY columns (zetasqlite_collate) so rows come out in the
-//!   window evaluation order, like Go
+//!   BY + ORDER BY columns so rows come out in the window evaluation order,
+//!   like Go
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const query_expr = @import("../sqlbuilder/query_expr.zig");
 
-const Error = interfaces.Error;
+const Error = types_data.Error;
 const SQLExpression = sqlbuilder.SQLExpression;
 
 /// Go AnalyticScanTransformer.Transform.
@@ -76,13 +75,12 @@ pub fn transform(
         const function = func_data.expression.function orelse continue;
         const window_spec = function.window_spec orelse continue;
 
-        // PARTITION BY expressions first (unqualified column names with
-        // zetasqlite_collate; always ASC).
+        // PARTITION BY expressions first (unqualified column names; always
+        // ASC).
         for (window_spec.partition_by) |part_data| {
             if (part_data.type != .column) continue;
             const column = part_data.column orelse continue;
             const expr = try ctx.fragmentContext().getQualifiedColumnExpression(column.column_id);
-            expr.collation = "zetasqlite_collate";
             const item = try alloc.create(sqlbuilder.OrderByItem);
             item.* = .{ .expression = expr, .direction = "ASC" };
             try order_by_items.append(alloc, item);
@@ -93,7 +91,6 @@ pub fn transform(
             if (order_data.expression.type != .column) continue;
             const column = order_data.expression.column orelse continue;
             const expr = try ctx.fragmentContext().getQualifiedColumnExpression(column.column_id);
-            expr.collation = "zetasqlite_collate";
             const item = try alloc.create(sqlbuilder.OrderByItem);
             item.* = .{
                 .expression = expr,
@@ -125,13 +122,14 @@ pub fn transform(
 //   extracted via getWindowBoundaryOptionFuncSQL ("ROWS", "1 PRECEDING",
 //   "CURRENT ROW"). The group's PARTITION BY / ORDER BY columns attach to
 //   the call's WindowSpec.
-// - transformer_function.go: PARTITION BY exprs and ORDER BY exprs get
-//   Collation = "zetasqlite_collate"; ORDER BY renders "<expr> COLLATE
-//   zetasqlite_collate ASC|DESC" (createOrderByItems).
+// - transformer_function.go: ORDER BY renders "<expr> ASC|DESC"
+//   (createOrderByItems). Go also set Collation = "zetasqlite_collate" on the
+//   PARTITION BY and ORDER BY exprs; that is gone here, because the encodings
+//   are memcomparable and the collation no longer exists.
 // - sqlbuilder: FunctionCall renders "name(args) OVER (<spec>)"; the frame
 //   renders "<unit> BETWEEN <start> AND <end>", offsets as "<n> PRECEDING".
 // - transformer_scan_analytic.go additionally ORDER BYs the outer SELECT on
-//   the partition/order columns with zetasqlite_collate.
+//   the partition/order columns.
 // Column aliases are ID-based (name__id); IDs come from the analyzer, so
 // assertions match on the stable fragments around them.
 // ----------------------------------------------------------------------
@@ -160,11 +158,11 @@ test "golden SQL: ROW_NUMBER() OVER (ORDER BY x)" {
 
     // zetasqlite_window_row_number carries the fixed frame from Go's
     // windowFuncFixedRanges (ROWS UNBOUNDED PRECEDING..CURRENT ROW) and the
-    // group ORDER BY with the zetasqlite_collate collation.
+    // group ORDER BY.
     try expectContains(sql, "zetasqlite_window_row_number() OVER (ORDER BY `x__");
     try expectContains(
         sql,
-        "` COLLATE zetasqlite_collate ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+        "` ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
     );
     // The analytic subquery also orders its results by the window ORDER BY
     // column (transformer_scan_analytic.go result ordering).
@@ -187,10 +185,10 @@ test "golden SQL: SUM(x) OVER (PARTITION BY y ORDER BY x ROWS BETWEEN 1 PRECEDIN
 
     try expectContains(sql, "zetasqlite_window_sum(");
     try expectContains(sql, "OVER (PARTITION BY `y__");
-    try expectContains(sql, "` COLLATE zetasqlite_collate ORDER BY `x__");
+    try expectContains(sql, "` ORDER BY `x__");
     try expectContains(
         sql,
-        "` COLLATE zetasqlite_collate ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
+        "` ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
     );
 }
 

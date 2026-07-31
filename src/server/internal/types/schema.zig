@@ -184,14 +184,34 @@ test "date, timestamp and bytes keep their own names" {
 // table visible to queries. These helpers rebuild the GoogleSQL type text
 // from a TableFieldSchema JSON node.
 
-/// Legacy REST type name -> GoogleSQL type name. The inverse of
-/// legacyTypeName, for the subset that round-trips.
-pub fn googleSqlTypeName(legacy: []const u8) []const u8 {
+/// A posted schema names a type this emulator cannot translate. Go reaches the
+/// same place by writing an empty type into the DDL and letting the CREATE
+/// fail; both surface to the client as a 400.
+pub const TypeError = error{UnknownFieldType};
+
+/// Legacy REST type name -> GoogleSQL type name, the inverse of
+/// legacyTypeName. Null when the name is not one BigQuery defines.
+///
+/// The alias set is Go's `Type.ZetaSQLTypeKind` (types/types.go): BigQuery
+/// spells INT64 six ways and NUMERIC/BIGNUMERIC two each, and a client that
+/// picks the wrong spelling should still get the right column. Returning
+/// "STRING" for anything unrecognised is what let `SchemaField("person_id",
+/// "INT")` silently create a STRING column, so unknown names now fail loudly.
+pub fn googleSqlTypeName(legacy: []const u8) ?[]const u8 {
     const map = std.StaticStringMap([]const u8).initComptime(.{
-        .{ "INTEGER", "INT64" },
         .{ "INT64", "INT64" },
+        .{ "INT", "INT64" },
+        .{ "SMALLINT", "INT64" },
+        .{ "INTEGER", "INT64" },
+        .{ "BIGINT", "INT64" },
+        .{ "TINYINT", "INT64" },
+        .{ "BYTEINT", "INT64" },
+        // Go sends FLOAT to types.FLOAT (32-bit) and only FLOAT64/DOUBLE to
+        // types.DOUBLE; BigQuery's REST "FLOAT" means FLOAT64, and that is
+        // what this port has always emitted.
         .{ "FLOAT", "FLOAT64" },
         .{ "FLOAT64", "FLOAT64" },
+        .{ "DOUBLE", "FLOAT64" },
         .{ "BOOLEAN", "BOOL" },
         .{ "BOOL", "BOOL" },
         .{ "STRING", "STRING" },
@@ -201,12 +221,14 @@ pub fn googleSqlTypeName(legacy: []const u8) []const u8 {
         .{ "TIME", "TIME" },
         .{ "TIMESTAMP", "TIMESTAMP" },
         .{ "NUMERIC", "NUMERIC" },
+        .{ "DECIMAL", "NUMERIC" },
         .{ "BIGNUMERIC", "BIGNUMERIC" },
+        .{ "BIGDECIMAL", "BIGNUMERIC" },
         .{ "JSON", "JSON" },
         .{ "INTERVAL", "INTERVAL" },
         .{ "GEOGRAPHY", "GEOGRAPHY" },
     });
-    return map.get(legacy) orelse "STRING";
+    return map.get(legacy);
 }
 
 /// GoogleSQL type text for one field node, honouring mode REPEATED and
@@ -214,13 +236,13 @@ pub fn googleSqlTypeName(legacy: []const u8) []const u8 {
 pub fn fieldTypeText(
     arena: std.mem.Allocator,
     field: std.json.Value,
-) std.mem.Allocator.Error![]const u8 {
-    if (field != .object) return "STRING";
+) (std.mem.Allocator.Error || TypeError)![]const u8 {
+    if (field != .object) return error.UnknownFieldType;
     const obj = field.object;
 
     const type_name = blk: {
-        const t = obj.get("type") orelse break :blk "STRING";
-        break :blk if (t == .string) t.string else "STRING";
+        const t = obj.get("type") orelse return error.UnknownFieldType;
+        break :blk if (t == .string) t.string else return error.UnknownFieldType;
     };
 
     var base: []const u8 = undefined;
@@ -245,7 +267,7 @@ pub fn fieldTypeText(
         try out.append(arena, '>');
         base = try out.toOwnedSlice(arena);
     } else {
-        base = googleSqlTypeName(type_name);
+        base = googleSqlTypeName(type_name) orelse return error.UnknownFieldType;
     }
 
     const mode = blk: {
@@ -268,7 +290,7 @@ pub fn createTableDdl(
     dataset_id: []const u8,
     table_id: []const u8,
     schema_json: ?std.json.Value,
-) std.mem.Allocator.Error![]const u8 {
+) (std.mem.Allocator.Error || TypeError)![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     try out.print(arena, "CREATE TABLE IF NOT EXISTS `{s}.{s}.{s}` (", .{
         project_id, dataset_id, table_id,
@@ -300,11 +322,68 @@ pub fn createTableDdl(
 }
 
 test "legacy type names map back to GoogleSQL" {
-    try testing.expectEqualStrings("INT64", googleSqlTypeName("INTEGER"));
-    try testing.expectEqualStrings("BOOL", googleSqlTypeName("BOOLEAN"));
-    try testing.expectEqualStrings("FLOAT64", googleSqlTypeName("FLOAT"));
-    // Unknown types degrade to STRING rather than failing the CREATE.
-    try testing.expectEqualStrings("STRING", googleSqlTypeName("SOMETHING_NEW"));
+    // Every alias Go's Type.ZetaSQLTypeKind accepts. `SchemaField("person_id",
+    // "INT")` used to fall through to STRING, which made person_id come back
+    // from a query as '123' instead of 123.
+    const cases = [_]struct { legacy: []const u8, googlesql: []const u8 }{
+        .{ .legacy = "INT64", .googlesql = "INT64" },
+        .{ .legacy = "INT", .googlesql = "INT64" },
+        .{ .legacy = "SMALLINT", .googlesql = "INT64" },
+        .{ .legacy = "INTEGER", .googlesql = "INT64" },
+        .{ .legacy = "BIGINT", .googlesql = "INT64" },
+        .{ .legacy = "TINYINT", .googlesql = "INT64" },
+        .{ .legacy = "BYTEINT", .googlesql = "INT64" },
+        .{ .legacy = "FLOAT", .googlesql = "FLOAT64" },
+        .{ .legacy = "FLOAT64", .googlesql = "FLOAT64" },
+        .{ .legacy = "DOUBLE", .googlesql = "FLOAT64" },
+        .{ .legacy = "BOOLEAN", .googlesql = "BOOL" },
+        .{ .legacy = "BOOL", .googlesql = "BOOL" },
+        .{ .legacy = "NUMERIC", .googlesql = "NUMERIC" },
+        .{ .legacy = "DECIMAL", .googlesql = "NUMERIC" },
+        .{ .legacy = "BIGNUMERIC", .googlesql = "BIGNUMERIC" },
+        .{ .legacy = "BIGDECIMAL", .googlesql = "BIGNUMERIC" },
+        .{ .legacy = "STRING", .googlesql = "STRING" },
+        .{ .legacy = "GEOGRAPHY", .googlesql = "GEOGRAPHY" },
+    };
+    for (cases) |c| try testing.expectEqualStrings(c.googlesql, googleSqlTypeName(c.legacy).?);
+
+    // Unknown names no longer degrade to STRING — a silent wrong column type
+    // is worse than a rejected CREATE, and Go rejects it too.
+    try testing.expectEqual(@as(?[]const u8, null), googleSqlTypeName("SOMETHING_NEW"));
+    // The map is case-sensitive, as BigQuery's REST schema is.
+    try testing.expectEqual(@as(?[]const u8, null), googleSqlTypeName("int64"));
+}
+
+test "an unusable field type fails the DDL instead of becoming STRING" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const schema = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[{"name":"a","type":"WIDGET"}]}
+    , .{});
+    try testing.expectError(
+        error.UnknownFieldType,
+        createTableDdl(arena, "p", "ds", "t", schema),
+    );
+
+    // A field with no type at all is the same kind of failure.
+    const untyped = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[{"name":"a"}]}
+    , .{});
+    try testing.expectError(
+        error.UnknownFieldType,
+        createTableDdl(arena, "p", "ds", "t", untyped),
+    );
+
+    // The aliases really do reach the DDL.
+    const ints = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[{"name":"person_id","type":"INT"},{"name":"n","type":"DECIMAL"}]}
+    , .{});
+    try testing.expectEqualStrings(
+        "CREATE TABLE IF NOT EXISTS `p.ds.t` (`person_id` INT64, `n` NUMERIC)",
+        try createTableDdl(arena, "p", "ds", "t", ints),
+    );
 }
 
 test "CREATE TABLE DDL covers scalars, REPEATED and nested RECORD" {

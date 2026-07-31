@@ -43,6 +43,11 @@ pub const Error = error{
     ExecFailed,
     /// Result-cell decoding failed.
     DecodeFailed,
+    /// The database was written in a storage format this build cannot read.
+    /// Distinct from ExecFailed because open() destroys the Db before
+    /// returning, so there is no `lastError` to carry an explanation — the
+    /// error name has to be the explanation.
+    IncompatibleStorageFormat,
     OutOfMemory,
 } || sqlite.Error;
 
@@ -253,7 +258,10 @@ pub const Db = struct {
                 return error.ExecFailed;
             };
         }
-        // zetasqlite_* UDFs + collation (Go: RegisterFunctions in driver init).
+        try db.checkStorageFormat();
+        // zetasqlite_* UDFs and the unnest vtab (Go: RegisterFunctions in
+        // driver init; Go also registered a collation, which this no longer
+        // needs — see codec_sortable.zig).
         db.udf_state = function.registerAll(&db.sqlite_db, gpa) catch
             return error.ExecFailed;
         errdefer db.udf_state.deinit();
@@ -297,6 +305,61 @@ pub const Db = struct {
     /// Diagnostic message for the last failed query/exec call.
     pub fn lastError(db: *Db) []const u8 {
         return db.last_error orelse "";
+    }
+
+    /// The storage format this build reads and writes, kept in the database's
+    /// `user_version`.
+    ///
+    /// 3 — the current format, and the only one this build reads or writes:
+    ///     every non-scalar value is a BLOB carrying one of the two payload
+    ///     shapes (codec_sortable.zig for the orderable kinds, codec_binary.zig
+    ///     for the rest).
+    /// 2 — orderable kinds as BLOB, NUMERIC/BIGNUMERIC still base64 in TEXT.
+    /// 1 — every value as base64 in TEXT.
+    ///
+    /// Neither 1 nor 2 is readable here and there is no migration: the code that
+    /// decoded them is gone. They are listed because refusing a database is only
+    /// useful if the reader can tell what was refused.
+    ///
+    /// Refusing is the only defence available, because a mismatch fails
+    /// silently rather than loudly: TEXT and BLOB never compare equal in SQLite,
+    /// so a database holding the older shape would not error — it would quietly
+    /// stop deduplicating in DISTINCT, UNION and WITHOUT ROWID primary keys.
+    pub const storage_format_version: i64 = 3;
+
+    /// Refuses a database this build cannot read, and stamps a new one.
+    ///
+    /// `user_version` is 0 both for a database this engine has never touched and
+    /// for every database written before the stamp existed. The two are told
+    /// apart by whether the catalog is already there: an unstamped database that
+    /// already holds one was written by an older format, and adopting it would
+    /// read its TEXT values as though they were BLOBs, silently, on every one.
+    fn checkStorageFormat(db: *Db) Error!void {
+        const found = db.readUserVersion() orelse return;
+        if (found == storage_format_version) return;
+        if (found != 0) return error.IncompatibleStorageFormat;
+        if (db.hasCatalogTable()) return error.IncompatibleStorageFormat;
+        // Fresh database. Best-effort: a read-only connection cannot stamp one,
+        // and an empty database has nothing to misread either way.
+        db.sqlite_db.exec(std.fmt.comptimePrint(
+            "PRAGMA user_version = {d}",
+            .{storage_format_version},
+        )) catch {};
+    }
+
+    fn hasCatalogTable(db: *Db) bool {
+        var stmt = db.sqlite_db.prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog'",
+        ) catch return false;
+        defer stmt.finalize();
+        return stmt.step() catch false;
+    }
+
+    fn readUserVersion(db: *Db) ?i64 {
+        var stmt = db.sqlite_db.prepare("PRAGMA user_version") catch return null;
+        defer stmt.finalize();
+        if (!(stmt.step() catch return null)) return null;
+        return stmt.columnInt64(0);
     }
 
     /// SQLite's allocator accounting for this connection plus the process.
@@ -1355,7 +1418,57 @@ pub const Db = struct {
         args: []const Param,
     ) Error!usize {
         const table_name = try table_spec.tableName(arena);
-        if (table_spec.create_mode == spec.create_mode_create_or_replace) {
+        const replacing = table_spec.create_mode == spec.create_mode_create_or_replace;
+        const from_query = table_spec.query.len != 0;
+
+        // CREATE OR REPLACE ... AS <query> builds into a scratch table and
+        // swaps, rather than dropping first. WRITE_TRUNCATE arrives here, and
+        // a truncate whose query reads its own destination is ordinary — the
+        // dataflow metric pruning job is `SELECT ... FROM t` replacing `t`.
+        // Dropping first loses the rows the query is about to read, and left
+        // the spec registered against a table SQLite no longer had, so later
+        // reads analyzed fine and then failed at prepare with "no such table".
+        // Go has no such window: it runs the query to completion first and
+        // only then truncates and inserts.
+        if (replacing and from_query) {
+            const scratch = try std.fmt.allocPrint(arena, "{s}__zetasqlite_replace", .{table_name});
+            const drop_scratch = try std.fmt.allocPrint(
+                arena,
+                "DROP TABLE IF EXISTS `{s}`",
+                .{scratch},
+            );
+            _ = try db.execSql(arena, drop_scratch, &.{});
+
+            const build = try std.fmt.allocPrint(
+                arena,
+                "CREATE TABLE `{s}` AS {s}",
+                .{ scratch, table_spec.query },
+            );
+            const consumed = db.execSql(arena, build, args) catch |err| {
+                // Leave the destination exactly as it was.
+                _ = db.execSql(arena, drop_scratch, &.{}) catch {};
+                return err;
+            };
+
+            const drop_old = try std.fmt.allocPrint(
+                arena,
+                "DROP TABLE IF EXISTS `{s}`",
+                .{table_name},
+            );
+            _ = try db.execSql(arena, drop_old, &.{});
+            const rename = try std.fmt.allocPrint(
+                arena,
+                "ALTER TABLE `{s}` RENAME TO `{s}`",
+                .{ scratch, table_name },
+            );
+            _ = try db.execSql(arena, rename, &.{});
+
+            db.registerTableSpec(table_spec) catch |err|
+                return db.failCatalog(err);
+            return consumed;
+        }
+
+        if (replacing) {
             const drop_sql = try std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{table_name});
             _ = try db.execSql(arena, drop_sql, &.{});
         }
@@ -1601,7 +1714,7 @@ pub const Db = struct {
             .null => try stmt.bindNull(idx),
             .int => |i| try stmt.bindInt64(idx, i),
             .float => |f| try stmt.bindDouble(idx, f),
-            .text => |t| try stmt.bindText(idx, t),
+            .blob => |b| try stmt.bindBlob(idx, b),
         }
     }
 
@@ -2503,11 +2616,16 @@ pub const Rows = struct {
             const repr: encoder.SqliteRepr = switch (stmt.columnType(ci)) {
                 .integer => .{ .int = stmt.columnInt64(ci) },
                 .float => .{ .float = stmt.columnDouble(ci) },
-                .text => .{ .text = stmt.columnText(ci) },
-                .blob => .{ .text = stmt.columnBlob(ci) },
+                .blob => .{ .blob = stmt.columnBlob(ci) },
                 .null => .null,
+                // A column here means something outside the engine wrote it.
+                // No engine value is TEXT.
+                .text => return r.db.failDecode(error.CorruptData),
+
             };
-            const value = encoder.DecodeValue(alloc, repr) catch |err|
+            // Safe to borrow: cellFromValue copies into the rows arena before
+            // the next step invalidates SQLite's column memory.
+            const value = encoder.DecodeValueBorrowing(alloc, repr) catch |err|
                 return r.db.failDecode(err);
             cells[i] = cellFromValue(alloc, value, col.type) catch |err|
                 return r.db.failDecode(err);
@@ -3228,6 +3346,78 @@ test "columnTypes is empty for a non-query statement" {
     try testing.expectEqual(@as(usize, 0), rows.columnTypes().len);
 }
 
+test "NUMERIC arithmetic rounds to the declared scale" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // These pin a deliberate divergence from go-zetasqlite, which keeps an
+    // exact big.Rat and so answers 1, and a move toward BigQuery, whose NUMERIC
+    // is decimal(38,9). No corpus case covers any of it, so without these tests
+    // the change would be invisible.
+    const cases = [_]struct { sql: []const u8, want: []const u8 }{
+        // Division rounds, so multiplying back does not recover the input.
+        .{ .sql = "SELECT CAST((NUMERIC '1' / NUMERIC '7') * NUMERIC '7' AS STRING) AS v", .want = "1.000000001" },
+        // PARSE_NUMERIC now rounds at ingest, as a folded CAST always did.
+        .{ .sql = "SELECT CAST(PARSE_NUMERIC('1.0123456789') * NUMERIC '1000000000' AS STRING) AS v", .want = "1012345679" },
+        // Values that render alike now *are* alike; they used to compare
+        // unequal while grouping together, since GROUP BY keys on the rendering.
+        .{ .sql = "SELECT CAST((NUMERIC '1' / NUMERIC '3') = PARSE_NUMERIC('0.333333333') AS STRING) AS v", .want = "true" },
+        // Mixed kinds widen to BIGNUMERIC rather than rounding the wider
+        // operand away: LHS-wins would make this 0.
+        .{
+            .sql = "SELECT CAST(BIGNUMERIC '0.00000000000000000000000000000000000001' + NUMERIC '0' AS STRING) AS v",
+            .want = "0.00000000000000000000000000000000000001",
+        },
+        // A magnitude below the scale rounds to a true zero, not Go's "-0".
+        .{ .sql = "SELECT CAST(CAST('-1e-10' AS NUMERIC) AS STRING) AS v", .want = "0" },
+    };
+    for (cases) |tc| {
+        var rows = try db.query(tc.sql, &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqualStrings(tc.want, row[0].string);
+    }
+}
+
+test "storage format gate stamps an unversioned database and rejects a foreign one" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena_state.allocator(),
+        ".zig-cache/tmp/{s}/format.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    // A fresh database has user_version 0 and must be adopted, not rejected —
+    // that is also every database written before this check existed.
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        var rows = try db.rawQuery("PRAGMA user_version", &.{});
+        defer rows.deinit();
+        try testing.expectEqual(Db.storage_format_version, (try rows.next()).?[0].int);
+    }
+    // Reopening finds its own stamp and is satisfied by it.
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        db.close();
+    }
+    // A database claiming a format this build does not know must refuse to
+    // open. Left silent, the failures downstream are wrong answers rather than
+    // errors: mismatched values never compare equal, so DISTINCT and primary
+    // keys quietly stop deduplicating.
+    {
+        var raw = try sqlite.Db.open(db_path);
+        try raw.exec("PRAGMA user_version = 999");
+        raw.close();
+    }
+    try testing.expectError(error.IncompatibleStorageFormat, Db.open(testing.allocator, db_path));
+}
+
 test "openWith applies pragmas and leaves open() behaviour unchanged" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3440,6 +3630,58 @@ test "created tables persist across connections to the same file" {
     }
 }
 
+test "CREATE OR REPLACE ... AS SELECT can read the table it replaces" {
+    // WRITE_TRUNCATE lands here, and the dataflow metric pruning job replaces
+    // a table from a query over that same table. Dropping first destroyed the
+    // rows the query was about to read; the job died with SQLite's "no such
+    // table", not the analyzer's "Table not found", because the raw DROP left
+    // the spec registered.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    _ = try db.exec(
+        "CREATE TABLE `p.d.metrics` (job_id STRING, n INT64);\n" ++
+            "INSERT INTO `p.d.metrics` VALUES ('keep', 1), ('drop', 2), ('keep', 3);",
+        &.{},
+        .{},
+    );
+    _ = try db.exec(
+        "CREATE OR REPLACE TABLE `p.d.metrics` AS " ++
+            "SELECT job_id, n FROM `p.d.metrics` WHERE job_id = 'keep';",
+        &.{},
+        .{},
+    );
+
+    var rows = try db.query("SELECT n FROM `p.d.metrics` ORDER BY n", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+    try testing.expectEqual(@as(i64, 3), (try rows.next()).?[0].int);
+    try testing.expect((try rows.next()) == null);
+}
+
+test "a failed CREATE OR REPLACE ... AS SELECT leaves the table intact" {
+    // The rebuild happens off to the side, so a query that cannot run costs
+    // nothing. Previously the DROP had already committed by then, and the
+    // catalog still advertised a table SQLite no longer had.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    _ = try db.exec(
+        "CREATE TABLE `p.d.t` (a INT64);\nINSERT INTO `p.d.t` VALUES (7);",
+        &.{},
+        .{},
+    );
+    try testing.expectError(error.AnalyzeFailed, db.exec(
+        "CREATE OR REPLACE TABLE `p.d.t` AS SELECT no_such_column FROM `p.d.t`;",
+        &.{},
+        .{},
+    ));
+
+    var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 7), (try rows.next()).?[0].int);
+}
+
 test "catalog persists across driver connections to the same file" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3617,6 +3859,43 @@ test "a DATE column accepts the datetime spellings ToTime handles" {
     defer rows.deinit();
     try testing.expectEqualStrings("2024-01-02", (try rows.next()).?[0].date);
     try testing.expectEqualStrings("2024-03-04", (try rows.next()).?[0].date);
+}
+
+test "an unpadded hour parses on both the bind path and the runtime cast" {
+    // Raw state extracts spell midnight "0:00:00" and morning "7:34:44". Go's
+    // `15` layout element takes one or two digits, so both paths accept them;
+    // this port used to reject both, as HTTP 500 out of insertAll and as
+    // "SQL logic error: failed to convert ... (1)" out of a query.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Bind path: castParamValue -> toUnixMicros, what insertAll does.
+    var bound = try db.query(
+        "CREATE TABLE stamps (d DATETIME);\n" ++
+            "INSERT INTO stamps (d) VALUES (?), (?);\n" ++
+            "SELECT d FROM stamps ORDER BY d;",
+        &.{
+            .{ .value = .{ .string = "2024-01-05 0:00:00" } },
+            .{ .value = .{ .string = "2020-11-30 7:34:44" } },
+        },
+        .{},
+    );
+    defer bound.deinit();
+    try testing.expectEqualStrings("2020-11-30T07:34:44", (try bound.next()).?[0].datetime);
+    try testing.expectEqualStrings("2024-01-05T00:00:00", (try bound.next()).?[0].datetime);
+
+    // Runtime cast: the zetasqlite_cast UDF. UNNEST keeps the analyzer from
+    // constant-folding the cast, which is what hid this from a literal test.
+    var cast = try db.query(
+        "SELECT CAST(x AS DATETIME) AS d " ++
+            "FROM UNNEST(['2024-01-05 0:00:00', '1988-09-14 2:05:05']) AS x " ++
+            "ORDER BY d;",
+        &.{},
+        .{},
+    );
+    defer cast.deinit();
+    try testing.expectEqualStrings("1988-09-14T02:05:05", (try cast.next()).?[0].datetime);
+    try testing.expectEqualStrings("2024-01-05T00:00:00", (try cast.next()).?[0].datetime);
 }
 
 test "an INT64 column bound as a string still compares as a number" {

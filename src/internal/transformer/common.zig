@@ -8,11 +8,10 @@
 const std = @import("std");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const encoder = @import("../encoder.zig");
 const value_mod = @import("../value.zig");
 
-pub const Error = interfaces.Error;
+pub const Error = types_data.Error;
 
 /// internal/function_register.go currentTimeFuncMap.
 pub const current_time_func_names = std.StaticStringMap(void).initComptime(.{
@@ -40,7 +39,7 @@ pub fn newLiteralExpressionFromValue(
 /// Go createOrderByItems (transformer_scan_orderby.go): ORDER BY items with
 /// proper NULL handling. An explicit NULLS FIRST/LAST modifier becomes an
 /// extra `expr IS NOT NULL` term (ASC puts nulls first, DESC last); the main
-/// term always gets the zetasqlite_collate collation.
+/// term is emitted for an explicit NULLS FIRST/LAST.
 pub fn createOrderByItems(
     alloc: std.mem.Allocator,
     expr: *sqlbuilder.SQLExpression,
@@ -60,7 +59,6 @@ pub fn createOrderByItems(
         };
         const null_expr = try alloc.create(sqlbuilder.SQLExpression);
         null_expr.* = .{ .type = .binary, .binary_expression = bin };
-        null_expr.collation = "zetasqlite_collate";
 
         // IS NOT NULL is 0 for nulls and 1 for non-nulls, so ASC puts nulls
         // first.
@@ -76,7 +74,6 @@ pub fn createOrderByItems(
 
     // Add the main ORDER BY item.
     const direction: []const u8 = if (order_data.is_descending) "DESC" else "ASC";
-    expr.collation = "zetasqlite_collate";
     const item = try alloc.create(sqlbuilder.OrderByItem);
     item.* = .{ .expression = expr, .direction = direction };
     try items.append(alloc, item);
@@ -90,12 +87,12 @@ pub fn createOrderByItems(
 
 const testing = std.testing;
 
-test "createOrderByItems adds NULLS FIRST/LAST term and collation" {
+test "createOrderByItems adds a NULLS FIRST/LAST term" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
-    // Unspecified: single item, collation applied.
+    // Unspecified: a single item.
     {
         const expr = try sqlbuilder.newColumnExpression(a, "x", null);
         const data = types_data.OrderByItemData{ .is_descending = true };
@@ -103,7 +100,7 @@ test "createOrderByItems adds NULLS FIRST/LAST term and collation" {
         try testing.expectEqual(@as(usize, 1), items.len);
         try testing.expectEqualStrings("DESC", items[0].direction);
         try testing.expectEqualStrings(
-            "`x` COLLATE zetasqlite_collate DESC",
+            "`x` DESC",
             try items[0].toString(a),
         );
     }
@@ -115,7 +112,7 @@ test "createOrderByItems adds NULLS FIRST/LAST term and collation" {
         const items = try createOrderByItems(a, expr, &data);
         try testing.expectEqual(@as(usize, 2), items.len);
         try testing.expectEqualStrings(
-            "`x` COLLATE zetasqlite_collate IS NOT NULL COLLATE zetasqlite_collate DESC",
+            "`x` IS NOT NULL DESC",
             try items[0].toString(a),
         );
         try testing.expectEqualStrings("ASC", items[1].direction);

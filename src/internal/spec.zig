@@ -226,7 +226,7 @@ pub const TableSpec = struct {
         if (self.primary_key.len != 0) {
             const primary_keys = try alloc.alloc([]const u8, self.primary_key.len);
             for (self.primary_key, 0..) |key, i| {
-                primary_keys[i] = try std.fmt.allocPrint(alloc, "{s} COLLATE zetasqlite_collate", .{key});
+                primary_keys[i] = try alloc.dupe(u8, key);
             }
             try columns.append(alloc, try std.fmt.allocPrint(
                 alloc,
@@ -763,11 +763,12 @@ test "SQLiteSchema golden strings" {
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
 
-    // With PRIMARY KEY: collation + WITHOUT ROWID.
+    // With PRIMARY KEY: WITHOUT ROWID, and no COLLATE — the encodings order
+    // correctly as bytes, so there is no collation to name.
     const with_pk = try makeGoShapeSpec(alloc);
     try testing.expectEqualStrings(
         "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT," ++
-            "PRIMARY KEY (a COLLATE zetasqlite_collate)) WITHOUT ROWID",
+            "PRIMARY KEY (a)) WITHOUT ROWID",
         try with_pk.sqliteSchema(alloc),
     );
 

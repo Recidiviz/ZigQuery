@@ -22,11 +22,10 @@ const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const query_expr = @import("../sqlbuilder/query_expr.zig");
 
-const Error = interfaces.Error;
+const Error = types_data.Error;
 const SQLExpression = sqlbuilder.SQLExpression;
 
 /// Go AggregateScanTransformer.Transform.
@@ -124,7 +123,7 @@ pub fn transform(
 
 /// Go buildGroupingSetsQuery: ROLLUP/GROUPING SETS as a UNION ALL of one
 /// SELECT per grouping set, with NULL projected for the columns a set does
-/// not group by, ordered by the grouping columns under zetasqlite_collate.
+/// not group by, ordered by the grouping columns.
 fn buildGroupingSetsQuery(
     alloc: std.mem.Allocator,
     agg_data: *const types_data.AggregateScanData,
@@ -201,10 +200,9 @@ fn buildGroupingSetsQuery(
         var order_by_items: std.ArrayList(*sqlbuilder.OrderByItem) = .empty;
         var val_it = group_by_map.valueIterator();
         while (val_it.next()) |group_by_col| {
-            // Copy with collation applied (Go copies the SQLExpression).
+            // Copy the SQLExpression, as Go does.
             const order_expr = try alloc.create(SQLExpression);
             order_expr.* = group_by_col.*.*;
-            order_expr.collation = "zetasqlite_collate";
 
             const item = try alloc.create(sqlbuilder.OrderByItem);
             item.* = .{ .expression = order_expr, .direction = "ASC" };

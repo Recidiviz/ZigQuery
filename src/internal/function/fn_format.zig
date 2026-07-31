@@ -313,14 +313,123 @@ fn formatFloatVerb(alloc: std.mem.Allocator, v: f64, specifier: u8, precision: i
                 return error.OutOfMemory;
             return goScientific(alloc, s, specifier == 'E');
         },
-        'g', 'G' => {
-            // %g: shortest of %e/%f (approximate). Use scientific full precision
-            // then reformat; matches Go for the compact-notation cases.
-            const s = std.fmt.float.render(&buf, v, .{ .mode = .scientific, .precision = prec }) catch
-                return error.OutOfMemory;
-            return goScientific(alloc, s, specifier == 'G');
-        },
+        'g', 'G' => return formatG(alloc, v, specifier == 'G', precision),
         else => unreachable,
+    }
+}
+
+/// strconv.FormatFloat(v, 'g'|'G', prec, 64): `prec` significant digits with
+/// trailing zeros trimmed, rendered as %e when the decimal exponent falls
+/// outside [-4, eprec) and as %f otherwise. `precision < 0` is Go's shortest
+/// mode, which uses eprec = 6 for that decision.
+fn formatG(alloc: std.mem.Allocator, v: f64, upper: bool, precision: i64) Error![]u8 {
+    const neg = std.math.signbit(v);
+    const av = @abs(v);
+
+    // Significant digits and the decimal point position: av == 0.<digits> * 10^dp.
+    var digits_buf: [512]u8 = undefined;
+    var digits: []const u8 = "0";
+    var dp: i64 = 1;
+    if (av != 0) {
+        var buf: [512]u8 = undefined;
+        // Rounding to N significant digits is scientific notation with N-1
+        // fractional digits; shortest mode asks for the round-trip form.
+        const sci_prec: ?usize = if (precision < 0)
+            null
+        else
+            @intCast(@max(precision, 1) - 1);
+        const s = std.fmt.float.render(&buf, av, .{ .mode = .scientific, .precision = sci_prec }) catch
+            return error.OutOfMemory;
+        const e_idx = std.mem.indexOfScalar(u8, s, 'e') orelse s.len;
+        var n: usize = 0;
+        for (s[0..e_idx]) |c| {
+            if (c == '.') continue;
+            digits_buf[n] = c;
+            n += 1;
+        }
+        const exp: i64 = if (e_idx < s.len)
+            std.fmt.parseInt(i64, s[e_idx + 1 ..], 10) catch 0
+        else
+            0;
+        // decimal.Round trims trailing zeros before formatDigits sees them.
+        while (n > 1 and digits_buf[n - 1] == '0') n -= 1;
+        digits = digits_buf[0..n];
+        dp = exp + 1;
+    }
+
+    const nd: i64 = @intCast(digits.len);
+    var prec: i64 = undefined;
+    var eprec: i64 = undefined;
+    if (precision < 0) {
+        prec = nd;
+        eprec = 6;
+    } else {
+        prec = @max(precision, 1);
+        eprec = prec;
+        if (eprec > nd and nd >= dp) eprec = nd;
+    }
+
+    const exp = dp - 1;
+    var out: std.ArrayList(u8) = .empty;
+    if (neg) try out.append(alloc, '-');
+    if (exp < -4 or exp >= eprec) {
+        try fmtE(alloc, &out, digits, dp, @min(prec, nd) - 1, upper);
+    } else {
+        if (prec > dp) prec = nd;
+        try fmtF(alloc, &out, digits, dp, @max(prec - dp, 0));
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+/// strconv fmtE: d[.ddd]e±NN with `prec` fractional mantissa digits.
+fn fmtE(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    digits: []const u8,
+    dp: i64,
+    prec: i64,
+    upper: bool,
+) Error!void {
+    try out.append(alloc, digits[0]);
+    if (prec > 0) {
+        try out.append(alloc, '.');
+        var i: i64 = 1;
+        while (i <= prec) : (i += 1) {
+            const idx: usize = @intCast(i);
+            try out.append(alloc, if (idx < digits.len) digits[idx] else '0');
+        }
+    }
+    try out.append(alloc, if (upper) 'E' else 'e');
+    const exp: i64 = if (digits.len == 1 and digits[0] == '0') 0 else dp - 1;
+    try out.append(alloc, if (exp < 0) @as(u8, '-') else @as(u8, '+'));
+    try out.print(alloc, "{d:0>2}", .{@abs(exp)});
+}
+
+/// strconv fmtF: fixed notation with `prec` fractional digits.
+fn fmtF(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    digits: []const u8,
+    dp: i64,
+    prec: i64,
+) Error!void {
+    if (dp > 0) {
+        var i: i64 = 0;
+        while (i < dp) : (i += 1) {
+            const idx: usize = @intCast(i);
+            try out.append(alloc, if (idx < digits.len) digits[idx] else '0');
+        }
+    } else {
+        try out.append(alloc, '0');
+    }
+    if (prec > 0) {
+        try out.append(alloc, '.');
+        var i: i64 = 0;
+        while (i < prec) : (i += 1) {
+            const at = dp + i;
+            const in_range = at >= 0 and at < @as(i64, @intCast(digits.len));
+            try out.append(alloc, if (in_range) digits[@intCast(at)] else '0');
+        }
     }
 }
 

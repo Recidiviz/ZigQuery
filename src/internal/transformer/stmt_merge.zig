@@ -13,10 +13,9 @@ const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
-const Error = interfaces.Error;
+const Error = types_data.Error;
 const ColumnData = types_data.ColumnData;
 const ExpressionData = types_data.ExpressionData;
 

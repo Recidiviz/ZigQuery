@@ -116,8 +116,14 @@ fn parseTypeJson(alloc: std.mem.Allocator, s: []const u8) !std.json.Value {
 fn parseNumericImpl(alloc: std.mem.Allocator, args: []const Value, is_big: bool) Error!Value {
     if (args[0] == .@"null") return null_v;
     const s = try args[0].toString(alloc);
-    return value_mod.numericFromString(alloc, s, is_big) catch
-        return bind.fail("unexpected numeric literal: {s}", .{s}, error.FailedConversion);
+    return value_mod.numericFromString(alloc, s, is_big) catch |err| switch (err) {
+        error.NumericOutOfRange => bind.fail(
+            "{s} value out of range: {s}",
+            .{ if (is_big) "BIGNUMERIC" else "NUMERIC", s },
+            error.FailedConversion,
+        ),
+        else => bind.fail("unexpected numeric literal: {s}", .{s}, error.FailedConversion),
+    };
 }
 
 pub fn parseNumeric(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -193,10 +199,63 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
             }
             return value_mod.arrayValue(alloc, out);
         },
+        // Go castValueInternal: an ARRAY input flattens into one struct by
+        // concatenating each element's fields; anything else is read as a
+        // struct and its fields are cast field-by-field, in the target type's
+        // field order. An absent field becomes NULL, and an unnamed field is
+        // addressed positionally as "_field_<n>".
+        .TYPE_STRUCT => return castToStruct(alloc, t, v),
         else => return bind.fail(
             "CAST: unimplemented cast to type kind {d}",
             .{@intFromEnum(kind)},
             error.Unimplemented,
         ),
     }
+}
+
+/// Go castValueInternal's TypeKindTypeStruct branch.
+fn castToStruct(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value {
+    // An ARRAY of structs collapses into a single struct holding every
+    // element's fields end to end — no per-field cast, exactly as Go does.
+    if (v == .array) {
+        const arr = try v.toArray();
+        var keys: std.ArrayList([]const u8) = .empty;
+        var values: std.ArrayList(Value) = .empty;
+        for (arr.values) |elem| {
+            const st = try elem.toStruct();
+            try keys.appendSlice(alloc, st.keys);
+            try values.appendSlice(alloc, st.values);
+        }
+        return value_mod.structValue(alloc, keys.items, values.items);
+    }
+
+    const src = try v.toStruct();
+    const field_types: []const std.json.Value = blk: {
+        if (t != .object) break :blk &.{};
+        const fts = t.object.get("fieldTypes") orelse break :blk &.{};
+        if (fts != .array) break :blk &.{};
+        break :blk fts.array.items;
+    };
+
+    var keys: std.ArrayList([]const u8) = .empty;
+    var values: std.ArrayList(Value) = .empty;
+    for (field_types, 0..) |field, i| {
+        var key: []const u8 = "";
+        var ftype: std.json.Value = std.json.Value.null;
+        if (field == .object) {
+            if (field.object.get("name")) |n| {
+                if (n == .string) key = n.string;
+            }
+            ftype = field.object.get("type") orelse std.json.Value.null;
+        }
+        if (key.len == 0) key = try std.fmt.allocPrint(alloc, "_field_{d}", .{i + 1});
+        try keys.append(alloc, key);
+        // Go leaves a field the source does not carry as an untyped NULL.
+        const existing = src.fieldByName(key) orelse {
+            try values.append(alloc, null_v);
+            continue;
+        };
+        try values.append(alloc, try castValue(alloc, ftype, existing));
+    }
+    return value_mod.structValue(alloc, keys.items, values.items);
 }

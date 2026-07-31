@@ -21,6 +21,10 @@ pub const ValueError = error{
     InvalidDate,
     CorruptData,
     Unimplemented,
+    /// A NUMERIC/BIGNUMERIC outside the range its declared precision allows.
+    /// Distinct from FailedConversion because the value converted fine — it is
+    /// the magnitude that the type cannot hold.
+    NumericOutOfRange,
     OutOfMemory,
 };
 
@@ -354,6 +358,61 @@ pub const Rat = struct {
         return std.fmt.allocPrint(alloc, "{s}/{s}", .{ ns, ds }) catch return error.OutOfMemory;
     }
 
+    /// The value times 10^scale, rounded to an integer half away from zero.
+    ///
+    /// This is `floatString`'s arithmetic in one step rather than two: that
+    /// splits into `trunc(|n|/d)` and `round(rem * 10^scale / d)` and
+    /// concatenates them, which is `round(|n| * 10^scale / d)`. Written once,
+    /// here, so the engine has exactly one rounding rule — a second
+    /// implementation that drifted would round values one way and render them
+    /// another.
+    pub fn toUnscaled(self: Rat, alloc: std.mem.Allocator, scale: usize) ValueError!big_int.Managed {
+        var absn = self.num.cloneWithDifferentAllocator(alloc) catch return error.OutOfMemory;
+        absn.abs();
+        const p10 = try powTen(alloc, scale);
+        var scaled = try mustManaged(alloc);
+        scaled.mul(&absn, &p10) catch return error.OutOfMemory;
+
+        var q = try mustManaged(alloc);
+        var rem = try mustManaged(alloc);
+        q.divTrunc(&rem, &scaled, &self.den) catch return error.OutOfMemory;
+        // Half away from zero: the same `2*rem >= den` test floatString uses.
+        var twice = try mustManaged(alloc);
+        twice.add(&rem, &rem) catch return error.OutOfMemory;
+        if (twice.order(self.den) != .lt) q.addScalar(&q, 1) catch return error.OutOfMemory;
+
+        if (self.isNegative() and !q.eqlZero()) q.negate();
+        return q;
+    }
+
+    /// Rounds in place to `scale` decimal places and returns the unscaled
+    /// integer it landed on.
+    ///
+    /// Establishes the invariant `10^scale % den == 0`, which is what makes a
+    /// fixed-width memcomparable encoding possible at all — see
+    /// codec_sortable.zig. The i256 conversion doubles as BIGNUMERIC's range
+    /// check, since that type's unscaled domain is exactly i256's.
+    pub fn roundToScale(self: *Rat, alloc: std.mem.Allocator, scale: usize) ValueError!i256 {
+        var unscaled = try self.toUnscaled(alloc, scale);
+        const as_int = unscaled.toInt(i256) catch
+            return fail("numeric value out of range", error.NumericOutOfRange);
+        self.num.swap(&unscaled);
+        var p10 = try powTen(alloc, scale);
+        self.den.swap(&p10);
+        // normalize gcd-reduces, so `den` ends up a divisor of 10^scale rather
+        // than 10^scale itself: 1.5 stays 3/2, not 15/10.
+        try self.normalize(alloc);
+        return as_int;
+    }
+
+    /// The unscaled integer for an already-rounded Rat. Exact by the invariant
+    /// `roundToScale` establishes, so this does no rounding of its own.
+    pub fn unscaledInt(self: Rat, alloc: std.mem.Allocator, scale: usize) ValueError!i256 {
+        var m = try self.toUnscaled(alloc, scale);
+        return m.toInt(i256) catch
+            fail("numeric value out of range", error.NumericOutOfRange);
+    }
+
     /// Go big.Rat.FloatString(prec): decimal form with exactly `prec` digits
     /// after the point; the last digit is rounded to nearest, halves away
     /// from zero. A negative value always renders its '-' (even "-0.000...").
@@ -441,8 +500,22 @@ fn signedIntFromDecimal(alloc: std.mem.Allocator, s_in: []const u8) ValueError!b
     return m;
 }
 
-/// Go NumericValue. `is_bignumeric` only changes the rendered precision
-/// (FloatString(38) vs FloatString(9)).
+/// NUMERIC is decimal(38,9) and BIGNUMERIC decimal(76,38), so each value is
+/// exactly an integer at its scale. `numericValue` enforces that, which is what
+/// lets both be stored memcomparably (codec_sortable.zig).
+///
+/// Scales, and the unscaled bounds their declared precision allows.
+pub const numeric_scale: usize = 9;
+pub const bignumeric_scale: usize = 38;
+/// 10^38 - 1, i.e. NUMERIC's 38 digits. Comfortably inside i128.
+pub const numeric_unscaled_max: i256 = 99999999999999999999999999999999999999;
+
+pub fn scaleFor(is_bignumeric: bool) usize {
+    return if (is_bignumeric) bignumeric_scale else numeric_scale;
+}
+
+/// Go NumericValue. `is_bignumeric` selects the scale — both the stored
+/// precision and the rendered one (FloatString(38) vs FloatString(9)).
 pub const Numeric = struct {
     rat: Rat,
     is_bignumeric: bool = false,
@@ -537,7 +610,14 @@ pub const Value = union(enum) {
             .json => return fail("add operation is unsupported for json", error.UnsupportedOperation),
             .interval => return fail("unsupported add operator for interval value", error.UnsupportedOperation),
             // Go NumericValue.Add: rat arithmetic, result keeps isBigNumeric.
-            .numeric => |n| return numericValue(alloc, try n.rat.add(alloc, try v.toRat(alloc)), n.is_bignumeric),
+            .numeric => |n| return numericValue(
+                alloc,
+                try n.rat.add(alloc, try v.toRat(alloc)),
+                // Widen to the wider operand: BigQuery coerces
+                // NUMERIC op BIGNUMERIC to BIGNUMERIC, and rounding
+                // the result to scale 9 would discard real digits.
+                n.is_bignumeric or isBigNumeric(v),
+            ),
             .array => return fail("add operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("add operation is unsupported for struct", error.UnsupportedOperation),
             .safe => |p| return p.add(alloc, v) catch Value.@"null",
@@ -576,7 +656,14 @@ pub const Value = union(enum) {
             .time => return fail("sub operation is unsupported for time", error.UnsupportedOperation),
             .json => return fail("sub operation is unsupported for json", error.UnsupportedOperation),
             .interval => return fail("unsupported sub operator for interval value", error.UnsupportedOperation),
-            .numeric => |n| return numericValue(alloc, try n.rat.sub(alloc, try v.toRat(alloc)), n.is_bignumeric),
+            .numeric => |n| return numericValue(
+                alloc,
+                try n.rat.sub(alloc, try v.toRat(alloc)),
+                // Widen to the wider operand: BigQuery coerces
+                // NUMERIC op BIGNUMERIC to BIGNUMERIC, and rounding
+                // the result to scale 9 would discard real digits.
+                n.is_bignumeric or isBigNumeric(v),
+            ),
             .array => return fail("sub operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("sub operation is unsupported for struct", error.UnsupportedOperation),
             .safe => |p| return p.sub(alloc, v) catch Value.@"null",
@@ -588,7 +675,14 @@ pub const Value = union(enum) {
             .@"null" => return fail("mul on null value", error.NullValue),
             .int => |i| return Value{ .int = i *% try v.toInt64() },
             .float => |f| return Value{ .float = f * try v.toFloat64() },
-            .numeric => |n| return numericValue(alloc, try n.rat.mul(alloc, try v.toRat(alloc)), n.is_bignumeric),
+            .numeric => |n| return numericValue(
+                alloc,
+                try n.rat.mul(alloc, try v.toRat(alloc)),
+                // Widen to the wider operand: BigQuery coerces
+                // NUMERIC op BIGNUMERIC to BIGNUMERIC, and rounding
+                // the result to scale 9 would discard real digits.
+                n.is_bignumeric or isBigNumeric(v),
+            ),
             .safe => |p| return p.mul(alloc, v) catch Value.@"null",
             else => return fail("mul operation is unsupported for this type", error.UnsupportedOperation),
         }
@@ -608,7 +702,14 @@ pub const Value = union(enum) {
                 if (v2 == 0) return fail("zero divided error", error.DivideByZero);
                 return Value{ .float = f / v2 };
             },
-            .numeric => |n| return numericValue(alloc, try n.rat.div(alloc, try v.toRat(alloc)), n.is_bignumeric),
+            .numeric => |n| return numericValue(
+                alloc,
+                try n.rat.div(alloc, try v.toRat(alloc)),
+                // Widen to the wider operand: BigQuery coerces
+                // NUMERIC op BIGNUMERIC to BIGNUMERIC, and rounding
+                // the result to scale 9 would discard real digits.
+                n.is_bignumeric or isBigNumeric(v),
+            ),
             .safe => |p| return p.div(alloc, v) catch Value.@"null",
             else => return fail("div operation is unsupported for this type", error.UnsupportedOperation),
         }
@@ -1749,6 +1850,28 @@ fn parseTwoDigits(s: []const u8, max: i64) ValueError!i64 {
     return v;
 }
 
+/// The hour, and how many bytes it took.
+///
+/// Every Go layout here spells the hour `15`, which is stdHour and reads
+/// through getnum(value, false) — one *or two* digits. Minute (`04`) and
+/// second (`05`) are stdZeroMinute/stdZeroSecond, getnum(value, true), which
+/// is fixed-width. So "2020-11-30 7:34:44" parses in Go and "2020-11-30
+/// 7:4:44" does not, and the flexibility stops at the hour.
+///
+/// Returns null rather than an error so callers keep their own literal-kind
+/// message; nothing here can allocate.
+fn parseHour(s: []const u8) ?struct { value: i64, len: usize } {
+    if (s.len == 0 or !std.ascii.isDigit(s[0])) return null;
+    var value: i64 = s[0] - '0';
+    var len: usize = 1;
+    if (s.len > 1 and std.ascii.isDigit(s[1])) {
+        value = value * 10 + @as(i64, s[1] - '0');
+        len = 2;
+    }
+    if (value >= 24) return null;
+    return .{ .value = value, .len = len };
+}
+
 /// Reads leading decimal digits as sub-second micros (first 6 significant
 /// digits, remaining digits truncated). Returns micros and the consumed count.
 fn readFracMicros(s: []const u8) struct { micro: u32, len: usize } {
@@ -1767,23 +1890,29 @@ fn readFracMicros(s: []const u8) struct { micro: u32, len: usize } {
 
 /// Go parseTime("15:04:05.999999") -> microseconds since midnight.
 pub fn parseTimeMicros(s: []const u8) ValueError!i64 {
-    if (s.len < 8 or s[2] != ':' or s[5] != ':') return fail("invalid time literal", error.InvalidDate);
-    const hour = try parseTwoDigits(s[0..2], 24);
-    const min = try parseTwoDigits(s[3..5], 60);
-    const sec = try parseTwoDigits(s[6..8], 60);
+    const h = parseHour(s) orelse return fail("invalid time literal", error.InvalidDate);
+    var idx = h.len;
+    if (s.len < idx + 6 or s[idx] != ':' or s[idx + 3] != ':') {
+        return fail("invalid time literal", error.InvalidDate);
+    }
+    const min = try parseTwoDigits(s[idx + 1 .. idx + 3], 60);
+    const sec = try parseTwoDigits(s[idx + 4 .. idx + 6], 60);
+    idx += 6;
     var micro: i64 = 0;
-    if (s.len > 8) {
-        if (s[8] != '.') return fail("invalid time literal", error.InvalidDate);
-        const frac = readFracMicros(s[9..]);
-        if (9 + frac.len != s.len) return fail("invalid time literal", error.InvalidDate);
+    if (s.len > idx) {
+        if (s[idx] != '.') return fail("invalid time literal", error.InvalidDate);
+        const frac = readFracMicros(s[idx + 1 ..]);
+        if (idx + 1 + frac.len != s.len) return fail("invalid time literal", error.InvalidDate);
         micro = frac.micro;
     }
-    return (hour * 3600 + min * 60 + sec) * second_micros + micro;
+    return (h.value * 3600 + min * 60 + sec) * second_micros + micro;
 }
 
 /// Go parseDatetime -> civil microseconds (T or space separator).
 pub fn parseDatetimeMicros(s: []const u8) ValueError!i64 {
-    if (s.len < 19) return fail("invalid datetime literal", error.InvalidDate);
+    // 18, not 19: "YYYY-MM-DD" + separator + the shortest legal time-of-day,
+    // "H:MM:SS".
+    if (s.len < 18) return fail("invalid datetime literal", error.InvalidDate);
     const days = try parseDateDays(s[0..10]);
     if (s[10] != 'T' and s[10] != ' ') return fail("invalid datetime literal", error.InvalidDate);
     const tod = try parseTimeMicros(s[11..]);
@@ -1800,11 +1929,15 @@ pub fn parseTimestampMicros(s: []const u8) ValueError!i64 {
     if (s.len == 10) return days * 86400 * second_micros;
     if (s[10] != 'T' and s[10] != ' ') return fail("invalid timestamp literal", error.InvalidDate);
     const rest = s[11..];
-    if (rest.len < 8 or rest[2] != ':' or rest[5] != ':') return fail("invalid timestamp literal", error.InvalidDate);
-    const hour = try parseTwoDigits(rest[0..2], 24);
-    const min = try parseTwoDigits(rest[3..5], 60);
-    const sec = try parseTwoDigits(rest[6..8], 60);
-    var idx: usize = 8;
+    const h = parseHour(rest) orelse return fail("invalid timestamp literal", error.InvalidDate);
+    var idx = h.len;
+    if (rest.len < idx + 6 or rest[idx] != ':' or rest[idx + 3] != ':') {
+        return fail("invalid timestamp literal", error.InvalidDate);
+    }
+    const hour = h.value;
+    const min = try parseTwoDigits(rest[idx + 1 .. idx + 3], 60);
+    const sec = try parseTwoDigits(rest[idx + 4 .. idx + 6], 60);
+    idx += 6;
     var micro: i64 = 0;
     if (idx < rest.len and rest[idx] == '.') {
         const frac = readFracMicros(rest[idx + 1 ..]);
@@ -2010,7 +2143,10 @@ pub fn formatFloatGo(buf: []u8, f: f64) []const u8 {
 }
 
 // ----------------------------------------------------------------------
-// Collation comparison (mirrors zetasqlite_collate in function_register.go:
+// Value ordering. This backed the zetasqlite_collate collation until the
+// encodings became memcomparable and SQLite took the comparison over; it
+// remains the oracle the codec_sortable invariant tests assert against.
+// (Mirrors Go's function_register.go:
 // EQ first, then GT; comparison errors are swallowed as "false").
 // ----------------------------------------------------------------------
 
@@ -2045,10 +2181,62 @@ pub fn safeValue(alloc: std.mem.Allocator, inner: Value) !Value {
     return Value{ .safe = p };
 }
 
-pub fn numericValue(alloc: std.mem.Allocator, rat: Rat, is_bignumeric: bool) ValueError!Value {
+/// The sole construction point for a numeric Value, and therefore where the
+/// fixed-scale invariant is enforced: every path into a `.numeric` — analyzer
+/// literal, codec decode, PARSE_*, CAST, parameter and result coercion, and all
+/// four arithmetic operators — arrives here.
+///
+/// Rounding here rather than at encode time means an out-of-scale or
+/// out-of-range numeric can never exist, instead of existing in memory and
+/// failing later when something tries to store it.
+pub fn numericValue(alloc: std.mem.Allocator, rat_in: Rat, is_bignumeric: bool) ValueError!Value {
+    var rat = rat_in;
+    const unscaled = try rat.roundToScale(alloc, scaleFor(is_bignumeric));
+    // BIGNUMERIC's unscaled domain is exactly i256's, so roundToScale's
+    // conversion already bounded it. NUMERIC's 38 digits are narrower than the
+    // i128 that holds them, so it needs its own check.
+    if (!is_bignumeric and (unscaled > numeric_unscaled_max or unscaled < -numeric_unscaled_max)) {
+        return fail("numeric value out of range", error.NumericOutOfRange);
+    }
     const p = alloc.create(Numeric) catch return error.OutOfMemory;
     p.* = .{ .rat = rat, .is_bignumeric = is_bignumeric };
     return Value{ .numeric = p };
+}
+
+/// Builds a numeric from an unscaled integer already at the kind's scale.
+///
+/// Skips the rounding `numericValue` would redo: a decoder has the invariant by
+/// construction, and re-establishing it would cost a powTen, a bigint multiply
+/// and a divTrunc per numeric per row to reach the value it already had. The
+/// range check stays, because a hand-written blob can carry an unscaled value
+/// the width allows but the type does not.
+pub fn numericFromUnscaled(
+    alloc: std.mem.Allocator,
+    unscaled: i256,
+    is_bignumeric: bool,
+) ValueError!Value {
+    if (!is_bignumeric and (unscaled > numeric_unscaled_max or unscaled < -numeric_unscaled_max)) {
+        return fail("numeric value out of range", error.NumericOutOfRange);
+    }
+    var rat = Rat{
+        .num = big_int.Managed.initSet(alloc, unscaled) catch return error.OutOfMemory,
+        .den = try powTen(alloc, scaleFor(is_bignumeric)),
+    };
+    try rat.normalize(alloc);
+    const p = alloc.create(Numeric) catch return error.OutOfMemory;
+    p.* = .{ .rat = rat, .is_bignumeric = is_bignumeric };
+    return Value{ .numeric = p };
+}
+
+/// Whether `v` is a BIGNUMERIC, following `.safe`. Needed because `toRat`
+/// discards the flag, so arithmetic cannot otherwise see the right operand's
+/// kind.
+fn isBigNumeric(v: Value) bool {
+    return switch (v) {
+        .numeric => |n| n.is_bignumeric,
+        .safe => |p| isBigNumeric(p.*),
+        else => false,
+    };
 }
 
 /// Convenience for tests: NUMERIC/BIGNUMERIC from its decimal literal.
@@ -2354,6 +2542,53 @@ test "timestamp parse accepts every Go layout" {
     try std.testing.expectEqual(want, try parseTimestampMicros("2006-01-03 00:04:05+02"));
 }
 
+test "the hour may be one digit, as Go's `15` layout element allows" {
+    // Raw state data spells midnight "0:00:00" and morning "7:34:44". Go's
+    // isDatetime regex wants {2} and rejects those, so ToTime falls through to
+    // parseTimestamp, whose `15` accepts one digit — these used to die as
+    // "failed to convert %s to time.Time type" on both the insertAll bind path
+    // and the runtime CAST.
+    try std.testing.expectEqual(
+        try parseTimestampMicros("2024-01-05 00:00:00"),
+        try parseTimestampMicros("2024-01-05 0:00:00"),
+    );
+    try std.testing.expectEqual(
+        try parseTimestampMicros("2020-11-30 07:34:44"),
+        try parseTimestampMicros("2020-11-30 7:34:44"),
+    );
+    // The flexible width does not disturb what follows it: separator,
+    // fractional seconds and zone all still land.
+    try std.testing.expectEqual(
+        try parseTimestampMicros("2006-01-02T07:04:05.5Z"),
+        try parseTimestampMicros("2006-01-02T7:04:05.5Z"),
+    );
+    try std.testing.expectEqual(
+        try parseTimestampMicros("2006-01-02 07:04:05+02:30"),
+        try parseTimestampMicros("2006-01-02 7:04:05+02:30"),
+    );
+    // parseDatetime and parseTime spell the hour `15` too, and both are called
+    // directly (driver castParamValue, codec_binary) rather than only through
+    // the shape dispatch.
+    try std.testing.expectEqual(
+        try parseDatetimeMicros("2024-01-05 00:00:00"),
+        try parseDatetimeMicros("2024-01-05 0:00:00"),
+    );
+    try std.testing.expectEqual(
+        try parseTimeMicros("07:34:44"),
+        try parseTimeMicros("7:34:44"),
+    );
+
+    // Minute and second are stdZeroMinute/stdZeroSecond — fixed width. Go
+    // rejects these and so do we.
+    try std.testing.expectError(error.InvalidDate, parseTimeMicros("7:4:44"));
+    try std.testing.expectError(error.InvalidDate, parseTimeMicros("7:04:4"));
+    try std.testing.expectError(error.InvalidDate, parseTimestampMicros("2024-01-05 7:4:44"));
+    // An hour still has to be a digit, and still has to be an hour.
+    try std.testing.expectError(error.InvalidDate, parseTimestampMicros("2024-01-05 :00:00"));
+    try std.testing.expectError(error.InvalidDate, parseTimestampMicros("2024-01-05 24:00:00"));
+    try std.testing.expectError(error.InvalidDate, parseTimeMicros("9"));
+}
+
 test "datetime and time formatting / parsing" {
     var buf: [48]u8 = undefined;
     const dt = try parseDatetimeMicros("2024-01-15 10:30:00");
@@ -2572,6 +2807,30 @@ test "Rat fromScaledTwosComplement (proto byte layout)" {
     // NUMERIC '-0.000000001' == -1 scaled (0xff sign-extended).
     const r5 = try Rat.fromScaledTwosComplement(alloc, &.{0xff}, 9);
     try std.testing.expectEqualStrings("-1/1000000000", try r5.ratString(alloc));
+}
+
+test "numeric rounding breaks ties away from zero" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // Exact halves at the scale boundary. Corpus cases 618/619 only ever round
+    // a trailing 9, which half-away-from-zero, half-up and half-even all agree
+    // on, so nothing there pins the tie rule. BigQuery documents half away from
+    // zero: the magnitude always grows, so the negative twin must go to -2 and
+    // not to -1.
+    const cases = [_]struct { in: []const u8, out: []const u8, big: bool }{
+        .{ .in = "0.0000000005", .out = "0.000000001", .big = false },
+        .{ .in = "-0.0000000005", .out = "-0.000000001", .big = false },
+        .{ .in = "0.0000000015", .out = "0.000000002", .big = false },
+        .{ .in = "-0.0000000015", .out = "-0.000000002", .big = false },
+        // Half-even would give 0.000000002 for the first of those.
+        .{ .in = "0.000000000000000000000000000000000000005", .out = "0.00000000000000000000000000000000000001", .big = true },
+    };
+    for (cases) |tc| {
+        const v = try numericValue(alloc, try Rat.setString(alloc, tc.in), tc.big);
+        try std.testing.expectEqualStrings(tc.out, try v.numeric.toText(alloc));
+    }
 }
 
 test "compareForCollation orderings" {

@@ -95,9 +95,20 @@ fn inverseEqual(a: Value, b: Value) bool {
         .int => |x| b == .int and b.int == x,
         .float => |x| b == .float and b.float == x,
         .bool => |x| b == .bool and b.bool == x,
+        // Go's DATE/DATETIME/TIME/TIMESTAMP are `time.Time` — a comparable
+        // struct — so `v == value` matches two separate decodes of the same
+        // instant. Compare the payload for the same effect.
         .date => |x| b == .date and b.date == x,
+        .datetime => |x| b == .datetime and b.datetime == x,
+        .time => |x| b == .time and b.time == x,
+        .timestamp => |x| b == .timestamp and b.timestamp == x,
         .string => |x| b == .string and std.mem.eql(u8, x, b.string),
+        .json => |x| b == .json and std.mem.eql(u8, x, b.json),
         .bytes => |x| b == .bytes and std.mem.eql(u8, x, b.bytes),
+        // NUMERIC and INTERVAL reach Go's `==` as *NumericValue/*IntervalValue,
+        // so it compares pointers and two decodes of the same number never
+        // match: the frame keeps them. Arrays and structs are not comparable in
+        // Go at all. Both stay "never equal" here.
         else => false,
     };
 }

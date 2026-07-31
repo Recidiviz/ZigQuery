@@ -22,51 +22,47 @@ pub const TableMeta = struct {
     schema: ?std.json.Value = null,
     /// "TABLE" or "VIEW".
     kind: []const u8 = "TABLE",
+    /// The body the client posted. Every key it carries that the server does
+    /// not compute — `clustering`, `labels`, `timePartitioning`, `view`, and
+    /// whatever a future client sends — survives into the resource, because Go
+    /// stores the posted map rather than a struct.
+    posted: ?std.json.Value = null,
+};
+
+/// The keys tables.list echoes, from Go's TableListTables. Everything else in
+/// the stored resource (schema, selfLink, view, ...) is dropped.
+const list_entry_keys = [_][]const u8{
+    "clustering",
+    "expirationTime",
+    "friendlyName",
+    "labels",
+    "rangePartitioning",
+    "timePartitioning",
 };
 
 /// Full table resource, as returned by tables.insert and tables.get.
 ///
-/// Key order is alphabetical, matching google-api-go-client's structs:
-/// creationTime, id, kind, lastModifiedTime, schema, selfLink, tableReference,
-/// type.
+/// Key order is alphabetical: Go stores this as a map and encoding/json sorts
+/// map keys, so `creationTime, id, kind, lastModifiedTime, schema, selfLink,
+/// tableReference, type` is what a client sees — and any posted key lands in
+/// its alphabetical place among them.
 pub fn writeTable(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
     m: TableMeta,
 ) !void {
+    var obj = try baseResource(arena, m, null);
+
     const ts = try std.fmt.allocPrint(arena, "{d}", .{m.created_millis});
-
-    try out.appendSlice(arena, "{\"creationTime\":");
-    try errors.writeJsonString(arena, out, ts);
-    try out.appendSlice(arena, ",\"id\":");
-    try errors.writeJsonString(arena, out, try std.fmt.allocPrint(
-        arena,
-        "{s}:{s}.{s}",
-        .{ m.project_id, m.dataset_id, m.table_id },
-    ));
-    try out.appendSlice(arena, ",\"kind\":\"bigquery#table\",\"lastModifiedTime\":");
-    try errors.writeJsonString(arena, out, ts);
-
-    if (m.schema) |s| {
-        try out.appendSlice(arena, ",\"schema\":");
-        try writeJsonValue(arena, out, s);
-    }
-
-    try out.appendSlice(arena, ",\"selfLink\":");
-    try errors.writeJsonString(arena, out, try std.fmt.allocPrint(
+    try obj.put(arena, "lastModifiedTime", .{ .string = ts });
+    try obj.put(arena, "selfLink", .{ .string = try std.fmt.allocPrint(
         arena,
         "http://{s}/bigquery/v2/projects/{s}/datasets/{s}/tables/{s}",
         .{ m.endpoint, m.project_id, m.dataset_id, m.table_id },
-    ));
-    try out.appendSlice(arena, ",\"tableReference\":{\"datasetId\":");
-    try errors.writeJsonString(arena, out, m.dataset_id);
-    try out.appendSlice(arena, ",\"projectId\":");
-    try errors.writeJsonString(arena, out, m.project_id);
-    try out.appendSlice(arena, ",\"tableId\":");
-    try errors.writeJsonString(arena, out, m.table_id);
-    try out.appendSlice(arena, "},\"type\":");
-    try errors.writeJsonString(arena, out, m.kind);
-    try out.append(arena, '}');
+    ) });
+    if (m.schema) |s| try obj.put(arena, "schema", s);
+
+    try writeJsonValue(arena, out, .{ .object = obj });
 }
 
 /// The abbreviated form tables.list returns: no schema, no selfLink,
@@ -76,24 +72,66 @@ pub fn writeTableListEntry(
     out: *std.ArrayList(u8),
     m: TableMeta,
 ) !void {
+    const obj = try baseResource(arena, m, &list_entry_keys);
+    try writeJsonValue(arena, out, .{ .object = obj });
+}
+
+/// Keys the emulator always computes, whatever the client posted.
+fn isServerComputedKey(k: []const u8) bool {
+    const computed = [_][]const u8{
+        "creationTime",   "id",         "kind",   "lastModifiedTime",
+        "selfLink",       "schema",     "type",   "tableReference",
+    };
+    for (computed) |c| {
+        if (std.mem.eql(u8, k, c)) return true;
+    }
+    return false;
+}
+
+/// The posted body with the fields the server owns written over it. When
+/// `keep` is non-null, only those posted keys are carried through — that is
+/// how tables.list narrows the resource to Go's TableListTables.
+fn baseResource(
+    arena: std.mem.Allocator,
+    m: TableMeta,
+    keep: ?[]const []const u8,
+) !std.json.ObjectMap {
+    var obj: std.json.ObjectMap = .empty;
+    if (m.posted) |p| {
+        if (p == .object) {
+            var it = p.object.iterator();
+            while (it.next()) |kv| {
+                const k = kv.key_ptr.*;
+                // tableReference is re-derived, and a stale creationTime or
+                // selfLink read back out of storage must not win.
+                if (isServerComputedKey(k)) continue;
+                if (keep) |allowed| {
+                    for (allowed) |a| {
+                        if (std.mem.eql(u8, k, a)) break;
+                    } else continue;
+                }
+                try obj.put(arena, k, kv.value_ptr.*);
+            }
+        }
+    }
+
     const ts = try std.fmt.allocPrint(arena, "{d}", .{m.created_millis});
-    try out.appendSlice(arena, "{\"creationTime\":");
-    try errors.writeJsonString(arena, out, ts);
-    try out.appendSlice(arena, ",\"id\":");
-    try errors.writeJsonString(arena, out, try std.fmt.allocPrint(
+    try obj.put(arena, "creationTime", .{ .string = ts });
+    try obj.put(arena, "id", .{ .string = try std.fmt.allocPrint(
         arena,
         "{s}:{s}.{s}",
         .{ m.project_id, m.dataset_id, m.table_id },
-    ));
-    try out.appendSlice(arena, ",\"kind\":\"bigquery#table\",\"tableReference\":{\"datasetId\":");
-    try errors.writeJsonString(arena, out, m.dataset_id);
-    try out.appendSlice(arena, ",\"projectId\":");
-    try errors.writeJsonString(arena, out, m.project_id);
-    try out.appendSlice(arena, ",\"tableId\":");
-    try errors.writeJsonString(arena, out, m.table_id);
-    try out.appendSlice(arena, "},\"type\":");
-    try errors.writeJsonString(arena, out, m.kind);
-    try out.append(arena, '}');
+    ) });
+    try obj.put(arena, "kind", .{ .string = "bigquery#table" });
+
+    var ref: std.json.ObjectMap = .empty;
+    try ref.put(arena, "datasetId", .{ .string = m.dataset_id });
+    try ref.put(arena, "projectId", .{ .string = m.project_id });
+    try ref.put(arena, "tableId", .{ .string = m.table_id });
+    try obj.put(arena, "tableReference", .{ .object = ref });
+
+    try obj.put(arena, "type", .{ .string = m.kind });
+    return obj;
 }
 
 /// Re-emits a parsed JSON value. Object keys are sorted, matching Go's

@@ -38,7 +38,7 @@ pub const ExpressionData = struct {
 
 /// LiteralData represents literal value data.
 pub const LiteralData = struct {
-    value: Value = .@"null",
+    value: Value = .null,
     /// String representation of the type kind for reference.
     type_name: []const u8 = "",
     location: ?*ParseLocation = null,
@@ -526,3 +526,19 @@ pub const MergeWhenClauseData = struct {
     insert_values: []const ExpressionData = &.{},
     set_items: []const *SetItemData = &.{},
 };
+
+/// Shared error set for extraction and transformation.
+pub const Error = error{
+    /// Node/statement/scan/expression kind not handled by the port yet
+    Unimplemented,
+    /// Node kind the Go original also rejects ("unsupported ... type").
+    UnsupportedNode,
+    /// Builtin function with no zetasqlite runtime mapping
+    UnsupportedFunction,
+    /// A proto field the Go accessors could always read is missing.
+    InvalidAST,
+    /// Go panics in GetQualifiedColumnRef; the port returns this instead.
+    ColumnNotFound,
+    /// validateColumnData mismatch (Go: "column validation failed ...").
+    ValidationFailed,
+} || value_mod.ValueError || sqlbuilder.Error || spec.Error;

@@ -10,7 +10,6 @@ const pb = @import("../../proto/resolved_ast.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const types_data = @import("types_data.zig");
 const context = @import("context.zig");
-const interfaces = @import("types_interfaces.zig");
 const extractor_mod = @import("extractor.zig");
 
 // Expression transformers.
@@ -47,7 +46,7 @@ const scan_recursive = @import("../transformer/scan_recursive.zig");
 const scan_recursive_ref = @import("../transformer/scan_recursive_ref.zig");
 const with_entry = @import("../transformer/with_entry.zig");
 
-pub const Error = interfaces.Error;
+pub const Error = types_data.Error;
 pub const NodeExtractor = extractor_mod.NodeExtractor;
 
 const ExpressionData = types_data.ExpressionData;
@@ -56,7 +55,9 @@ const ScanData = types_data.ScanData;
 const ColumnData = types_data.ColumnData;
 const TransformContext = context.TransformContext;
 
-/// Go QueryCoordinator: orchestrates the transformation by delegating to
+
+/// Orchestrates the transformation of the extracted query data
+/// to by delegating to
 /// the appropriate transformers.
 pub const QueryCoordinator = struct {
     alloc: std.mem.Allocator,
@@ -168,77 +169,31 @@ pub const QueryCoordinator = struct {
         const token = try ctx.fragmentContext().enterScope();
         defer ctx.fragmentContext().exitScope(token);
 
-        var alias_base: []const u8 = undefined;
         var query: *sqlbuilder.SelectStatement = undefined;
-        switch (scan_data.type) {
-            .table => {
-                alias_base = "table_scan";
-                query = try scan_table.transform(self, scan_data, ctx);
-            },
-            .join => {
-                alias_base = "join_scan";
-                query = try scan_join.transform(self, scan_data, ctx);
-            },
-            .filter => {
-                alias_base = "filter_scan";
-                query = try scan_filter.transform(self, scan_data, ctx);
-            },
-            .project => {
-                alias_base = "project_scan";
-                query = try scan_project.transform(self, scan_data, ctx);
-            },
-            .aggregate => {
-                alias_base = "aggregate_scan";
-                query = try scan_aggregate.transform(self, scan_data, ctx);
-            },
-            .order_by => {
-                alias_base = "order_by_scan";
-                query = try scan_orderby.transform(self, scan_data, ctx);
-            },
-            .limit => {
-                alias_base = "limit_scan";
-                query = try scan_limit.transform(self, scan_data, ctx);
-            },
-            .set_op => {
-                alias_base = "set_op_scan";
-                query = try scan_setop.transform(self, scan_data, ctx);
-            },
-            .single_row => {
-                alias_base = "single_row_scan";
-                query = try scan_single_row.transform(self, scan_data, ctx);
-            },
-            .with => {
-                alias_base = "with_scan";
-                query = try scan_with.transform(self, scan_data, ctx);
-            },
-            .with_ref => {
-                alias_base = "with_ref_scan";
-                query = try scan_with_ref.transform(self, scan_data, ctx);
-            },
-            // Go: "WithEntry scans should use TransformWithEntry method"
-            .with_entry => return error.UnsupportedNode,
-            .array => {
-                alias_base = "array_scan";
-                query = try scan_array.transform(self, scan_data, ctx);
-            },
-            .analytic => {
-                alias_base = "analytic_scan";
-                query = try scan_analytic.transform(self, scan_data, ctx);
-            },
-            .recursive => {
-                alias_base = "recursive_scan";
-                query = try scan_recursive.transform(self, scan_data, ctx);
-            },
-            .recursive_ref => {
-                alias_base = "recursive_ref_scan";
-                query = try scan_recursive_ref.transform(self, scan_data, ctx);
-            },
-        }
+        query = switch (scan_data.type) {
+            .table          => try scan_table.transform(self, scan_data, ctx),
+            .join           => try scan_join.transform(self, scan_data, ctx),
+            .filter         => try scan_filter.transform(self, scan_data, ctx),
+            .project        => try scan_project.transform(self, scan_data, ctx),
+            .aggregate      => try scan_aggregate.transform(self, scan_data, ctx),
+            .order_by       => try scan_orderby.transform(self, scan_data, ctx),
+            .limit          => try scan_limit.transform(self, scan_data, ctx),
+            .set_op         => try scan_setop.transform(self, scan_data, ctx),
+            .single_row     => try scan_single_row.transform(self, scan_data, ctx),
+            .with           => try scan_with.transform(self, scan_data, ctx),
+            .with_ref       => try scan_with_ref.transform(self, scan_data, ctx),
+            // WithEntry scans should use TransformWithEntry method
+            .with_entry     => return error.UnsupportedNode,
+            .array          => try scan_array.transform(self, scan_data, ctx),
+            .analytic       => try scan_analytic.transform(self, scan_data, ctx),
+            .recursive      => try scan_recursive.transform(self, scan_data, ctx),
+            .recursive_ref  => try scan_recursive_ref.transform(self, scan_data, ctx)
+        };
 
         return .{
             .query = query,
-            .alias = try std.fmt.allocPrint(self.alloc, "{s}_{s}", .{
-                alias_base,
+            .alias = try std.fmt.allocPrint(self.alloc, "{s}_scan_{s}", .{
+                @tagName(scan_data.type),
                 ctx.fragmentContext().getID(),
             }),
             .columns = scan_data.column_list,

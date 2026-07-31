@@ -19,11 +19,10 @@ const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const common = @import("common.zig");
 
-const Error = interfaces.Error;
+const Error = types_data.Error;
 const ExpressionData = types_data.ExpressionData;
 const SQLExpression = sqlbuilder.SQLExpression;
 
@@ -129,9 +128,10 @@ pub fn transform(
         try partition_by.ensureTotalCapacity(alloc, ws_data.partition_by.len);
         for (ws_data.partition_by) |part_data| {
             const expr = try coord.transformExpression(part_data.*, ctx);
-            // Apply collation so SQLite partitions rows based on the
-            // zetasqlite_collate return value.
-            expr.collation = "zetasqlite_collate";
+            // This used to apply COLLATE zetasqlite_collate so SQLite
+            // partitioned on the decoded value. Unnecessary since the encodings
+            // became memcomparable: SQLite's own byte comparison is now the
+            // right one, and the collation no longer exists.
             try partition_by.append(alloc, expr);
         }
 

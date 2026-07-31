@@ -24,6 +24,7 @@ const driver = zetasqlite.driver;
 const govalue = @import("govalue.zig");
 const schema = @import("schema.zig");
 const spec = zetasqlite.spec;
+const value_mod = zetasqlite.value;
 const errors = @import("../../error.zig");
 
 /// Writes one cell as `{"v":...}`.
@@ -163,6 +164,42 @@ fn cellByteLen(arena: std.mem.Allocator, cell: driver.Cell) std.mem.Allocator.Er
             break :blk n;
         },
     };
+}
+
+/// True when any output column is a bare top-level TIMESTAMP, i.e. when
+/// `useInt64Timestamp` would change the rendering at all.
+pub fn hasInt64TimestampColumn(cols: []const driver.OutputColumn) bool {
+    for (cols) |c| {
+        if (c.type.typeKind() == .TYPE_TIMESTAMP) return true;
+    }
+    return false;
+}
+
+/// Go internal/types.Format: under `formatOptions.useInt64Timestamp`, a
+/// TIMESTAMP cell is re-rendered as int64 microseconds instead of the
+/// "sec.microRemainder" form.
+///
+/// Top level only. Go indexes `schema.Fields[colIdx]` per row cell and never
+/// recurses, so a TIMESTAMP nested in a STRUCT or an ARRAY keeps the float
+/// form — the asymmetry clients have to work around, reproduced rather than
+/// fixed. Matching on the cell tag gets the same set: the driver only yields
+/// `.timestamp` for a scalar column, never for one nested in a container.
+pub fn formatInt64Timestamps(
+    arena: std.mem.Allocator,
+    row: []const driver.Cell,
+) std.mem.Allocator.Error![]const driver.Cell {
+    var converted: ?[]driver.Cell = null;
+    for (row, 0..) |cell, i| {
+        if (cell != .timestamp) continue;
+        const micros = value_mod.parseTimestampApi(cell.timestamp) catch continue;
+        if (converted == null) {
+            const dup = try arena.alloc(driver.Cell, row.len);
+            @memcpy(dup, row);
+            converted = dup;
+        }
+        converted.?[i] = .{ .int = micros };
+    }
+    return converted orelse row;
 }
 
 /// Applies coerceNullArrays across a whole row.

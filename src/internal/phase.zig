@@ -19,6 +19,12 @@
 //! engine is ever driven from several threads.
 
 const std = @import("std");
+const build_options = @import("build_options");
+
+/// Whether the codec phases are instrumented in this build (`-Dcodec-timers`).
+/// Readers of `codec*` totals should surface this: with it false those numbers
+/// are zero because nothing measured them, not because nothing happened.
+pub const codec_timers_enabled = build_options.codec_timers;
 
 pub const Phase = enum {
     /// GoogleSQL analysis: catalog delta render, the push into the C++
@@ -35,9 +41,17 @@ pub const Phase = enum {
     sqlite_step,
     /// sqlite3_exec.
     sqlite_exec,
-    /// Value codec: base64(binary codec) in and out. Runs at every UDF
-    /// boundary (convertArgs / result) and at the client boundary.
-    codec,
+    /// Value codec, encode direction: Value -> SqliteRepr. Runs at every UDF
+    /// boundary (result) and at the client boundary (bind).
+    codec_encode,
+    /// Value codec, decode direction: SqliteRepr -> Value. Runs at every UDF
+    /// boundary (arguments) and at the client boundary (row read).
+    codec_decode,
+    /// Value -> SQL literal text for values embedded in generated SQL rather
+    /// than bound. Once per call site at transform time, not once per row —
+    /// counted apart because it is the only codec work whose cost does not
+    /// scale with rows.
+    codec_literal,
 };
 
 /// Who asked. "SQLite is slow" could mean the caller's query, or the
@@ -92,6 +106,21 @@ pub const Timer = struct {
     }
 };
 
+/// A `Timer` for the codec phases, which compiles to nothing unless
+/// `-Dcodec-timers`. Same shape as `Timer` so call sites read identically:
+/// `var t = phase.CodecTimer.begin(.codec_encode); defer t.end();`
+///
+/// Separate from `Timer` rather than a flag inside it because only the codec
+/// phases run often enough for the instrumentation to matter — an `.analyze`
+/// span happens once per statement, a `.codec_decode` span happens millions of
+/// times per query.
+pub const CodecTimer = if (codec_timers_enabled) Timer else struct {
+    pub fn begin(_: Phase) @This() {
+        return .{};
+    }
+    pub fn end(_: @This()) void {}
+};
+
 /// Sets `source` for a scope and restores it, so a metadata call that reaches
 /// the engine (or vice versa) still attributes its innermost work correctly.
 pub const SourceScope = struct {
@@ -140,6 +169,21 @@ pub fn sqliteTotalNs() u64 {
 pub fn sqliteTotalNsFrom(s: Source) u64 {
     var sum: u64 = 0;
     for (sqlite_phases) |p| sum += totalNsFrom(p, s);
+    return sum;
+}
+
+/// The codec phases that partition the work — disjoint, so they may be summed.
+pub const codec_phases = [_]Phase{ .codec_encode, .codec_decode, .codec_literal };
+
+pub fn codecTotalNs() u64 {
+    var sum: u64 = 0;
+    for (codec_phases) |p| sum += totalNs(p);
+    return sum;
+}
+
+pub fn codecCount() u64 {
+    var sum: u64 = 0;
+    for (codec_phases) |p| sum += count(p);
     return sum;
 }
 
@@ -231,6 +275,28 @@ test "source attributes a span and is restored on scope exit" {
     try testing.expectEqual(@as(u64, 1), countFrom(.sqlite_prepare, .metadata));
     try testing.expectEqual(@as(u64, 0), countFrom(.sqlite_prepare, .engine));
     try testing.expectEqual(@as(u64, 1), count(.sqlite_prepare));
+}
+
+test "codec totals span the disjoint codec phases" {
+    reset();
+    defer reset();
+    for (codec_phases) |p| {
+        var t = Timer.begin(p);
+        t.end();
+    }
+    try testing.expectEqual(@as(u64, 3), codecCount());
+}
+
+test "CodecTimer records only when the build option is on" {
+    reset();
+    defer reset();
+    var t = CodecTimer.begin(.codec_encode);
+    while (nowNs() == @as(u64, if (codec_timers_enabled) t.start else 0)) {
+        if (!codec_timers_enabled) break;
+    }
+    t.end();
+    const expected: u64 = if (codec_timers_enabled) 1 else 0;
+    try testing.expectEqual(expected, count(.codec_encode));
 }
 
 test "sqlite totals span every sqlite phase" {

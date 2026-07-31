@@ -9,12 +9,19 @@
 //! Aggregator's Step recognizes and strips from the argument list
 //! (parseAggregateOptions), exactly like Go.
 //!
-//! Deviation from Go (both sides owned by this file, so lossless): where Go
-//! embeds the payload Value with encoding/json marshaling (lossy for e.g.
-//! dates), we embed base64(binary codec v1) so every foundation Value kind
-//! round-trips exactly. The surrounding JSON structure matches Go
-//! byte-for-byte otherwise, and parsing accepts only what the producers
-//! below emit.
+//! Deviation from Go, both sides owned by this file: Go builds a JSON marker
+//! string and embeds the payload Value with encoding/json marshaling, which is
+//! lossy for e.g. dates. This uses a BYTES marker carrying the self-delimiting
+//! codec directly — magic, a kind byte, then the payload.
+//!
+//! The JSON was worth dropping because it forced base64 on the payload: JSON
+//! strings cannot hold arbitrary bytes, so every marker paid an encode and a
+//! decode purely to survive the envelope. That cost is per row, not per query —
+//! zetasqlite_order_by takes the sort key, so it runs once per row of every
+//! ordered aggregate. Nothing observable depended on the JSON: a marker is
+//! produced and consumed inside one statement, never stored (generated SQL
+//! holds the *call*, not the marker), so no golden, corpus case or database
+//! could ever see one.
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -23,15 +30,21 @@ const codec = @import("../codec_binary.zig");
 pub const Value = bind.Value;
 pub const Error = bind.Error;
 
-// Go AggregatorFuncOptionType constants.
-pub const type_distinct = "aggregate_distinct";
-pub const type_limit = "aggregate_limit";
-pub const type_order_by = "aggregate_order_by";
-pub const type_ignore_nulls = "aggregate_ignore_nulls";
-pub const type_having_max = "aggregate_having_max";
-pub const type_having_min = "aggregate_having_min";
+/// Marks an argument as an option rather than data. A marker rides in the
+/// argument list beside real values, so it has to be self-identifying, and any
+/// in-band scheme has some collision surface: this one needs a BYTES value
+/// whose first 12 bytes are exactly the magic.
+const magic = "\x00\xffzqAGGOPT\xff\x00";
 
-const marker_prefix = "{\"type\":\"aggregate_";
+/// Go's AggregatorFuncOptionType, as a byte.
+const Kind = enum(u8) {
+    distinct = 1,
+    ignore_nulls = 2,
+    limit = 3,
+    order_by = 4,
+    having_max = 5,
+    having_min = 6,
+};
 
 /// Go AggregateOrderBy: one per zetasqlite_order_by argument, carrying the
 /// (per-row) sort key value.
@@ -59,79 +72,51 @@ pub const AggregatorOption = struct {
 
 // ----------------------------------------------------------------------
 // Producers (Go DISTINCT()/LIMIT()/IGNORE_NULLS()/ORDER_BY()/HAVING_*()).
-// Each returns a StringValue holding the JSON marker.
+// Each returns a BytesValue holding the marker.
 // ----------------------------------------------------------------------
 
+/// `magic ++ kind ++ extra ++ codec(value)`, where a kind that carries no
+/// value stops after `extra`.
+fn marker(alloc: std.mem.Allocator, kind: Kind, extra: []const u8, value: ?Value) Error![]u8 {
+    const encoded: []const u8 = if (value) |v| try codec.encodeBinaryValue(alloc, v) else "";
+    var out: std.ArrayList(u8) = .empty;
+    try out.ensureTotalCapacity(alloc, magic.len + 1 + extra.len + encoded.len);
+    out.appendSliceAssumeCapacity(magic);
+    out.appendAssumeCapacity(@intFromEnum(kind));
+    out.appendSliceAssumeCapacity(extra);
+    out.appendSliceAssumeCapacity(encoded);
+    return out.toOwnedSlice(alloc);
+}
+
 pub fn DISTINCT(alloc: std.mem.Allocator) Error!Value {
-    return .{ .string = try alloc.dupe(
-        u8,
-        "{\"type\":\"aggregate_distinct\",\"value\":null}",
-    ) };
+    return .{ .bytes = try marker(alloc, .distinct, "", null) };
 }
 
 pub fn IGNORE_NULLS(alloc: std.mem.Allocator) Error!Value {
-    return .{ .string = try alloc.dupe(
-        u8,
-        "{\"type\":\"aggregate_ignore_nulls\",\"value\":null}",
-    ) };
+    return .{ .bytes = try marker(alloc, .ignore_nulls, "", null) };
 }
 
 pub fn LIMIT(alloc: std.mem.Allocator, limit: i64) Error!Value {
-    return .{ .string = try std.fmt.allocPrint(
-        alloc,
-        "{{\"type\":\"aggregate_limit\",\"value\":{d}}}",
-        .{limit},
-    ) };
+    var le: [8]u8 = undefined;
+    std.mem.writeInt(i64, &le, limit, .little);
+    return .{ .bytes = try marker(alloc, .limit, &le, null) };
 }
 
 pub fn ORDER_BY(alloc: std.mem.Allocator, value: Value, is_asc: bool) Error!Value {
-    const embedded = try embedValue(alloc, value);
-    return .{ .string = try std.fmt.allocPrint(
-        alloc,
-        "{{\"type\":\"aggregate_order_by\",\"value\":{{\"value\":\"{s}\",\"isAsc\":{s}}}}}",
-        .{ embedded, if (is_asc) "true" else "false" },
-    ) };
+    return .{ .bytes = try marker(alloc, .order_by, &.{@intFromBool(is_asc)}, value) };
 }
 
 pub fn HAVING_MAX(alloc: std.mem.Allocator, value: Value) Error!Value {
-    return havingMarker(alloc, type_having_max, value);
+    return .{ .bytes = try marker(alloc, .having_max, "", value) };
 }
 
 pub fn HAVING_MIN(alloc: std.mem.Allocator, value: Value) Error!Value {
-    return havingMarker(alloc, type_having_min, value);
-}
-
-fn havingMarker(alloc: std.mem.Allocator, comptime type_name: []const u8, value: Value) Error!Value {
-    const embedded = try embedValue(alloc, value);
-    return .{ .string = try std.fmt.allocPrint(
-        alloc,
-        "{{\"type\":\"" ++ type_name ++ "\",\"value\":\"{s}\"}}",
-        .{embedded},
-    ) };
-}
-
-/// base64(binary codec v1) of any foundation Value (NULL included).
-fn embedValue(alloc: std.mem.Allocator, v: Value) Error![]u8 {
-    const bin = try codec.encodeBinaryValue(alloc, v);
-    defer alloc.free(bin);
-    const encoder = std.base64.standard.Encoder;
-    const out = try alloc.alloc(u8, encoder.calcSize(bin.len));
-    _ = encoder.encode(out, bin);
-    return out;
-}
-
-fn parseEmbedded(alloc: std.mem.Allocator, b64: []const u8) Error!Value {
-    const decoder = std.base64.standard.Decoder;
-    const n = decoder.calcSizeForSlice(b64) catch return error.CorruptData;
-    const bin = try alloc.alloc(u8, n);
-    defer alloc.free(bin);
-    decoder.decode(bin, b64) catch return error.CorruptData;
-    return codec.decodeBinaryValue(alloc, bin);
+    return .{ .bytes = try marker(alloc, .having_min, "", value) };
 }
 
 // ----------------------------------------------------------------------
-// parseAggregateOptions (Go parseAggregateOptions): splits marker strings
-// out of the raw argument list.
+// parseAggregateOptions (Go parseAggregateOptions): splits markers out of the
+// raw argument list.
 // ----------------------------------------------------------------------
 
 pub const ParsedArgs = struct {
@@ -147,13 +132,13 @@ pub fn parseAggregateOptions(alloc: std.mem.Allocator, args: []const Value) Erro
     var order_by: std.ArrayList(*AggregateOrderBy) = .empty;
 
     for (args) |arg| {
-        // Go tries arg.ToString() + json.Unmarshal on every arg and keeps
-        // args that fail either step; only marker-shaped strings qualify.
-        if (arg != .string or !std.mem.startsWith(u8, arg.string, marker_prefix)) {
+        // Go tries arg.ToString() + json.Unmarshal on every arg and keeps args
+        // that fail either step; only marker-shaped BYTES qualify here.
+        if (arg != .bytes or !std.mem.startsWith(u8, arg.bytes, magic)) {
             try filtered.append(alloc, arg);
             continue;
         }
-        if (try applyOption(alloc, arg.string, opt, &order_by)) continue;
+        if (try applyOption(alloc, arg.bytes[magic.len..], opt, &order_by)) continue;
         try filtered.append(alloc, arg);
     }
 
@@ -161,72 +146,54 @@ pub fn parseAggregateOptions(alloc: std.mem.Allocator, args: []const Value) Erro
     return .{ .values = try filtered.toOwnedSlice(alloc), .opt = opt };
 }
 
-/// Parses one marker string; returns false when it is not a recognized
-/// option (the arg then stays in the filtered list, like Go's default case).
+/// Parses one marker body (everything after the magic); returns false when it
+/// is not a recognized option, and the arg then stays in the filtered list like
+/// Go's default case.
 fn applyOption(
     alloc: std.mem.Allocator,
-    s: []const u8,
+    body: []const u8,
     opt: *AggregatorOption,
     order_by: *std.ArrayList(*AggregateOrderBy),
 ) Error!bool {
-    // s = {"type":"aggregate_<kind>","value":<payload>}  (fixed field order:
-    // this parser only needs to read what the producers above emit).
-    var rest = s["{\"type\":\"".len..];
-    const type_end = std.mem.indexOfScalar(u8, rest, '"') orelse return false;
-    const type_name = rest[0..type_end];
-    rest = rest[type_end..];
-
-    if (std.mem.eql(u8, type_name, type_distinct)) {
-        opt.distinct = true;
-        return true;
+    if (body.len < 1) return false;
+    // An unknown byte means this is not our marker (or is from a build that
+    // knows a kind this one does not), so it stays in the argument list.
+    const kind = std.enums.fromInt(Kind, body[0]) orelse return false;
+    const rest = body[1..];
+    switch (kind) {
+        .distinct => {
+            opt.distinct = true;
+            return true;
+        },
+        .ignore_nulls => {
+            opt.ignore_nulls = true;
+            return true;
+        },
+        .limit => {
+            if (rest.len != 8) return false;
+            opt.limit = std.mem.readInt(i64, rest[0..8], .little);
+            return true;
+        },
+        .order_by => {
+            if (rest.len < 1) return false;
+            const item = try alloc.create(AggregateOrderBy);
+            item.* = .{
+                .value = try codec.decodeBinaryValue(alloc, rest[1..]),
+                .is_asc = rest[0] != 0,
+            };
+            try order_by.append(alloc, item);
+            return true;
+        },
+        .having_max, .having_min => {
+            const modifier = try alloc.create(AggregateHavingModifier);
+            modifier.* = .{
+                .kind = if (kind == .having_max) .max else .min,
+                .value = try codec.decodeBinaryValue(alloc, rest),
+            };
+            opt.having_modifier = modifier;
+            return true;
+        },
     }
-    if (std.mem.eql(u8, type_name, type_ignore_nulls)) {
-        opt.ignore_nulls = true;
-        return true;
-    }
-
-    if (!std.mem.startsWith(u8, rest, "\",\"value\":")) return false;
-    var payload = rest["\",\"value\":".len..];
-    if (payload.len < 1 or payload[payload.len - 1] != '}') return false;
-    payload = payload[0 .. payload.len - 1];
-
-    if (std.mem.eql(u8, type_name, type_limit)) {
-        opt.limit = std.fmt.parseInt(i64, payload, 10) catch return false;
-        return true;
-    }
-    if (std.mem.eql(u8, type_name, type_order_by)) {
-        // payload = {"value":"B64","isAsc":true|false}
-        if (!std.mem.startsWith(u8, payload, "{\"value\":\"")) return false;
-        const b64_and_tail = payload["{\"value\":\"".len..];
-        const b64_end = std.mem.indexOfScalar(u8, b64_and_tail, '"') orelse return false;
-        const tail = b64_and_tail[b64_end..];
-        const is_asc = if (std.mem.eql(u8, tail, "\",\"isAsc\":true}"))
-            true
-        else if (std.mem.eql(u8, tail, "\",\"isAsc\":false}"))
-            false
-        else
-            return false;
-        const item = try alloc.create(AggregateOrderBy);
-        item.* = .{
-            .value = try parseEmbedded(alloc, b64_and_tail[0..b64_end]),
-            .is_asc = is_asc,
-        };
-        try order_by.append(alloc, item);
-        return true;
-    }
-    if (std.mem.eql(u8, type_name, type_having_max) or
-        std.mem.eql(u8, type_name, type_having_min))
-    {
-        if (payload.len < 2 or payload[0] != '"' or payload[payload.len - 1] != '"') return false;
-        const modifier = try alloc.create(AggregateHavingModifier);
-        modifier.* = .{
-            .kind = if (std.mem.eql(u8, type_name, type_having_max)) .max else .min,
-            .value = try parseEmbedded(alloc, payload[1 .. payload.len - 1]),
-        };
-        opt.having_modifier = modifier;
-        return true;
-    }
-    return false;
 }
 
 // ----------------------------------------------------------------------
@@ -296,17 +263,48 @@ pub const option_func_table = [_]bind.FuncInfo{
 const testing = std.testing;
 const value_mod = bind.value_mod;
 
-test "producers emit Go-shaped markers" {
+test "producers emit magic-prefixed BYTES markers" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
+    // BYTES, not STRING: the payload is raw codec bytes, which is the whole
+    // point — a JSON envelope would force base64 back on, per row.
     const d = try DISTINCT(alloc);
-    try testing.expectEqualStrings("{\"type\":\"aggregate_distinct\",\"value\":null}", d.string);
-    const l = try LIMIT(alloc, 42);
-    try testing.expectEqualStrings("{\"type\":\"aggregate_limit\",\"value\":42}", l.string);
-    const inl = try IGNORE_NULLS(alloc);
-    try testing.expectEqualStrings("{\"type\":\"aggregate_ignore_nulls\",\"value\":null}", inl.string);
+    try testing.expect(d == .bytes);
+    try testing.expectEqualSlices(u8, magic ++ "\x01", d.bytes);
+    try testing.expectEqualSlices(u8, magic ++ "\x02", (try IGNORE_NULLS(alloc)).bytes);
+    try testing.expectEqualSlices(
+        u8,
+        magic ++ "\x03" ++ "\x2a\x00\x00\x00\x00\x00\x00\x00",
+        (try LIMIT(alloc, 42)).bytes,
+    );
+
+    // A payload with a NUL and a 0xff byte survives, which is exactly what the
+    // JSON envelope could not carry without escaping or base64.
+    const hostile = Value{ .bytes = "\x00\xff\x00" };
+    const rt = try parseAggregateOptions(alloc, &.{try HAVING_MAX(alloc, hostile)});
+    try value_mod.expectValueEqual(hostile, rt.opt.having_modifier.?.value);
+}
+
+test "a BYTES value that is not a marker stays an argument" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // Detection is in-band, so the near misses matter: ordinary BYTES, a
+    // prefix of the magic, and the magic followed by a kind byte nothing
+    // claims. None may be swallowed as an option.
+    const near = [_]Value{
+        .{ .bytes = "plain" },
+        .{ .bytes = magic[0 .. magic.len - 1] },
+        .{ .bytes = magic ++ "\x7f" },
+        .{ .string = magic },
+    };
+    const parsed = try parseAggregateOptions(alloc, &near);
+    try testing.expectEqual(near.len, parsed.values.len);
+    try testing.expect(!parsed.opt.distinct);
+    try testing.expect(parsed.opt.limit == null);
 }
 
 test "parseAggregateOptions round trip" {

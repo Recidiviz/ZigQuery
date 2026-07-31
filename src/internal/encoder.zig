@@ -1,13 +1,19 @@
-//! Faithful port of go-zetasqlite internal/encoder.go (EncodeValue,
-//! LiteralFromValue) and internal/decoder.go (DecodeValue).
-//!
 //! SQLite representation: Int/Float travel natively, Bool as INTEGER 0/1
-//! (Go returns a bool that the driver binds as an integer), NULL as NULL,
-//! and everything else as TEXT holding base64(binary codec v1).
+//! NULL as NULL, Everything else is a BLOB, carrying one of two payload
+//! shapes chosen by kind and told apart by tag range:
+//!
+//!   0x40+       the memcomparable encoding (codec_sortable.zig), for the kinds
+//!               that can be ordered: STRING, BYTES, DATE, TIME, DATETIME,
+//!               TIMESTAMP.
+//!   0x00-0x0f   the self-delimiting codec (codec_binary.zig), for the kinds
+//!               that cannot: ARRAY, STRUCT, JSON, INTERVAL. Its uvarint length
+//!               prefixes would sort by length before content, which does not
+//!               matter for a kind the analyzer refuses to ORDER BY.
 
 const std = @import("std");
 const value_mod = @import("value.zig");
 const codec = @import("codec_binary.zig");
+const sortable = @import("codec_sortable.zig");
 const phase = @import("phase.zig");
 
 pub const Value = value_mod.Value;
@@ -18,13 +24,15 @@ pub const SqliteRepr = union(enum) {
     @"null",
     int: i64,
     float: f64,
-    text: []const u8,
+    /// The binary codec, in either payload shape; the tag byte says which.
+    /// See the file header.
+    blob: []const u8,
 };
 
-/// Go EncodeValue: scalar kinds pass through natively; the rest become
-/// base64(binary codec).
+/// Go EncodeValue: scalar kinds pass through natively; see the file header for
+/// how the rest divide between the two BLOB payload shapes and TEXT.
 pub fn EncodeValue(alloc: std.mem.Allocator, v: Value) ValueError!SqliteRepr {
-    var t = phase.Timer.begin(.codec);
+    var t = phase.CodecTimer.begin(.codec_encode);
     defer t.end();
     switch (v) {
         .@"null" => return .@"null",
@@ -35,17 +43,27 @@ pub fn EncodeValue(alloc: std.mem.Allocator, v: Value) ValueError!SqliteRepr {
         .bool => |b| return .{ .int = @intFromBool(b) },
         .safe => |p| return EncodeValue(alloc, p.*),
         else => {
-            const bin = try codec.encodeBinaryValue(alloc, v);
-            defer alloc.free(bin);
-            return .{ .text = try base64Encode(alloc, bin) };
+            // Memcomparable kinds: a BLOB whose bytes order correctly, which is
+            // what makes a BLOB safe here at all — SQLite never applies a
+            // collation to one. See codec_sortable.zig.
+            if (try sortable.encode(alloc, v)) |b| return .{ .blob = b };
+
+            // Kinds with no ordering to preserve keep the self-delimiting
+            // codec, still as a BLOB. Its uvarint length prefixes sort by
+            // length before content, which is only a problem for a kind that
+            // can be ordered, and ARRAY/STRUCT/JSON/INTERVAL cannot be (the
+            // analyzer rejects ORDER BY on all four).
+            return .{ .blob = try codec.encodeBinaryValue(alloc, v) };
         },
     }
 }
 
 /// Go LiteralFromValue: renders a Value as a SQL literal for embedded query
-/// text. Non-scalar values become a DOUBLE-quoted base64 string (SQLite
-/// treats unknown double-quoted identifiers as string literals).
+/// text. Every non-scalar value is a BLOB, so every non-scalar literal is an
+/// X'..' literal.
 pub fn LiteralFromValue(alloc: std.mem.Allocator, v: Value) ValueError![]u8 {
+    var t = phase.CodecTimer.begin(.codec_literal);
+    defer t.end();
     switch (v) {
         .@"null" => return alloc.dupe(u8, "null"),
         .int => |i| return std.fmt.allocPrint(alloc, "{d}", .{i}),
@@ -63,47 +81,92 @@ pub fn LiteralFromValue(alloc: std.mem.Allocator, v: Value) ValueError![]u8 {
         },
         .bool => |b| return alloc.dupe(u8, if (b) "true" else "false"),
         .safe => |p| return LiteralFromValue(alloc, p.*),
-        else => {
-            const bin = try codec.encodeBinaryValue(alloc, v);
-            defer alloc.free(bin);
-            const b64 = try base64Encode(alloc, bin);
-            defer alloc.free(b64);
-            return std.fmt.allocPrint(alloc, "\"{s}\"", .{b64});
+        // Delegating to EncodeValue is what guarantees a literal and a bound
+        // parameter produce the same storage class — they used to be able to
+        // disagree, since each decided the encoding for itself.
+        else => switch (try EncodeValue(alloc, v)) {
+            // An X'..' literal, which is also unambiguous SQL. The quoted form
+            // below is a *string* only because SQLite tolerates double-quoted
+            // identifiers that resolve to nothing, so a payload colliding with
+            // a column name in scope would silently become that column.
+            .blob => |b| {
+                defer alloc.free(b);
+                return hexLiteral(alloc, b);
+            },
+            // This arm is only reached for non-scalar kinds, which EncodeValue
+            // always renders as a BLOB.
+            else => unreachable,
         },
     }
 }
 
-/// Go DecodeValue: first-byte dispatch after base64-decoding TEXT values.
-/// Legacy payloads are base64(JSON{header,body}) and begin with '{'; this
-/// engine never produces them, so they surface error.Unimplemented.
+fn hexLiteral(alloc: std.mem.Allocator, b: []const u8) ValueError![]u8 {
+    // X, quote, two hex digits per byte, quote.
+    const out = try alloc.alloc(u8, 2 + b.len * 2 + 1);
+    out[0] = 'X';
+    out[1] = '\'';
+    const digits = "0123456789abcdef";
+    for (b, 0..) |byte, i| {
+        out[2 + i * 2] = digits[byte >> 4];
+        out[3 + i * 2] = digits[byte & 0x0f];
+    }
+    out[out.len - 1] = '\'';
+    return out;
+}
+
+/// The returned Value owns its bytes: they come from `alloc` and nothing in it
+/// references `repr`. Use this whenever the Value outlives the call that
+/// produced it — aggregate and window steps buffer decoded arguments across
+/// rows in a per-group arena, so a Value pointing at SQLite's memory would
+/// dangle on the next step.
 pub fn DecodeValue(alloc: std.mem.Allocator, repr: SqliteRepr) ValueError!Value {
-    var t = phase.Timer.begin(.codec);
+    return decodeRepr(alloc, repr, false);
+}
+
+/// As `DecodeValue`, but a `.blob` result aliases `repr.blob` rather than
+/// copying out of it — saving a copy per argument per row on the hottest path
+/// there is.
+///
+/// Only for callers that finish with the Value before returning, because
+/// `repr.blob` is SQLite's memory and lives only as long as the current
+/// statement step or UDF call. That holds for scalar UDF arguments (the
+/// handler runs and returns) and for `Rows.next` (cellFromValue copies into
+/// the rows arena immediately). It does **not** hold for aggregates.
+pub fn DecodeValueBorrowing(alloc: std.mem.Allocator, repr: SqliteRepr) ValueError!Value {
+    return decodeRepr(alloc, repr, true);
+}
+
+fn decodeRepr(
+    alloc: std.mem.Allocator,
+    repr: SqliteRepr,
+    comptime borrow_blob: bool,
+) ValueError!Value {
+    var t = phase.CodecTimer.begin(.codec_decode);
     defer t.end();
     switch (repr) {
         .@"null" => return Value.@"null",
         .int => |i| return Value{ .int = i },
         .float => |f| return Value{ .float = f },
-        .text => |s| {
-            const decoder = std.base64.standard.Decoder;
-            const n = decoder.calcSizeForSlice(s) catch
-                return error.CorruptData; // failed to decode value
-            const decoded = try alloc.alloc(u8, n);
-            defer alloc.free(decoded);
-            decoder.decode(decoded, s) catch return error.CorruptData;
-            if (decoded.len > 0 and decoded[0] == '{') {
-                // Legacy base64(JSON) layout: never produced by this engine.
-                return error.Unimplemented;
-            }
-            return codec.decodeBinaryValue(alloc, decoded);
+        // Two payload shapes travel in a BLOB, told apart by tag range: the
+        // self-delimiting codec uses 0x00-0x0f, the memcomparable one 0x40 and
+        // up. This is a dispatch on *kind*, not a compatibility fallback —
+        // which shape a kind uses is fixed, and a database in an older format
+        // is refused at open (see Db.storage_format_version) rather than
+        // sniffed for here.
+        //
+        // Borrows from `b`, which belongs to SQLite and stays valid for the
+        // statement step or UDF call that produced it — long enough for every
+        // caller, all of which consume the Value before returning (decodeArgs
+        // into a handler, Rows.next into a Cell, and cellFromValue copies).
+        .blob => |b| {
+            if (b.len == 0) return error.CorruptData;
+            // Copy first when the Value must outlive this call; the decode is
+            // identical either way.
+            const src = if (borrow_blob) b else try alloc.dupe(u8, b);
+            if (src[0] < 0x10) return codec.decodeBinaryValueBorrowing(alloc, src);
+            return sortable.decode(alloc, src);
         },
     }
-}
-
-fn base64Encode(alloc: std.mem.Allocator, data: []const u8) ValueError![]u8 {
-    const encoder = std.base64.standard.Encoder;
-    const out = try alloc.alloc(u8, encoder.calcSize(data.len));
-    _ = encoder.encode(out, data);
-    return out;
 }
 
 // ----------------------------------------------------------------------
@@ -455,23 +518,32 @@ test "EncodeValue keeps scalars native" {
     try testing.expectEqual(SqliteRepr{ .int = 3 }, try EncodeValue(alloc, safe));
 }
 
-test "EncodeValue base64-wraps non-scalar kinds" {
+test "EncodeValue splits non-scalar kinds by storage format" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
+    // Memcomparable: a BLOB whose payload is the raw bytes after the kind tag,
+    // with no length prefix, which would sort by length before content.
     const repr = try EncodeValue(alloc, Value{ .string = "hello" });
-    try testing.expect(repr == .text);
-    // The text is valid base64 of the binary codec payload.
-    const decoder = std.base64.standard.Decoder;
-    const n = try decoder.calcSizeForSlice(repr.text);
-    const decoded = try alloc.alloc(u8, n);
-    try decoder.decode(decoded, repr.text);
-    try testing.expectEqualSlices(u8, "\x04\x05hello", decoded);
+    try testing.expect(repr == .blob);
+    try testing.expectEqualSlices(u8, "\x60hello", repr.blob);
 
+    // Kinds with no ordering also become BLOBs, carrying the self-delimiting
+    // codec (tag 0x0e here) rather than the memcomparable one.
     const arr = try value_mod.arrayValue(alloc, &.{ Value{ .int = 1 }, Value.@"null" });
     const arr_repr = try EncodeValue(alloc, arr);
-    try testing.expect(arr_repr == .text);
+    try testing.expect(arr_repr == .blob);
+    try testing.expectEqual(@as(u8, 0x0e), arr_repr.blob[0]);
+    try testing.expect((try EncodeValue(alloc, Value{ .json = "{}" })) == .blob);
+
+    // NUMERIC was the last kind in TEXT. It is memcomparable now too, so
+    // nothing is: no value reaches the boundary base64-wrapped.
+    const num = try value_mod.numericFromString(alloc, "1.5", false);
+    const num_repr = try EncodeValue(alloc, num);
+    try testing.expect(num_repr == .blob);
+    try testing.expectEqual(@as(u8, 0x70), num_repr.blob[0]);
+    try testing.expectEqual(@as(usize, 17), num_repr.blob.len);
 }
 
 test "DecodeValue(EncodeValue(v)) round trips foundation kinds" {
@@ -525,22 +597,22 @@ test "EncodeValue/DecodeValue round-trips time kinds (CURRENT_TIMESTAMP path)" {
         Value{ .interval = try value_mod.parseIntervalValue("1-2 3 4:5:6") },
     };
     for (cases) |v| {
-        // Non-scalar kinds cross the boundary as base64(binary codec) TEXT.
+        // All of these cross as BLOBs: the date/time kinds because they are
+        // memcomparable, INTERVAL because it has no order to preserve.
         const repr = try EncodeValue(alloc, v);
-        try testing.expect(repr == .text);
+        try testing.expect(repr == .blob);
         try value_mod.expectValueEqual(v, try DecodeValue(alloc, repr));
     }
 }
 
-test "DecodeValue rejects legacy JSON payloads and bad base64" {
+test "DecodeValue rejects a BLOB with an unknown tag" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    // base64("{...}") => legacy layout => Unimplemented.
-    const legacy = try base64Encode(alloc, "{\"header\":\"StringValue\"}");
-    try testing.expectError(error.Unimplemented, DecodeValue(alloc, .{ .text = legacy }));
-    try testing.expectError(error.CorruptData, DecodeValue(alloc, .{ .text = "!!!not base64!!!" }));
+    try testing.expectError(error.CorruptData, DecodeValue(alloc, .{ .blob = "\x7b" }));
+    try testing.expectError(error.CorruptData, DecodeValue(alloc, .{ .blob = "\x30" }));
+    try testing.expectError(error.CorruptData, DecodeValue(alloc, .{ .blob = "" }));
 }
 
 test "LiteralFromValue formatting" {
@@ -564,17 +636,19 @@ test "LiteralFromValue formatting" {
     try testing.expectEqualStrings("1e+06", try LiteralFromValue(alloc, Value{ .float = 1e6 }));
     try testing.expectEqualStrings("-0.0", try LiteralFromValue(alloc, Value{ .float = -0.0 }));
 
-    // Non-scalar kinds become a DOUBLE-quoted base64 literal that decodes
-    // back to the original value.
-    const lit = try LiteralFromValue(alloc, Value{ .string = "hi" });
-    try testing.expect(lit.len >= 2 and lit[0] == '"' and lit[lit.len - 1] == '"');
-    const decoded = try DecodeValue(alloc, .{ .text = lit[1 .. lit.len - 1] });
-    try value_mod.expectValueEqual(Value{ .string = "hi" }, decoded);
+    // Every non-scalar kind renders as an X'..' BLOB literal, so a literal and a bound
+    // value produce the same storage class.
+    try testing.expectEqualStrings("X'606869'", try LiteralFromValue(alloc, Value{ .string = "hi" }));
+    // 0x40 is the DATE tag; the payload is 0 with its sign bit flipped, which is
+    // what makes pre-epoch dates sort below the epoch under memcmp.
+    try testing.expectEqualStrings("X'408000000000000000'", try LiteralFromValue(alloc, Value{ .date = 0 }));
 
-    // Dates use their "YYYY-MM-DD" binary form under the quotes.
-    const date_lit = try LiteralFromValue(alloc, Value{ .date = 0 });
-    const date_decoded = try DecodeValue(alloc, .{ .text = date_lit[1 .. date_lit.len - 1] });
-    try value_mod.expectValueEqual(Value{ .date = 0 }, date_decoded);
+    // Every non-scalar kind is a BLOB now, so every non-scalar literal is an
+    // X'..' literal — the double-quoted base64 form has no remaining producer.
+    const arr = try value_mod.arrayValue(alloc, &.{Value{ .int = 1 }});
+    try testing.expect(std.mem.startsWith(u8, try LiteralFromValue(alloc, arr), "X'"));
+    const num = try value_mod.numericFromString(alloc, "1.5", false);
+    try testing.expect(std.mem.startsWith(u8, try LiteralFromValue(alloc, num), "X'"));
 }
 
 test "castValue stub passes same-kind values through" {

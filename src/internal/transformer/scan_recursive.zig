@@ -10,7 +10,6 @@ const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
-const interfaces = @import("../coordinator/types_interfaces.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const flatten = @import("../sqlbuilder/flatten.zig");
 
@@ -19,7 +18,7 @@ pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
-) interfaces.Error!*sqlbuilder.SelectStatement {
+) types_data.Error!*sqlbuilder.SelectStatement {
     // Go: "expected recursive scan data, got type %v"
     if (data.type != .recursive) return error.UnsupportedNode;
     const recursive_scan_data = data.recursive_scan orelse return error.UnsupportedNode;

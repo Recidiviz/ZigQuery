@@ -1,41 +1,25 @@
-//! Faithful port of go-zetasqlite internal/querybuilder_context.go and
-//! internal/types_config.go.
-//!
-//! Differences from Go, by design:
-//! - No mutexes: the pipeline is single-threaded.
-//! - Go's embedded `context.Context` becomes `QueryContext` (current time +
-//!   debug flag) since Zig has no request context.
-//! - `GetQualifiedColumnRef` returns error.ColumnNotFound where Go panics.
-//! - Everything is arena-allocated: no deinit anywhere.
-
 const std = @import("std");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const types_data = @import("types_data.zig");
-const interfaces = @import("types_interfaces.zig");
 
-pub const Error = interfaces.Error;
+pub const Error = types_data.Error;
 pub const ColumnData = types_data.ColumnData;
 pub const ScanData = types_data.ScanData;
 
 const spec = @import("../spec.zig");
 
-/// One query-parameter occurrence collected during extraction (Go
-/// getParamsFromNode result: ResolvedParameter name + resolved type). The
-/// driver uses the types to cast bound values (Go EncodeNamedValues).
+/// One query-parameter occurrence collected during extraction.
+/// The driver uses the types to cast bound values.
 pub const CollectedParam = struct {
     /// "?" for positional, "@name" for named parameters.
     identifier: []const u8 = "",
     type: ?*spec.Type = null,
 };
 
-/// Go internal/types_config.go TransformConfig.
 pub const TransformConfig = struct {
     debug: bool = false,
 };
 
-/// Go DefaultTransformConfig (ZETASQLITE_DEBUG env toggle). Zig 0.16
-/// removed std.posix.getenv; the module always links libc, so read the
-/// variable through it.
 pub fn defaultTransformConfig() TransformConfig {
     const debug = if (std.c.getenv("ZETASQLITE_DEBUG")) |v|
         std.mem.eql(u8, std.mem.sliceTo(v, 0), "true")
