@@ -3179,6 +3179,54 @@ test "INFORMATION_SCHEMA.SCHEMATA names the dataset" {
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
 
+test "a table_name filter reaches the vtab and returns the same rows" {
+    // SQLite pushes the user's WHERE through the generated subquery down to
+    // xBestIndex, so the vtab prunes instead of building every table's columns
+    // and letting SQLite discard them. Correctness must not change: assert the
+    // filtered result equals the filtered-afterwards result.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE pd.t1 (a INT64, b STRING)", &.{}, .{});
+    try db.exec("CREATE TABLE pd.t2 (c FLOAT64)", &.{}, .{});
+
+    {
+        var rows = try db.query(
+            \\SELECT column_name FROM pd.INFORMATION_SCHEMA.COLUMNS
+            \\WHERE table_name = 't1' ORDER BY column_name
+        , &.{}, .{});
+        defer rows.deinit();
+        const want = [_][]const u8{ "a", "b" };
+        var i: usize = 0;
+        while (try rows.next()) |row| : (i += 1) {
+            try testing.expectEqualStrings(want[i], row[0].string);
+        }
+        try testing.expectEqual(want.len, i);
+    }
+
+    // A name that matches nothing yields nothing, rather than falling back to
+    // an unfiltered scan.
+    {
+        var rows = try db.query(
+            "SELECT COUNT(*) FROM pd.INFORMATION_SCHEMA.COLUMNS WHERE table_name = 'nope'",
+            &.{},
+            .{},
+        );
+        defer rows.deinit();
+        try testing.expectEqual(Cell{ .int = 0 }, (try rows.next()).?[0]);
+    }
+
+    // And a table_schema filter, the other pushed-down column.
+    {
+        var rows = try db.query(
+            "SELECT COUNT(*) FROM pd.INFORMATION_SCHEMA.TABLES WHERE table_schema = 'pd'",
+            &.{},
+            .{},
+        );
+        defer rows.deinit();
+        try testing.expectEqual(Cell{ .int = 2 }, (try rows.next()).?[0]);
+    }
+}
+
 test "an unfiltered INFORMATION_SCHEMA scan is legal" {
     // Exercises the xBestIndex path where the hidden schema constraint is
     // absent: unnest rejects that with SQLITE_CONSTRAINT, these views must not.

@@ -63,7 +63,24 @@ pub const View = struct {
     view: []const u8,
     module: [:0]const u8,
     columns: []const []const u8,
-    build: *const fn (std.mem.Allocator, []const *spec.TableSpec, []const u8) error{OutOfMemory}![]const Row,
+    /// Index of the column naming the table, for constraint pushdown. Null for
+    /// SCHEMATA, which has no table dimension.
+    name_col: ?u32,
+    build: *const fn (std.mem.Allocator, []const *spec.TableSpec, Filter) error{OutOfMemory}![]const Row,
+
+    /// Index of the column naming the dataset. First in every view, whether it
+    /// is spelled `schema_name` or `table_schema`.
+    const dataset_col: u32 = 1;
+};
+
+/// What a scan has been narrowed to. `prefix` always comes from the transformer
+/// (it is the scanned path); `schema` and `table` are the user's own WHERE
+/// terms, handed to us by SQLite's planner when it offers them.
+pub const Filter = struct {
+    /// `_`-joined path of the dataset being scanned. Empty means every dataset.
+    prefix: []const u8 = "",
+    schema: ?[]const u8 = null,
+    table: ?[]const u8 = null,
 };
 
 pub const views = [_]View{
@@ -74,6 +91,7 @@ pub const views = [_]View{
             "catalog_name",  "schema_name",        "schema_owner",
             "creation_time", "last_modified_time", "location",
         },
+        .name_col = null,
         .build = buildSchemata,
     },
     .{
@@ -84,6 +102,7 @@ pub const views = [_]View{
             "table_type",         "is_typed",     "is_insertable_into",
             "creation_time",
         },
+        .name_col = 2,
         .build = buildTables,
     },
     .{
@@ -95,6 +114,7 @@ pub const views = [_]View{
             "data_type",              "is_partitioning_column",
             "is_hidden",              "is_system_defined",
         },
+        .name_col = 2,
         .build = buildColumns,
     },
 };
@@ -156,25 +176,36 @@ fn hidden(table_spec: *const spec.TableSpec) bool {
 /// canonical names are `_`-joined and dataset names may contain underscores,
 /// so `demo_ds_...` is not decomposable. A table and its dataset's views always
 /// share a prefix, which makes this exact.
-fn matches(arena: std.mem.Allocator, table_spec: *const spec.TableSpec, prefix: []const u8) bool {
+fn matches(arena: std.mem.Allocator, table_spec: *const spec.TableSpec, filter: Filter) bool {
     if (hidden(table_spec)) return false;
-    if (table_spec.name_path.len < 2) return false;
-    if (prefix.len == 0) return true;
-    const own = spec.formatPath(arena, table_spec.name_path[0 .. table_spec.name_path.len - 1]) catch
-        return false;
-    return std.mem.eql(u8, own, prefix);
+    const path = table_spec.name_path;
+    if (path.len < 2) return false;
+
+    // The user's own WHERE terms, pushed down by SQLite's planner. Pruning here
+    // is what keeps COLUMNS from building a row per column of every table in
+    // the dataset when the query only wanted one table's.
+    if (filter.table) |want| {
+        if (!std.mem.eql(u8, path[path.len - 1], want)) return false;
+    }
+    if (filter.schema) |want| {
+        if (!std.mem.eql(u8, path[path.len - 2], want)) return false;
+    }
+
+    if (filter.prefix.len == 0) return true;
+    const own = spec.formatPath(arena, path[0 .. path.len - 1]) catch return false;
+    return std.mem.eql(u8, own, filter.prefix);
 }
 
 fn buildSchemata(
     arena: std.mem.Allocator,
     specs: []const *spec.TableSpec,
-    prefix: []const u8,
+    filter: Filter,
 ) error{OutOfMemory}![]const Row {
     var out: std.ArrayList(Row) = .empty;
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(arena);
     for (specs) |table_spec| {
-        if (!matches(arena, table_spec, prefix)) continue;
+        if (!matches(arena, table_spec, filter)) continue;
         const parts = splitPath(table_spec.name_path).?;
         if (seen.contains(parts.schema)) continue;
         try seen.put(arena, parts.schema, {});
@@ -196,11 +227,11 @@ fn buildSchemata(
 fn buildTables(
     arena: std.mem.Allocator,
     specs: []const *spec.TableSpec,
-    prefix: []const u8,
+    filter: Filter,
 ) error{OutOfMemory}![]const Row {
     var out: std.ArrayList(Row) = .empty;
     for (specs) |table_spec| {
-        if (!matches(arena, table_spec, prefix)) continue;
+        if (!matches(arena, table_spec, filter)) continue;
         const parts = splitPath(table_spec.name_path).?;
         const row = try arena.alloc(Cell, 7);
         row[0] = .{ .string = parts.catalog };
@@ -221,11 +252,11 @@ fn buildTables(
 fn buildColumns(
     arena: std.mem.Allocator,
     specs: []const *spec.TableSpec,
-    prefix: []const u8,
+    filter: Filter,
 ) error{OutOfMemory}![]const Row {
     var out: std.ArrayList(Row) = .empty;
     for (specs) |table_spec| {
-        if (!matches(arena, table_spec, prefix)) continue;
+        if (!matches(arena, table_spec, filter)) continue;
         const parts = splitPath(table_spec.name_path).?;
         const table_name = table_spec.name_path[table_spec.name_path.len - 1];
         for (table_spec.columns, 0..) |col, i| {
@@ -368,28 +399,72 @@ fn xDisconnect(vtab_ptr: [*c]c.sqlite3_vtab) callconv(.c) c_int {
     return c.SQLITE_OK;
 }
 
-/// The hidden `schema` column is the last one. Unlike unnest, an absent
-/// constraint is legal — `SELECT * FROM ds.INFORMATION_SCHEMA.TABLES` with no
-/// WHERE is a real query — so the unconstrained plan is offered at a high cost
-/// rather than rejected.
+/// Which filters `xFilter` was handed, and in which `argv` slot.
+///
+/// A bitmask rather than fixed positions because argv is packed in assignment
+/// order: with only a table constraint the table lands in argv[0], with both a
+/// prefix and a table it lands in argv[1].
+const has_prefix: c_int = 1;
+const has_schema: c_int = 2;
+const has_table: c_int = 4;
+
+/// Offers three EQ pushdowns: the hidden `schema` column (the scanned dataset,
+/// always supplied by the transformer) plus the user's own `table_schema` and
+/// `table_name` terms, which SQLite hands us when the query has them.
+///
+/// Unlike unnest, an absent constraint is legal — `SELECT * FROM
+/// ds.INFORMATION_SCHEMA.TABLES` with no WHERE is a real query — so the
+/// unconstrained plan is offered at a high cost rather than rejected.
+///
+/// `omit` is set only for the hidden column, whose value SQLite cannot check
+/// for itself (xColumn returns NULL for it). The visible ones are left for
+/// SQLite to re-check: our pruning is an optimisation, and correctness should
+/// not depend on our comparison agreeing with SQLite's byte-for-byte.
 fn xBestIndex(vtab: [*c]c.sqlite3_vtab, info: [*c]c.sqlite3_index_info) callconv(.c) c_int {
     const v: *Vtab = @ptrCast(@alignCast(vtab));
-    const schema_col: c_int = @intCast(v.ctx.view.columns.len);
+    const view = v.ctx.view;
+    const schema_col: c_int = @intCast(view.columns.len);
+    const dataset_col: c_int = @intCast(View.dataset_col);
+    const name_col: c_int = if (view.name_col) |nc| @intCast(nc) else -1;
+
     info.*.estimatedCost = 1e6;
     info.*.estimatedRows = 1000;
+    info.*.idxNum = 0;
+
     const n: usize = @intCast(info.*.nConstraint);
     const cons = info.*.aConstraint[0..n];
     const usage = info.*.aConstraintUsage[0..n];
-    for (cons, usage) |con, *use| {
-        if (con.usable == 0) continue;
-        if (con.iColumn == schema_col and con.op == c.SQLITE_INDEX_CONSTRAINT_EQ) {
-            use.argvIndex = 1;
-            use.omit = 1;
-            info.*.idxNum = 1;
-            info.*.estimatedCost = 1.0;
-            info.*.estimatedRows = 100;
-            return c.SQLITE_OK;
+    var argv_index: c_int = 0;
+    var idx: c_int = 0;
+
+    // Assign slots in a FIXED order — prefix, schema, table — rather than in
+    // the order SQLite happens to list the constraints. argv is packed by
+    // argvIndex, and SQLite does not list them in column order (it offers
+    // `table_name` before the hidden column for a `WHERE table_name = ...`
+    // query), so iterating the constraint array directly would hand xFilter
+    // the values transposed.
+    const wanted = [_]struct { bit: c_int, col: c_int }{
+        .{ .bit = has_prefix, .col = schema_col },
+        .{ .bit = has_schema, .col = dataset_col },
+        .{ .bit = has_table, .col = name_col },
+    };
+    for (wanted) |w| {
+        if (w.col < 0) continue;
+        for (cons, usage) |con, *use| {
+            if (con.usable == 0 or con.op != c.SQLITE_INDEX_CONSTRAINT_EQ) continue;
+            if (con.iColumn != w.col) continue;
+            argv_index += 1;
+            use.argvIndex = argv_index;
+            if (w.bit == has_prefix) use.omit = 1;
+            idx |= w.bit;
+            break; // one slot per column; a repeat adds nothing
         }
+    }
+
+    info.*.idxNum = idx;
+    if (idx != 0) {
+        info.*.estimatedCost = if (idx & has_table != 0) 1.0 else 10.0;
+        info.*.estimatedRows = if (idx & has_table != 0) 8 else 100;
     }
     return c.SQLITE_OK;
 }
@@ -426,7 +501,6 @@ fn xFilter(
     argc: c_int,
     argv: [*c]?*c.sqlite3_value,
 ) callconv(.c) c_int {
-    _ = idx_num;
     _ = idx_str;
     const cur: *Cursor = @ptrCast(@alignCast(cur_ptr));
     const st = cur.state;
@@ -435,26 +509,50 @@ fn xFilter(
     st.row = 0;
     const alloc = st.arena.allocator();
 
-    // Empty dataset = unconstrained scan over every dataset.
-    var dataset: []const u8 = "";
-    if (argc >= 1) {
-        // The transformer emits a plain SQL string literal, but accept an
-        // encoded value too so this does not depend on which form it chose.
-        dataset = switch (sqlite.valueType(argv[0])) {
-            .text => sqlite.valueText(argv[0]),
-            .blob => blk: {
-                const v = encoder.DecodeValueBorrowing(alloc, .{ .blob = sqlite.valueBlob(argv[0]) }) catch
-                    return c.SQLITE_ERROR;
-                break :blk v.toString(alloc) catch return c.SQLITE_ERROR;
-            },
-            .null => "",
-            else => return c.SQLITE_ERROR,
-        };
+    // argv is packed in the order xBestIndex assigned, so walk the bits in the
+    // same order rather than assuming fixed positions.
+    var filter: Filter = .{};
+    var next: usize = 0;
+    const take = struct {
+        fn f(a: std.mem.Allocator, args: [*c]?*c.sqlite3_value, n: usize, count: c_int) ?[]const u8 {
+            if (n >= @as(usize, @intCast(count))) return null;
+            return argText(a, args[n]);
+        }
+    }.f;
+
+    if (idx_num & has_prefix != 0) {
+        filter.prefix = take(alloc, argv, next, argc) orelse return c.SQLITE_ERROR;
+        next += 1;
+    }
+    if (idx_num & has_schema != 0) {
+        filter.schema = take(alloc, argv, next, argc);
+        next += 1;
+    }
+    if (idx_num & has_table != 0) {
+        filter.table = take(alloc, argv, next, argc);
+        next += 1;
     }
 
-    st.rows = st.ctx.view.build(alloc, st.ctx.state.info_schema, dataset) catch
+    st.rows = st.ctx.view.build(alloc, st.ctx.state.info_schema, filter) catch
         return c.SQLITE_NOMEM;
     return c.SQLITE_OK;
+}
+
+/// A constraint value as text. The transformer emits the dataset as a plain SQL
+/// literal, but a user's `WHERE table_name = 'x'` is compared against encoded
+/// column values, so that arrives as an encoded BLOB — accept both. A NULL
+/// constraint matches nothing, which `null` here expresses by leaving the
+/// filter unset and letting SQLite's own re-check discard the rows.
+fn argText(alloc: std.mem.Allocator, v: ?*c.sqlite3_value) ?[]const u8 {
+    return switch (sqlite.valueType(v)) {
+        .text => sqlite.valueText(v),
+        .blob => blk: {
+            const decoded = encoder.DecodeValueBorrowing(alloc, .{ .blob = sqlite.valueBlob(v) }) catch
+                break :blk null;
+            break :blk decoded.toString(alloc) catch null;
+        },
+        else => null,
+    };
 }
 
 fn xNext(cur_ptr: [*c]c.sqlite3_vtab_cursor) callconv(.c) c_int {
@@ -543,7 +641,7 @@ test "TABLES reports one row per table with its type" {
         try testSpec(a, &.{ "other", "t2" }, &.{"z"}, false),
     };
 
-    const rows = try buildTables(a, &specs, "ds");
+    const rows = try buildTables(a, &specs, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 2), rows.len);
     try testing.expectEqualStrings("t1", rows[0][2].string);
     try testing.expectEqualStrings("BASE TABLE", rows[0][3].string);
@@ -553,7 +651,7 @@ test "TABLES reports one row per table with its type" {
     try testing.expectEqualStrings("NO", rows[1][5].string);
 
     // No dataset constraint scans everything.
-    try testing.expectEqual(@as(usize, 3), (try buildTables(a, &specs, "")).len);
+    try testing.expectEqual(@as(usize, 3), (try buildTables(a, &specs, .{ .prefix = "" })).len);
 }
 
 test "COLUMNS numbers columns from one, in declaration order" {
@@ -564,7 +662,7 @@ test "COLUMNS numbers columns from one, in declaration order" {
     const specs = [_]*spec.TableSpec{
         try testSpec(a, &.{ "ds", "t1" }, &.{ "col_a", "col_b", "col_c" }, false),
     };
-    const rows = try buildColumns(a, &specs, "ds");
+    const rows = try buildColumns(a, &specs, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 3), rows.len);
     try testing.expectEqualStrings("col_a", rows[0][3].string);
     try testing.expectEqual(@as(i64, 1), rows[0][4].int);
@@ -584,12 +682,12 @@ test "SCHEMATA lists each dataset once" {
         try testSpec(a, &.{ "ds", "t2" }, &.{"x"}, false),
         try testSpec(a, &.{ "other", "t3" }, &.{"x"}, false),
     };
-    const all = try buildSchemata(a, &specs, "");
+    const all = try buildSchemata(a, &specs, .{ .prefix = "" });
     try testing.expectEqual(@as(usize, 2), all.len);
     try testing.expectEqualStrings("ds", all[0][1].string);
     try testing.expectEqualStrings("other", all[1][1].string);
 
-    const one = try buildSchemata(a, &specs, "ds");
+    const one = try buildSchemata(a, &specs, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 1), one.len);
 }
 
@@ -606,7 +704,7 @@ test "temps and the synthetic views are never listed" {
         // Our own injected view must not report itself.
         try testSpec(a, &.{ "ds", "INFORMATION_SCHEMA", "TABLES" }, &.{"table_name"}, false),
     };
-    const rows = try buildTables(a, &specs, "ds");
+    const rows = try buildTables(a, &specs, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqualStrings("real", rows[0][2].string);
 }
@@ -620,16 +718,16 @@ test "a three-part path reports its project as the catalog" {
         try testSpec(a, &.{ "proj", "ds", "t1" }, &.{"x"}, false),
     };
     // The filter is the `_`-joined prefix, so a 3-part path wants "proj_ds".
-    const rows = try buildTables(a, &specs, "proj_ds");
+    const rows = try buildTables(a, &specs, .{ .prefix = "proj_ds" });
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqualStrings("proj", rows[0][0].string);
     try testing.expectEqualStrings("ds", rows[0][1].string);
     // The bare dataset name is NOT the prefix here and must not match.
-    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, "ds")).len);
+    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, .{ .prefix = "ds" })).len);
 
     // A two-part path has no project to report.
     const short = [_]*spec.TableSpec{try testSpec(a, &.{ "ds", "t1" }, &.{"x"}, false)};
-    const short_rows = try buildTables(a, &short, "ds");
+    const short_rows = try buildTables(a, &short, .{ .prefix = "ds" });
     try testing.expectEqualStrings("", short_rows[0][0].string);
 }
 
@@ -644,8 +742,61 @@ test "a dataset name containing an underscore is not mis-split" {
     const specs = [_]*spec.TableSpec{
         try testSpec(a, &.{ "demo_ds", "tbl_a" }, &.{"x"}, false),
     };
-    try testing.expectEqual(@as(usize, 1), (try buildTables(a, &specs, "demo_ds")).len);
-    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, "ds")).len);
+    try testing.expectEqual(@as(usize, 1), (try buildTables(a, &specs, .{ .prefix = "demo_ds" })).len);
+    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, .{ .prefix = "ds" })).len);
+}
+
+test "pushed-down table and schema filters agree with filtering afterwards" {
+    // The whole point of the pushdown is to prune early. It is only valid if it
+    // selects exactly what SQLite's own re-check would have kept, so assert
+    // that rather than just asserting a smaller number.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    const specs = [_]*spec.TableSpec{
+        try testSpec(a, &.{ "ds", "t1" }, &.{ "x", "y" }, false),
+        try testSpec(a, &.{ "ds", "t2" }, &.{"z"}, false),
+        try testSpec(a, &.{ "other", "t1" }, &.{"w"}, false),
+    };
+
+    // COLUMNS across the dataset is 3 rows; narrowed to t1 it is the 2 that
+    // belong to t1, and they are the same rows.
+    const all = try buildColumns(a, &specs, .{ .prefix = "ds" });
+    try testing.expectEqual(@as(usize, 3), all.len);
+
+    const narrowed = try buildColumns(a, &specs, .{ .prefix = "ds", .table = "t1" });
+    try testing.expectEqual(@as(usize, 2), narrowed.len);
+    for (narrowed) |row| try testing.expectEqualStrings("t1", row[2].string);
+    try testing.expectEqualStrings("x", narrowed[0][3].string);
+    try testing.expectEqualStrings("y", narrowed[1][3].string);
+
+    // A schema filter is redundant with a matching prefix and contradictory
+    // with a different one.
+    try testing.expectEqual(
+        @as(usize, 3),
+        (try buildColumns(a, &specs, .{ .prefix = "ds", .schema = "ds" })).len,
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        (try buildColumns(a, &specs, .{ .prefix = "ds", .schema = "other" })).len,
+    );
+
+    // A table name that exists in a different dataset must not leak in.
+    try testing.expectEqual(
+        @as(usize, 2),
+        (try buildTables(a, &specs, .{ .table = "t1" })).len, // ds.t1 and other.t1
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        (try buildTables(a, &specs, .{ .prefix = "ds", .table = "t1" })).len,
+    );
+
+    // An unmatched table prunes to nothing rather than falling back to all.
+    try testing.expectEqual(
+        @as(usize, 0),
+        (try buildTables(a, &specs, .{ .prefix = "ds", .table = "nope" })).len,
+    );
 }
 
 test "canonical names map back to their view" {
