@@ -380,6 +380,10 @@ const TestEnv = struct {
         return env.enc(Value{ .string = s });
     }
 
+    fn encBytes(env: *TestEnv, b: []const u8) ![]u8 {
+        return env.enc(Value{ .bytes = b });
+    }
+
     fn fmt(env: *TestEnv, comptime f: []const u8, args: anytype) ![]u8 {
         return std.fmt.allocPrint(env.alloc(), f, args);
     }
@@ -856,6 +860,32 @@ test "extended string functions (ascii/length/case/pad/split/soundex)" {
     try env.expectInt(4, try env.fmt("SELECT zetasqlite_strpos({s}, {s})", .{ try env.encStr("foo@bar"), try env.encStr("@") }));
     try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 1, 2)", .{ try env.encStr("banana"), try env.encStr("an") }));
     try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1, 1)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    // INSTR's optional arguments and its backward search. Every expectation
+    // below is BigQuery's (recidiviz-bigquery-sandbox); the docs carry the
+    // -3 and helloooo ones too (string_functions.md#instr).
+    //
+    // Two arguments: position defaults to the start, occurrence to the first.
+    try env.expectInt(2, try env.fmt("SELECT zetasqlite_instr({s}, {s})", .{ try env.encStr("banana"), try env.encStr("a") }));
+    // A negative position searches backward from the end, -1 being the last
+    // unit, and the occurrence counts backward with it.
+    try env.expectInt(6, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1, 2)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    // It bounds where a match *starts*, so this one runs past unit 4.
+    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -3)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    // A position past either end returns 0 rather than erroring.
+    try env.expectInt(6, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 6)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 7)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -10)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    // Occurrences may overlap: the second "oo" of "helloooo" starts at 6.
+    try env.expectInt(6, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 1, 2)", .{ try env.encStr("helloooo"), try env.encStr("oo") }));
+    // More occurrences asked for than exist, and an empty needle.
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 1, 9)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_instr({s}, {s})", .{ try env.encStr("banana"), try env.encStr("") }));
+    // STRING counts characters, BYTES counts bytes: "héllo" puts the first
+    // "l" at 3, and the identical value as BYTES puts it at 4.
+    try env.expectInt(3, try env.fmt("SELECT zetasqlite_instr({s}, {s})", .{ try env.encStr("héllo"), try env.encStr("l") }));
+    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1)", .{ try env.encStr("héllo"), try env.encStr("l") }));
+    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s})", .{ try env.encBytes("héllo"), try env.encBytes("l") }));
     try env.expectInt(1, try env.fmt("SELECT zetasqlite_starts_with({s}, {s})", .{ try env.encStr("bar"), try env.encStr("b") }));
     try env.expectInt(1, try env.fmt("SELECT zetasqlite_ends_with({s}, {s})", .{ try env.encStr("apple"), try env.encStr("e") }));
     // translate.

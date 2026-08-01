@@ -397,13 +397,21 @@ pub fn strpos(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 // INSTR -----------------------------------------------------------------
 
-/// Go INSTR(source, search, position, occurrence). Byte-oriented for both
-/// STRING and BYTES (Go slices the underlying bytes).
+/// INSTR(value, subvalue[, position[, occurrence]]): the 1-based position of an
+/// occurrence of `subvalue` in `value` (string_functions.md#instr).
+///
+/// Positions count characters for STRING and bytes for BYTES, so
+/// INSTR('h\u{e9}llo', 'l') is 3 while the same value as BYTES gives 4. Go works in
+/// bytes for both.
 pub fn instr(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args.len != 2 and args.len != 3 and args.len != 4)
+    if (args.len < 2 or args.len > 4)
         return bind.fail("INSTR: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
-    var position: i64 = 0;
+
+    // Both optional arguments default to "from the beginning, the first one".
+    // Defaulting position to 0 instead tripped the check below, so the
+    // two-argument form — the common one — failed outright.
+    var position: i64 = 1;
     var occurrence: i64 = 1;
     if (args.len >= 3) position = try args[2].toInt64();
     if (args.len == 4) occurrence = try args[3].toInt64();
@@ -411,6 +419,7 @@ pub fn instr(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return bind.fail("INSTR: invalid position number. position is must be large than zero value", .{}, error.UnsupportedOperation);
     if (occurrence <= 0)
         return bind.fail("INSTR: invalid occurrence number. occurrence is must be large than zero value. but specified {d}", .{occurrence}, error.UnsupportedOperation);
+
     const same_type = switch (args[0]) {
         .string => args[1] == .string,
         .bytes => args[1] == .bytes,
@@ -418,26 +427,57 @@ pub fn instr(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     };
     if (!same_type)
         return bind.fail("INSTR: source and search are must be same type", .{}, error.UnsupportedOperation);
+
+    const by_char = args[0] == .string;
     const full = try args[0].toBytes(alloc);
     const search = try args[1].toBytes(alloc);
-    const pos: usize = @intCast(if (position < 0) -position else position);
-    if (pos >= full.len)
-        return bind.fail("INSTR: invalid position number. position {d} is larger than source value length {d}", .{ pos, full.len }, error.UnsupportedOperation);
-    const src_len: i64 = @intCast(full.len);
-    const src = if (position < 0) full[0 .. full.len - pos + 1] else full[pos - 1 ..];
-    var found: i64 = 0;
-    var i: usize = 0;
-    while (i < src.len) : (i += 1) {
-        if (std.mem.indexOf(u8, src[i..], search)) |idx| {
-            found += 1;
-            i += idx;
-        }
-        if (found == occurrence) {
-            if (position < 0) return Value{ .int = src_len - @as(i64, @intCast(i)) - 1 };
-            return Value{ .int = @as(i64, @intCast(pos + i)) };
-        }
+    const units: i64 = if (by_char) @intCast(runeCount(full)) else @intCast(full.len);
+
+    // The window a match may start in. A positive position is a floor and the
+    // search runs forward from it; a negative one is a ceiling counted back
+    // from the end, with -1 the last unit, and the search runs backward. Note
+    // it bounds where a match *starts*: the docs give INSTR('banana', 'an', -3)
+    // as 4, and that match runs past unit 4. Out of range is 0 rather than an
+    // error — "position is greater than the length of value" is listed under
+    // "Returns 0".
+    var lo: i64 = 1;
+    var hi: i64 = units;
+    if (position > 0) {
+        if (position > units) return Value{ .int = 0 };
+        lo = position;
+    } else {
+        if (-position > units) return Value{ .int = 0 };
+        hi = units + position + 1;
     }
-    return Value{ .int = 0 };
+
+    // Every occurrence in the window, ascending. Occurrences may overlap:
+    // INSTR('helloooo', 'oo', 1, 2) is 6, not 7.
+    var matches: std.ArrayList(i64) = .empty;
+    var off: usize = 0;
+    var scanned: usize = 0;
+    var unit_pos: i64 = 1;
+    while (off <= full.len) {
+        const idx = std.mem.indexOfPos(u8, full, off, search) orelse break;
+        while (scanned < idx) : (unit_pos += 1) {
+            const step: usize = if (by_char)
+                (std.unicode.utf8ByteSequenceLength(full[scanned]) catch 1)
+            else
+                1;
+            scanned += @min(step, idx - scanned);
+        }
+        if (unit_pos >= lo and unit_pos <= hi) try matches.append(alloc, unit_pos);
+        off = idx + 1;
+    }
+
+    // `occurrence` counts in the direction of the search.
+    const want: usize = @intCast(occurrence);
+    if (want > matches.items.len) return Value{ .int = 0 };
+    return Value{
+        .int = if (position > 0)
+            matches.items[want - 1]
+        else
+            matches.items[matches.items.len - want],
+    };
 }
 
 // REPLACE / REPEAT / REVERSE -------------------------------------------

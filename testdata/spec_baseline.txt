@@ -255,6 +255,7 @@ googlesql/functions/string/char_length	empty string
 googlesql/functions/string/character_length	ascii char length synonym
 googlesql/functions/string/chr	ascii uppercase
 googlesql/functions/string/chr	ascii lowercase
+googlesql/functions/string/code_points_to_bytes	returns the bytes that the code points encode
 googlesql/functions/string/code_points_to_string	code_points_to_string basic behaviour
 googlesql/functions/string/collate	upstream example 2
 googlesql/functions/string/concat	two strings
@@ -268,6 +269,7 @@ googlesql/functions/string/from_base32	round-trip BYTES through base32 encoding
 googlesql/functions/string/from_base64	base64 round-trip
 googlesql/functions/string/from_hex	round-trip with TO_HEX
 googlesql/functions/string/initcap	initcap two words
+googlesql/functions/string/instr	instr basic behaviour
 googlesql/functions/string/left	leftmost three chars
 googlesql/functions/string/left	more than length
 googlesql/functions/string/length	ascii string length

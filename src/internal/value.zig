@@ -1079,7 +1079,18 @@ pub const Value = union(enum) {
             },
             .bool => |b| return alloc.dupe(u8, if (b) "true" else "false"),
             .string => |s| return quoteJsonString(alloc, s),
-            .bytes => |b| return quoteJsonString(alloc, b),
+            // BYTES is base64 in JSON, as it is everywhere else the value
+            // crosses into text (driver.zig's TYPE_BYTES cell, Go's
+            // BytesValue.ToApiString). BigQuery: TO_JSON_STRING(b"He") is
+            // "SGU=". Emitting the raw bytes also produced invalid JSON for
+            // anything that was not already UTF-8. Arrays and structs recurse
+            // through here, so they follow.
+            .bytes => |b| {
+                const enc = std.base64.standard.Encoder;
+                const buf = try alloc.alloc(u8, enc.calcSize(b.len));
+                defer alloc.free(buf);
+                return quoteJsonString(alloc, enc.encode(buf, b));
+            },
             .json => |s| return alloc.dupe(u8, s),
             .date => |days| {
                 var buf: [32]u8 = undefined;
@@ -2878,4 +2889,26 @@ test "compareForCollation orderings" {
         Value{ .bool = true },
         Value{ .array = &empty_array_storage },
     ));
+}
+
+test "BYTES is base64 in JSON, at every nesting depth" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // BigQuery: TO_JSON_STRING(b"He") is "SGU=". Emitting the raw bytes made
+    // TO_JSON_STRING(CODE_POINTS_TO_BYTES([72, 101])) read "He", and produced
+    // invalid JSON outright for anything not already UTF-8.
+    const he = Value{ .bytes = "He" };
+    try std.testing.expectEqualStrings("\"SGU=\"", try he.toJson(alloc));
+
+    // Arrays and structs recurse through the same arm.
+    const arr = try arrayValue(alloc, &.{ he, Value{ .bytes = "Hi" } });
+    try std.testing.expectEqualStrings("[\"SGU=\",\"SGk=\"]", try arr.toJson(alloc));
+    const st = try structValue(alloc, &.{"x"}, &.{he});
+    try std.testing.expectEqualStrings("{\"x\":\"SGU=\"}", try st.toJson(alloc));
+
+    // Bytes that are not valid UTF-8 survive, where quoting them did not.
+    const raw = Value{ .bytes = &[_]u8{ 0xff, 0x00, 0x80 } };
+    try std.testing.expectEqualStrings("\"/wCA\"", try raw.toJson(alloc));
 }
