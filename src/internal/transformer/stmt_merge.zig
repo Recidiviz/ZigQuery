@@ -87,6 +87,16 @@ pub fn transform(
     const merged_target_column_name = column_mapping.lookupName(target_column) orelse
         return error.ValidationFailed;
 
+    // The join key's name in the source scan's own scope. The merged table
+    // aliases exactly this expression as `merged_source_<key>`, so it is what
+    // correlates an INSERT's source row back to the snapshot.
+    const source_key_ref = try alloc.create(types_data.ColumnRefData);
+    source_key_ref.* = .{ .column_id = source_column.id };
+    const source_key_sql = try (try coord.transformExpression(
+        .{ .type = .column, .column = source_key_ref },
+        ctx,
+    )).toString(alloc);
+
     // Build the list of SQL statements.
     var statements: std.ArrayList([]const u8) = .empty;
 
@@ -101,6 +111,7 @@ pub fn transform(
             merge_data.target_table,
             target_column.name,
             source_table,
+            source_key_sql,
             merged_source_column_name,
             merged_target_column_name,
             &column_mapping,
@@ -187,6 +198,7 @@ fn transformWhenClause(
     target_table_name: []const u8,
     target_column_name: []const u8,
     source_table: *sqlbuilder.FromItem,
+    source_key_sql: []const u8,
     merged_source_column_name: []const u8,
     merged_target_column_name: []const u8,
     column_mapping: *const ColumnMapping,
@@ -194,7 +206,10 @@ fn transformWhenClause(
 ) Error![]const u8 {
     const alloc = coord.alloc;
 
-    // FROM-filter for this match type.
+    // FROM-filter for this match type. Each branch has to correlate the merged
+    // row back to the target row being acted on: an uncorrelated predicate is a
+    // property of the merged table as a whole, so it holds for every target row
+    // as soon as it holds for one of them.
     const from_filter = switch (when_clause.match_type) {
         // Both target and source table have matching records.
         .MATCHED => try sqlbuilder.newBinaryExpression(
@@ -213,14 +228,17 @@ fn transformWhenClause(
                 try sqlbuilder.newColumnExpression(alloc, target_column_name, null),
             ),
         ),
-        // Target table has a record but the source table doesn't.
+        // Target table has a record but the source table doesn't. `IS` rather
+        // than `=` on the key so that a target row whose key is NULL — which
+        // can never satisfy the ON condition, and so is always unmatched — is
+        // still selected.
         .NOT_MATCHED_BY_SOURCE => try sqlbuilder.newBinaryExpression(
             alloc,
             try sqlbuilder.newBinaryExpression(
                 alloc,
                 try sqlbuilder.newColumnExpression(alloc, merged_target_column_name, null),
-                "IS NOT",
-                try sqlbuilder.newLiteralExpression(alloc, "NULL"),
+                "IS",
+                try sqlbuilder.newColumnExpression(alloc, target_column_name, null),
             ),
             "AND",
             try sqlbuilder.newBinaryExpression(
@@ -230,7 +248,9 @@ fn transformWhenClause(
                 try sqlbuilder.newLiteralExpression(alloc, "NULL"),
             ),
         ),
-        // Source table has a record but the target table doesn't.
+        // Source table has a record but the target table doesn't. Only INSERT
+        // is legal here, and it filters source rows rather than target rows, so
+        // this filter is unused — it stays for the match-type validation below.
         .NOT_MATCHED_BY_TARGET => try sqlbuilder.newBinaryExpression(
             alloc,
             try sqlbuilder.newBinaryExpression(
@@ -251,38 +271,74 @@ fn transformWhenClause(
         else => return error.UnsupportedNode,
     };
 
-    // WHERE clause with existence check.
-    const subq = try sqlbuilder.newSelectStatement(alloc);
-    const subq_from = try alloc.create(sqlbuilder.FromItem);
-    subq_from.* = .{ .type = .table, .table_name = "zetasqlite_merged_table" };
-    subq.from_clause = subq_from;
-    const subq_list = try alloc.alloc(*sqlbuilder.SelectListItem, 2);
-    subq_list[0] = try create(alloc, sqlbuilder.SelectListItem{
-        .expression = try sqlbuilder.newColumnExpression(alloc, merged_source_column_name, null),
-    });
-    subq_list[1] = try create(alloc, sqlbuilder.SelectListItem{
-        .expression = try sqlbuilder.newColumnExpression(alloc, merged_target_column_name, null),
-    });
-    subq.select_list = subq_list;
-    subq.where_clause = from_filter;
-    const exists_stmt = try sqlbuilder.newExistsExpression(alloc, subq);
+    // `WHEN <match_type> AND <search_condition>`: the resolved AST hangs the
+    // extra predicate off the WHEN clause rather than folding it into the ON
+    // expression, so each lowered statement has to re-apply it itself.
+    const condition_sql: ?[]const u8 = if (when_clause.condition) |cond|
+        try (try coord.transformExpression(cond.*, ctx)).toString(alloc)
+    else
+        null;
 
     switch (when_clause.action_type) {
-        .INSERT => return transformInsertAction(coord, when_clause, target_table_name, source_table, ctx),
-        .UPDATE => return transformUpdateAction(
+        .INSERT => return transformInsertAction(
             coord,
             when_clause,
             target_table_name,
-            try from_filter.toString(alloc),
-            column_mapping,
+            source_table,
+            source_key_sql,
+            merged_source_column_name,
+            merged_target_column_name,
+            condition_sql,
             ctx,
         ),
+        .UPDATE => {
+            var where_sql = try from_filter.toString(alloc);
+            if (condition_sql) |cond| {
+                where_sql = try std.fmt.allocPrint(alloc, "{s} AND ({s})", .{
+                    where_sql,
+                    try remapToMergedColumns(coord, cond, column_mapping, ctx),
+                });
+            }
+            return transformUpdateAction(
+                coord,
+                when_clause,
+                target_table_name,
+                where_sql,
+                column_mapping,
+                ctx,
+            );
+        },
         .DELETE => {
+            // WHERE clause with existence check over the merged table.
+            const subq = try sqlbuilder.newSelectStatement(alloc);
+            const subq_from = try alloc.create(sqlbuilder.FromItem);
+            subq_from.* = .{ .type = .table, .table_name = "zetasqlite_merged_table" };
+            subq.from_clause = subq_from;
+            const subq_list = try alloc.alloc(*sqlbuilder.SelectListItem, 2);
+            subq_list[0] = try create(alloc, sqlbuilder.SelectListItem{
+                .expression = try sqlbuilder.newColumnExpression(alloc, merged_source_column_name, null),
+            });
+            subq_list[1] = try create(alloc, sqlbuilder.SelectListItem{
+                .expression = try sqlbuilder.newColumnExpression(alloc, merged_target_column_name, null),
+            });
+            subq.select_list = subq_list;
+            subq.where_clause = from_filter;
+            if (condition_sql) |cond| {
+                subq.where_clause = try sqlbuilder.newBinaryExpression(
+                    alloc,
+                    from_filter,
+                    "AND",
+                    try sqlbuilder.newLiteralExpression(alloc, try std.fmt.allocPrint(alloc, "({s})", .{
+                        try remapToMergedColumns(coord, cond, column_mapping, ctx),
+                    })),
+                );
+            }
+
             const target_from = try alloc.create(sqlbuilder.FromItem);
             target_from.* = .{ .type = .table, .table_name = target_table_name };
             const delete_stmt = try create(alloc, sqlbuilder.DeleteStatement{
                 .table = .{ .from_item = target_from },
-                .where_expr = .{ .expression = exists_stmt },
+                .where_expr = .{ .expression = try sqlbuilder.newExistsExpression(alloc, subq) },
             });
             return delete_stmt.toString(alloc);
         },
@@ -291,12 +347,42 @@ fn transformWhenClause(
     }
 }
 
+/// Rewrites source- and target-scan column references into the merged table's
+/// column names, so an expression written against `T`/`S` can be evaluated on a
+/// row of `zetasqlite_merged_table`. Go does this inline for UPDATE's SET items
+/// only; the WHEN search condition needs the same treatment.
+fn remapToMergedColumns(
+    coord: *coordinator.QueryCoordinator,
+    sql: []const u8,
+    column_mapping: *const ColumnMapping,
+    ctx: *context.TransformContext,
+) Error![]const u8 {
+    const alloc = coord.alloc;
+    var out = sql;
+    var it = column_mapping.all_column_map.iterator();
+    while (it.next()) |entry| {
+        const column = entry.key_ptr.*;
+        const mapped = entry.value_ptr.*;
+        const ref = try alloc.create(types_data.ColumnRefData);
+        ref.* = .{ .column_id = column.id };
+        const expr = try coord.transformExpression(.{ .type = .column, .column = ref }, ctx);
+        const needle = try expr.toString(alloc);
+        const replacement = try std.fmt.allocPrint(alloc, "`{s}`", .{mapped});
+        out = try replaceAll(alloc, out, needle, replacement);
+    }
+    return out;
+}
+
 /// Go transformInsertAction: INSERT INTO target (cols) SELECT values FROM source.
 fn transformInsertAction(
     coord: *coordinator.QueryCoordinator,
     when_clause: *const types_data.MergeWhenClauseData,
     target_table_name: []const u8,
     source_table: *sqlbuilder.FromItem,
+    source_key_sql: []const u8,
+    merged_source_column_name: []const u8,
+    merged_target_column_name: []const u8,
+    condition_sql: ?[]const u8,
     ctx: *context.TransformContext,
 ) Error![]const u8 {
     const alloc = coord.alloc;
@@ -312,11 +398,30 @@ fn transformInsertAction(
         try values.append(alloc, try value_expr.toString(alloc));
     }
 
-    return std.fmt.allocPrint(alloc, "INSERT INTO `{s}` ({s}) SELECT {s} FROM {s}", .{
+    // INSERT is only reachable under NOT MATCHED BY TARGET, so a source row
+    // that already has a match in the target must be skipped — without this the
+    // statement copies the whole source across and an upsert duplicates every
+    // matched row. The test reads the merged table rather than the target so
+    // that a preceding WHEN clause which has already written to the target
+    // cannot change the answer: MERGE decides against the pre-MERGE snapshot.
+    var predicates: std.ArrayList([]const u8) = .empty;
+    try predicates.append(alloc, try std.fmt.allocPrint(
+        alloc,
+        "NOT EXISTS (SELECT 1 FROM zetasqlite_merged_table WHERE `{s}` = {s} AND `{s}` IS NOT NULL)",
+        .{ merged_source_column_name, source_key_sql, merged_target_column_name },
+    ));
+    // The search condition is evaluated in the source scan's own scope here, so
+    // unlike UPDATE/DELETE it needs no remapping onto the merged table.
+    if (condition_sql) |cond| {
+        try predicates.append(alloc, try std.fmt.allocPrint(alloc, "({s})", .{cond}));
+    }
+
+    return std.fmt.allocPrint(alloc, "INSERT INTO `{s}` ({s}) SELECT {s} FROM {s} WHERE {s}", .{
         target_table_name,
         try joinStrings(alloc, columns.items, ","),
         try joinStrings(alloc, values.items, ","),
         try source_table.toString(alloc),
+        try joinStrings(alloc, predicates.items, " AND "),
     });
 }
 
@@ -336,21 +441,12 @@ fn transformUpdateAction(
         const value_expr = try coord.transformExpression(item.value, ctx);
 
         // Replace column references with mapped names from the temp table.
-        var value_string: []const u8 = try value_expr.toString(alloc);
-        var it = column_mapping.all_column_map.iterator();
-        while (it.next()) |entry| {
-            const column = entry.key_ptr.*;
-            const mapped = entry.value_ptr.*;
-            const ref = try alloc.create(types_data.ColumnRefData);
-            ref.* = .{ .column_id = column.id };
-            const expr = try coord.transformExpression(
-                .{ .type = .column, .column = ref },
-                ctx,
-            );
-            const needle = try expr.toString(alloc);
-            const replacement = try std.fmt.allocPrint(alloc, "`{s}`", .{mapped});
-            value_string = try replaceAll(alloc, value_string, needle, replacement);
-        }
+        const value_string = try remapToMergedColumns(
+            coord,
+            try value_expr.toString(alloc),
+            column_mapping,
+            ctx,
+        );
 
         try set_items.append(alloc, try std.fmt.allocPrint(alloc, "`{s}`= {s}", .{
             item.column,
@@ -622,6 +718,135 @@ test "MERGE with empty source leaves target empty" {
         .{},
     );
     defer rows.deinit();
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
+}
+
+// An upsert is the shape MERGE exists for, and it is the one that catches an
+// unfiltered INSERT: the source row that the UPDATE just handled must not also
+// be inserted. Verified against BigQuery (recidiviz-bigquery-sandbox).
+test "MERGE upsert does not re-insert the rows it just updated" {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        \\CREATE TEMP TABLE target(k STRING, v INT64);
+        \\CREATE TEMP TABLE source(k STRING, v INT64);
+        \\INSERT INTO target(k, v) VALUES ("a", 1), ("b", 2);
+        \\INSERT INTO source(k, v) VALUES ("a", 10), ("c", 30);
+        \\MERGE target T USING source S ON T.k = S.k
+        \\WHEN MATCHED THEN UPDATE SET v = S.v
+        \\WHEN NOT MATCHED THEN INSERT (k, v) VALUES (k, v);
+        \\SELECT k, v FROM target ORDER BY k;
+    ,
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    const want = [_]struct { k: []const u8, v: i64 }{
+        .{ .k = "a", .v = 10 },
+        .{ .k = "b", .v = 2 },
+        .{ .k = "c", .v = 30 },
+    };
+    for (want) |w| {
+        const row = (try rows.next()).?;
+        try testing.expectEqualStrings(w.k, row[0].string);
+        try testing.expectEqual(driver.Cell{ .int = w.v }, row[1]);
+    }
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
+}
+
+// NOT MATCHED BY SOURCE picks out target rows with no source match. Its filter
+// has to name the target row; an uncorrelated one rewrites the whole table the
+// moment a single orphan exists.
+test "MERGE NOT MATCHED BY SOURCE touches only the unmatched target rows" {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        \\CREATE TEMP TABLE target(k INT64, status STRING);
+        \\CREATE TEMP TABLE source(k INT64);
+        \\INSERT INTO target(k, status) VALUES (1, "A"), (2, "A"), (3, "A");
+        \\INSERT INTO source(k) VALUES (1), (2);
+        \\MERGE target T USING source S ON T.k = S.k
+        \\WHEN NOT MATCHED BY SOURCE THEN UPDATE SET status = "ORPHAN";
+        \\SELECT k, status FROM target ORDER BY k;
+    ,
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    const want = [_]struct { k: i64, status: []const u8 }{
+        .{ .k = 1, .status = "A" },
+        .{ .k = 2, .status = "A" },
+        .{ .k = 3, .status = "ORPHAN" },
+    };
+    for (want) |w| {
+        const row = (try rows.next()).?;
+        try testing.expectEqual(driver.Cell{ .int = w.k }, row[0]);
+        try testing.expectEqualStrings(w.status, row[1].string);
+    }
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
+}
+
+// The per-WHEN `AND <search_condition>` narrows the match, once per action
+// kind: UPDATE and DELETE evaluate it on a merged-table row (so its column
+// references need remapping), INSERT on a source row (so they do not).
+test "MERGE WHEN search conditions narrow each action" {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        \\CREATE TEMP TABLE target(k INT64, v INT64);
+        \\CREATE TEMP TABLE source(k INT64, w INT64);
+        \\INSERT INTO target(k, v) VALUES (1, 10), (2, 20), (3, 30);
+        \\INSERT INTO source(k, w) VALUES (1, 100), (2, 5), (4, 999);
+        \\MERGE target T USING source S ON T.k = S.k
+        \\WHEN MATCHED AND S.w > 50 THEN UPDATE SET v = S.w
+        \\WHEN NOT MATCHED BY TARGET AND S.w > 500 THEN INSERT (k, v) VALUES (k, w)
+        \\WHEN NOT MATCHED BY SOURCE AND T.v > 25 THEN DELETE;
+        \\SELECT k, v FROM target ORDER BY k;
+    ,
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    // k=1 matched and w>50 so it updates; k=2 matched but w=5 so it does not;
+    // k=3 is unmatched by source with v=30>25 so it is deleted; k=4 is
+    // unmatched by target with w=999>500 so it is inserted.
+    const want = [_][2]i64{ .{ 1, 100 }, .{ 2, 20 }, .{ 4, 999 } };
+    for (want) |w| {
+        const row = (try rows.next()).?;
+        try testing.expectEqual(driver.Cell{ .int = w[0] }, row[0]);
+        try testing.expectEqual(driver.Cell{ .int = w[1] }, row[1]);
+    }
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
+}
+
+// A NULL key satisfies no ON condition, so such a target row is always
+// unmatched by source. That is why the filter compares with `IS`, not `=`.
+test "MERGE NOT MATCHED BY SOURCE reaches a NULL-keyed target row" {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        \\CREATE TEMP TABLE target(k INT64, status STRING);
+        \\CREATE TEMP TABLE source(k INT64);
+        \\INSERT INTO target(k, status) VALUES (1, "A"), (NULL, "A");
+        \\INSERT INTO source(k) VALUES (1);
+        \\MERGE target T USING source S ON T.k = S.k
+        \\WHEN NOT MATCHED BY SOURCE THEN UPDATE SET status = "ORPHAN";
+        \\SELECT status FROM target ORDER BY k NULLS LAST;
+    ,
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    try testing.expectEqualStrings("A", (try rows.next()).?[0].string);
+    try testing.expectEqualStrings("ORPHAN", (try rows.next()).?[0].string);
     try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
 }
 

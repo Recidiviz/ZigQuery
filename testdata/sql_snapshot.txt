@@ -11697,7 +11697,7 @@ SELECT
 `id` AS `id__3`,    
 `name` AS `name__4`  
 FROM `source` AS `S`
-) AS `table_scan_4`;
+) AS `table_scan_4` WHERE NOT EXISTS (SELECT 1 FROM zetasqlite_merged_table WHERE `merged_source_id` = `id__3` AND `merged_target_id` IS NOT NULL);
 DROP TABLE zetasqlite_merged_table;
 SELECT
 `id`,  
@@ -11756,7 +11756,7 @@ SELECT
 `id` AS `id__3`,    
 `name` AS `name__4`  
 FROM `source` AS `S`
-) AS `table_scan_4`;
+) AS `table_scan_4` WHERE NOT EXISTS (SELECT 1 FROM zetasqlite_merged_table WHERE `merged_source_id` = `id__3` AND `merged_target_id` IS NOT NULL);
 DROP TABLE zetasqlite_merged_table;
 SELECT
 `id`,  
@@ -11815,7 +11815,7 @@ SELECT
 `id` AS `id__3`,    
 `name` AS `name__4`  
 FROM `tmp_target_123` AS `S`
-) AS `table_scan_4`;
+) AS `table_scan_4` WHERE NOT EXISTS (SELECT 1 FROM zetasqlite_merged_table WHERE `merged_source_id` = `id__3` AND `merged_target_id` IS NOT NULL);
 DROP TABLE zetasqlite_merged_table;
 SELECT
 `id`,  
@@ -11878,7 +11878,7 @@ SELECT
 `id` AS `id__3`,    
 `name` AS `name__4`  
 FROM `source`
-) AS `project_scan_4`;
+) AS `project_scan_4` WHERE NOT EXISTS (SELECT 1 FROM zetasqlite_merged_table WHERE `merged_source_id` = `id__3` AND `merged_target_id` IS NOT NULL);
 DROP TABLE zetasqlite_merged_table;
 SELECT
 `id`,  
@@ -11997,7 +11997,7 @@ SELECT
 `id` AS `id__3`,    
 `name` AS `name__4`  
 FROM `source`
-) AS `project_scan_4`;
+) AS `project_scan_4` WHERE NOT EXISTS (SELECT 1 FROM zetasqlite_merged_table WHERE `merged_source_id` = `id__3` AND `merged_target_id` IS NOT NULL);
 DROP TABLE zetasqlite_merged_table;
 SELECT
 `id`,  

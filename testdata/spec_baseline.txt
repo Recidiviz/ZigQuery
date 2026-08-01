@@ -389,7 +389,12 @@ googlesql/syntax/dml/delete	DELETE WHERE TRUE removes every row
 googlesql/syntax/dml/insert	INSERT a single row via VALUES
 googlesql/syntax/dml/insert	INSERT multiple rows via VALUES
 googlesql/syntax/dml/insert	INSERT ... SELECT copies rows from a query
+googlesql/syntax/dml/merge	MERGE upstream Inventory + NewArrivals walkthrough
 googlesql/syntax/dml/merge	MERGE WHEN MATCHED THEN DELETE
+googlesql/syntax/dml/merge	MERGE WHEN MATCHED AND search_condition THEN UPDATE
+googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED BY TARGET AND search_condition THEN INSERT
+googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED BY SOURCE THEN UPDATE
+googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED BY SOURCE AND search_condition THEN DELETE
 googlesql/syntax/dml/merge	MERGE INTO + explicit AS alias on both sides
 googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED THEN INSERT VALUES (no column list)
 googlesql/syntax/dml/merge	MERGE WHEN NOT MATCHED THEN INSERT ROW
