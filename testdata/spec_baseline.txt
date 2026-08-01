@@ -379,6 +379,7 @@ googlesql/information_schema/tables	TABLES lists every table in the dataset
 googlesql/syntax/cte/with_recursive	count 1..5 with recursive CTE
 googlesql/syntax/cte/with_recursive	count down with recursive CTE
 googlesql/syntax/cte/with_recursive	factorial via recursive CTE
+googlesql/syntax/ddl/create_function	CREATE FUNCTION registers a callable UDF
 googlesql/syntax/ddl/create_or_replace_table	CREATE OR REPLACE replaces the existing table's schema
 googlesql/syntax/ddl/create_or_replace_view	CREATE OR REPLACE VIEW substitutes the new definition
 googlesql/syntax/ddl/create_table	create a base table and read columns via INFORMATION_SCHEMA

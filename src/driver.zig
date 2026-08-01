@@ -4521,6 +4521,33 @@ test "CREATE FUNCTION then use it in a SELECT" {
     try testing.expectEqual(Cell{ .int = 7 }, (try rows.next()).?[0]);
 }
 
+// BigQuery requires a persistent UDF to name its dataset ("Routine must be
+// qualified with a dataset"), so this — not the bare form above — is the shape
+// every real CREATE FUNCTION takes.
+test "a dataset-qualified CREATE FUNCTION is callable both ways" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE FUNCTION fn_ds.add_one(x INT64) AS (x + 1)", &.{}, .{});
+    try db.exec("CREATE FUNCTION fn_ds.dbl(x INT64) AS (x * 2)", &.{}, .{});
+
+    // Qualified is how it was declared. Unqualified also resolves, because the
+    // analyzer registers the function at the root catalog as well as inside
+    // the dataset's — and it is the only name the resolved AST ever carries,
+    // so the qualified call is the one that used to fail.
+    var rows = try db.query(
+        "SELECT fn_ds.add_one(41) AS a, add_one(1) AS b, fn_ds.dbl(fn_ds.add_one(4)) AS c",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    const row = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 42 }, row[0]);
+    try testing.expectEqual(Cell{ .int = 2 }, row[1]);
+    try testing.expectEqual(Cell{ .int = 10 }, row[2]);
+}
+
 test "CREATE FUNCTION persists across connections to the same file" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

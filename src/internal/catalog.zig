@@ -588,7 +588,26 @@ pub const Catalog = struct {
     ) error{OutOfMemory}!void {
         for (c.functions.items) |fs| {
             if (fs.body == null and std.mem.eql(u8, fs.language, "SQL")) continue;
-            try map.put(try fs.funcName(alloc), fs);
+            const full = try fs.funcName(alloc);
+            try map.put(full, fs);
+
+            // A dataset-qualified function also answers to its bare leaf name,
+            // because that is how addFunctionToNode registers it — at the
+            // analyzer's root catalog as well as inside the dataset's. The
+            // resolved AST then names it by the leaf and nothing else:
+            // `fn_ds.add_one(41)` comes back as a FunctionRef called
+            // "add_one", with the dataset gone. Keyed only by the joined path,
+            // that call matched no spec and fell through to an undefined
+            // SQLite function.
+            if (fs.name_path.len < 2) continue;
+            const leaf = fs.name_path[fs.name_path.len - 1];
+            if (leaf.len == 0 or std.mem.eql(u8, leaf, full)) continue;
+            // First registration keeps the leaf, which is what the analyzer
+            // resolved against (addFunctionToNode skips a name already
+            // present), so the two agree on which body an unqualified call
+            // means. The full-path key above is unambiguous and still lets a
+            // TEMP function shadow a persistent one of the same path.
+            if (!map.contains(leaf)) try map.put(leaf, fs);
         }
     }
 
