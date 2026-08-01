@@ -108,12 +108,15 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
             var tmp: [96]u8 = undefined;
             try appendBinaryString(buf, alloc, bin_tag_interval, value_mod.formatInterval(&tmp, iv));
         },
-        // Go stores *NumericValue as Rat.MarshalText ("n/d" when the
-        // denominator != 1, else just "n"), tagged by isBigNumeric.
+        // The scaled integer googlesql stores, in decimal, tagged by kind —
+        // the tag supplies the scale on the way back in. goccy wrote
+        // Rat.MarshalText here ("3/2" for 1.5), which only had a numerator and
+        // denominator to write because the value was held as a fraction.
         .numeric => |n| {
             const tag: u8 = if (n.is_bignumeric) bin_tag_bignumeric else bin_tag_numeric;
-            const s = try n.rat.ratString(alloc);
-            defer alloc.free(s);
+            var tmp: [96]u8 = undefined;
+            const s = std.fmt.bufPrint(&tmp, "{d}", .{n.unscaled}) catch
+                return error.OutOfMemory;
             try appendBinaryString(buf, alloc, tag, s);
         },
         .array => |arr| {
@@ -205,14 +208,20 @@ const BinReader = struct {
             bin_tag_interval => return Value{ .interval = try value_mod.parseIntervalValue(try r.lenBytes()) },
             // Go: JsonValue(string(b)) — the raw JSON string.
             bin_tag_json => return Value{ .json = try r.payload(alloc, borrow) },
-            // Go: big.Rat SetString over the stored MarshalText payload.
+            // The unscaled integer written above, read back at the scale the
+            // tag names.
             bin_tag_numeric, bin_tag_bignumeric => {
                 const b = try r.lenBytes();
-                const rat = value_mod.Rat.setString(alloc, b) catch |err| switch (err) {
+                const unscaled = std.fmt.parseInt(i256, b, 10) catch
+                    return error.CorruptData; // invalid numeric payload
+                return value_mod.numericFromUnscaled(
+                    alloc,
+                    unscaled,
+                    tag == bin_tag_bignumeric,
+                ) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
-                    else => return error.CorruptData, // invalid numeric payload
+                    else => return error.CorruptData,
                 };
-                return value_mod.numericValue(alloc, rat, tag == bin_tag_bignumeric);
             },
             bin_tag_array => {
                 const n = try r.uvarint();
@@ -578,16 +587,21 @@ test "binary codec numeric round trips and byte layout" {
         );
     }
 
-    // Byte layout: tag + uvarint length + MarshalText payload.
+    // Byte layout: tag + uvarint length + the scaled integer in decimal. The
+    // tag carries the scale, so 1.5 is 1500000000 as a NUMERIC and 38 digits
+    // as a BIGNUMERIC. goccy wrote Rat.MarshalText ("3/2") here.
     const n15 = try value_mod.numericFromString(alloc, "1.5", false);
-    try testing.expectEqualSlices(u8, "\x06\x033/2", try encodeBinaryValue(alloc, n15));
+    try testing.expectEqualSlices(u8, "\x06\x0a1500000000", try encodeBinaryValue(alloc, n15));
     const b15 = try value_mod.numericFromString(alloc, "1.5", true);
-    try testing.expectEqualSlices(u8, "\x07\x033/2", try encodeBinaryValue(alloc, b15));
-    // Integer-valued rationals store without the "/1" (Go MarshalText).
+    try testing.expectEqualSlices(
+        u8,
+        "\x07\x27150000000000000000000000000000000000000",
+        try encodeBinaryValue(alloc, b15),
+    );
     const n42 = try value_mod.numericFromString(alloc, "42", false);
-    try testing.expectEqualSlices(u8, "\x06\x0242", try encodeBinaryValue(alloc, n42));
+    try testing.expectEqualSlices(u8, "\x06\x0b42000000000", try encodeBinaryValue(alloc, n42));
     const neg = try value_mod.numericFromString(alloc, "-42", false);
-    try testing.expectEqualSlices(u8, "\x06\x03-42", try encodeBinaryValue(alloc, neg));
+    try testing.expectEqualSlices(u8, "\x06\x0c-42000000000", try encodeBinaryValue(alloc, neg));
 }
 
 test "binary codec json round trip" {

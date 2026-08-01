@@ -484,12 +484,11 @@ pub fn valueFromProto(
             };
             const is_big = kind == .TYPE_BIGNUMERIC;
             const scale: usize = if (is_big) 38 else 9;
-            const rat = value_mod.Rat.fromScaledTwosComplement(alloc, bytes, scale) catch |err|
+            return value_mod.numericFromTwosComplement(alloc, bytes, scale, is_big) catch |err|
                 switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => return error.CorruptData,
                 };
-            return value_mod.numericValue(alloc, rat, is_big);
         },
         // Remaining kinds (geography, proto, ...) stay deferred.
         else => return error.Unimplemented,

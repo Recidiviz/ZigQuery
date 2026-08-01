@@ -102,8 +102,10 @@ pub fn encode(alloc: std.mem.Allocator, v: Value) ValueError!?[]u8 {
         // width, so a signed export would have to reserve the sign bit itself.
         // Biasing first makes the value non-negative and exactly `w` bits.
         .numeric => |n| {
-            const scale = value_mod.scaleFor(n.is_bignumeric);
-            const unscaled = try n.rat.unscaledInt(alloc, scale);
+            // Already the unscaled integer at the kind's scale — the whole
+            // point of storing it that way, where the rational form had to
+            // multiply out by 10^scale to recover it.
+            const unscaled = n.unscaled;
             if (n.is_bignumeric) {
                 const out = try alloc.alloc(u8, 1 + bignumeric_bytes);
                 out[0] = tag_bignumeric;

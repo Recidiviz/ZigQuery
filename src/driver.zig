@@ -2453,10 +2453,10 @@ fn castParamValue(
             .interval => return v,
             else => return .{ .interval = try value_mod.parseIntervalValue(try v.toString(alloc)) },
         },
-        // Go castValueInternal: NumericValue{Rat: v.ToRat()}, isBigNumeric per
-        // the target kind (a numeric input is rewrapped under the new kind).
-        .TYPE_NUMERIC => return value_mod.numericValue(alloc, try v.toRat(alloc), false),
-        .TYPE_BIGNUMERIC => return value_mod.numericValue(alloc, try v.toRat(alloc), true),
+        // googlesql casts to the scaled integer for the target kind (a
+        // numeric input is rewrapped, and rescaled, under the new kind).
+        .TYPE_NUMERIC => return value_mod.numericValue(alloc, v, false),
+        .TYPE_BIGNUMERIC => return value_mod.numericValue(alloc, v, true),
 
         // Kinds with no CastValue arm in Go (geography, proto, ...) pass the
         // value through unchanged rather than failing the bind.
@@ -2569,11 +2569,9 @@ fn cellFromValue(
         // the column kind, then assignInterfaceValue renders ToApiString — a
         // plain decimal-string cell through database/sql.
         .TYPE_NUMERIC, .TYPE_BIGNUMERIC => {
-            const n = value_mod.Numeric{
-                .rat = try v.toRat(alloc),
-                .is_bignumeric = typ.typeKind() == .TYPE_BIGNUMERIC,
-            };
-            return .{ .string = try n.toText(alloc) };
+            const is_big = typ.typeKind() == .TYPE_BIGNUMERIC;
+            const wrapped = try value_mod.numericValue(alloc, v, is_big);
+            return .{ .string = try wrapped.numeric.toText(alloc) };
         },
         .TYPE_ARRAY => {
             const arr = try v.toArray();

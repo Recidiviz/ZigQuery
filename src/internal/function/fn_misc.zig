@@ -185,8 +185,8 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
         },
         // Go castValueInternal: NumericValue{Rat: v.ToRat()}, isBigNumeric per
         // the target kind (a numeric input is rewrapped under the new kind).
-        .TYPE_NUMERIC => return value_mod.numericValue(alloc, try v.toRat(alloc), false),
-        .TYPE_BIGNUMERIC => return value_mod.numericValue(alloc, try v.toRat(alloc), true),
+        .TYPE_NUMERIC => return value_mod.numericValue(alloc, v, false),
+        .TYPE_BIGNUMERIC => return value_mod.numericValue(alloc, v, true),
         .TYPE_ARRAY => {
             const arr = try v.toArray();
             const elem_type = if (t == .object)
