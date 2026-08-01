@@ -94,6 +94,9 @@ googlesql/functions/conversion/cast	int to string
 googlesql/functions/conversion/cast	string to int
 googlesql/functions/conversion/cast	int to float
 googlesql/functions/conversion/parse_bignumeric	parse plain decimal
+googlesql/functions/conversion/parse_bignumeric	parse a decimal that needs no rounding
+googlesql/functions/conversion/parse_bignumeric	a 39th fractional digit rounds into scale 38, ties away from zero
+googlesql/functions/conversion/parse_bignumeric	a value past BIGNUMERIC's range is rejected, not truncated
 googlesql/functions/conversion/parse_numeric	parse plain decimal
 googlesql/functions/conversion/safe_cast	valid cast
 googlesql/functions/conversion/safe_cast	invalid cast returns NULL

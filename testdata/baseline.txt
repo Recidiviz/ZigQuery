@@ -615,12 +615,7 @@
 616	justify_interval
 617	cast numeric and bignumeric
 618	parse_numeric
-# 619	parse_bignumeric -- deliberately failing since storage format 3.
-# PARSE_BIGNUMERIC("123.456E37") is 1.23456e39, which is 2.13x over
-# BIGNUMERIC's documented max of 5.7896e38 and needs 1.23e77 unscaled,
-# past 2^255. BigQuery rejects it too; go-zetasqlite accepted it only
-# because it has no bounds checking at all. The other two values in
-# the same case are in range and still parse.
+619	parse_bignumeric
 620	cast numeric and bignumeric to string
 621	bytes_formatting
 622	session_user

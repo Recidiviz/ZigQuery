@@ -14,5 +14,33 @@
                 .{"1.5"},
             },
         },
+        // The three arguments of corpus case 619, which now asserts only that
+        // the middle one is rejected. Verified against BigQuery
+        // (recidiviz-bigquery-sandbox).
+        .{
+            .desc = "parse a decimal that needs no rounding",
+            .sql = "SELECT CAST(PARSE_BIGNUMERIC(\"123.45\") AS STRING)",
+            .rows = .{
+                .{"123.45"},
+            },
+        },
+        .{
+            .desc = "a 39th fractional digit rounds into scale 38, ties away from zero",
+            .sql =
+            \\SELECT
+            \\  CAST(PARSE_BIGNUMERIC("1.123456789012345678901234567890123456789") AS STRING) AS up,
+            \\  CAST(PARSE_BIGNUMERIC("-1.123456789012345678901234567890123456785") AS STRING) AS tie
+            ,
+            .rows = .{
+                .{ "1.12345678901234567890123456789012345679", "-1.12345678901234567890123456789012345679" },
+            },
+        },
+        .{
+            .desc = "a value past BIGNUMERIC's range is rejected, not truncated",
+            // 123.456E37 is 1.23456e39, 2.13x the maximum. BigQuery answers
+            // "Invalid input to PARSE_BIGNUMERIC"; this engine names the range.
+            .sql = "SELECT PARSE_BIGNUMERIC(\"123.456E37\")",
+            .expect_error = "BIGNUMERIC value out of range",
+        },
     },
 }
