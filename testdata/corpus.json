@@ -9598,6 +9598,7 @@
   {
    "idx": 260,
    "name": "array function with struct",
+   "skip": "expected_rows keys a STRUCT by field name, which cannot express the anonymous fields of SELECT AS STRUCT; go-zetasqlite named them _field_<n> only because its StructValue is a Go map",
    "query": "SELECT ARRAY (SELECT AS STRUCT 1, 2, 3 UNION ALL SELECT AS STRUCT 4, 5, 6) AS new_array",
    "expected_rows": [
     [
@@ -9646,6 +9647,7 @@
   {
    "idx": 261,
    "name": "array function with multiple array",
+   "skip": "expected_rows keys a STRUCT by field name, which cannot express the anonymous fields of SELECT AS STRUCT; go-zetasqlite named them _field_<n> only because its StructValue is a Go map",
    "query": "SELECT ARRAY (SELECT AS STRUCT [1, 2, 3] UNION ALL SELECT AS STRUCT [4, 5, 6]) AS new_array",
    "expected_rows": [
     [

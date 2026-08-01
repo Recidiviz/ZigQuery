@@ -2382,17 +2382,16 @@ fn castParamValue(
             const sv = v.struct_;
             const keys = try alloc.alloc([]const u8, t.field_types.len);
             const values = try alloc.alloc(value_mod.Value, t.field_types.len);
+            // Field-by-position, like the CAST function itself: the declared
+            // type names the fields, the supplied value fills them in order.
             for (t.field_types, 0..) |field, i| {
-                var key = field.name;
-                if (key.len == 0) {
-                    key = try std.fmt.allocPrint(alloc, "_field_{d}", .{i + 1});
-                }
-                keys[i] = key;
-                if (sv.fieldByName(key)) |fv| {
-                    values[i] = if (field.type) |ft| try castParamValue(alloc, fv, ft) else fv;
-                } else {
+                keys[i] = field.name;
+                if (i >= sv.values.len) {
                     values[i] = .null;
+                    continue;
                 }
+                const fv = sv.values[i];
+                values[i] = if (field.type) |ft| try castParamValue(alloc, fv, ft) else fv;
             }
             return value_mod.structValue(alloc, keys, values);
         },

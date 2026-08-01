@@ -81,15 +81,11 @@ pub const StructValue = struct {
     keys: [][]const u8,
     values: []Value,
 
-    /// Linear lookup (key counts are small; Go keeps a map, we do not).
-    /// Returns the first field with the given name, like Go's map would
-    /// return the (deduplicated) entry.
-    pub fn fieldByName(self: *const StructValue, name: []const u8) ?Value {
-        for (self.keys, self.values) |k, v| {
-            if (std.mem.eql(u8, k, name)) return v;
-        }
-        return null;
-    }
+    // There is deliberately no lookup-by-name here. Every field access
+    // GoogleSQL resolves is already an index by the time it reaches the
+    // runtime (`zetasqlite_get_struct_field(expr, <n>)`), names on a STRUCT
+    // need not be unique or even present, and the one thing a by-name helper
+    // was used for — comparison and CAST — turned out to be positional.
 };
 
 // Shared zero-value results used by the SafeValue error-swallowing paths
@@ -827,12 +823,16 @@ pub const Value = union(enum) {
             },
             .struct_ => |st| {
                 const st2 = try v.toStruct();
-                if (st2.keys.len != st.keys.len) return false;
-                for (st.keys, st.values) |key, lhs_field| {
-                    // Go indexes the other struct's map; a missing key yields
-                    // a nil Value (which would panic there).
-                    const rhs_field = st2.fieldByName(key) orelse
-                        return fail("missing struct field in comparison", error.NullValue);
+                if (st2.values.len != st.values.len) return false;
+                // Field-by-position, like the array arm above. Names belong to
+                // the type, not the value: BigQuery says
+                // `STRUCT(1 AS a, 2 AS b) = STRUCT(1 AS b, 2 AS a)` is TRUE,
+                // which by-name matching would call false. Go indexes the other
+                // struct's map because its StructValue *is* a map; ours is an
+                // ordered pair of slices and does not have to. By name, two
+                // anonymous fields both key on "" and collide, which made
+                // `STRUCT(3, 5) = STRUCT(3, 5)` false.
+                for (st.values, st2.values) |lhs_field, rhs_field| {
                     if (!try rhs_field.compareOp(op, lhs_field)) return false;
                 }
                 return true;
@@ -2464,23 +2464,30 @@ test "array comparisons are element-wise" {
     try std.testing.expectError(error.UnsupportedOperation, a.add(alloc, b));
 }
 
-test "struct comparisons match by key" {
+test "struct comparisons match by position, not by field name" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
     const s1 = try structValue(alloc, &.{ "a", "b" }, &.{ Value{ .int = 1 }, Value{ .string = "x" } });
-    const s2 = try structValue(alloc, &.{ "b", "a" }, &.{ Value{ .string = "x" }, Value{ .int = 1 } });
-    const s3 = try structValue(alloc, &.{ "a", "b" }, &.{ Value{ .int = 2 }, Value{ .string = "x" } });
-    const s4 = try structValue(alloc, &.{ "a", "c" }, &.{ Value{ .int = 1 }, Value{ .string = "x" } });
+    // Same values in the same order under different names. BigQuery calls this
+    // equal; Go's map lookup would pair a-with-a and call it false.
+    const renamed = try structValue(alloc, &.{ "b", "a" }, &.{ Value{ .int = 1 }, Value{ .string = "x" } });
+    try std.testing.expect(try s1.eq(renamed));
 
-    // Key-based comparison: field order does not matter (Go iterates the map).
-    try std.testing.expect(try s1.eq(s2));
-    try std.testing.expect(!try s1.eq(s3));
-    try std.testing.expectError(error.NullValue, s1.eq(s4)); // missing key => Go nil deref
-    const field = s1.struct_.fieldByName("a") orelse return error.TestUnexpectedResult;
-    try expectValueEqual(Value{ .int = 1 }, field);
-    try std.testing.expect(s1.struct_.fieldByName("zzz") == null);
+    // Two anonymous fields share the key "", so a by-name lookup answered both
+    // with the first field and reported STRUCT(3, 5) != STRUCT(3, 5).
+    const anon1 = try structValue(alloc, &.{ "", "" }, &.{ Value{ .int = 3 }, Value{ .int = 5 } });
+    const anon2 = try structValue(alloc, &.{ "", "" }, &.{ Value{ .int = 3 }, Value{ .int = 5 } });
+    const anon3 = try structValue(alloc, &.{ "", "" }, &.{ Value{ .int = 5 }, Value{ .int = 3 } });
+    try std.testing.expect(try anon1.eq(anon2));
+    try std.testing.expect(!try anon1.eq(anon3)); // position carries the meaning
+
+    const differing = try structValue(alloc, &.{ "a", "b" }, &.{ Value{ .int = 2 }, Value{ .string = "x" } });
+    try std.testing.expect(!try s1.eq(differing));
+
+    const shorter = try structValue(alloc, &.{"a"}, &.{Value{ .int = 1 }});
+    try std.testing.expect(!try s1.eq(shorter)); // length mismatch => false
 }
 
 test "safe value swallows errors" {

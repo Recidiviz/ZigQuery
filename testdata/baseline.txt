@@ -258,8 +258,6 @@
 257	array function
 258	array scan left outer join
 259	array scan inner join
-260	array function with struct
-261	array function with multiple array
 262	array function with other column
 263	array_concat function
 264	array_first function

@@ -202,8 +202,7 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
         // Go castValueInternal: an ARRAY input flattens into one struct by
         // concatenating each element's fields; anything else is read as a
         // struct and its fields are cast field-by-field, in the target type's
-        // field order. An absent field becomes NULL, and an unnamed field is
-        // addressed positionally as "_field_<n>".
+        // field order. A field the source does not reach becomes NULL.
         .TYPE_STRUCT => return castToStruct(alloc, t, v),
         else => return bind.fail(
             "CAST: unimplemented cast to type kind {d}",
@@ -248,14 +247,18 @@ fn castToStruct(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Val
             }
             ftype = field.object.get("type") orelse std.json.Value.null;
         }
-        if (key.len == 0) key = try std.fmt.allocPrint(alloc, "_field_{d}", .{i + 1});
         try keys.append(alloc, key);
-        // Go leaves a field the source does not carry as an untyped NULL.
-        const existing = src.fieldByName(key) orelse {
+        // Field-by-position: the target type supplies the names, the source
+        // supplies the values, and the two need not agree. BigQuery says
+        // `CAST(STRUCT(1 AS x) AS STRUCT<y INT64>).y` is 1 — a rename, not a
+        // lookup. Go matches by name (its StructValue is a map), which turns
+        // every renaming cast, and every cast off an anonymous field, into
+        // NULL. A source too short still leaves the tail NULL, as Go does.
+        if (i >= src.values.len) {
             try values.append(alloc, null_v);
             continue;
-        };
-        try values.append(alloc, try castValue(alloc, ftype, existing));
+        }
+        try values.append(alloc, try castValue(alloc, ftype, src.values[i]));
     }
     return value_mod.structValue(alloc, keys.items, values.items);
 }

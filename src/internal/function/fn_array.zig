@@ -168,9 +168,13 @@ pub fn makeStruct(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     const keys = try alloc.alloc([]const u8, n);
     const values = try alloc.alloc(Value, n);
     for (0..n) |i| {
-        var k = try args[i * 2].toString(alloc);
-        if (k.len == 0) k = try std.fmt.allocPrint(alloc, "_field_{d}", .{i + 1});
-        keys[i] = k;
+        // An anonymous field keeps the empty name the analyzer gave it. Go
+        // substitutes "_field_<n>" because its StructValue is a map and needs a
+        // distinct key; ours is an ordered pair of slices. Inventing the name
+        // here also made the same construct render two ways, since a struct the
+        // analyzer constant-folds never passes through this function:
+        // `SELECT STRUCT(3)` kept the empty name, `SELECT STRUCT(2*v)` did not.
+        keys[i] = try args[i * 2].toString(alloc);
         values[i] = args[i * 2 + 1];
     }
     return value_mod.structValue(alloc, keys, values);

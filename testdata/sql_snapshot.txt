@@ -5127,52 +5127,8 @@ FROM `produce` AS `wrs14`
 ) AS `with_scan_3`;
 
 ### 260	array function with struct
-SELECT
-`new_array__10` AS `new_array`
-FROM (
-SELECT  
-(SELECT    
-zetasqlite_array(`$struct__9`)    
-FROM (
-SELECT      
-`$struct__4` AS `$struct__9`      
-FROM (
-SELECT        
-zetasqlite_make_struct(X'60', 1, X'60', 2, X'60', 3) AS `$struct__4`
-) AS `project_scan_7`      
-UNION ALL      
-SELECT      
-`$struct__8` AS `$struct__9`      
-FROM (
-SELECT        
-zetasqlite_make_struct(X'60', 4, X'60', 5, X'60', 6) AS `$struct__8`
-) AS `project_scan_11`
-) AS `set_op_scan_5`) AS `new_array__10`
-) AS `project_scan_3`;
 
 ### 261	array function with multiple array
-SELECT
-`new_array__6` AS `new_array`
-FROM (
-SELECT  
-(SELECT    
-zetasqlite_array(`$struct__5`)    
-FROM (
-SELECT      
-`$struct__2` AS `$struct__5`      
-FROM (
-SELECT        
-zetasqlite_make_struct(X'60', X'0e03010100000000000000010200000000000000010300000000000000') AS `$struct__2`
-) AS `project_scan_7`      
-UNION ALL      
-SELECT      
-`$struct__4` AS `$struct__5`      
-FROM (
-SELECT        
-zetasqlite_make_struct(X'60', X'0e03010400000000000000010500000000000000010600000000000000') AS `$struct__4`
-) AS `project_scan_11`
-) AS `set_op_scan_5`) AS `new_array__6`
-) AS `project_scan_3`;
 
 ### 262	array function with other column
 SELECT
