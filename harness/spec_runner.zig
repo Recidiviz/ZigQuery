@@ -265,6 +265,16 @@ fn runSpecFile(
     const spec_name = try arena.dupe(u8, stringField(zoir, .root, "spec") orelse entry.path);
     const cases = field(zoir, .root, "cases") orelse return;
 
+    // A file-level `.skip` applies to every case in it. That is a different
+    // claim from the per-case one below: it says the whole spec does not
+    // describe this engine's surface — a GoogleSQL feature BigQuery does not
+    // expose — rather than that some case is unimplemented. Without it such a
+    // file reports as UNSUPPORTED, which reads as a to-do list.
+    const spec_skip: ?[]const u8 = if (stringField(zoir, .root, "skip")) |r|
+        try arena.dupe(u8, r)
+    else
+        null;
+
     // One connection for the whole file, opened lazily and reused by every
     // setup-free case; only 9% of the corpus carries `setup`, and those get
     // their own. See docs: this is the ordering coupling `corpus` has and this
@@ -279,7 +289,7 @@ fn runSpecFile(
         const desc = try arena.dupe(u8, stringField(zoir, c, "desc") orelse "(no desc)");
         const sql = stringField(zoir, c, "sql") orelse continue;
 
-        if (stringField(zoir, c, "skip")) |reason| {
+        if (stringField(zoir, c, "skip") orelse spec_skip) |reason| {
             try results.append(gpa, .{
                 .spec = spec_name,
                 .desc = desc,

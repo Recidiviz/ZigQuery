@@ -6,6 +6,7 @@
     .spec = "googlesql/functions/debug/iserror",
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/debugging_functions.md#iserror",
+    .skip = "BigQuery has no ISERROR: \"Function not found: ISERROR\". These examples come from GoogleSQL's debugging_functions.md, which documents the language, not the BigQuery surface this engine emulates. ERROR() itself does exist and is supported.",
     .cases = .{
         .{
             .desc = "upstream example 1",
