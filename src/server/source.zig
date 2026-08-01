@@ -10,7 +10,11 @@
 //!
 //! and a dataset's tables look like:
 //!
-//!   {"id":"t","columns":[{"name":"a","type":"INTEGER","mode":"NULLABLE"}]}
+//!   {"id":"t","columns":[{"name":"a","type":"INTEGER","mode":"NULLABLE"}],
+//!    "data":[{"a":1},{"a":2}]}
+//!
+//! `data` is optional; each entry maps column name to value, exactly as
+//! tabledata.insertAll's `json` member does.
 //!
 //! Go's JSONSource does no validation at all — unlike YAMLSource, which is
 //! strict — so a malformed entry is skipped rather than fatal. That leniency
@@ -24,12 +28,15 @@ const schema_mod = @import("internal/types/schema.zig");
 const metadata = @import("internal/metadata/repository.zig");
 const datasets_handler = @import("handler/datasets.zig");
 const tables_handler = @import("handler/tables.zig");
+const contentdata = @import("internal/contentdata/repository.zig");
 
 pub const LoadStats = struct {
     projects: usize = 0,
     datasets: usize = 0,
     tables: usize = 0,
     failed_tables: usize = 0,
+    rows: usize = 0,
+    failed_rows: usize = 0,
 };
 
 /// Loads a `--data-from-json` document into the content database and the
@@ -121,6 +128,34 @@ pub fn loadJson(
                 });
                 try repo.addTable(project_id, dataset_id, table_id, meta.items);
                 stats.tables += 1;
+
+                // A table's rows live beside its schema in `data`, keyed by
+                // column name — the same object tabledata.insertAll posts in
+                // its `json` member, which is why the same writer serves both.
+                // Checked against the Go emulator: a missing key and an
+                // explicit null both store NULL, REPEATED columns take a JSON
+                // array and RECORD columns a JSON object, and values may be
+                // native JSON types rather than strings.
+                const rows = arrayField(tbl, "data") orelse continue;
+                if (rows.len == 0) continue;
+                var content = contentdata.Repository{ .arena = arena, .db = db };
+                content.addTableData(
+                    project_id,
+                    dataset_id,
+                    table_id,
+                    schemaFields(schema_node),
+                    rows,
+                ) catch |err| {
+                    // Lenient like the rest of JSONSource: a table whose rows
+                    // will not load still exists, and empty beats absent.
+                    std.log.warn(
+                        "source table {s}.{s}.{s}: {d} rows failed to load: {t} — {s}",
+                        .{ project_id, dataset_id, table_id, rows.len, err, content.message },
+                    );
+                    stats.failed_rows += rows.len;
+                    continue;
+                };
+                stats.rows += rows.len;
             }
         }
     }
@@ -151,6 +186,14 @@ fn normalizeSchema(
     return .{ .object = obj };
 }
 
+/// The `fields` array of a normalized `{"fields":[...]}` schema node.
+fn schemaFields(schema_node: ?std.json.Value) []const std.json.Value {
+    const node = schema_node orelse return &.{};
+    if (node != .object) return &.{};
+    const f = node.object.get("fields") orelse return &.{};
+    return if (f == .array) f.array.items else &.{};
+}
+
 fn stringField(v: std.json.Value, name: []const u8) ?[]const u8 {
     if (v != .object) return null;
     const f = v.object.get(name) orelse return null;
@@ -168,6 +211,100 @@ const testing = std.testing;
 fn loadInto(arena: std.mem.Allocator, db: *driver.Db, json: []const u8) !LoadStats {
     var repo = try metadata.Repository.init(db);
     return loadJson(arena, db, &repo, "h:1", 0, json);
+}
+
+test "a table's `data` rows load and are queryable" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Shapes checked against the Go emulator: a missing key and an explicit
+    // null are both NULL, values may be native JSON types, and REPEATED and
+    // RECORD columns take an array and an object.
+    const stats = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","columns":[
+        \\     {"name":"i","type":"INTEGER"},
+        \\     {"name":"s","type":"STRING"},
+        \\     {"name":"b","type":"BOOLEAN"},
+        \\     {"name":"arr","type":"INTEGER","mode":"REPEATED"},
+        \\     {"name":"st","type":"RECORD","fields":[{"name":"x","type":"INTEGER"}]}],
+        \\   "data":[
+        \\     {"i":1,"s":"alice","b":true,"arr":[1,2,3],"st":{"x":7}},
+        \\     {"i":2,"s":null}]}
+        \\]}]}]
+    );
+    try testing.expectEqual(@as(usize, 1), stats.tables);
+    try testing.expectEqual(@as(usize, 2), stats.rows);
+    try testing.expectEqual(@as(usize, 0), stats.failed_rows);
+
+    var rows = try db.query(
+        "SELECT i, s, b, ARRAY_LENGTH(arr), st.x FROM `p.d.t` ORDER BY i",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    const r1 = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 1), r1[0].int);
+    try testing.expectEqualStrings("alice", r1[1].string);
+    try testing.expectEqual(true, r1[2].bool);
+    try testing.expectEqual(@as(i64, 3), r1[3].int);
+    try testing.expectEqual(@as(i64, 7), r1[4].int);
+    const r2 = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 2), r2[0].int);
+    // An explicit null and a key that is simply absent are both NULL.
+    try testing.expectEqual(driver.Cell.null, r2[1]);
+    try testing.expectEqual(driver.Cell.null, r2[2]);
+}
+
+test "a table with no `data` member still loads" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const stats = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","columns":[{"name":"a","type":"INTEGER"}]},
+        \\  {"id":"u","columns":[{"name":"a","type":"INTEGER"}],"data":[]}
+        \\]}]}]
+    );
+    try testing.expectEqual(@as(usize, 2), stats.tables);
+    try testing.expectEqual(@as(usize, 0), stats.rows);
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
+}
+
+test "rows that cannot be shaped leave the table present but empty" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // "not a number" cannot cast to INT64, so the batch rolls back — but
+    // JSONSource is lenient and the table still exists.
+    const stats = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","columns":[{"name":"a","type":"INTEGER"}],
+        \\   "data":[{"a":1},{"a":"not a number"}]}
+        \\]}]}]
+    );
+    try testing.expectEqual(@as(usize, 1), stats.tables);
+    try testing.expectEqual(@as(usize, 0), stats.rows);
+    try testing.expectEqual(@as(usize, 2), stats.failed_rows);
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
 }
 
 test "loads projects, datasets and tables, and the tables are queryable" {

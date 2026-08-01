@@ -51,8 +51,10 @@ pub const Options = struct {
     database: ?[]const u8 = null,
     host: []const u8 = "0.0.0.0",
     port: u16 = 9050,
-    /// Go's --data-from-json: source tables loaded at startup.
-    data_from_json: ?[]const u8 = null,
+    /// Go's --data-from-json: source tables loaded at startup. Repeatable —
+    /// the flag may be given more than once and the files load in order, so a
+    /// later one can add datasets or tables to what an earlier one defined.
+    data_from_json: []const []const u8 = &.{},
     /// Go's --dataset: one empty dataset created at startup.
     dataset: ?[]const u8 = null,
 };
@@ -129,7 +131,7 @@ pub const Server = struct {
             try s.repo.addDataset(s.project, dataset_id, meta.items);
         }
 
-        if (opts.data_from_json) |path| {
+        for (opts.data_from_json) |path| {
             const bytes = try std.Io.Dir.cwd().readFileAlloc(
                 io,
                 path,
@@ -151,8 +153,14 @@ pub const Server = struct {
                 return err;
             };
             std.log.info(
-                "loaded {d} projects, {d} datasets, {d} tables ({d} failed) from {s}",
-                .{ stats.projects, stats.datasets, stats.tables, stats.failed_tables, path },
+                "loaded {d} projects, {d} datasets, {d} tables ({d} failed), " ++
+                    "{d} rows ({d} failed) from {s}",
+                .{
+                    stats.projects,    stats.datasets,
+                    stats.tables,      stats.failed_tables,
+                    stats.rows,        stats.failed_rows,
+                    path,
+                },
             );
         }
         // Startup loading is engine work but not request work, and counting it

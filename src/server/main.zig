@@ -21,7 +21,6 @@ const Options = struct {
     grpc_port: u16 = default_grpc_port,
     log_level: []const u8 = "error",
     database: ?[]const u8 = null,
-    data_from_json: ?[]const u8 = null,
     data_from_yaml: ?[]const u8 = null,
     log_format: []const u8 = "console",
 };
@@ -47,6 +46,8 @@ pub fn main(init: std.process.Init) !void {
     const err_out = &stderr_writer.interface;
 
     var opts = Options{};
+    var json_paths: std.ArrayList([]const u8) = .empty;
+    defer json_paths.deinit(gpa);
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next(); // program name
     while (args.next()) |arg| {
@@ -65,7 +66,8 @@ pub fn main(init: std.process.Init) !void {
         } else if (flagValue(arg, "--database")) |v| {
             opts.database = v;
         } else if (flagValue(arg, "--data-from-json")) |v| {
-            opts.data_from_json = v;
+            // Repeatable, unlike the other flags: each file loads in turn.
+            try json_paths.append(gpa, v);
         } else if (flagValue(arg, "--data-from-yaml")) |v| {
             opts.data_from_yaml = v;
         } else if (flagValue(arg, "--log-format")) |v| {
@@ -98,7 +100,7 @@ pub fn main(init: std.process.Init) !void {
         .database = opts.database,
         .host = opts.host,
         .port = opts.port,
-        .data_from_json = opts.data_from_json,
+        .data_from_json = json_paths.items,
         .dataset = opts.dataset,
     });
     defer app.deinit();
