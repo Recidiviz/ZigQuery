@@ -35,18 +35,24 @@
                 .{"{1}"},
             },
         },
+        // Named fields print as `<value> <name>`. Upstream dropped the names;
+        // data-types.md#struct-type documents only the output *type* of these
+        // queries, so there was nothing to scrape and the rendering is goccy's
+        // own. The docs do print STRUCTs elsewhere, always value-then-name:
+        // `{blue color, round shape}` (operators.md), `{2025 year, 09 month,
+        // 10 day}` and `{NULL id, ABC name}` (string_functions.md).
         .{
             .desc = "struct with duplicate field names of different types",
             .sql = "SELECT STRUCT(\"abc\" AS a, 3 AS a)",
             .rows = .{
-                .{"{abc, 3}"},
+                .{"{abc a, 3 a}"},
             },
         },
         .{
             .desc = "struct with duplicate field names of the same type",
             .sql = "SELECT STRUCT(\"abc\" AS a, \"3\" AS a)",
             .rows = .{
-                .{"{abc, 3}"},
+                .{"{abc a, 3 a}"},
             },
         },
         .{
@@ -115,10 +121,11 @@
             \\)
             \\ORDER BY s.a, s.b
             ,
+            // Named fields, so value-then-name; see the note above.
             .rows = .{
-                .{"{abc, 3}"},
-                .{"{def, 5}"},
-                .{"{def, 5}"},
+                .{"{abc a, 3 b}"},
+                .{"{def a, 5 b}"},
+                .{"{def a, 5 b}"},
             },
         },
         .{
@@ -167,15 +174,17 @@
         .{
             .desc = "struct alias as value",
             .sql = "SELECT t FROM (SELECT STRUCT(\"abc\" AS a, 3 AS b) AS t) x",
+            // Named fields, so value-then-name; see the note above.
             .rows = .{
-                .{"{abc, 3}"},
+                .{"{abc a, 3 b}"},
             },
         },
         .{
             .desc = "struct from table reference cast",
             .sql = "SELECT CAST(q AS STRUCT<a INT64>) FROM (SELECT 1) AS q",
+            // The CAST names the field `a`, so it prints; upstream dropped it.
             .rows = .{
-                .{"{1}"},
+                .{"{1 a}"},
             },
         },
         .{

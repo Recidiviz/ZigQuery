@@ -163,7 +163,7 @@ fn stringMatch(
     }
 }
 
-/// A cell as the reference docs print it: arrays `[a, b]`, structs `{a: 1}`.
+/// A cell as the reference docs print it: arrays `[a, b]`, structs `{1 a}`.
 /// Caller owns the result.
 ///
 /// Deliberately not `src/main.zig`'s `printCell`: that one is private to the
@@ -194,13 +194,18 @@ fn writeCell(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), cell: driver.Cell)
             try buf.append(gpa, ']');
         },
         .struct_ => |fields| {
+            // Value first, then the field name, which is omitted when the
+            // field is anonymous: `{blue color, round shape}`, `{2025 year, 09
+            // month, 10 day}`, `{NULL id, ABC name}`, `{1}`. That is how the
+            // reference docs print a STRUCT (operators.md, string_functions.md)
+            // and it is what ZetaSQL's Value::Format produces. Reading names
+            // first, JSON-style, would be a third convention answering to
+            // nothing.
             try buf.append(gpa, '{');
             for (fields, 0..) |f, i| {
                 if (i > 0) try buf.appendSlice(gpa, ", ");
-                // Anonymous fields print positionally: the docs render
-                // `STRUCT(1)` as `{1}` and `STRUCT(1 AS a)` as `{a: 1}`.
-                if (f.name.len > 0) try buf.print(gpa, "{s}: ", .{f.name});
                 try writeCell(gpa, buf, f.value);
+                if (f.name.len > 0) try buf.print(gpa, " {s}", .{f.name});
             }
             try buf.append(gpa, '}');
         },
@@ -295,11 +300,20 @@ test "a string want falls back to rendering an array or struct" {
         .{ .name = "a", .value = .{ .int = 1 } },
         .{ .name = "b", .value = .{ .string = "x" } },
     };
-    try testing.expect(try check("\"{a: 1, b: x}\"", .{ .struct_ = &fields }));
+    try testing.expect(try check("\"{1 a, x b}\"", .{ .struct_ = &fields }));
 }
 
-test "anonymous struct fields render positionally, as the docs print them" {
-    // `SELECT STRUCT(1)` is documented as `{1}`, not `{: 1}`.
+test "a struct renders value-then-name, as the reference docs print it" {
+    // docs/operators.md:2656 prints STRUCT('blue' AS color, 'round' AS shape)
+    // as `{blue color, round shape}` — the name trails its value.
+    var named = [_]driver.Cell.Field{
+        .{ .name = "color", .value = .{ .string = "blue" } },
+        .{ .name = "shape", .value = .{ .string = "round" } },
+    };
+    try testing.expect(try check("\"{blue color, round shape}\"", .{ .struct_ = &named }));
+
+    // An anonymous field contributes its value alone: `SELECT STRUCT(1)` is
+    // documented as `{1}`, not `{1 }`.
     var one = [_]driver.Cell.Field{.{ .name = "", .value = .{ .int = 1 } }};
     try testing.expect(try check("\"{1}\"", .{ .struct_ = &one }));
 
@@ -308,6 +322,22 @@ test "anonymous struct fields render positionally, as the docs print them" {
         .{ .name = "", .value = .{ .int = 3 } },
     };
     try testing.expect(try check("\"{abc, 3}\"", .{ .struct_ = &two }));
+
+    // Named and anonymous side by side: docs/string_functions.md:3099 prints
+    // `{id key, 123}`.
+    var mixed = [_]driver.Cell.Field{
+        .{ .name = "key", .value = .{ .string = "id" } },
+        .{ .name = "", .value = .{ .int = 123 } },
+    };
+    try testing.expect(try check("\"{id key, 123}\"", .{ .struct_ = &mixed }));
+
+    // And a NULL keeps its spelling inside the braces
+    // (docs/string_functions.md:3168, `{NULL id, ABC name}`).
+    var with_null = [_]driver.Cell.Field{
+        .{ .name = "id", .value = .null },
+        .{ .name = "name", .value = .{ .string = "ABC" } },
+    };
+    try testing.expect(try check("\"{NULL id, ABC name}\"", .{ .struct_ = &with_null }));
 }
 
 test "renderCell spells NULL inside containers" {
