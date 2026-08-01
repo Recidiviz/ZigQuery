@@ -1620,6 +1620,7 @@ pub const Db = struct {
             .query = query_str,
             .updated_at = now.rfc3339,
             .created_at = now.rfc3339,
+            .options = try optionSpecsFrom(arena, base.option_list),
         };
 
         if (table_spec.create_mode == spec.create_mode_create_or_replace) {
@@ -2166,6 +2167,51 @@ fn columnSpecsFromDefs(
     return columns;
 }
 
+/// DDL `OPTIONS(name=value)` as INFORMATION_SCHEMA.TABLE_OPTIONS reports them.
+///
+/// Takes the option list rather than the statement because CREATE TABLE and
+/// CREATE VIEW carry it on different base protos.
+///
+/// Only literal values are captured. An option whose value is a computed
+/// expression is skipped rather than evaluated: rendering it would need the
+/// transformer's context, and BigQuery's own DDL only accepts literals here.
+///
+/// The rendered form is `Value.format('T', ...)`, which is BigQuery's: a STRING
+/// option reads back as `"demo table"` — double-quoted, `\"`-escaped, single
+/// quotes untouched. Verified against a real table. Note this is deliberately
+/// NOT `encoder.LiteralFromValue`, which renders a string as the storage
+/// literal `X'606869'`.
+fn optionSpecsFrom(
+    arena: std.mem.Allocator,
+    opts: []const *pb.ResolvedOptionProto,
+) Error![]const *spec.OptionSpec {
+    if (opts.len == 0) return &.{};
+    var out: std.ArrayList(*spec.OptionSpec) = .empty;
+    for (opts) |opt| {
+        const name = opt.name orelse continue;
+        const expr = opt.value orelse continue;
+        const node = expr.node orelse continue;
+        const lit = switch (node) {
+            .resolved_literal_node => |n| n,
+            else => continue,
+        };
+        const vwt = lit.value orelse continue;
+        const type_proto = vwt.@"type" orelse continue;
+        const value_proto = vwt.value orelse continue;
+        const v = encoder.valueFromProto(arena, value_proto, type_proto) catch continue;
+
+        const rendered = v.format('T', arena) catch continue;
+        const o = try arena.create(spec.OptionSpec);
+        o.* = .{
+            .name = try arena.dupe(u8, name),
+            .type_name = spec.bigQueryTypeName(type_proto.type_kind orelse .TYPE_UNKNOWN),
+            .value = rendered,
+        };
+        try out.append(arena, o);
+    }
+    return out.toOwnedSlice(arena);
+}
+
 /// Go spec.go newTableSpec / newTableAsSelectSpec (shared body): scope,
 /// merged name path, column definitions, primary key, create mode and
 /// timestamps; `query_str` is empty for plain CREATE TABLE and holds the
@@ -2187,6 +2233,7 @@ fn newTableSpecFromCreate(
         .query = query_str,
         .updated_at = now.rfc3339,
         .created_at = now.rfc3339,
+        .options = try optionSpecsFrom(arena, base.option_list),
     };
     return table_spec;
 }
@@ -3177,6 +3224,62 @@ test "INFORMATION_SCHEMA.SCHEMATA names the dataset" {
     const row = (try rows.next()).?;
     try testing.expectEqualStrings("sd", row[0].string);
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "INFORMATION_SCHEMA.TABLE_OPTIONS reports DDL options for tables and views" {
+    // option_value is the SQL literal as BigQuery renders it: double-quoted
+    // with backslash escapes, NOT single-quoted. Verified against a real table
+    // — setting this description and reading TABLE_OPTIONS back returns
+    // `"demo table"`. Upstream googlesqlite normalises to single quotes; we do
+    // not, which is why the .zon fixture is hand-corrected.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE od.t1 (a INT64) OPTIONS(description='demo table')", &.{}, .{});
+    try db.exec("CREATE VIEW od.v1 OPTIONS(description='a view') AS SELECT 1 AS b", &.{}, .{});
+    // No OPTIONS: contributes no rows.
+    try db.exec("CREATE TABLE od.t2 (a INT64)", &.{}, .{});
+
+    var rows = try db.query(
+        \\SELECT table_name, option_name, option_type, option_value
+        \\FROM od.INFORMATION_SCHEMA.TABLE_OPTIONS ORDER BY table_name
+    , &.{}, .{});
+    defer rows.deinit();
+
+    const want = [_]struct { table: []const u8, value: []const u8 }{
+        .{ .table = "t1", .value = "\"demo table\"" },
+        .{ .table = "v1", .value = "\"a view\"" },
+    };
+    var i: usize = 0;
+    while (try rows.next()) |row| : (i += 1) {
+        try testing.expectEqualStrings(want[i].table, row[0].string);
+        try testing.expectEqualStrings("description", row[1].string);
+        try testing.expectEqualStrings("STRING", row[2].string);
+        try testing.expectEqualStrings(want[i].value, row[3].string);
+    }
+    try testing.expectEqual(want.len, i);
+}
+
+test "a quoted description renders the way BigQuery escapes it" {
+    // BigQuery returns `"he said \"hi\" and it's fine"` for this description:
+    // inner double quotes backslash-escaped, single quotes left alone.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(
+        \\CREATE TABLE qd.t (a INT64)
+        \\OPTIONS(description='he said "hi" and it\'s fine')
+    , &.{}, .{});
+
+    var rows = try db.query(
+        "SELECT option_value FROM qd.INFORMATION_SCHEMA.TABLE_OPTIONS",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqualStrings(
+        \\"he said \"hi\" and it's fine"
+    , row[0].string);
 }
 
 test "a table_name filter reaches the vtab and returns the same rows" {

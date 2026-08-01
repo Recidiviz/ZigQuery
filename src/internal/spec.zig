@@ -185,6 +185,19 @@ pub const ColumnSpec = struct {
     }
 };
 
+/// One `OPTIONS(name=value)` entry from CREATE TABLE / CREATE VIEW, as
+/// INFORMATION_SCHEMA.TABLE_OPTIONS reports it.
+///
+/// `value` is the SQL *literal*, quotes included — BigQuery renders a STRING
+/// option as `"demo table"`, double-quoted with `\"` escapes (verified against
+/// a real table). It is stored rendered rather than as a typed value because
+/// that is the only form the view ever needs.
+pub const OptionSpec = struct {
+    name: []const u8 = "",
+    type_name: []const u8 = "",
+    value: []const u8 = "",
+};
+
 /// Go spec.go TableSpec. `updated_at`/`created_at` hold the RFC3339 strings
 /// Go's time.Time marshals to; they are round-tripped opaquely.
 pub const TableSpec = struct {
@@ -197,6 +210,10 @@ pub const TableSpec = struct {
     query: []const u8 = "",
     updated_at: []const u8 = "",
     created_at: []const u8 = "",
+    /// DDL OPTIONS. Go's TableSpec has no such field, so this is serialised
+    /// only when non-empty — see toJson — keeping the JSON byte-identical to
+    /// Go's for every spec that has none.
+    options: []const *OptionSpec = &.{},
 
     /// Go TableSpec.Column.
     pub fn column(self: *const TableSpec, name: []const u8) ?*ColumnSpec {
@@ -318,6 +335,23 @@ pub const TableSpec = struct {
         try appendJsonString(&out, alloc, self.updated_at);
         try out.appendSlice(alloc, ",\"createdAt\":");
         try appendJsonString(&out, alloc, self.created_at);
+        // Only when present, so a spec with no options marshals byte-for-byte
+        // as Go does — Go's TableSpec has no such field. Same shape as upstream
+        // googlesqlite's `json:"options,omitempty"`.
+        if (self.options.len > 0) {
+            try out.appendSlice(alloc, ",\"options\":[");
+            for (self.options, 0..) |opt, i| {
+                if (i > 0) try out.append(alloc, ',');
+                try out.appendSlice(alloc, "{\"name\":");
+                try appendJsonString(&out, alloc, opt.name);
+                try out.appendSlice(alloc, ",\"type\":");
+                try appendJsonString(&out, alloc, opt.type_name);
+                try out.appendSlice(alloc, ",\"value\":");
+                try appendJsonString(&out, alloc, opt.value);
+                try out.append(alloc, '}');
+            }
+            try out.append(alloc, ']');
+        }
         try out.append(alloc, '}');
         return out.toOwnedSlice(alloc);
     }
@@ -442,6 +476,31 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
                 cols[i] = try columnSpecFromValue(alloc, item);
             }
             table_spec.columns = cols;
+        }
+    }
+    // Mandatory counterpart to toJson's options block: addNewTableSpec
+    // serialises a spec and stores the *re-parsed* one, so a key written but
+    // not read here would vanish before the catalog ever saw it.
+    if (obj.get("options")) |v| {
+        if (v == .array) {
+            const opts = try alloc.alloc(*OptionSpec, v.array.items.len);
+            for (v.array.items, 0..) |item, i| {
+                const o = try alloc.create(OptionSpec);
+                o.* = .{};
+                if (item == .object) {
+                    if (item.object.get("name")) |x| {
+                        if (x == .string) o.name = try alloc.dupe(u8, x.string);
+                    }
+                    if (item.object.get("type")) |x| {
+                        if (x == .string) o.type_name = try alloc.dupe(u8, x.string);
+                    }
+                    if (item.object.get("value")) |x| {
+                        if (x == .string) o.value = try alloc.dupe(u8, x.string);
+                    }
+                }
+                opts[i] = o;
+            }
+            table_spec.options = opts;
         }
     }
     return table_spec;
@@ -864,4 +923,32 @@ test "pkIndexSchema lowers a primary key to a non-unique index" {
         .query = "SELECT 1",
     };
     try testing.expectEqual(@as(?[]u8, null), try view.pkIndexSchema(alloc));
+}
+
+test "options round-trip through JSON and stay out of it when empty" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // Absent when there are none — this is what keeps the Go byte-for-byte
+    // golden above valid, since Go's TableSpec has no options field.
+    const bare = try makeGoShapeSpec(alloc);
+    try testing.expect(std.mem.indexOf(u8, try bare.toJson(alloc), "\"options\"") == null);
+
+    const with_opts = try makeGoShapeSpec(alloc);
+    const opt = try alloc.create(OptionSpec);
+    opt.* = .{ .name = "description", .type_name = "STRING", .value = "\"demo table\"" };
+    with_opts.options = try alloc.dupe(*OptionSpec, &.{opt});
+
+    const encoded = try with_opts.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, encoded, "\"options\":[{\"name\":\"description\"") != null);
+
+    // The round trip is load-bearing: addNewTableSpec stores the re-parsed
+    // spec, so anything toJson writes and tableSpecFromJson drops is lost.
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expectEqual(@as(usize, 1), decoded.options.len);
+    try testing.expectEqualStrings("description", decoded.options[0].name);
+    try testing.expectEqualStrings("STRING", decoded.options[0].type_name);
+    try testing.expectEqualStrings("\"demo table\"", decoded.options[0].value);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }

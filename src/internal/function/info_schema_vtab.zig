@@ -117,6 +117,16 @@ pub const views = [_]View{
         .name_col = 2,
         .build = buildColumns,
     },
+    .{
+        .view = "TABLE_OPTIONS",
+        .module = "zetasqlite_info_schema_table_options",
+        .columns = &.{
+            "table_catalog", "table_schema", "table_name",
+            "option_name",   "option_type",  "option_value",
+        },
+        .name_col = 2,
+        .build = buildTableOptions,
+    },
 };
 
 /// The view a canonical catalog name refers to, or null.
@@ -272,6 +282,34 @@ fn buildColumns(
             row[7] = .{ .string = "NO" };
             row[8] = .{ .string = "NO" };
             row[9] = .{ .string = "NO" };
+            try out.append(arena, row);
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// One row per declared option. A table with no OPTIONS contributes nothing,
+/// which is what BigQuery does — it reports options that were set, not every
+/// option with a default.
+fn buildTableOptions(
+    arena: std.mem.Allocator,
+    specs: []const *spec.TableSpec,
+    filter: Filter,
+) error{OutOfMemory}![]const Row {
+    var out: std.ArrayList(Row) = .empty;
+    for (specs) |table_spec| {
+        if (!matches(arena, table_spec, filter)) continue;
+        const parts = splitPath(table_spec.name_path).?;
+        const table_name = table_spec.name_path[table_spec.name_path.len - 1];
+        for (table_spec.options) |opt| {
+            if (opt.name.len == 0) continue;
+            const row = try arena.alloc(Cell, 6);
+            row[0] = .{ .string = parts.catalog };
+            row[1] = .{ .string = parts.schema };
+            row[2] = .{ .string = table_name };
+            row[3] = .{ .string = opt.name };
+            row[4] = .{ .string = opt.type_name };
+            row[5] = .{ .string = opt.value };
             try out.append(arena, row);
         }
     }
@@ -796,6 +834,44 @@ test "pushed-down table and schema filters agree with filtering afterwards" {
     try testing.expectEqual(
         @as(usize, 0),
         (try buildTables(a, &specs, .{ .prefix = "ds", .table = "nope" })).len,
+    );
+}
+
+test "TABLE_OPTIONS reports one row per declared option and none otherwise" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    const with_opts = try testSpec(a, &.{ "ds", "t1" }, &.{"x"}, false);
+    const desc = try a.create(spec.OptionSpec);
+    desc.* = .{ .name = "description", .type_name = "STRING", .value = "\"demo table\"" };
+    const friendly = try a.create(spec.OptionSpec);
+    friendly.* = .{ .name = "friendly_name", .type_name = "STRING", .value = "\"T One\"" };
+    with_opts.options = try a.dupe(*spec.OptionSpec, &.{ desc, friendly });
+
+    const specs = [_]*spec.TableSpec{
+        with_opts,
+        // No OPTIONS at all: contributes nothing, as BigQuery does. It reports
+        // options that were set, not every option with a default.
+        try testSpec(a, &.{ "ds", "t2" }, &.{"y"}, false),
+    };
+
+    const rows = try buildTableOptions(a, &specs, .{ .prefix = "ds" });
+    try testing.expectEqual(@as(usize, 2), rows.len);
+    try testing.expectEqualStrings("t1", rows[0][2].string);
+    try testing.expectEqualStrings("description", rows[0][3].string);
+    try testing.expectEqualStrings("STRING", rows[0][4].string);
+    try testing.expectEqualStrings("\"demo table\"", rows[0][5].string);
+    try testing.expectEqualStrings("friendly_name", rows[1][3].string);
+
+    // The table pushdown applies here too.
+    try testing.expectEqual(
+        @as(usize, 0),
+        (try buildTableOptions(a, &specs, .{ .prefix = "ds", .table = "t2" })).len,
+    );
+    try testing.expectEqual(
+        @as(usize, 2),
+        (try buildTableOptions(a, &specs, .{ .prefix = "ds", .table = "t1" })).len,
     );
 }
 
