@@ -432,7 +432,7 @@ test "sum/avg/count/countif over a table" {
     try env.expectFloat(3.5, "SELECT zetasqlite_sum(x) FROM tf");
 }
 
-test "empty and all-NULL groups mirror Go" {
+test "empty and all-NULL groups are NULL" {
     var env = try TestEnv.init();
     defer env.deinit();
 
@@ -445,15 +445,16 @@ test "empty and all-NULL groups mirror Go" {
     try env.expectInt(0, "SELECT zetasqlite_count(x) FROM empty_t");
     try env.expectInt(0, "SELECT zetasqlite_count_star() FROM empty_t");
     try env.expectNullResult("SELECT zetasqlite_string_agg(x) FROM empty_t");
-    // Go quirks preserved: bool/bit aggregates return their sentinels.
-    try value_mod.expectValueEqual(.{ .int = 1 }, try env.queryValue("SELECT zetasqlite_logical_and(x) FROM empty_t"));
-    try value_mod.expectValueEqual(.{ .int = 0 }, try env.queryValue("SELECT zetasqlite_logical_or(x) FROM empty_t"));
-    try env.expectInt(-1, "SELECT zetasqlite_bit_and(x) FROM empty_t");
-    try env.expectInt(-1, "SELECT zetasqlite_bit_or(x) FROM empty_t");
-    try env.expectInt(1, "SELECT zetasqlite_bit_xor(x) FROM empty_t");
-    // ARRAY_AGG over zero rows -> empty array (Go returns &ArrayValue{}).
-    const arr = try env.queryValue("SELECT zetasqlite_array_agg(x) FROM empty_t");
-    try testing.expectEqual(@as(usize, 0), arr.array.values.len);
+    // These returned Go's in-band sentinels (true/false/-1/-1/1/[]) until the
+    // "unset" marker moved out of band. BigQuery returns NULL for all of them;
+    // see the header of fn_aggregate.zig.
+    try env.expectNullResult("SELECT zetasqlite_logical_and(x) FROM empty_t");
+    try env.expectNullResult("SELECT zetasqlite_logical_or(x) FROM empty_t");
+    try env.expectNullResult("SELECT zetasqlite_bit_and(x) FROM empty_t");
+    try env.expectNullResult("SELECT zetasqlite_bit_or(x) FROM empty_t");
+    try env.expectNullResult("SELECT zetasqlite_bit_xor(x) FROM empty_t");
+    try env.expectNullResult("SELECT zetasqlite_array_agg(x) FROM empty_t");
+    try env.expectNullResult("SELECT zetasqlite_array_concat_agg(x) FROM empty_t");
 
     // All-NULL input behaves the same for the NULL-skipping aggregates.
     try env.exec("CREATE TABLE null_t(x)");
@@ -462,6 +463,14 @@ test "empty and all-NULL groups mirror Go" {
     try env.expectInt(0, "SELECT zetasqlite_count(x) FROM null_t");
     try env.expectInt(2, "SELECT zetasqlite_count_star() FROM null_t");
     try env.expectNullResult("SELECT zetasqlite_any_value(x) FROM null_t");
+    // All-NULL reaches done() by a different route than the empty group above
+    // — step runs but returns early — so assert it separately. BigQuery gives
+    // NULL for both.
+    try env.expectNullResult("SELECT zetasqlite_bit_and(x) FROM null_t");
+    try env.expectNullResult("SELECT zetasqlite_bit_or(x) FROM null_t");
+    try env.expectNullResult("SELECT zetasqlite_bit_xor(x) FROM null_t");
+    try env.expectNullResult("SELECT zetasqlite_logical_and(x) FROM null_t");
+    try env.expectNullResult("SELECT zetasqlite_logical_or(x) FROM null_t");
 }
 
 test "max/min/any_value over ints, strings and dates" {

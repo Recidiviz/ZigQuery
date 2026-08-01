@@ -371,9 +371,10 @@ test "COUNTIF / LOGICAL_AND / LOGICAL_OR / bit aggregates" {
     try testing.expectEqual(Cell{ .bool = true }, row[2]);
     try testing.expectEqual(Cell{ .int = 0 }, row[3]);
     try testing.expectEqual(Cell{ .int = 3 }, row[4]);
-    // Go quirk preserved: BIT_XOR_AGG{1} treats a running value of 1 as
-    // "unset", so the first XOR result over [1, 2, 3] is 2^3 = 1, not 0.
-    try testing.expectEqual(Cell{ .int = 1 }, row[5]);
+    // 1^2^3 = 0. This returned 1 while BIT_XOR seeded its accumulator with an
+    // in-band sentinel of 1 and treated a running value of 1 as "unset",
+    // silently dropping the first input; BigQuery returns 0.
+    try testing.expectEqual(Cell{ .int = 0 }, row[5]);
 }
 
 test "empty input: SUM -> NULL, COUNT -> 0" {

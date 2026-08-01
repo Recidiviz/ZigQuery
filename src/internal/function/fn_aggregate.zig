@@ -7,10 +7,20 @@
 //! filtered arg list) with the corresponding FN.Step/Done methods:
 //!   step(self, alloc, values, opt)  — values/opt from parseAggregateOptions
 //!   done(self, alloc) -> Value      — the aggregate result
-//! Zero-initialized structs must produce Go's empty-group results (SUM/MAX/
-//! MIN/AVG -> NULL, COUNT/COUNTIF -> 0, LOGICAL_AND -> true, LOGICAL_OR ->
-//! false, BIT_AND -> -1, BIT_OR -> -1, BIT_XOR -> 1, ARRAY_AGG -> []), since
-//! aggregate.zig calls done() on a fresh struct when SQLite never stepped.
+//! aggregate.zig calls done() on a fresh struct when SQLite never stepped, so a
+//! zero-initialized struct must produce the empty-group result: NULL for every
+//! aggregate here except COUNT/COUNTIF (0) and ARRAY (`[]`, because it backs
+//! `ARRAY(SELECT ...)` subqueries rather than ARRAY_AGG).
+//!
+//! "Nothing accumulated yet" is tracked out of band, by a `seen`/`once`/
+//! `initialized` bool set inside step() *after* that impl's own NULL check —
+//! which is what makes zero rows and all-NULL rows converge on NULL, as
+//! BigQuery does for both. Go instead seeded the accumulator with an in-band
+//! sentinel (BIT_OR -1, BIT_XOR 1) and treated a running value equal to it as
+//! unset. That leaked the sentinel out of an empty group *and* silently
+//! discarded a real input equal to it: BIT_OR([-1, 5]) gave 5 rather than -1,
+//! BIT_XOR([1, 2, 3]) gave 1 rather than 0. Both are fixed here, a deliberate
+//! divergence from go-zetasqlite.
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -170,6 +180,10 @@ pub const ANY_VALUE = struct {
 // ----------------------------------------------------------------------
 
 pub const ARRAY_AGG = struct {
+    /// Set on the first row that survives the NULL check. Keyed on rather than
+    /// `values.items.len` so a group of non-NULL but *empty* arrays still
+    /// yields `[]` rather than NULL.
+    once: bool = false,
     opt: ?*const AggregatorOption = null,
     values: std.ArrayList(*OrderedValue) = .empty,
 
@@ -178,6 +192,7 @@ pub const ARRAY_AGG = struct {
         if (values[0] == .@"null") {
             return bind.fail("ARRAY_AGG: input value must be not null", .{}, error.NullValue);
         }
+        f.once = true;
         if (f.opt == null) f.opt = opt;
         const ov = try alloc.create(OrderedValue);
         ov.* = .{ .order_by = opt.order_by, .value = values[0] };
@@ -185,6 +200,8 @@ pub const ARRAY_AGG = struct {
     }
 
     pub fn done(f: *ARRAY_AGG, alloc: std.mem.Allocator) Error!Value {
+        // Zero rows, or every row NULL: BigQuery returns NULL, not [].
+        if (!f.once) return .@"null";
         sortAndLimit(&f.values, f.opt);
         const out = try alloc.alloc(Value, f.values.items.len);
         for (f.values.items, 0..) |ov, i| out[i] = ov.value;
@@ -193,6 +210,10 @@ pub const ARRAY_AGG = struct {
 };
 
 pub const ARRAY_CONCAT_AGG = struct {
+    /// Set on the first row that survives the NULL check. Keyed on rather than
+    /// `values.items.len` so a group of non-NULL but *empty* arrays still
+    /// yields `[]` rather than NULL.
+    once: bool = false,
     opt: ?*const AggregatorOption = null,
     values: std.ArrayList(*OrderedValue) = .empty,
 
@@ -201,6 +222,7 @@ pub const ARRAY_CONCAT_AGG = struct {
         // Go bindArrayConcatAgg: NULL input rows are skipped.
         if (values[0] == .@"null") return;
         const arr = try values[0].toArray();
+        f.once = true;
         if (f.opt == null) f.opt = opt;
         for (arr.values) |vv| {
             const ov = try alloc.create(OrderedValue);
@@ -210,6 +232,8 @@ pub const ARRAY_CONCAT_AGG = struct {
     }
 
     pub fn done(f: *ARRAY_CONCAT_AGG, alloc: std.mem.Allocator) Error!Value {
+        // Zero rows, or every row NULL: BigQuery returns NULL, not [].
+        if (!f.once) return .@"null";
         sortAndLimit(&f.values, f.opt);
         const out = try alloc.alloc(Value, f.values.items.len);
         for (f.values.items, 0..) |ov, i| out[i] = ov.value;
@@ -266,64 +290,61 @@ pub const SUM = struct {
 // ----------------------------------------------------------------------
 
 pub const BIT_AND_AGG = struct {
-    value: Value = .{ .int = -1 }, // Go: &BIT_AND_AGG{IntValue(-1)}
+    seen: bool = false,
+    value: i64 = -1, // the AND identity (all bits set)
 
     pub fn step(f: *BIT_AND_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("BIT_AND: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .@"null") return;
-        const i = try values[0].toInt64();
-        const cur = try f.value.toInt64();
-        f.value = .{ .int = cur & i };
+        f.seen = true;
+        f.value &= try values[0].toInt64();
     }
 
     pub fn done(f: *BIT_AND_AGG, alloc: std.mem.Allocator) Error!Value {
         _ = alloc;
-        return f.value;
+        if (!f.seen) return .@"null";
+        return .{ .int = f.value };
     }
 };
 
 pub const BIT_OR_AGG = struct {
-    value: i64 = -1, // Go: &BIT_OR_AGG{-1}
+    seen: bool = false,
+    value: i64 = 0, // the OR identity, now that "unset" is out of band
 
     pub fn step(f: *BIT_OR_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("BIT_OR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .@"null") return;
-        const i = try values[0].toInt64();
-        if (f.value == -1) {
-            f.value = i;
-        } else {
-            f.value |= i;
-        }
+        f.seen = true;
+        f.value |= try values[0].toInt64();
     }
 
     pub fn done(f: *BIT_OR_AGG, alloc: std.mem.Allocator) Error!Value {
         _ = alloc;
+        if (!f.seen) return .@"null";
         return .{ .int = f.value };
     }
 };
 
 pub const BIT_XOR_AGG = struct {
-    value: i64 = 1, // Go: &BIT_XOR_AGG{1}
+    seen: bool = false,
+    value: i64 = 0, // the XOR identity
 
     pub fn step(f: *BIT_XOR_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("BIT_XOR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .@"null") return;
-        const i = try values[0].toInt64();
-        if (f.value == 1) {
-            f.value = i;
-        } else {
-            f.value ^= i;
-        }
+        f.seen = true;
+        f.value ^= try values[0].toInt64();
     }
 
     pub fn done(f: *BIT_XOR_AGG, alloc: std.mem.Allocator) Error!Value {
         _ = alloc;
+        if (!f.seen) return .@"null";
         return .{ .int = f.value };
     }
 };
@@ -396,35 +417,41 @@ pub const COUNTIF = struct {
 // ----------------------------------------------------------------------
 
 pub const LOGICAL_AND = struct {
-    v: bool = true, // Go: &LOGICAL_AND{true}
+    seen: bool = false,
+    v: bool = true, // the AND identity
 
     pub fn step(f: *LOGICAL_AND, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("LOGICAL_AND: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .@"null") return;
+        f.seen = true;
         if (!(try values[0].toBool())) f.v = false;
     }
 
     pub fn done(f: *LOGICAL_AND, alloc: std.mem.Allocator) Error!Value {
         _ = alloc;
+        if (!f.seen) return .@"null";
         return .{ .bool = f.v };
     }
 };
 
 pub const LOGICAL_OR = struct {
-    v: bool = false,
+    seen: bool = false,
+    v: bool = false, // the OR identity
 
     pub fn step(f: *LOGICAL_OR, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("LOGICAL_OR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .@"null") return;
+        f.seen = true;
         if (try values[0].toBool()) f.v = true;
     }
 
     pub fn done(f: *LOGICAL_OR, alloc: std.mem.Allocator) Error!Value {
         _ = alloc;
+        if (!f.seen) return .@"null";
         return .{ .bool = f.v };
     }
 };
@@ -849,7 +876,7 @@ test "sortAggregatedValues orders by per-row keys with NULLs first/last" {
     try testing.expectEqual(@as(i64, 3), items[3].order_by[0].value.int);
 }
 
-test "empty-group done() results mirror Go" {
+test "an empty group is NULL for every aggregate but COUNT and ARRAY" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -868,23 +895,89 @@ test "empty-group done() results mirror Go" {
     try value_mod.expectValueEqual(.{ .int = 0 }, try countif.done(alloc));
     var count_star = COUNT_STAR{};
     try value_mod.expectValueEqual(.{ .int = 0 }, try count_star.done(alloc));
+    // These six returned Go's sentinels (true/false/-1/-1/1/[]) until the
+    // "unset" marker moved out of band; BigQuery returns NULL for all of them.
     var land = LOGICAL_AND{};
-    try value_mod.expectValueEqual(.{ .bool = true }, try land.done(alloc));
+    try value_mod.expectValueEqual(.@"null", try land.done(alloc));
     var lor = LOGICAL_OR{};
-    try value_mod.expectValueEqual(.{ .bool = false }, try lor.done(alloc));
+    try value_mod.expectValueEqual(.@"null", try lor.done(alloc));
     var band = BIT_AND_AGG{};
-    try value_mod.expectValueEqual(.{ .int = -1 }, try band.done(alloc));
+    try value_mod.expectValueEqual(.@"null", try band.done(alloc));
     var bor = BIT_OR_AGG{};
-    try value_mod.expectValueEqual(.{ .int = -1 }, try bor.done(alloc));
+    try value_mod.expectValueEqual(.@"null", try bor.done(alloc));
     var bxor = BIT_XOR_AGG{};
-    try value_mod.expectValueEqual(.{ .int = 1 }, try bxor.done(alloc));
+    try value_mod.expectValueEqual(.@"null", try bxor.done(alloc));
+    var array_agg = ARRAY_AGG{};
+    try value_mod.expectValueEqual(.@"null", try array_agg.done(alloc));
+    var array_concat = ARRAY_CONCAT_AGG{};
+    try value_mod.expectValueEqual(.@"null", try array_concat.done(alloc));
     var string_agg = STRING_AGG{};
     try value_mod.expectValueEqual(.@"null", try string_agg.done(alloc));
-    var array_agg = ARRAY_AGG{};
-    const arr = try array_agg.done(alloc);
-    try testing.expectEqual(@as(usize, 0), arr.array.values.len);
     var any_value = ANY_VALUE{};
     try value_mod.expectValueEqual(.@"null", try any_value.done(alloc));
+
+    // ARRAY is not ARRAY_AGG: it backs `ARRAY(SELECT ...)`, where zero rows
+    // really is an empty array.
+    var array = ARRAY{};
+    const arr = try array.done(alloc);
+    try testing.expectEqual(@as(usize, 0), arr.array.values.len);
+}
+
+test "the bit aggregates combine values that used to alias the sentinel" {
+    // Go seeded BIT_OR with -1 and BIT_XOR with 1 and treated a running value
+    // equal to the seed as "unset", so a real input equal to it was dropped.
+    // BigQuery: BIT_OR([-1,5]) = -1, BIT_XOR([1,4]) = 5, BIT_XOR([1,1]) = 0,
+    // BIT_XOR([1,2,3]) = 0.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const opt = AggregatorOption{};
+
+    var bor = BIT_OR_AGG{};
+    for ([_]i64{ -1, 5 }) |v| try bor.step(alloc, &.{.{ .int = v }}, &opt);
+    try value_mod.expectValueEqual(.{ .int = -1 }, try bor.done(alloc));
+
+    var x1 = BIT_XOR_AGG{};
+    for ([_]i64{ 1, 4 }) |v| try x1.step(alloc, &.{.{ .int = v }}, &opt);
+    try value_mod.expectValueEqual(.{ .int = 5 }, try x1.done(alloc));
+
+    var x2 = BIT_XOR_AGG{};
+    for ([_]i64{ 1, 1 }) |v| try x2.step(alloc, &.{.{ .int = v }}, &opt);
+    try value_mod.expectValueEqual(.{ .int = 0 }, try x2.done(alloc));
+
+    var x3 = BIT_XOR_AGG{};
+    for ([_]i64{ 1, 2, 3 }) |v| try x3.step(alloc, &.{.{ .int = v }}, &opt);
+    try value_mod.expectValueEqual(.{ .int = 0 }, try x3.done(alloc));
+
+    // BIT_AND's seed is the genuine identity, so it never had the aliasing bug.
+    var band = BIT_AND_AGG{};
+    for ([_]i64{ -1, 6 }) |v| try band.step(alloc, &.{.{ .int = v }}, &opt);
+    try value_mod.expectValueEqual(.{ .int = 6 }, try band.done(alloc));
+}
+
+test "all-NULL input is NULL, and an empty array input is still an empty array" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const opt = AggregatorOption{};
+
+    // Reaches done() by a different route than the empty group: step runs but
+    // returns early. BigQuery gives NULL for both.
+    var bor = BIT_OR_AGG{};
+    try bor.step(alloc, &.{.@"null"}, &opt);
+    try bor.step(alloc, &.{.@"null"}, &opt);
+    try value_mod.expectValueEqual(.@"null", try bor.done(alloc));
+
+    var land = LOGICAL_AND{};
+    try land.step(alloc, &.{.@"null"}, &opt);
+    try value_mod.expectValueEqual(.@"null", try land.done(alloc));
+
+    // One non-NULL but EMPTY array must still yield [], not NULL — which is why
+    // the guard keys on `once` rather than on the collected length.
+    var concat = ARRAY_CONCAT_AGG{};
+    try concat.step(alloc, &.{try value_mod.arrayValue(alloc, &.{})}, &opt);
+    const out = try concat.done(alloc);
+    try testing.expectEqual(@as(usize, 0), out.array.values.len);
 }
 
 test "SUM keeps int typing; AVG divides as float" {

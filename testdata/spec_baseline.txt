@@ -30,12 +30,17 @@ googlesql/functions/aggregate/approximate/approx_quantiles	approx_quantiles retu
 googlesql/functions/aggregate/approximate/approx_top_count	approx_top_count returns array of structs
 googlesql/functions/aggregate/approximate/approx_top_sum	approx_top_sum runs over weighted inputs
 googlesql/functions/aggregate/array_agg	aggregate ints into array
+googlesql/functions/aggregate/array_agg	empty input returns NULL
 googlesql/functions/aggregate/array_concat_agg	concat arrays preserves order
+googlesql/functions/aggregate/array_concat_agg	empty input returns NULL
 googlesql/functions/aggregate/avg	avg of three
 googlesql/functions/aggregate/avg	empty input returns NULL
 googlesql/functions/aggregate/bit_and	bit_and over integers
+googlesql/functions/aggregate/bit_and	empty input returns NULL
 googlesql/functions/aggregate/bit_or	bit_or over integers
+googlesql/functions/aggregate/bit_or	empty input returns NULL
 googlesql/functions/aggregate/bit_xor	BIT_XOR of 0xF0, 0x0F, 0x55 is 0xAA
+googlesql/functions/aggregate/bit_xor	empty input returns NULL
 googlesql/functions/aggregate/count	count integers
 googlesql/functions/aggregate/count	count star
 googlesql/functions/aggregate/count	count of empty input is zero
@@ -44,8 +49,10 @@ googlesql/functions/aggregate/countif	count truthy values
 googlesql/functions/aggregate/countif	countif of empty input is zero
 googlesql/functions/aggregate/logical_and	all true
 googlesql/functions/aggregate/logical_and	one false
+googlesql/functions/aggregate/logical_and	empty input returns NULL
 googlesql/functions/aggregate/logical_or	one true
 googlesql/functions/aggregate/logical_or	all false
+googlesql/functions/aggregate/logical_or	empty input returns NULL
 googlesql/functions/aggregate/max	max of integers
 googlesql/functions/aggregate/max	empty input returns NULL
 googlesql/functions/aggregate/min	min of integers
