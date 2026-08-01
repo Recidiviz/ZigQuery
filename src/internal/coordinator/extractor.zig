@@ -421,6 +421,93 @@ pub fn newColumnExpressionData(
     return .{ .type = .column, .column = ref };
 }
 
+// ----------------------------------------------------------------------
+// GROUP BY GROUPING SETS / ROLLUP / CUBE
+//
+// The resolved AST keeps ROLLUP and CUBE as their own nodes; both are defined
+// as shorthand for a list of grouping sets (query-syntax.md #group_by_rollup,
+// #group_by_cube), and expanding them here means the transformer only ever
+// sees the one flat form it already lowers.
+// ----------------------------------------------------------------------
+
+/// Ceiling on CUBE's grouping elements. Each generated set becomes its own
+/// SELECT in a UNION ALL, so 2^n is emitted SQL, not a bitmask — 10 is already
+/// 1024 branches. Beyond it, refusing beats generating a query no engine runs.
+const max_cube_groups = 10;
+
+/// One grouping set, from the columns it groups by. An empty list is the
+/// grand-total set.
+fn appendGroupingSet(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(*types_data.GroupingSetData),
+    column_refs: []const *pb.ResolvedColumnRefProto,
+) Error!void {
+    var items: std.ArrayList(*types_data.ComputedColumnData) = .empty;
+    for (column_refs) |ref| {
+        const column = ref.column orelse return error.InvalidAST;
+        const item = try alloc.create(types_data.ComputedColumnData);
+        item.* = .{
+            .column = try extractColumnData(alloc, column),
+            .expression = try newColumnExpressionData(alloc, column),
+        };
+        try items.append(alloc, item);
+    }
+    const gs = try alloc.create(types_data.GroupingSetData);
+    gs.* = .{ .group_by_columns = try items.toOwnedSlice(alloc) };
+    try out.append(alloc, gs);
+}
+
+/// One grouping set from a selection of ROLLUP/CUBE groups, flattened. A group
+/// is a parenthesised item — the `(b, c)` in `ROLLUP(a, (b, c))` — which enters
+/// and leaves a grouping set whole.
+fn appendMultiColumnSet(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(*types_data.GroupingSetData),
+    groups: []const *pb.ResolvedGroupingSetMultiColumnProto,
+) Error!void {
+    var refs: std.ArrayList(*pb.ResolvedColumnRefProto) = .empty;
+    for (groups) |g| try refs.appendSlice(alloc, g.column_list);
+    try appendGroupingSet(alloc, out, refs.items);
+}
+
+/// ROLLUP(g1, ..., gn) is n+1 grouping sets: every prefix of the group list,
+/// longest first, ending with the grand total. The docs give ROLLUP(b, c) as
+/// (b, c), (b), ().
+fn expandRollup(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(*types_data.GroupingSetData),
+    groups: []const *pb.ResolvedGroupingSetMultiColumnProto,
+) Error!void {
+    var len = groups.len + 1;
+    while (len > 0) {
+        len -= 1;
+        try appendMultiColumnSet(alloc, out, groups[0..len]);
+    }
+}
+
+/// CUBE(g1, ..., gn) is 2^n grouping sets: every subset. The docs enumerate
+/// CUBE(a, b, c) as (a,b,c) (a,b) (a,c) (a) (b,c) (b) (c) (), which is the
+/// subset masks counted down with the *first* group as the high bit — so the
+/// single-group case comes out (a), (), the same list ROLLUP(a) produces.
+fn expandCube(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(*types_data.GroupingSetData),
+    groups: []const *pb.ResolvedGroupingSetMultiColumnProto,
+) Error!void {
+    if (groups.len > max_cube_groups) return error.UnsupportedNode;
+    var selected: std.ArrayList(*pb.ResolvedGroupingSetMultiColumnProto) = .empty;
+    var mask: usize = @as(usize, 1) << @as(u6, @intCast(groups.len));
+    while (mask > 0) {
+        mask -= 1;
+        selected.clearRetainingCapacity();
+        for (groups, 0..) |g, i| {
+            const bit = @as(usize, 1) << @as(u6, @intCast(groups.len - 1 - i));
+            if (mask & bit != 0) try selected.append(alloc, g);
+        }
+        try appendMultiColumnSet(alloc, out, selected.items);
+    }
+}
+
 /// Go scanColumnList: output column list of any resolved scan (the promoted
 /// ResolvedScan base field). Only foundation scan kinds are reachable.
 fn scanColumnListOf(scan: *const pb.AnyResolvedScanProto) Error![]const *pb.ResolvedColumnProto {
@@ -1134,34 +1221,37 @@ pub const NodeExtractor = struct {
             try group_by_list.append(alloc, try self.extractComputedColumnData(alloc, group_by, ctx));
         }
 
-        // Grouping sets (GROUP BY GROUPING SETS/ROLLUP/CUBE). Go's
-        // extractAggregateScanData iterates GroupingSetList and casts each to
-        // *ResolvedGroupingSet, reading GroupByColumnList (a list of column
-        // refs into the group_by_list columns). Each becomes a GroupingSetData
-        // whose GroupByColumns carry the referenced column (empty for the
-        // grand-total set).
+        // Grouping sets (GROUP BY GROUPING SETS/ROLLUP/CUBE). The transformer
+        // lowers these as a UNION ALL of one SELECT per set
+        // (transformer/scan_aggregate.zig buildGroupingSetsQuery), so ROLLUP
+        // and CUBE are expanded to concrete sets here and it never has to know
+        // they existed. A GROUPING SETS list may itself hold ROLLUP and CUBE
+        // items; the analyzer leaves them as siblings in one flat list, which
+        // is exactly what appending each expansion in turn produces.
         var grouping_sets: std.ArrayList(*types_data.GroupingSetData) = .empty;
         for (base.grouping_set_list) |grouping_set_base| {
             const gs_node = grouping_set_base.node orelse return error.InvalidAST;
-            const grouping_set = switch (gs_node) {
-                .resolved_grouping_set_node => |gs| gs,
-                // Go: "unsupported grouping set node type: %T" (only the
-                // analyzer-expanded ResolvedGroupingSet form is handled).
+            switch (gs_node) {
+                .resolved_grouping_set_node => |gs| try appendGroupingSet(
+                    alloc,
+                    &grouping_sets,
+                    gs.group_by_column_list,
+                ),
+                .resolved_rollup_node => |r| try expandRollup(
+                    alloc,
+                    &grouping_sets,
+                    r.rollup_column_list,
+                ),
+                .resolved_cube_node => |c| try expandCube(
+                    alloc,
+                    &grouping_sets,
+                    c.cube_column_list,
+                ),
+                // ResolvedGroupingSetList / ResolvedGroupingSetProduct arise
+                // only under FEATURE_MULTI_GROUPING_SETS, which the shim
+                // leaves off, so the analyzer rejects those queries first.
                 else => return error.UnsupportedNode,
-            };
-            var grouping_set_items: std.ArrayList(*types_data.ComputedColumnData) = .empty;
-            for (grouping_set.group_by_column_list) |group_by_col| {
-                const column = group_by_col.column orelse return error.InvalidAST;
-                const item = try alloc.create(types_data.ComputedColumnData);
-                item.* = .{
-                    .column = try extractColumnData(alloc, column),
-                    .expression = try newColumnExpressionData(alloc, column),
-                };
-                try grouping_set_items.append(alloc, item);
             }
-            const gs_data = try alloc.create(types_data.GroupingSetData);
-            gs_data.* = .{ .group_by_columns = try grouping_set_items.toOwnedSlice(alloc) };
-            try grouping_sets.append(alloc, gs_data);
         }
 
         const parent = base.parent orelse return error.InvalidAST;

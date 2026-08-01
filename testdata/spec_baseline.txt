@@ -418,11 +418,13 @@ googlesql/syntax/query/conditional_expressions	IF returns then-branch when condi
 googlesql/syntax/query/conditional_expressions	IFNULL replaces NULL with the default
 googlesql/syntax/query/conditional_expressions	COALESCE returns the first non-NULL argument
 googlesql/syntax/query/conditional_expressions	NULLIF returns NULL when the arguments are equal
+googlesql/syntax/query/cube	cube over a single column equals rollup
 googlesql/syntax/query/except	EXCEPT DISTINCT removes shared rows
 googlesql/syntax/query/group_by	scalar GROUP BY with COUNT
 googlesql/syntax/query/group_by	GROUP BY on individual STRUCT fields
 googlesql/syntax/query/group_by	NULL becomes its own GROUP BY bucket
 googlesql/syntax/query/group_by	GROUP BY a scalar column that carries an ARRAY field in the row
+googlesql/syntax/query/grouping_sets	per-key total plus grand total via GROUPING SETS
 googlesql/syntax/query/intersect	INTERSECT DISTINCT keeps the shared values
 googlesql/syntax/query/join	INNER JOIN on equality
 googlesql/syntax/query/join	LEFT JOIN keeps unmatched left-side row

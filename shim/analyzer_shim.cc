@@ -119,6 +119,16 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // implicit in go-googlesql's analyzer revision, feature-gated here.
     googlesql::FEATURE_CONCAT_MIXED_TYPES,
     googlesql::FEATURE_ALLOW_REGEXP_EXTRACT_OPTIONALS,
+    // GROUP BY GROUPING SETS and GROUP BY CUBE, both of which BigQuery
+    // supports. Enabling this also changes how ROLLUP resolves: the legacy
+    // flat ResolvedGroupingSet list gives way to a ResolvedRollup node
+    // (query_resolver_helper.cc ReleaseGroupingSetsAndRollupList), which the
+    // extractor expands. FEATURE_MULTI_GROUPING_SETS stays off on purpose:
+    // it would allow a grouping element beside GROUPING SETS/ROLLUP/CUBE, and
+    // BigQuery rejects that too, with the very message the analyzer gives when
+    // the feature is disabled ("The GROUP BY clause only supports ROLLUP when
+    // there are no other grouping elements").
+    googlesql::FEATURE_GROUPING_SETS,
 };
 
 // Ported verbatim from internal/analyzer.go `supportedStatementKinds`.

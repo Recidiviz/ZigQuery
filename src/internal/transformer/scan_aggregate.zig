@@ -442,3 +442,148 @@ test "HAVING clause filters aggregate groups (FilterScan above AggregateScan)" {
     try testing.expectEqual(Cell{ .int = 5 }, row[1]);
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
+
+// GROUP BY GROUPING SETS / ROLLUP / CUBE. The analyzer hands these over as
+// three different node kinds, all expanded to a flat set list by
+// coordinator/extractor.zig before buildGroupingSetsQuery above sees them.
+// Every expected result below was taken from BigQuery
+// (recidiviz-bigquery-sandbox), row order included.
+
+/// The three-row fixture the grouping tests share: two keys, three rows.
+const grouping_rows =
+    \\FROM UNNEST([
+    \\  STRUCT('x' AS a, 'p' AS b, 1 AS v),
+    \\  STRUCT('x', 'q', 2),
+    \\  STRUCT('y', 'p', 4)
+    \\])
+;
+
+/// Runs `select_and_group` over `grouping_rows` and checks (a, b, SUM(v))
+/// against `want`, where an empty string stands for a NULL grouping column.
+fn expectGrouping(
+    select_and_group: []const u8,
+    want: []const [3][]const u8,
+) !void {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const sql = try std.fmt.allocPrint(
+        testing.allocator,
+        "SELECT a, b, SUM(v) AS s {s} {s} ORDER BY a NULLS LAST, b NULLS LAST",
+        .{ grouping_rows, select_and_group },
+    );
+    defer testing.allocator.free(sql);
+
+    var rows = try db.query(sql, &.{}, .{});
+    defer rows.deinit();
+
+    for (want) |w| {
+        const row = (try rows.next()) orelse return error.TooFewRows;
+        for (w[0..2], 0..) |cell, i| {
+            if (cell.len == 0) {
+                try testing.expect(row[i] == .null);
+            } else {
+                try testing.expectEqualStrings(cell, row[i].string);
+            }
+        }
+        try testing.expectEqual(
+            Cell{ .int = try std.fmt.parseInt(i64, w[2], 10) },
+            row[2],
+        );
+    }
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "GROUP BY ROLLUP walks the prefixes of its grouping list" {
+    // ROLLUP(a, b) is (a, b), (a), ().
+    try expectGrouping("GROUP BY ROLLUP(a, b)", &.{
+        .{ "x", "p", "1" },
+        .{ "x", "q", "2" },
+        .{ "x", "", "3" },
+        .{ "y", "p", "4" },
+        .{ "y", "", "4" },
+        .{ "", "", "7" },
+    });
+}
+
+test "GROUP BY CUBE takes every subset of its grouping list" {
+    // CUBE(a, b) is (a, b), (a), (b), () — ROLLUP's sets plus (b).
+    try expectGrouping("GROUP BY CUBE(a, b)", &.{
+        .{ "x", "p", "1" },
+        .{ "x", "q", "2" },
+        .{ "x", "", "3" },
+        .{ "y", "p", "4" },
+        .{ "y", "", "4" },
+        .{ "", "p", "5" },
+        .{ "", "q", "2" },
+        .{ "", "", "7" },
+    });
+}
+
+test "GROUP BY CUBE over one column is GROUP BY ROLLUP over it" {
+    // Both are (a), (), so the two queries agree — the single case where CUBE's
+    // subsets and ROLLUP's prefixes coincide.
+    for ([_][]const u8{ "CUBE(a)", "ROLLUP(a)" }) |grouping| {
+        var db = try driver.Db.open(testing.allocator, ":memory:");
+        defer db.close();
+
+        const sql = try std.fmt.allocPrint(
+            testing.allocator,
+            "SELECT a, SUM(v) AS s " ++ grouping_rows ++ " GROUP BY {s} ORDER BY a NULLS LAST",
+            .{grouping},
+        );
+        defer testing.allocator.free(sql);
+
+        var rows = try db.query(sql, &.{}, .{});
+        defer rows.deinit();
+
+        var row = (try rows.next()).?;
+        try testing.expectEqualStrings("x", row[0].string);
+        try testing.expectEqual(Cell{ .int = 3 }, row[1]);
+        row = (try rows.next()).?;
+        try testing.expectEqualStrings("y", row[0].string);
+        try testing.expectEqual(Cell{ .int = 4 }, row[1]);
+        row = (try rows.next()).?;
+        try testing.expect(row[0] == .null);
+        try testing.expectEqual(Cell{ .int = 7 }, row[1]);
+        try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+    }
+}
+
+test "GROUP BY GROUPING SETS takes the sets as written" {
+    // A parenthesised item groups by both its columns at once.
+    try expectGrouping("GROUP BY GROUPING SETS (a, (a, b), ())", &.{
+        .{ "x", "p", "1" },
+        .{ "x", "q", "2" },
+        .{ "x", "", "3" },
+        .{ "y", "p", "4" },
+        .{ "y", "", "4" },
+        .{ "", "", "7" },
+    });
+}
+
+test "GROUPING SETS expands a ROLLUP nested inside it" {
+    // GROUPING SETS (a, ROLLUP(b)) is (a), (b), () — the analyzer leaves the
+    // ROLLUP as a sibling node in one flat list and the extractor expands it
+    // in place.
+    try expectGrouping("GROUP BY GROUPING SETS (a, ROLLUP(b))", &.{
+        .{ "x", "", "3" },
+        .{ "y", "", "4" },
+        .{ "", "p", "5" },
+        .{ "", "q", "2" },
+        .{ "", "", "7" },
+    });
+}
+
+test "a grouping element beside ROLLUP is rejected, as BigQuery rejects it" {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // FEATURE_MULTI_GROUPING_SETS is off in shim/analyzer_shim.cc precisely so
+    // that this fails here the way it fails in BigQuery.
+    try testing.expectError(error.AnalyzeFailed, db.query(
+        "SELECT a, SUM(v) AS s " ++ grouping_rows ++ " GROUP BY a, ROLLUP(b)",
+        &.{},
+        .{},
+    ));
+}
