@@ -147,6 +147,7 @@ googlesql/functions/hash/sha512	sha512 of empty bytes
 googlesql/functions/hll/hll_count_extract	HLL_COUNT.EXTRACT through INIT pipeline returns approximate cardinality
 googlesql/functions/hll/hll_count_init	HLL_COUNT.INIT produces a non-empty sketch
 googlesql/functions/hll/hll_count_merge	upstream example 1
+googlesql/functions/hll/hll_count_merge_partial	a merged sketch still counts the distinct inputs
 googlesql/functions/interval/extract	extract year from interval
 googlesql/functions/interval/justify_days	JUSTIFY_DAYS executes without error
 googlesql/functions/interval/justify_hours	JUSTIFY_HOURS executes without error
@@ -446,6 +447,8 @@ googlesql/syntax/query/operators_logical	AND / OR / NOT on TRUE and FALSE
 googlesql/syntax/query/operators_logical	NULL propagation in three-valued logic
 googlesql/syntax/query/parameters	positional placeholders bind in order
 googlesql/syntax/query/parameters	named placeholders bind by name
+googlesql/syntax/query/parameters	mixed positional and named in one statement is rejected
+googlesql/syntax/query/parameters	mixed positional and named with two positional after the named is rejected
 googlesql/syntax/query/pivot	pivot by category, sum values
 googlesql/syntax/query/predicates	BETWEEN inclusive range
 googlesql/syntax/query/predicates	IN list literal

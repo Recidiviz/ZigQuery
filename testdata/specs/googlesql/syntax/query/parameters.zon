@@ -23,23 +23,24 @@
                 .{3},
             },
         },
+        // Mixing the two parameter modes is an error, not a result. Upstream
+        // asserted values here; BigQuery refuses the query outright with
+        // "Cannot mix query parameter modes NAMED and POSITIONAL", and its
+        // parameterized-queries page — the cited source — never shows the two
+        // together. Restated as the refusal, so the cases still pin something.
         .{
-            .desc = "mixed positional and named in one statement",
+            .desc = "mixed positional and named in one statement is rejected",
             .sql = "SELECT @a + ?",
             .args = .{2},
             .named_args = .{ .a = 1 },
-            .rows = .{
-                .{3},
-            },
+            .expect_error = "named parameter and positional parameter cannot be used together",
         },
         .{
-            .desc = "mixed positional and named with two positional after the named",
+            .desc = "mixed positional and named with two positional after the named is rejected",
             .sql = "SELECT @a + ? + ?",
             .args = .{ 2, 3 },
             .named_args = .{ .a = 10 },
-            .rows = .{
-                .{15},
-            },
+            .expect_error = "named parameter and positional parameter cannot be used together",
         },
     },
 }
