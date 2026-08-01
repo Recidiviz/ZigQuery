@@ -62,11 +62,12 @@ pub const Repository = struct {
         r.db.rawExec("BEGIN", &.{}) catch return r.failEngine();
         errdefer r.db.rawExec("ROLLBACK", &.{}) catch {};
 
+        const plans = try r.planFor(fields);
         const params = try r.arena.alloc(driver.Param, fields.len);
         var norm = rowvalue.Normalizer{ .arena = r.arena };
         for (rows) |row| {
-            for (fields, 0..) |field, i| {
-                params[i] = .{ .value = try r.cellFor(&norm, row, field) };
+            for (plans, 0..) |*plan, i| {
+                params[i] = .{ .value = try r.cellFor(&norm, row, plan) };
             }
             stmt.exec(params) catch return r.failEngine();
         }
@@ -99,6 +100,49 @@ pub const Repository = struct {
         return out.toOwnedSlice(r.arena);
     }
 
+    /// Everything `cellFor` needs from a column's schema node, read once per
+    /// insert instead of once per cell.
+    ///
+    /// `name`, `type`, `mode` and `fields` are all constant for a column, yet
+    /// resolving them inside the row loop meant four of the five hash lookups
+    /// each cell performed were re-deriving the same answer — 1.8M redundant
+    /// lookups on an 18k-row, 25-column batch, and 55% of cellFor's time.
+    /// Only the row lookup itself genuinely varies. Same fix as the field-name
+    /// set in tabledata.validateAgainstSchema.
+    const ColumnPlan = struct {
+        /// The key to read from each posted row.
+        name: []const u8,
+        /// Which of Go's three string coercions this column takes, if any.
+        coercion: enum { none, timestamp, json, bytes },
+        /// Normalizer inputs for everything the coercions do not claim.
+        mode: []const u8,
+        sub_fields: []const std.json.Value,
+    };
+
+    fn planFor(
+        r: *Repository,
+        fields: []const std.json.Value,
+    ) std.mem.Allocator.Error![]const ColumnPlan {
+        const plans = try r.arena.alloc(ColumnPlan, fields.len);
+        for (fields, 0..) |field, i| {
+            const type_name = rowvalue.stringOf(field, "type");
+            plans[i] = .{
+                .name = rowvalue.stringOf(field, "name"),
+                .coercion = if (std.mem.eql(u8, type_name, "TIMESTAMP"))
+                    .timestamp
+                else if (std.mem.eql(u8, type_name, "JSON"))
+                    .json
+                else if (std.mem.eql(u8, type_name, "BYTES"))
+                    .bytes
+                else
+                    .none,
+                .mode = rowvalue.stringOf(field, "mode"),
+                .sub_fields = rowvalue.fieldsOf(field),
+            };
+        }
+        return plans;
+    }
+
     /// One column's bound value: the three string coercions Go applies in
     /// AddTableData (:496-532), then normalizeData for everything else.
     ///
@@ -109,15 +153,13 @@ pub const Repository = struct {
         r: *Repository,
         norm: *rowvalue.Normalizer,
         row: std.json.Value,
-        field: std.json.Value,
+        plan: *const ColumnPlan,
     ) Error!driver.Cell {
         if (row != .object) return .null;
-        const name = rowvalue.stringOf(field, "name");
-        const v = row.object.get(name) orelse return .null;
+        const v = row.object.get(plan.name) orelse return .null;
 
-        if (v == .string) {
-            const type_name = rowvalue.stringOf(field, "type");
-            if (std.mem.eql(u8, type_name, "TIMESTAMP")) {
+        if (v == .string) switch (plan.coercion) {
+            .timestamp => {
                 // Go: TimeFromTimestampValue, and on failure it binds the raw
                 // string — CastValue's ToTime then handles the RFC3339 and
                 // "YYYY-MM-DD HH:MM:SS" spellings that this one does not.
@@ -130,7 +172,8 @@ pub const Repository = struct {
                         ),
                     };
                 } else |_| {}
-            } else if (std.mem.eql(u8, type_name, "JSON")) {
+            },
+            .json => {
                 _ = std.json.parseFromSliceLeaky(
                     std.json.Value,
                     r.arena,
@@ -146,7 +189,8 @@ pub const Repository = struct {
                 };
                 // The payload binds as JSON, not as a quoted string.
                 return .{ .json = v.string };
-            } else if (std.mem.eql(u8, type_name, "BYTES")) {
+            },
+            .bytes => {
                 // BigQuery's JSON API carries BYTES base64-encoded, so the
                 // stored value is the decoded bytes; encoding them again is
                 // the double-encoding bug PR #55 fixed.
@@ -165,10 +209,11 @@ pub const Repository = struct {
                     .{v.string},
                 );
                 return error.InvalidBase64Value;
-            }
-        }
+            },
+            .none => {},
+        };
 
-        return norm.cellForField(v, field) catch |err| switch (err) {
+        return norm.cellForShape(v, plan.mode, plan.sub_fields) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {
                 r.message = norm.message;

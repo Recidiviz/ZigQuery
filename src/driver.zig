@@ -1687,12 +1687,21 @@ pub const Db = struct {
         stmt: *sqlite.Stmt,
         args: []const Param,
     ) Error!usize {
-        return db.bindParamsWith(arena, stmt, args, db.param_mode, db.stmt_params);
+        return db.bindParamsWith(arena, stmt, args, db.param_mode, db.stmt_params, .transient);
     }
 
     /// bindParams against an explicit mode + parameter-type list, so a
     /// PreparedStmt can bind from its own snapshot after `db.stmt_params` has
     /// moved on to another statement.
+    /// Whether SQLite copies each bound blob or borrows it.
+    ///
+    /// `.static` is only correct when the encoded bytes outlive the statement's
+    /// use of them. `Db.query` hands its arena to the returned `Rows`, and the
+    /// rest of the engine binds from arenas with assorted lifetimes, so those
+    /// stay `.transient`; `PreparedStmt.exec` owns its scratch arena outright
+    /// and is the one place that can promise otherwise.
+    const BlobLifetime = enum { transient, static };
+
     fn bindParamsWith(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1700,6 +1709,7 @@ pub const Db = struct {
         args: []const Param,
         param_mode: ParamMode,
         stmt_params: []const context_mod.CollectedParam,
+        blobs: BlobLifetime,
     ) Error!usize {
         const count = stmt.bindParameterCount();
         if (count <= 0) return 0;
@@ -1720,7 +1730,7 @@ pub const Db = struct {
                         stmt_params[ord].type
                     else
                         null;
-                    try db.bindCell(arena, stmt, idx, args[ord].value, param_type);
+                    try db.bindCell(arena, stmt, idx, args[ord].value, param_type, blobs);
                 }
                 return ucount;
             },
@@ -1745,7 +1755,7 @@ pub const Db = struct {
                     } else {
                         value = args[@intCast(idx - 1)].value;
                     }
-                    try db.bindCell(arena, stmt, idx, value, param_type);
+                    try db.bindCell(arena, stmt, idx, value, param_type, blobs);
                 }
                 return 0;
             },
@@ -1771,6 +1781,7 @@ pub const Db = struct {
         idx: i32,
         cell: Cell,
         param_type: ?*const spec.Type,
+        blobs: BlobLifetime,
     ) Error!void {
         // Cleared first so failDecode cannot report a diagnostic left behind
         // by some earlier conversion (function/bind.zig does the same before
@@ -1785,7 +1796,10 @@ pub const Db = struct {
             .null => try stmt.bindNull(idx),
             .int => |i| try stmt.bindInt64(idx, i),
             .float => |f| try stmt.bindDouble(idx, f),
-            .blob => |b| try stmt.bindBlob(idx, b),
+            .blob => |b| switch (blobs) {
+                .transient => try stmt.bindBlob(idx, b),
+                .static => try stmt.bindBlobStatic(idx, b),
+            },
         }
     }
 
@@ -2618,16 +2632,24 @@ pub const PreparedStmt = struct {
         // scratch arena is reset per exec rather than built and torn down:
         // over a streaming insert that is the difference between a couple of
         // allocator round trips per row and none.
-        _ = p.scratch.reset(.retain_capacity);
-
+        //
+        // Order matters now that the binds are `.static`: the previous row's
+        // bytes stay referenced by the statement until clearBindings drops
+        // them, so the scratch they live in is only recycled after that.
         p.stmt.reset();
         p.stmt.clearBindings();
+        _ = p.scratch.reset(.retain_capacity);
+
         _ = try p.db.bindParamsWith(
             p.scratch.allocator(),
             &p.stmt,
             args,
             p.param_mode,
             p.params,
+            // Sound because the bytes are allocated from `scratch` just below
+            // and outlive the step: nothing recycles them until the next call
+            // reaches the reset above, and `deinit` finalizes before freeing.
+            .static,
         );
         while (p.stmt.step() catch {
             p.db.setLastSqliteError();
@@ -4886,8 +4908,13 @@ test "allocStats reports lookaside activity" {
     }
     const default_stats = db.allocStats();
     try testing.expect(default_stats.lookaside_hit > 0);
-    try testing.expect(default_stats.memory_used.current > 0);
-    try testing.expect(default_stats.malloc_size_max > 0);
+    // memory_used and malloc_size_max come from sqlite3_status, which reports
+    // zero unless ZQL_MEM_STATS kept SQLITE_CONFIG_MEMSTATUS on. The lookaside
+    // counters below are sqlite3_db_status and are always live.
+    if (sqlite.memStatsEnabled()) {
+        try testing.expect(default_stats.memory_used.current > 0);
+        try testing.expect(default_stats.malloc_size_max > 0);
+    }
     // A pool that is never exhausted reports a hit rate; assert it is a real
     // fraction rather than trusting the division.
     const rate = default_stats.hitRate().?;

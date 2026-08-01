@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const phase = @import("internal/phase.zig");
+const io_stats = @import("internal/io_stats.zig");
 
 pub const c = @cImport({
     @cInclude("sqlite3.h");
@@ -14,6 +15,8 @@ pub const c = @cImport({
 // unaligned function pointer. Redeclare the destructor-taking functions with
 // the ABI-identical `isize` parameter and pass -1 directly.
 const SQLITE_TRANSIENT: isize = -1;
+/// SQLITE_STATIC is (sqlite3_destructor_type)0: SQLite borrows the bytes.
+const SQLITE_STATIC: isize = 0;
 extern fn sqlite3_bind_text(stmt: ?*c.sqlite3_stmt, idx: c_int, v: [*c]const u8, n: c_int, destructor: isize) c_int;
 extern fn sqlite3_bind_blob(stmt: ?*c.sqlite3_stmt, idx: c_int, v: ?*const anyopaque, n: c_int, destructor: isize) c_int;
 extern fn sqlite3_result_text(ctx: ?*c.sqlite3_context, v: [*c]const u8, n: c_int, destructor: isize) void;
@@ -21,12 +24,52 @@ extern fn sqlite3_result_blob(ctx: ?*c.sqlite3_context, v: ?*const anyopaque, n:
 
 pub const Error = error{SQLite};
 
+/// Runs once, before the first connection triggers sqlite3_initialize —
+/// sqlite3_config answers SQLITE_MISUSE after that point.
+var configured: std.atomic.Value(bool) = .init(false);
+
+/// Turns off SQLite's memory accounting unless `ZQL_MEM_STATS` asks for it.
+///
+/// With MEMSTATUS on (the default) every sqlite3_malloc and sqlite3_free calls
+/// malloc_size() and takes the STATIC_MEM mutex to maintain byte counters that
+/// only /debug/stats reads. Sampling a bulk insert put that at 11% of the time
+/// inside sqlite3_step's caller — more than the VDBE spent executing. The
+/// three counters it feeds are opt-in rather than always paid for; see
+/// io_stats.memStatsRequested.
+fn configureOnce() void {
+    if (configured.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return;
+    if (io_stats.memStatsRequested()) return;
+    _ = c.sqlite3_config(c.SQLITE_CONFIG_MEMSTATUS, @as(c_int, 0));
+}
+
+/// Whether this process kept SQLite's memory accounting, so callers can say
+/// so rather than reporting a zero that looks like a measurement.
+pub fn memStatsEnabled() bool {
+    return io_stats.memStatsRequested();
+}
+
 pub const Db = struct {
     handle: *c.sqlite3,
 
+    /// Opens in SQLite's "multi-thread" mode: no per-connection mutex.
+    ///
+    /// SQLITE_OPEN_NOMUTEX is sound because a connection is never touched by
+    /// two threads at once. The server accepts on many threads but dispatches
+    /// under one `handler_mutex` onto its single engine connection
+    /// (server/http/server.zig), and every threaded harness opens a Db per
+    /// thread. Serialized mode was buying that same guarantee a second time,
+    /// at ~28 connection-mutex round trips per inserted row.
+    ///
+    /// SQLITE_OPEN_URI is explicit rather than inherited: the DSNs are real
+    /// URIs (`file:/bqemu-<pid>?vfs=memdb`), and sqlite3_open_v2 parses them
+    /// only when asked, where sqlite3_open relied on the library being built
+    /// with SQLITE_USE_URI.
     pub fn open(path: [:0]const u8) Error!Db {
+        configureOnce();
         var handle: ?*c.sqlite3 = null;
-        if (c.sqlite3_open(path.ptr, &handle) != c.SQLITE_OK) {
+        const flags = c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_CREATE |
+            c.SQLITE_OPEN_URI | c.SQLITE_OPEN_NOMUTEX;
+        if (c.sqlite3_open_v2(path.ptr, &handle, flags, null) != c.SQLITE_OK) {
             if (handle) |h| _ = c.sqlite3_close_v2(h);
             return error.SQLite;
         }
@@ -390,6 +433,30 @@ pub const Stmt = struct {
             v.ptr,
             @intCast(v.len),
             SQLITE_TRANSIENT,
+        );
+        if (rc != c.SQLITE_OK) return error.SQLite;
+    }
+
+    /// `bindBlob` without the copy: SQLite reads `v` in place.
+    ///
+    /// The caller promises `v` stays valid and unmodified until the statement
+    /// is reset or its bindings cleared. TRANSIENT otherwise makes SQLite
+    /// malloc and memcpy every value on every bind — on a 25-column, 18k-row
+    /// insert that is 459k copies, a third of the time inside exec.
+    ///
+    /// Only `PreparedStmt.exec` takes this path, because only there is the
+    /// lifetime provable: the bytes come from a scratch arena that is recycled
+    /// after the next reset+clearBindings, never before.
+    pub fn bindBlobStatic(s: *Stmt, index: i32, v: []const u8) Error!void {
+        // A zero-length blob with a null pointer reads back as NULL, so the
+        // empty case keeps the transient path's non-null sentinel.
+        if (v.len == 0) return s.bindBlob(index, v);
+        const rc = sqlite3_bind_blob(
+            s.handle,
+            @intCast(index),
+            v.ptr,
+            @intCast(v.len),
+            SQLITE_STATIC,
         );
         if (rc != c.SQLITE_OK) return error.SQLite;
     }

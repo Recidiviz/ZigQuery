@@ -272,6 +272,19 @@ pub fn isInstalled() bool {
     return installed;
 }
 
+/// Reads `ZQL_MEM_STATS`: whether to leave SQLITE_CONFIG_MEMSTATUS on.
+///
+/// Off by default because the accounting is not free — every sqlite3_malloc
+/// and free calls malloc_size() and takes the STATIC_MEM mutex, which sampling
+/// put at 11% of a bulk insert's time in sqlite3_step's caller. Set it to read
+/// the `memoryUsedBytes` / `mallocsOutstanding` / `largestAllocBytes` fields of
+/// /debug/stats, which report zero otherwise. The lookaside, cache, schema and
+/// stmt counters come from sqlite3_db_status and are unaffected either way.
+pub fn memStatsRequested() bool {
+    const v = env("ZQL_MEM_STATS") orelse return false;
+    return v.len > 0 and !std.mem.eql(u8, v, "0");
+}
+
 /// `PRAGMA temp_store` for this process, from `ZQL_TEMP_STORE`
 /// (`default` | `file` | `memory`), or null to leave SQLite's default alone.
 ///

@@ -36,7 +36,19 @@ pub const Normalizer = struct {
         json: std.json.Value,
         field: std.json.Value,
     ) Error!driver.Cell {
-        return n.cell(json, stringOf(field, "mode"), fieldsOf(field));
+        return n.cellForShape(json, stringOf(field, "mode"), fieldsOf(field));
+    }
+
+    /// `cellForField` with the schema node's `mode` and `fields` already read.
+    /// Both are constant for a column, so the insert path resolves them once
+    /// per column instead of paying two hash lookups on every cell.
+    pub fn cellForShape(
+        n: *Normalizer,
+        json: std.json.Value,
+        mode: []const u8,
+        fields: []const std.json.Value,
+    ) Error!driver.Cell {
+        return n.cell(json, mode, fields);
     }
 
     fn cell(
