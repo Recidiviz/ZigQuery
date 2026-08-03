@@ -1,12 +1,33 @@
 const std = @import("std");
 
-const sqlite_include = "/opt/homebrew/opt/sqlite/include";
-const sqlite_lib = "/opt/homebrew/opt/sqlite/lib";
+/// Compile-time options for the SQLite amalgamation.
+///
+///   USE_URI            `sqlite.zig` opens through `sqlite3_open`, and the
+///                      driver's and server's in-memory DSN is
+///                      `file:/<name>?vfs=memdb`. Off (the default), that URI
+///                      is taken as a literal filename and every `:memory:`
+///                      database becomes a file on disk.
+///   MAX_FUNCTION_ARG   corpus cases 724/725 ("function call with many
+///                      arguments - under/above limit") are in baseline.txt
+///                      and pin the boundary at exactly 1000: 999 arguments
+///                      must evaluate, 1001 must raise "too many arguments on
+///                      function". The default of 127 fails both.
+///   DQS=0              a double-quoted token that names no column stays an
+///                      error rather than falling back to a string literal.
+const sqlite_cflags = [_][]const u8{
+    // The amalgamation's own warnings are the vendor's business, not ours.
+    "-w",
+    "-DSQLITE_THREADSAFE=1",
+    "-DSQLITE_USE_URI=1",
+    "-DSQLITE_DQS=0",
+    "-DSQLITE_MAX_FUNCTION_ARG=1000",
+};
 
 // zetasqlite-zig: GoogleSQL -> SQLite translator, a faithful Zig port of
 // Recidiviz/go-zetasqlite. The GoogleSQL analyzer is consumed as a Bazel-built
-// C-ABI dylib from the googlesql repo (see zig/BUILD there); SQLite comes from
-// the Homebrew keg (the macOS SDK stub lacks window-function support).
+// C-ABI dylib from the googlesql repo (see zig/BUILD there); SQLite is the
+// amalgamation, pinned by build.zig.zon and compiled by Zig itself, so the
+// only build inputs from outside this repo are Zig and Bazel.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const opts: std.Build.StandardOptimizeOptionOptions = .{
@@ -46,6 +67,28 @@ pub fn build(b: *std.Build) void {
     const build_opts = b.addOptions();
     build_opts.addOption(bool, "codec_timers", codec_timers);
 
+    // SQLite is built once and linked into every module below, always at
+    // ReleaseFast whatever `-Drelease` says. The `coverage` step builds the
+    // whole module tree a second time at -ODebug, and an -O0 amalgamation
+    // would make every kcov run pay for a library whose lines kcov then
+    // discards anyway (--include-path keeps the report to src/).
+    const sqlite_dep = b.dependency("sqlite", .{});
+    const sqlite_headers = sqlite_dep.path("");
+    const sqlite = b.addLibrary(.{
+        .name = "sqlite3",
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = .ReleaseFast,
+            .link_libc = true,
+        }),
+    });
+    sqlite.root_module.addCSourceFile(.{
+        .file = sqlite_dep.path("sqlite3.c"),
+        .flags = &sqlite_cflags,
+    });
+    sqlite.root_module.addIncludePath(sqlite_headers);
+
     // The `coverage` step builds a second copy of the module tree at -ODebug,
     // so the wiring lives in engineModule/serverModule rather than inline.
     const deps: EngineDeps = .{
@@ -53,6 +96,8 @@ pub fn build(b: *std.Build) void {
         .build_options = build_opts.createModule(),
         .shim_dylib = shim_dylib,
         .shim_dir = shim_dir,
+        .sqlite = sqlite,
+        .sqlite_headers = sqlite_headers,
     };
     const mod = engineModule(b, deps, optimize);
 
@@ -362,6 +407,11 @@ const EngineDeps = struct {
     build_options: *std.Build.Module,
     shim_dylib: []const u8,
     shim_dir: []const u8,
+    /// Static libsqlite3, shared by every module (see the note at its
+    /// construction: always ReleaseFast, even under -ODebug).
+    sqlite: *std.Build.Step.Compile,
+    /// The amalgamation directory, for `sqlite.zig`'s @cInclude.
+    sqlite_headers: std.Build.LazyPath,
 };
 
 fn engineModule(
@@ -376,9 +426,8 @@ fn engineModule(
         .link_libc = true,
     });
     mod.addImport("build_options", deps.build_options);
-    mod.addIncludePath(.{ .cwd_relative = sqlite_include });
-    mod.addLibraryPath(.{ .cwd_relative = sqlite_lib });
-    mod.linkSystemLibrary("sqlite3", .{});
+    mod.addIncludePath(deps.sqlite_headers);
+    mod.linkLibrary(deps.sqlite);
     mod.addObjectFile(.{ .cwd_relative = deps.shim_dylib });
     mod.addRPath(.{ .cwd_relative = deps.shim_dir });
     return mod;

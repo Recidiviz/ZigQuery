@@ -51,7 +51,6 @@ Two parts deliberately diverge:
 - `googlesql` analyzer shim built
   - `bazel build -c opt //shim:libgooglesql_shim.dylib`
   - or `zig build -Dbuild-shim=true`
-- Homebrew sqlite (`brew install sqlite`)
 - `brew install kcov`, for `zig build coverage` only
 
 ## Build & test

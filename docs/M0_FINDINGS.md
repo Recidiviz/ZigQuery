@@ -120,6 +120,11 @@ codesign -f -s - exe    # REQUIRED on macOS after install_name_tool
 plus copying `libgooglesql_shim.dylib` and `libsqlite3.dylib` next to the exe.
 The `codesign` step was not in the plan and is mandatory.
 
+**Since superseded, half of it.** SQLite is now the amalgamation compiled into
+the binary, so the `/opt/homebrew` rpath and the `-change`/copy steps for
+`libsqlite3.dylib` are gone — `otool -L` shows only `@rpath/libgooglesql_shim.dylib`
+and `libSystem`. The shim lines and the mandatory `codesign` still stand.
+
 ## R12 — `vfs=memdb`
 
 **Result: available and working.** Verified both via the sqlite3 CLI and a

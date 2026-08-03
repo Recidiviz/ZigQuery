@@ -1,4 +1,5 @@
-//! Thin wrapper over the SQLite C API (Homebrew keg). This layer plus
+//! Thin wrapper over the SQLite C API (the amalgamation, pinned by
+//! build.zig.zon and compiled by Zig; see `sqlite_cflags`). This layer plus
 //! driver.zig replaces go-zetasqlite's database/sql driver surface
 //! (driver.go/conn.go/stmt.go/rows.go + modernc sqlite.RegisterFunction) —
 //! the one part of the port that is redesigned rather than mirrored.
