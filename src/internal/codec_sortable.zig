@@ -278,7 +278,10 @@ test "NUMERIC and BIGNUMERIC do not interleave" {
     // NUMERIC to 34 bytes to order a state that cannot occur.
     const small_big = try value_mod.numericFromString(alloc, "1", true);
     const large_num = try value_mod.numericFromString(alloc, "1e28", false);
-    try testing.expectEqual(std.math.Order.lt, try value_mod.compareForCollation(small_big, large_num));
+    try testing.expectEqual(
+        std.math.Order.lt,
+        try value_mod.compareForCollation(small_big, large_num),
+    );
     // ...but the bytes say otherwise, because the tag leads.
     try testing.expectEqual(std.math.Order.gt, std.mem.order(
         u8,
@@ -302,7 +305,10 @@ test "memcmp over encodings matches compareForCollation" {
         &.{ .{ .bytes = "" }, .{ .bytes = "\x00" }, .{ .bytes = "\x00\x00" }, .{ .bytes = "\xff" } },
         // Pre-epoch values are the ones a naive big-endian encoding gets wrong:
         // the sign bit makes them sort above everything unless it is flipped.
-        &.{ .{ .date = -719162 }, .{ .date = -1 }, .{ .date = 0 }, .{ .date = 1 }, .{ .date = 100000 } },
+        &.{
+            .{ .date = -719162 }, .{ .date = -1 },     .{ .date = 0 },
+            .{ .date = 1 },       .{ .date = 100000 },
+        },
         &.{
             .{ .timestamp = std.math.minInt(i64) }, .{ .timestamp = -1 },
             .{ .timestamp = 0 },                    .{ .timestamp = 1 },

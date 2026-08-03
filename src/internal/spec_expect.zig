@@ -96,7 +96,9 @@ pub fn matches(
             .struct_ => |fields| {
                 if (fields.len != range.len) return false;
                 for (fields, 0..) |field, i| {
-                    if (!try matches(gpa, zoir, range.at(@intCast(i)), field.value, opts)) return false;
+                    if (!try matches(gpa, zoir, range.at(@intCast(i)), field.value, opts)) {
+                        return false;
+                    }
                 }
                 return true;
             },

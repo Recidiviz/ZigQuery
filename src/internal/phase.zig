@@ -306,5 +306,8 @@ test "sqlite totals span every sqlite phase" {
         var t = Timer.begin(p);
         t.end();
     }
-    try testing.expectEqual(@as(u64, 3), count(.sqlite_prepare) + count(.sqlite_step) + count(.sqlite_exec));
+    try testing.expectEqual(
+        @as(u64, 3),
+        count(.sqlite_prepare) + count(.sqlite_step) + count(.sqlite_exec),
+    );
 }

@@ -145,7 +145,15 @@ pub const BrokenTime = struct {
     }
     pub fn addDate(self: BrokenTime, y: i64, mo: i64, d: i64) BrokenTime {
         const c = decompose(self.civ);
-        return .{ .civ = compose(c.year + y, c.month + mo, c.day + d, c.hour, c.minute, c.second, c.micro) };
+        return .{ .civ = compose(
+            c.year + y,
+            c.month + mo,
+            c.day + d,
+            c.hour,
+            c.minute,
+            c.second,
+            c.micro,
+        ) };
     }
     pub fn add(self: BrokenTime, micros: i64) BrokenTime {
         return .{ .civ = self.civ + micros };

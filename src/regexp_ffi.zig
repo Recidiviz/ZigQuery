@@ -165,7 +165,14 @@ pub fn normalize(alloc: std.mem.Allocator, mode: NormalizeMode, in: []const u8) 
     var out: ?[*]u8 = null;
     var out_len: c_int = 0;
     var out_err: ?[*:0]u8 = null;
-    const rc = GoogleSQL_Normalize(mode_str, emptySafe(in), @intCast(in.len), &out, &out_len, &out_err);
+    const rc = GoogleSQL_Normalize(
+        mode_str,
+        emptySafe(in),
+        @intCast(in.len),
+        &out,
+        &out_len,
+        &out_err,
+    );
     if (rc != 0) {
         if (out_err) |e| GoogleSQL_Free(e);
         return error.Normalize;
@@ -180,7 +187,13 @@ pub fn normalize(alloc: std.mem.Allocator, mode: NormalizeMode, in: []const u8) 
 pub fn caseMap(alloc: std.mem.Allocator, upper: bool, in: []const u8) Error![]u8 {
     var out: ?[*]u8 = null;
     var out_len: c_int = 0;
-    const rc = GoogleSQL_CaseMap(if (upper) 0 else 1, emptySafe(in), @intCast(in.len), &out, &out_len);
+    const rc = GoogleSQL_CaseMap(
+        if (upper) 0 else 1,
+        emptySafe(in),
+        @intCast(in.len),
+        &out,
+        &out_len,
+    );
     if (rc != 0) {
         if (out) |p| GoogleSQL_Free(p);
         return error.Normalize;

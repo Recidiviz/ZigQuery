@@ -28,8 +28,12 @@ pub fn string(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     {
         const inner0 = if (args[0] == .safe) args[0].safe.* else args[0];
         if (inner0 == .json) {
-            const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, inner0.json, .{ .parse_numbers = false }) catch
-                return bind.fail("STRING: invalid json", .{}, error.FailedConversion);
+            const parsed = std.json.parseFromSliceLeaky(
+                std.json.Value,
+                alloc,
+                inner0.json,
+                .{ .parse_numbers = false },
+            ) catch return bind.fail("STRING: invalid json", .{}, error.FailedConversion);
             const s: []const u8 = switch (parsed) {
                 .string => |x| x,
                 .number_string => |x| x,
@@ -238,8 +242,17 @@ pub fn generateTimestampArray(alloc: std.mem.Allocator, args: []const Value) Err
     const end = (try tu.broken(args[1])).civ;
     const step = try args[2].toInt64();
     const part = try fd.partStr(args[3]);
-    const u = unitMicros(part) orelse if (std.mem.eql(u8, part, "DAY")) tu.day_micros else return bind.fail("GENERATE_TIMESTAMP_ARRAY: unexpected part {s}", .{part}, error.UnsupportedOperation);
-    if (step == 0) return bind.fail("GENERATE_TIMESTAMP_ARRAY: step size cannot be 0", .{}, error.UnsupportedOperation);
+    const u = unitMicros(part) orelse
+        if (std.mem.eql(u8, part, "DAY")) tu.day_micros else return bind.fail(
+            "GENERATE_TIMESTAMP_ARRAY: unexpected part {s}",
+            .{part},
+            error.UnsupportedOperation,
+        );
+    if (step == 0) return bind.fail(
+        "GENERATE_TIMESTAMP_ARRAY: step size cannot be 0",
+        .{},
+        error.UnsupportedOperation,
+    );
 
     var list: std.ArrayList(Value) = .empty;
     const ascending = step > 0;

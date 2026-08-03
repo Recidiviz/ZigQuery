@@ -39,7 +39,15 @@ pub fn datetime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
                 const t2 = try tu.broken(args[1]);
                 const c = bt.parts();
                 const tc = t2.parts();
-                return .{ .datetime = tu.compose(c.year, c.month, c.day, tc.hour, tc.minute, tc.second, tc.micro) };
+                return .{ .datetime = tu.compose(
+                    c.year,
+                    c.month,
+                    c.day,
+                    tc.hour,
+                    tc.minute,
+                    tc.second,
+                    tc.micro,
+                ) };
             }
             return tu.datetimeValue(bt);
         },
@@ -107,10 +115,18 @@ pub fn datetimeTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value 
     const part = try fd.partStr(args[1]);
     const c = bt.parts();
     if (std.mem.eql(u8, part, "MICROSECOND")) return tu.datetimeValue(bt);
-    if (std.mem.eql(u8, part, "MILLISECOND")) return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0) };
-    if (std.mem.eql(u8, part, "SECOND")) return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) };
-    if (std.mem.eql(u8, part, "MINUTE")) return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) };
-    if (std.mem.eql(u8, part, "HOUR")) return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, 0, 0, 0) };
+    if (std.mem.eql(u8, part, "MILLISECOND")) {
+        return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0) };
+    }
+    if (std.mem.eql(u8, part, "SECOND")) {
+        return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) };
+    }
+    if (std.mem.eql(u8, part, "MINUTE")) {
+        return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) };
+    }
+    if (std.mem.eql(u8, part, "HOUR")) {
+        return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, 0, 0, 0) };
+    }
     return tu.datetimeValue(try ops.dateTrunc(bt, part));
 }
 

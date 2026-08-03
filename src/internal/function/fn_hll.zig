@@ -156,7 +156,12 @@ pub const Settings = struct {
     two_to_l: f64,
 
     /// go-hll Settings.toInternal (validation + derived constants).
-    pub fn init(log2m: i64, regwidth: i64, explicit_threshold: i64, sparse_enabled: bool) Error!Settings {
+    pub fn init(
+        log2m: i64,
+        regwidth: i64,
+        explicit_threshold: i64,
+        sparse_enabled: bool,
+    ) Error!Settings {
         if (log2m < minimum_log2m) {
             return bind.fail(
                 "Log2m is too small.  Requires at least {d} but got {d}",
@@ -534,7 +539,9 @@ pub const Hll = struct {
         if (version != 1) {
             return bind.fail("unsupported Hll version: {d}", .{version}, error.CorruptData);
         }
-        if (raw_type < @intFromEnum(StorageType.empty) or raw_type > @intFromEnum(StorageType.dense)) {
+        if (raw_type < @intFromEnum(StorageType.empty) or
+            raw_type > @intFromEnum(StorageType.dense))
+        {
             return bind.fail("invalid Hll type: {d}", .{raw_type}, error.CorruptData);
         }
         const storage_type: StorageType = @enumFromInt(raw_type);
@@ -570,7 +577,10 @@ pub const Hll = struct {
                 var i: usize = 0;
                 while (i < num_registers) : (i += 1) {
                     const reg_and_val = readBits(payload, i * bits_per_register, bits_per_register);
-                    const regnum: i32 = @bitCast(@as(u32, @truncate(reg_and_val >> @intCast(settings.regwidth))));
+                    const regnum: i32 = @bitCast(@as(
+                        u32,
+                        @truncate(reg_and_val >> @intCast(settings.regwidth)),
+                    ));
                     try map.put(alloc, regnum, @as(u8, @truncate(reg_and_val)) & reg_mask);
                 }
                 h.storage = .{ .sparse = map };
@@ -726,7 +736,9 @@ pub const Hll = struct {
         if (h.storage == .empty) {
             if (other.storage == .sparse and !h.settings.sparse_enabled) {
                 // edge case: the other is sparse but sparse is disabled here.
-                h.storage = .{ .dense = try sparseToDense(alloc, &h.settings, other.storage.sparse) };
+                h.storage = .{
+                    .dense = try sparseToDense(alloc, &h.settings, other.storage.sparse),
+                };
             } else {
                 h.storage = try copyStorage(alloc, other.storage);
             }
@@ -764,7 +776,12 @@ pub const Hll = struct {
                     try h.upgrade(alloc);
                     denseUnion(h.storage.dense, other_words, &h.settings, &other.settings);
                 },
-                .dense => |this_words| denseUnion(this_words, other_words, &h.settings, &other.settings),
+                .dense => |this_words| denseUnion(
+                    this_words,
+                    other_words,
+                    &h.settings,
+                    &other.settings,
+                ),
                 .empty => unreachable,
             },
         }
@@ -826,7 +843,8 @@ pub const Hll = struct {
                 const bits_per_register: usize = @as(usize, s.log2m) + s.regwidth;
                 var addr: usize = 0;
                 for (sorted) |reg| {
-                    const packed_value = (@as(u64, @as(u32, @bitCast(reg))) << @intCast(s.regwidth)) |
+                    const reg_bits = @as(u64, @as(u32, @bitCast(reg)));
+                    const packed_value = (reg_bits << @intCast(s.regwidth)) |
                         @as(u64, map.get(reg).?);
                     writeBits(out, addr, packed_value, bits_per_register);
                     addr += bits_per_register;
@@ -884,7 +902,12 @@ fn sparseToDense(alloc: std.mem.Allocator, s: *const Settings, sparse: SparseMap
 /// computation (the mask it walks selects exactly one register at a time
 /// whenever log2m >= regwidth, which holds for every sketch this engine
 /// produces and for every sketch the storage spec sanctions).
-fn denseUnion(this_words: []u64, other_words: []const u64, this_s: *const Settings, other_s: *const Settings) void {
+fn denseUnion(
+    this_words: []u64,
+    other_words: []const u64,
+    this_s: *const Settings,
+    other_s: *const Settings,
+) void {
     if (this_s.log2m == other_s.log2m and this_s.regwidth == other_s.regwidth) {
         const num_reg = this_s.m();
         var i: usize = 0;
@@ -1152,25 +1175,95 @@ test "union matches go-hll for every storage pairing" {
     const Case = struct { a: [2]usize, b: [2]usize, card: u64, len: usize, typ: u8, fp: u64 };
     const cases = [_]Case{
         // explicit + explicit (overlapping)
-        .{ .a = .{ 0, 10 }, .b = .{ 5, 20 }, .card = 20, .len = 163, .typ = 2, .fp = 0xb666ce72fdbca781 },
+        .{
+            .a = .{ 0, 10 },
+            .b = .{ 5, 20 },
+            .card = 20,
+            .len = 163,
+            .typ = 2,
+            .fp = 0xb666ce72fdbca781,
+        },
         // explicit + explicit (disjoint)
-        .{ .a = .{ 0, 3 }, .b = .{ 100000, 100003 }, .card = 6, .len = 51, .typ = 2, .fp = 0x3b8625c2bfabf658 },
+        .{
+            .a = .{ 0, 3 },
+            .b = .{ 100000, 100003 },
+            .card = 6,
+            .len = 51,
+            .typ = 2,
+            .fp = 0x3b8625c2bfabf658,
+        },
         // sparse + sparse
-        .{ .a = .{ 0, 5000 }, .b = .{ 4000, 9000 }, .card = 9053, .len = 22745, .typ = 3, .fp = 0x83eceae151bcbd09 },
+        .{
+            .a = .{ 0, 5000 },
+            .b = .{ 4000, 9000 },
+            .card = 9053,
+            .len = 22745,
+            .typ = 3,
+            .fp = 0x83eceae151bcbd09,
+        },
         // sparse + explicit
-        .{ .a = .{ 0, 9000 }, .b = .{ 0, 3 }, .card = 9053, .len = 22745, .typ = 3, .fp = 0x83eceae151bcbd09 },
+        .{
+            .a = .{ 0, 9000 },
+            .b = .{ 0, 3 },
+            .card = 9053,
+            .len = 22745,
+            .typ = 3,
+            .fp = 0x83eceae151bcbd09,
+        },
         // explicit + explicit crossing into sparse
-        .{ .a = .{ 0, 4097 }, .b = .{ 0, 2 }, .card = 4097, .len = 11075, .typ = 3, .fp = 0x7aa6f0e6f5cfee7a },
+        .{
+            .a = .{ 0, 4097 },
+            .b = .{ 0, 2 },
+            .card = 4097,
+            .len = 11075,
+            .typ = 3,
+            .fp = 0x7aa6f0e6f5cfee7a,
+        },
         // dense + dense
-        .{ .a = .{ 0, 20000 }, .b = .{ 15000, 30000 }, .card = 30134, .len = 32771, .typ = 4, .fp = 0xfaf197a7c3edcfc9 },
+        .{
+            .a = .{ 0, 20000 },
+            .b = .{ 15000, 30000 },
+            .card = 30134,
+            .len = 32771,
+            .typ = 4,
+            .fp = 0xfaf197a7c3edcfc9,
+        },
         // dense + explicit
-        .{ .a = .{ 0, 20000 }, .b = .{ 0, 5 }, .card = 20115, .len = 32771, .typ = 4, .fp = 0x366e3f4adccb233f },
+        .{
+            .a = .{ 0, 20000 },
+            .b = .{ 0, 5 },
+            .card = 20115,
+            .len = 32771,
+            .typ = 4,
+            .fp = 0x366e3f4adccb233f,
+        },
         // dense + sparse
-        .{ .a = .{ 0, 20000 }, .b = .{ 0, 5000 }, .card = 20115, .len = 32771, .typ = 4, .fp = 0x366e3f4adccb233f },
+        .{
+            .a = .{ 0, 20000 },
+            .b = .{ 0, 5000 },
+            .card = 20115,
+            .len = 32771,
+            .typ = 4,
+            .fp = 0x366e3f4adccb233f,
+        },
         // explicit + dense (the receiver adopts the dense storage)
-        .{ .a = .{ 0, 5 }, .b = .{ 0, 20000 }, .card = 20115, .len = 32771, .typ = 4, .fp = 0x366e3f4adccb233f },
+        .{
+            .a = .{ 0, 5 },
+            .b = .{ 0, 20000 },
+            .card = 20115,
+            .len = 32771,
+            .typ = 4,
+            .fp = 0x366e3f4adccb233f,
+        },
         // explicit + sparse (the receiver adopts the sparse storage)
-        .{ .a = .{ 0, 5 }, .b = .{ 0, 5000 }, .card = 5015, .len = 13372, .typ = 3, .fp = 0xb80a84461a3c9be8 },
+        .{
+            .a = .{ 0, 5 },
+            .b = .{ 0, 5000 },
+            .card = 5015,
+            .len = 13372,
+            .typ = 3,
+            .fp = 0xb80a84461a3c9be8,
+        },
     };
 
     for (cases) |c| {

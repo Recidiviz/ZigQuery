@@ -328,7 +328,8 @@ pub const Server = struct {
         });
         const reqs = http_server.stat_requests.load(.monotonic);
         const wait_ms = @as(f64, @floatFromInt(http_server.stat_wait_ns.load(.monotonic))) / 1e6;
-        const handle_ms = @as(f64, @floatFromInt(http_server.stat_handle_ns.load(.monotonic))) / 1e6;
+        const handle_ns = http_server.stat_handle_ns.load(.monotonic);
+        const handle_ms = @as(f64, @floatFromInt(handle_ns)) / 1e6;
         try out.print(arena, ",\"contention\":{{\"requests\":{d},\"totalWaitMs\":{d:.1}," ++
             "\"totalHandleMs\":{d:.1},\"meanWaitMs\":{d:.3}," ++
             "\"meanHandleMs\":{d:.3},\"waitFraction\":{d:.3}," ++

@@ -576,10 +576,11 @@ fn functionCallBaseOf(
         .resolved_function_call_node => |fc| return fc.parent orelse error.InvalidAST,
         .resolved_non_scalar_function_call_base_node => |ns| {
             const ns_node = ns.node orelse return error.InvalidAST;
-            const non_scalar: *pb.ResolvedNonScalarFunctionCallBaseProto = switch (ns_node) {
-                .resolved_aggregate_function_call_node => |agg| agg.parent orelse return error.InvalidAST,
-                .resolved_analytic_function_call_node => |an| an.parent orelse return error.InvalidAST,
+            const parent: ?*pb.ResolvedNonScalarFunctionCallBaseProto = switch (ns_node) {
+                .resolved_aggregate_function_call_node => |agg| agg.parent,
+                .resolved_analytic_function_call_node => |an| an.parent,
             };
+            const non_scalar = parent orelse return error.InvalidAST;
             return non_scalar.parent orelse error.InvalidAST;
         },
     }
@@ -608,12 +609,19 @@ pub const NodeExtractor = struct {
         const stmt_node = stmt.node orelse return error.InvalidAST;
         switch (stmt_node) {
             .resolved_query_stmt_node => |q| return self.extractQueryStatementData(alloc, q, ctx),
-            .resolved_create_statement_node => |n| return self.extractCreateStatementData(alloc, n, ctx),
+            .resolved_create_statement_node => |n| return self.extractCreateStatementData(
+                alloc,
+                n,
+                ctx,
+            ),
             .resolved_insert_stmt_node => |n| return self.extractInsertStatementData(alloc, n, ctx),
             .resolved_update_stmt_node => |n| return self.extractUpdateStatementData(alloc, n, ctx),
             .resolved_delete_stmt_node => |n| return self.extractDeleteStatementData(alloc, n, ctx),
             .resolved_drop_stmt_node => |n| return extractDropStatementData(alloc, n),
-            .resolved_drop_function_stmt_node => |n| return extractDropFunctionStatementData(alloc, n),
+            .resolved_drop_function_stmt_node => |n| return extractDropFunctionStatementData(
+                alloc,
+                n,
+            ),
             .resolved_merge_stmt_node => |n| return self.extractMergeStatementData(alloc, n, ctx),
             else => return error.UnsupportedNode,
         }
@@ -631,7 +639,10 @@ pub const NodeExtractor = struct {
         const query = node.query orelse return error.InvalidAST;
         const scan_data = try self.ExtractScanData(alloc, query, ctx);
 
-        const select_items = try alloc.alloc(*types_data.SelectItemData, node.output_column_list.len);
+        const select_items = try alloc.alloc(
+            *types_data.SelectItemData,
+            node.output_column_list.len,
+        );
         for (node.output_column_list, 0..) |col, i| {
             // Go routes ResolvedOutputColumn through ExtractExpressionData,
             // which resolves to NewColumnExpressionData(col.Column()).
@@ -908,7 +919,10 @@ pub const NodeExtractor = struct {
                 },
                 .UPDATE => {
                     // Extract UPDATE SET items.
-                    const set_items = try alloc.alloc(*types_data.SetItemData, when.update_item_list.len);
+                    const set_items = try alloc.alloc(
+                        *types_data.SetItemData,
+                        when.update_item_list.len,
+                    );
                     for (when.update_item_list, 0..) |item, i| {
                         // Extract target column name (only ColumnRef targets,
                         // like the Go original).
@@ -967,7 +981,10 @@ pub const NodeExtractor = struct {
         const query = node.query orelse return error.InvalidAST;
         const query_scan = try self.ExtractScanData(alloc, query, ctx);
 
-        const select_items = try alloc.alloc(*types_data.SelectItemData, node.output_column_list.len);
+        const select_items = try alloc.alloc(
+            *types_data.SelectItemData,
+            node.output_column_list.len,
+        );
         for (node.output_column_list, 0..) |oc, i| {
             const column = oc.column orelse return error.InvalidAST;
             const item = try alloc.create(types_data.SelectItemData);
@@ -1008,7 +1025,10 @@ pub const NodeExtractor = struct {
         const query = base.query orelse return error.InvalidAST;
         const query_scan = try self.ExtractScanData(alloc, query, ctx);
 
-        const select_items = try alloc.alloc(*types_data.SelectItemData, base.output_column_list.len);
+        const select_items = try alloc.alloc(
+            *types_data.SelectItemData,
+            base.output_column_list.len,
+        );
         for (base.output_column_list, 0..) |oc, i| {
             const column = oc.column orelse return error.InvalidAST;
             const item = try alloc.create(types_data.SelectItemData);
@@ -1048,7 +1068,11 @@ pub const NodeExtractor = struct {
             .resolved_aggregate_scan_base_node => |n| {
                 const agg_node = n.node orelse return error.InvalidAST;
                 switch (agg_node) {
-                    .resolved_aggregate_scan_node => |a| return self.extractAggregateScanData(alloc, a, ctx),
+                    .resolved_aggregate_scan_node => |a| return self.extractAggregateScanData(
+                        alloc,
+                        a,
+                        ctx,
+                    ),
                     // Anonymized/DifferentialPrivacy/AggregationThreshold:
                     // Go has no case for them either.
                     else => return error.UnsupportedNode,
@@ -1056,14 +1080,26 @@ pub const NodeExtractor = struct {
             },
             .resolved_order_by_scan_node => |n| return self.extractOrderByScanData(alloc, n, ctx),
             .resolved_limit_offset_scan_node => |n| return self.extractLimitScanData(alloc, n, ctx),
-            .resolved_set_operation_scan_node => |n| return self.extractSetOperationScanData(alloc, n, ctx),
+            .resolved_set_operation_scan_node => |n| return self.extractSetOperationScanData(
+                alloc,
+                n,
+                ctx,
+            ),
             .resolved_with_scan_node => |n| return self.extractWithScanNode(alloc, n, ctx),
             .resolved_with_ref_scan_node => |n| return self.extractWithRefScanNode(alloc, n, ctx),
             .resolved_array_scan_node => |n| return self.extractArrayScanData(alloc, n, ctx),
             .resolved_table_scan_node => |n| return extractTableScanData(alloc, n),
             .resolved_analytic_scan_node => |n| return self.extractAnalyticScanData(alloc, n, ctx),
-            .resolved_recursive_scan_node => |n| return self.extractRecursiveScanData(alloc, n, ctx),
-            .resolved_recursive_ref_scan_node => |n| return self.extractRecursiveRefScanData(alloc, n, ctx),
+            .resolved_recursive_scan_node => |n| return self.extractRecursiveScanData(
+                alloc,
+                n,
+                ctx,
+            ),
+            .resolved_recursive_ref_scan_node => |n| return self.extractRecursiveRefScanData(
+                alloc,
+                n,
+                ctx,
+            ),
             else => return error.UnsupportedNode, // Go: "unsupported scan node type"
         }
     }
@@ -1110,7 +1146,10 @@ pub const NodeExtractor = struct {
         const input_scan = node.input_scan orelse return error.InvalidAST;
         const input_scan_data = try self.ExtractScanData(alloc, input_scan, ctx);
 
-        const computed_columns = try alloc.alloc(*types_data.ComputedColumnData, node.expr_list.len);
+        const computed_columns = try alloc.alloc(
+            *types_data.ComputedColumnData,
+            node.expr_list.len,
+        );
         for (node.expr_list, 0..) |expr, i| {
             computed_columns[i] = try self.extractComputedColumnData(alloc, expr, ctx);
         }
@@ -1218,7 +1257,10 @@ pub const NodeExtractor = struct {
 
         var group_by_list: std.ArrayList(*types_data.ComputedColumnData) = .empty;
         for (base.group_by_list) |group_by| {
-            try group_by_list.append(alloc, try self.extractComputedColumnData(alloc, group_by, ctx));
+            try group_by_list.append(
+                alloc,
+                try self.extractComputedColumnData(alloc, group_by, ctx),
+            );
         }
 
         // Grouping sets (GROUP BY GROUPING SETS/ROLLUP/CUBE). The transformer
@@ -1278,7 +1320,10 @@ pub const NodeExtractor = struct {
         const input_scan = node.input_scan orelse return error.InvalidAST;
         const input_scan_data = try self.ExtractScanData(alloc, input_scan, ctx);
 
-        const order_by_items = try alloc.alloc(*types_data.OrderByItemData, node.order_by_item_list.len);
+        const order_by_items = try alloc.alloc(
+            *types_data.OrderByItemData,
+            node.order_by_item_list.len,
+        );
         for (node.order_by_item_list, 0..) |item_node, i| {
             const column_ref = item_node.column_ref orelse return error.InvalidAST;
             const column = column_ref.column orelse return error.InvalidAST;
@@ -1370,7 +1415,10 @@ pub const NodeExtractor = struct {
             const item_scan = item.scan orelse return error.InvalidAST;
             const scan_data = try self.ExtractScanData(alloc, item_scan, ctx);
 
-            const select_items = try alloc.alloc(*types_data.SelectItemData, item.output_column_list.len);
+            const select_items = try alloc.alloc(
+                *types_data.SelectItemData,
+                item.output_column_list.len,
+            );
             for (item.output_column_list, 0..) |column, j| {
                 // Use the final output column name (from the outer scan's
                 // ColumnList) instead of the item's internal column name.
@@ -1412,7 +1460,10 @@ pub const NodeExtractor = struct {
         const query_node = node.query orelse return error.InvalidAST;
         const query = try self.ExtractScanData(alloc, query_node, ctx);
 
-        const with_entry_list = try alloc.alloc(*types_data.WithEntryData, node.with_entry_list.len);
+        const with_entry_list = try alloc.alloc(
+            *types_data.WithEntryData,
+            node.with_entry_list.len,
+        );
         for (node.with_entry_list, 0..) |entry, i| {
             with_entry_list[i] = try self.extractWithEntryData(alloc, entry, ctx);
         }
@@ -1524,7 +1575,10 @@ pub const NodeExtractor = struct {
         const item_scan = item.scan orelse return error.InvalidAST;
         const scan_data = try self.ExtractScanData(alloc, item_scan, ctx);
 
-        const select_items = try alloc.alloc(*types_data.SelectItemData, item.output_column_list.len);
+        const select_items = try alloc.alloc(
+            *types_data.SelectItemData,
+            item.output_column_list.len,
+        );
         for (item.output_column_list, 0..) |col, i| {
             const select_item = try alloc.create(types_data.SelectItemData);
             select_item.* = .{
@@ -1734,15 +1788,23 @@ pub const NodeExtractor = struct {
                     .resolved_non_scalar_function_call_base_node => |ns| {
                         const ns_node = ns.node orelse return error.InvalidAST;
                         switch (ns_node) {
-                            .resolved_aggregate_function_call_node => |agg| return self.extractAggregateFunctionCallData(alloc, agg, ctx),
-                            .resolved_analytic_function_call_node => |an| return self.extractAnalyticFunctionCallData(alloc, an, ctx),
+                            .resolved_aggregate_function_call_node => |agg| {
+                                return self.extractAggregateFunctionCallData(alloc, agg, ctx);
+                            },
+                            .resolved_analytic_function_call_node => |an| {
+                                return self.extractAnalyticFunctionCallData(alloc, an, ctx);
+                            },
                         }
                     },
                 }
             },
             .resolved_cast_node => |n| return self.extractCastData(alloc, n, ctx),
             .resolved_subquery_expr_node => |n| return self.extractSubqueryData(alloc, n, ctx),
-            .resolved_get_struct_field_node => |n| return self.extractGetStructFieldData(alloc, n, ctx),
+            .resolved_get_struct_field_node => |n| return self.extractGetStructFieldData(
+                alloc,
+                n,
+                ctx,
+            ),
             .resolved_make_struct_node => |n| return self.extractMakeStructData(alloc, n, ctx),
             // Go extractDMLDefaultData: a zero-value literal stands in for
             // the DEFAULT keyword (renders as NULL — no column defaults).
@@ -1874,7 +1936,8 @@ pub const NodeExtractor = struct {
         if (std.mem.eql(u8, original_func_name, "min_by") or
             std.mem.eql(u8, original_func_name, "max_by"))
         {
-            if (arguments.items.len != 2) return error.UnsupportedFunction; // requires exactly 2 arguments
+            // requires exactly 2 arguments
+            if (arguments.items.len != 2) return error.UnsupportedFunction;
             const having_func: []const u8 = if (std.mem.eql(u8, original_func_name, "min_by"))
                 "zetasqlite_having_min"
             else
@@ -1884,7 +1947,11 @@ pub const NodeExtractor = struct {
             having_args[0] = arguments.items[1];
             const wrapped_args = try alloc.alloc(ExpressionData, 2);
             wrapped_args[0] = arguments.items[0]; // x - the value to return
-            wrapped_args[1] = try types_data.newFunctionCallExpressionData(alloc, having_func, having_args);
+            wrapped_args[1] = try types_data.newFunctionCallExpressionData(
+                alloc,
+                having_func,
+                having_args,
+            );
 
             const fn_data = try alloc.create(types_data.FunctionCallData);
             fn_data.* = .{
@@ -1979,11 +2046,14 @@ pub const NodeExtractor = struct {
         }
 
         switch (non_scalar.null_handling_modifier orelse .DEFAULT_NULL_HANDLING) {
-            .IGNORE_NULLS => try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
-                alloc,
-                "zetasqlite_ignore_nulls",
-                &.{},
-            )),
+            .IGNORE_NULLS => {
+                const ignore_nulls = try types_data.newFunctionCallExpressionData(
+                    alloc,
+                    "zetasqlite_ignore_nulls",
+                    &.{},
+                );
+                try arguments.append(alloc, ignore_nulls);
+            },
             else => {},
         }
 
@@ -2077,11 +2147,14 @@ pub const NodeExtractor = struct {
             std.mem.eql(u8, function.name, "zetasqlite_window_percentile_disc");
 
         switch (non_scalar.null_handling_modifier orelse .DEFAULT_NULL_HANDLING) {
-            .IGNORE_NULLS => try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
-                alloc,
-                "zetasqlite_ignore_nulls",
-                &.{},
-            )),
+            .IGNORE_NULLS => {
+                const ignore_nulls = try types_data.newFunctionCallExpressionData(
+                    alloc,
+                    "zetasqlite_ignore_nulls",
+                    &.{},
+                );
+                try arguments.append(alloc, ignore_nulls);
+            },
             .DEFAULT_NULL_HANDLING => if (ignore_nulls_by_default) {
                 try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
                     alloc,
@@ -2530,7 +2603,10 @@ test "extract scalar subquery and cast" {
 
     const sub = exprs[0].expression;
     try testing.expectEqual(types_data.ExpressionType.subquery, sub.type);
-    try testing.expectEqual(pb.ResolvedSubqueryExprEnums_SubqueryType.SCALAR, sub.subquery.?.subquery_type);
+    try testing.expectEqual(
+        pb.ResolvedSubqueryExprEnums_SubqueryType.SCALAR,
+        sub.subquery.?.subquery_type,
+    );
     try testing.expectEqual(types_data.ScanType.project, sub.subquery.?.query.type);
 
     // CAST over a literal is constant-folded by the analyzer, so cast a

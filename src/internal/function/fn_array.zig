@@ -115,7 +115,10 @@ pub fn arrayToString(alloc: std.mem.Allocator, args: []const Value) Error!Value 
     var out: std.ArrayList(u8) = .empty;
     var first = true;
     for (arr.values) |v| {
-        const piece: []const u8 = if (v == .null) (null_text orelse continue) else try v.format('t', alloc);
+        const piece: []const u8 = if (v == .null) (null_text orelse continue) else try v.format(
+            't',
+            alloc,
+        );
         if (!first) try out.appendSlice(alloc, delim);
         try out.appendSlice(alloc, piece);
         first = false;

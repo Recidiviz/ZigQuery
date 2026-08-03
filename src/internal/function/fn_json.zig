@@ -164,7 +164,8 @@ const PathParser = struct {
         var cursor: usize = 0;
         while (cursor < buf.len) : (cursor += 1) {
             if (buf[cursor] == ']') {
-                const idx = std.fmt.parseInt(i64, buf[0..cursor], 10) catch return error.InvalidPath;
+                const idx = std.fmt.parseInt(i64, buf[0..cursor], 10) catch
+                    return error.InvalidPath;
                 try self.add(.{ .index = idx });
                 return self.buildNextCharIfExists(buf, cursor + 1);
             }
@@ -190,7 +191,12 @@ fn parsePath(alloc: std.mem.Allocator, s: []const u8) PathError!Path {
 
 /// Parse JSON keeping numbers as exact source text; null on invalid input.
 fn parseJson(alloc: std.mem.Allocator, s: []const u8) ?std.json.Value {
-    return std.json.parseFromSliceLeaky(std.json.Value, alloc, s, .{ .parse_numbers = false }) catch null;
+    return std.json.parseFromSliceLeaky(
+        std.json.Value,
+        alloc,
+        s,
+        .{ .parse_numbers = false },
+    ) catch null;
 }
 
 /// Navigate the parsed path over a value tree. Returns the matched sub-value,
@@ -369,7 +375,12 @@ pub fn jsonValueArray(alloc: std.mem.Allocator, args: []const Value) Error!Value
 /// (Go JSON_FIELD / JSON_SUBSCRIPT return the extracted bytes verbatim).
 fn jsonSingle(alloc: std.mem.Allocator, v: []const u8, node: PathNode) Error!Value {
     const root = parseJson(alloc, v) orelse return null_v;
-    const path = Path{ .nodes = &.{node}, .root_only = false, .single_quote = false, .double_quote = false };
+    const path = Path{
+        .nodes = &.{node},
+        .root_only = false,
+        .single_quote = false,
+        .double_quote = false,
+    };
     const matched = navigate(root, path) orelse return null_v;
     return Value{ .json = try stringifyCompact(alloc, matched) };
 }
@@ -431,7 +442,11 @@ pub fn jsonType(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         else => return bind.fail("JSON_TYPE: failed to convert to JSON value", .{}, error.FailedConversion),
     };
     if (std.mem.eql(u8, raw, "null")) return Value{ .string = try alloc.dupe(u8, "null") };
-    const parsed = parseJson(alloc, raw) orelse return bind.fail("JSON_TYPE: invalid json {s}", .{raw}, error.FailedConversion);
+    const parsed = parseJson(alloc, raw) orelse return bind.fail(
+        "JSON_TYPE: invalid json {s}",
+        .{raw},
+        error.FailedConversion,
+    );
     const t: []const u8 = switch (parsed) {
         .null => "null",
         .bool => "boolean",

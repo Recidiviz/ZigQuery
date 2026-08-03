@@ -66,7 +66,11 @@ pub const View = struct {
     /// Index of the column naming the table, for constraint pushdown. Null for
     /// SCHEMATA, which has no table dimension.
     name_col: ?u32,
-    build: *const fn (std.mem.Allocator, []const *spec.TableSpec, Filter) error{OutOfMemory}![]const Row,
+    build: *const fn (
+        std.mem.Allocator,
+        []const *spec.TableSpec,
+        Filter,
+    ) error{OutOfMemory}![]const Row,
 
     /// Index of the column naming the dataset. First in every view, whether it
     /// is spelled `schema_name` or `table_schema`.
@@ -552,7 +556,12 @@ fn xFilter(
     var filter: Filter = .{};
     var next: usize = 0;
     const take = struct {
-        fn f(a: std.mem.Allocator, args: [*c]?*c.sqlite3_value, n: usize, count: c_int) ?[]const u8 {
+        fn f(
+            a: std.mem.Allocator,
+            args: [*c]?*c.sqlite3_value,
+            n: usize,
+            count: c_int,
+        ) ?[]const u8 {
             if (n >= @as(usize, @intCast(count))) return null;
             return argText(a, args[n]);
         }
@@ -585,8 +594,10 @@ fn argText(alloc: std.mem.Allocator, v: ?*c.sqlite3_value) ?[]const u8 {
     return switch (sqlite.valueType(v)) {
         .text => sqlite.valueText(v),
         .blob => blk: {
-            const decoded = encoder.DecodeValueBorrowing(alloc, .{ .blob = sqlite.valueBlob(v) }) catch
-                break :blk null;
+            const decoded = encoder.DecodeValueBorrowing(
+                alloc,
+                .{ .blob = sqlite.valueBlob(v) },
+            ) catch break :blk null;
             break :blk decoded.toString(alloc) catch null;
         },
         else => null,

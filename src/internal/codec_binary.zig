@@ -52,7 +52,12 @@ fn appendUvarint(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, x_in: u64) V
     try buf.append(alloc, @truncate(x));
 }
 
-fn appendBinaryString(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, tag: u8, s: []const u8) ValueError!void {
+fn appendBinaryString(
+    buf: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    tag: u8,
+    s: []const u8,
+) ValueError!void {
     try buf.append(alloc, tag);
     try appendUvarint(buf, alloc, s.len);
     try buf.appendSlice(alloc, s);
@@ -90,7 +95,12 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
         // Go stores DatetimeValue/TimeValue as their ToString strings.
         .datetime => |m| {
             var tmp: [40]u8 = undefined;
-            try appendBinaryString(buf, alloc, bin_tag_datetime, value_mod.formatDatetimeString(&tmp, m));
+            try appendBinaryString(
+                buf,
+                alloc,
+                bin_tag_datetime,
+                value_mod.formatDatetimeString(&tmp, m),
+            );
         },
         .time => |m| {
             var tmp: [24]u8 = undefined;
@@ -106,7 +116,12 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
         // Go stores *IntervalValue as its ToString string.
         .interval => |iv| {
             var tmp: [96]u8 = undefined;
-            try appendBinaryString(buf, alloc, bin_tag_interval, value_mod.formatInterval(&tmp, iv));
+            try appendBinaryString(
+                buf,
+                alloc,
+                bin_tag_interval,
+                value_mod.formatInterval(&tmp, iv),
+            );
         },
         // The scaled integer googlesql stores, in decimal, tagged by kind —
         // the tag supplies the scale on the way back in. goccy wrote
@@ -186,7 +201,11 @@ const BinReader = struct {
 
     /// Reads a length-prefixed payload, copying it out of the buffer or
     /// aliasing it in place. `borrow` is comptime so only one arm compiles.
-    fn payload(r: *BinReader, alloc: std.mem.Allocator, comptime borrow: bool) ValueError![]const u8 {
+    fn payload(
+        r: *BinReader,
+        alloc: std.mem.Allocator,
+        comptime borrow: bool,
+    ) ValueError![]const u8 {
         const b = try r.lenBytes();
         return if (borrow) b else alloc.dupe(u8, b);
     }
@@ -202,10 +221,14 @@ const BinReader = struct {
             bin_tag_bytes => return Value{ .bytes = try r.payload(alloc, borrow) },
             bin_tag_date => return Value{ .date = try value_mod.parseDateDays(try r.lenBytes()) },
             // Go parses the stored ToString back into the civil value.
-            bin_tag_datetime => return Value{ .datetime = try value_mod.parseDatetimeMicros(try r.lenBytes()) },
+            bin_tag_datetime => return Value{
+                .datetime = try value_mod.parseDatetimeMicros(try r.lenBytes()),
+            },
             bin_tag_time => return Value{ .time = try value_mod.parseTimeMicros(try r.lenBytes()) },
             bin_tag_timestamp => return Value{ .timestamp = @bitCast(try r.fixed64()) },
-            bin_tag_interval => return Value{ .interval = try value_mod.parseIntervalValue(try r.lenBytes()) },
+            bin_tag_interval => return Value{
+                .interval = try value_mod.parseIntervalValue(try r.lenBytes()),
+            },
             // Go: JsonValue(string(b)) — the raw JSON string.
             bin_tag_json => return Value{ .json = try r.payload(alloc, borrow) },
             // The unscaled integer written above, read back at the scale the
@@ -395,7 +418,10 @@ test "ArrayWalker rejects non-arrays and truncated buffers" {
     try testing.expectError(error.CorruptData, ArrayWalker.init(not_array));
     try testing.expectError(error.CorruptData, ArrayWalker.init(""));
 
-    const arr = try encodeBinaryValue(alloc, try value_mod.arrayValue(alloc, &.{.{ .string = "abc" }}));
+    const arr = try encodeBinaryValue(
+        alloc,
+        try value_mod.arrayValue(alloc, &.{.{ .string = "abc" }}),
+    );
     var w = try ArrayWalker.init(arr[0 .. arr.len - 2]); // element payload cut short
     try testing.expectError(error.CorruptData, w.next());
 }
@@ -465,7 +491,10 @@ test "binary codec time-kind byte layout matches Go" {
     try testing.expectEqualSlices(u8, "\x0b\x0810:30:15", tv);
 
     // Interval: tag 0x0d + uvarint length + canonical ToString.
-    const iv = try encodeBinaryValue(alloc, Value{ .interval = try value_mod.parseIntervalValue("1-2 3 4:5:6") });
+    const iv = try encodeBinaryValue(
+        alloc,
+        Value{ .interval = try value_mod.parseIntervalValue("1-2 3 4:5:6") },
+    );
     try testing.expectEqualSlices(u8, "\x0d\x0b1-2 3 4:5:6", iv);
 }
 
@@ -478,13 +507,20 @@ test "binary codec tag bytes match the Go format" {
     try testing.expectEqual(bin_tag_int, (try encodeBinaryValue(alloc, Value{ .int = 7 }))[0]);
     try testing.expectEqual(bin_tag_float, (try encodeBinaryValue(alloc, Value{ .float = 7 }))[0]);
     try testing.expectEqual(bin_tag_bool, (try encodeBinaryValue(alloc, Value{ .bool = true }))[0]);
-    try testing.expectEqual(bin_tag_string, (try encodeBinaryValue(alloc, Value{ .string = "s" }))[0]);
+    try testing.expectEqual(
+        bin_tag_string,
+        (try encodeBinaryValue(alloc, Value{ .string = "s" }))[0],
+    );
     try testing.expectEqual(bin_tag_bytes, (try encodeBinaryValue(alloc, Value{ .bytes = "b" }))[0]);
     try testing.expectEqual(bin_tag_date, (try encodeBinaryValue(alloc, Value{ .date = 0 }))[0]);
 
     // Int payload is fixed64 little-endian two's complement.
     const enc = try encodeBinaryValue(alloc, Value{ .int = -2 });
-    try testing.expectEqualSlices(u8, &.{ 0x01, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, enc);
+    try testing.expectEqualSlices(
+        u8,
+        &.{ 0x01, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff },
+        enc,
+    );
 
     // Date payload is the uvarint-length-prefixed "YYYY-MM-DD" string.
     const denc = try encodeBinaryValue(alloc, Value{ .date = 0 });
@@ -543,11 +579,19 @@ test "binary codec rejects truncated and corrupt input" {
     const alloc = arena.allocator();
 
     try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{}));
-    try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_int, 0x01 })); // truncated fixed64
-    try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_string, 0x05, 'a' })); // truncated bytes
+    // truncated fixed64
+    try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_int, 0x01 }));
+    // truncated bytes
+    try testing.expectError(
+        error.CorruptData,
+        decodeBinaryValue(alloc, &.{ bin_tag_string, 0x05, 'a' }),
+    );
     try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{0x7f})); // unknown tag
     // Invalid numeric payload text is corruption, not a parse fallback.
-    try testing.expectError(error.CorruptData, decodeBinaryValue(alloc, &.{ bin_tag_numeric, 0x01, 'x' }));
+    try testing.expectError(
+        error.CorruptData,
+        decodeBinaryValue(alloc, &.{ bin_tag_numeric, 0x01, 'x' }),
+    );
 }
 
 test "binary codec numeric round trips and byte layout" {

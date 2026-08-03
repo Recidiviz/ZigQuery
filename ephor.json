@@ -1,0 +1,73 @@
+{
+  "version": "0.14.2",
+  // Directory to analyze - auto-detected from build.zig during install
+  // (e.g., "src", "lib", "app", or "." for project root)
+  "path_dir": "src",
+
+  // Entry points for import graph analysis (orphan detection)
+  // Add your main files and build.zig here
+  "entries": ["src/main.zig", "build.zig"],
+
+  // Directories to exclude from analysis
+  "exclude": ["test", "vendor", "third_party"],
+
+  // Patterns to exclude from orphan detection only
+  "orphan_exclude": ["_test.zig", "/test/", "/tests/"],
+
+  // Rules to disable (by ID or category prefix)
+  // Examples: "ZA301" (single rule), "ZA3" (all complexity), "ZA7" (all style)
+  //
+  // Available rules:
+  //   ZA1xx Memory:     ZA101 alloc-no-defer, ZA102 create-no-defer,
+  //                     ZA103 alloc-no-errdefer,
+  //                     ZA105 use-after-free, ZA106 double-free,
+  //                     ZA110 must-return-ref,
+  //                     ZA111 returned-stack-ref (error, AST tier)
+  //   ZA2xx ErrHandle:  ZA201 silent-catch (warning), ZA202 catch-unreachable (warning),
+  //                     ZA203 orelse-unreachable (warning), ZA204 undefined (warning),
+  //                     ZA205 ignored-error (note), ZA206 exit-bypasses-defer,
+  //                     ZA207 catch-undefined, ZA208 panic (note),
+  //                     ZA209 useless-error-return (note),
+  //                     ZA210 no-catch-return (note, OFF by default)
+  //   ZA3xx Complexity: ZA301 func-too-long, ZA302 nesting-too-deep,
+  //                     ZA303 too-many-params, ZA304 too-many-branches,
+  //                     ZA305 cyclomatic (OFF by default), ZA306 cognitive (OFF by default)
+  //   ZA4xx Unused:     ZA401 unused-import, ZA402 unused-const, ZA403 unused-var
+  //   ZA5xx Structure:  ZA501 orphan-file
+  //   ZA6xx Format:     ZA601 needs-format,
+  //                     ZA607 read-before-assign (semantic, not formatting)
+  //   ZA7xx Style:      ZA701 line-too-long, ZA702 file-too-long,
+  //                     ZA703 naming
+  //   ZA8xx NullSafety: ZA801 unsafe-optional-unwrap
+  //   ZA9xx Panic:      ZA901 decrement-overflow, ZA902 subtraction-overflow,
+  //                     ZA903 index-arithmetic,
+  //                     ZA904 intcast-no-bounds (note, OFF by default)
+  //   ZT1xx Tests:      ZT101 lie-test (name promises fn body never calls),
+  //                     ZT102 no-assertions (note for try-only smoke tests),
+  //                     ZT103 trivially-true-assert, ZT104 swallowed-error,
+  //                     ZT105 untested-pub-fn (note)
+  //   ZC1xx Concurrency: ZC101 lock-no-defer-unlock, ZC102 double-lock,
+  //                     ZC103 unlock-without-lock, ZC104 thread-no-join
+  "disable": ["ZA305", "ZA306", "ZA703"],
+
+  // Rules to explicitly enable (overrides disable)
+  // Examples: "ZA305" (cyclomatic complexity), "ZA306" (cognitive complexity)
+  "enable": [],
+
+  // CI gating: exit 1 when findings reach the level (default: informational)
+  // "strict": true        — fail on any warning or error
+  // "fail_on": "warning"  — finer control: error, warning, note, never
+
+  "error_naming": "TitleCase",
+
+  // Configurable thresholds
+  "thresholds": {
+    "max_lines": 50,
+    "max_nesting": 3,
+    "max_params": 4,
+    "max_branches": 12,
+    "max_line_length": 100,
+    "max_cyclomatic": 15,
+    "max_cognitive": 15
+  }
+}

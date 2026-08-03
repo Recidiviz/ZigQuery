@@ -48,10 +48,18 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
 
     inline for (bind.func_table) |info| {
         const Tramp = struct {
-            fn normal(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
+            fn normal(
+                ctx: ?*c.sqlite3_context,
+                argc: c_int,
+                argv: [*c]?*c.sqlite3_value,
+            ) callconv(.c) void {
                 invoke(info, false, ctx, argc, argv);
             }
-            fn safe(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
+            fn safe(
+                ctx: ?*c.sqlite3_context,
+                argc: c_int,
+                argv: [*c]?*c.sqlite3_value,
+            ) callconv(.c) void {
                 invoke(info, true, ctx, argc, argv);
             }
         };
@@ -151,7 +159,10 @@ fn decodeArgs(
             .float => Value{ .float = sqlite.valueDouble(argv[i]) },
             // TEXT has no engine meaning since storage format 3.
             .text => return error.CorruptData,
-            .blob => try encoder.DecodeValueBorrowing(alloc, .{ .blob = sqlite.valueBlob(argv[i]) }),
+            .blob => try encoder.DecodeValueBorrowing(
+                alloc,
+                .{ .blob = sqlite.valueBlob(argv[i]) },
+            ),
         };
     }
     return args;
@@ -180,7 +191,11 @@ fn errorText(comptime name: []const u8, err: anyerror, buf: []u8) []const u8 {
 // (Go decoded.Interface()).
 // ----------------------------------------------------------------------
 
-fn groupByTramp(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
+fn groupByTramp(
+    ctx: ?*c.sqlite3_context,
+    argc: c_int,
+    argv: [*c]?*c.sqlite3_value,
+) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
     _ = state.arena.reset(.retain_capacity);
     const alloc = state.arena.allocator();
@@ -806,10 +821,16 @@ test "encoded values order by memcmp, with no collation involved" {
     defer stmt.finalize();
     try testing.expect(try stmt.step());
     try testing.expectEqual(sqlite.Stmt.ColumnType.blob, stmt.columnType(0));
-    var v = try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) });
+    var v = try encoder.DecodeValue(
+        env.alloc(),
+        .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) },
+    );
     try value_mod.expectValueEqual(Value{ .string = "aa" }, v);
     try testing.expect(try stmt.step());
-    v = try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) });
+    v = try encoder.DecodeValue(
+        env.alloc(),
+        .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) },
+    );
     try value_mod.expectValueEqual(Value{ .string = "b" }, v);
 
     // Dates compare chronologically, including across the epoch, which a naive
@@ -822,7 +843,10 @@ test "encoded values order by memcmp, with no collation involved" {
     ));
     defer dstmt.finalize();
     try testing.expect(try dstmt.step());
-    const first = try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, dstmt.columnBlob(0)) });
+    const first = try encoder.DecodeValue(
+        env.alloc(),
+        .{ .blob = try env.alloc().dupe(u8, dstmt.columnBlob(0)) },
+    );
     try value_mod.expectValueEqual(Value{ .date = try value_mod.parseDateDays("1930-01-01") }, first);
 }
 
@@ -950,7 +974,10 @@ test "FORMAT verbs" {
     try env.expectStringResult("1.100000 2.200000E+00", try env.fmt("SELECT zetasqlite_format({s}, 1.1, 2.2)", .{try env.encStr("%f %E")}));
     try env.expectStringResult("-abcd-", try env.fmt("SELECT zetasqlite_format({s}, {s})", .{ try env.encStr("-%s-"), try env.encStr("abcd") }));
     // %T typed rendering of BYTES.
-    try env.expectStringResult("b\"abc\"", try env.fmt("SELECT zetasqlite_format({s}, {s})", .{ try env.encStr("%T"), try env.enc(Value{ .bytes = "abc" }) }));
+    try env.expectStringResult("b\"abc\"", try env.fmt(
+        "SELECT zetasqlite_format({s}, {s})",
+        .{ try env.encStr("%T"), try env.enc(Value{ .bytes = "abc" }) },
+    ));
     try env.expectNullResult(try env.fmt("SELECT zetasqlite_format({s}, NULL)", .{try env.encStr("%s")}));
 }
 

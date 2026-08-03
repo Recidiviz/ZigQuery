@@ -130,7 +130,9 @@ pub fn lower(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return bind.fail("LOWER: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
     switch (args[0]) {
-        .string => |s| return Value{ .string = re.caseMap(alloc, false, s) catch |e| return caseMapErr(e) },
+        .string => |s| return Value{
+            .string = re.caseMap(alloc, false, s) catch |e| return caseMapErr(e),
+        },
         .bytes => |b| return Value{ .bytes = try asciiMapCase(alloc, b, .lower) },
         else => return bind.fail("LOWER: value type is must be STRING or BYTES type", .{}, error.UnsupportedOperation),
     }
@@ -141,7 +143,9 @@ pub fn upper(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return bind.fail("UPPER: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (args[0] == .null) return null_v;
     switch (args[0]) {
-        .string => |s| return Value{ .string = re.caseMap(alloc, true, s) catch |e| return caseMapErr(e) },
+        .string => |s| return Value{
+            .string = re.caseMap(alloc, true, s) catch |e| return caseMapErr(e),
+        },
         .bytes => |b| return Value{ .bytes = try asciiMapCase(alloc, b, .upper) },
         else => return bind.fail("UPPER: value type is must be STRING or BYTES type", .{}, error.UnsupportedOperation),
     }
@@ -259,7 +263,12 @@ fn runesToString(alloc: std.mem.Allocator, runes: []const u21) Error![]u8 {
 
 /// Simple per-code-point case mapping of a single rune, matching Go's
 /// unicode.To{Upper,Lower}; ASCII fast path avoids an FFI call.
-fn mapRuneCase(alloc: std.mem.Allocator, out: *std.ArrayList(u8), cp: u21, to_upper: bool) Error!void {
+fn mapRuneCase(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    cp: u21,
+    to_upper: bool,
+) Error!void {
     if (cp < 128) {
         const c: u8 = @intCast(cp);
         try out.append(alloc, if (to_upper) std.ascii.toUpper(c) else std.ascii.toLower(c));
@@ -267,7 +276,10 @@ fn mapRuneCase(alloc: std.mem.Allocator, out: *std.ArrayList(u8), cp: u21, to_up
     }
     var buf: [4]u8 = undefined;
     const n = std.unicode.utf8Encode(cp, &buf) catch {
-        try out.appendSlice(alloc, buf[0 .. std.unicode.utf8Encode(0xFFFD, &buf) catch unreachable]);
+        try out.appendSlice(
+            alloc,
+            buf[0 .. std.unicode.utf8Encode(0xFFFD, &buf) catch unreachable],
+        );
         return;
     };
     const mapped = re.caseMap(alloc, to_upper, buf[0..n]) catch |e| return caseMapErr(e);
@@ -499,7 +511,12 @@ pub fn replace(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 /// strings.ReplaceAll: empty `from` inserts `to` between every byte and at the
 /// ends (Go semantics), otherwise non-overlapping replacement.
-fn replaceAll(alloc: std.mem.Allocator, v: []const u8, from: []const u8, to: []const u8) Error![]u8 {
+fn replaceAll(
+    alloc: std.mem.Allocator,
+    v: []const u8,
+    from: []const u8,
+    to: []const u8,
+) Error![]u8 {
     var out: std.ArrayList(u8) = .empty;
     if (from.len == 0) {
         try out.appendSlice(alloc, to);
@@ -561,7 +578,12 @@ pub fn reverse(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 const TrimSide = enum { left, right, both };
 
-fn trimImpl(alloc: std.mem.Allocator, args: []const Value, side: TrimSide, name: []const u8) Error!Value {
+fn trimImpl(
+    alloc: std.mem.Allocator,
+    args: []const Value,
+    side: TrimSide,
+    name: []const u8,
+) Error!Value {
     _ = name;
     if (args.len != 1 and args.len != 2)
         return bind.fail("TRIM: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
@@ -596,7 +618,8 @@ pub fn rtrim(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 fn isSpaceRune(cp: u21) bool {
     // Go unicode.IsSpace set.
     return switch (cp) {
-        '\t', '\n', 0x0B, 0x0C, '\r', ' ', 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 => true,
+        '\t', '\n', 0x0B, 0x0C, '\r', ' ', 0x85, 0xA0 => true,
+        0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 => true,
         else => cp >= 0x2000 and cp <= 0x200A,
     };
 }
@@ -610,7 +633,10 @@ fn trimSpaceUnicode(s: []const u8, side: TrimSide) []const u8 {
         var i: usize = 0;
         while (i < end) {
             const l = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
-            const cp = if (i + l <= s.len) (std.unicode.utf8Decode(s[i .. i + l]) catch @as(u21, s[i])) else @as(u21, s[i]);
+            const cp = if (i + l <= s.len)
+                (std.unicode.utf8Decode(s[i .. i + l]) catch @as(u21, s[i]))
+            else
+                @as(u21, s[i]);
             if (!isSpaceRune(cp)) break;
             i += @max(l, 1);
         }
@@ -623,7 +649,10 @@ fn trimSpaceUnicode(s: []const u8, side: TrimSide) []const u8 {
             var j = i - 1;
             while (j > start and (s[j] & 0xC0) == 0x80) j -= 1;
             const l = std.unicode.utf8ByteSequenceLength(s[j]) catch 1;
-            const cp = if (j + l <= s.len) (std.unicode.utf8Decode(s[j .. j + l]) catch @as(u21, s[j])) else @as(u21, s[j]);
+            const cp = if (j + l <= s.len)
+                (std.unicode.utf8Decode(s[j .. j + l]) catch @as(u21, s[j]))
+            else
+                @as(u21, s[j]);
             if (!isSpaceRune(cp)) break;
             i = j;
         }
@@ -633,7 +662,12 @@ fn trimSpaceUnicode(s: []const u8, side: TrimSide) []const u8 {
 }
 
 /// strings.Trim{,Left,Right}(s, cutset): trims runes contained in cutset.
-fn trimCutset(alloc: std.mem.Allocator, s: []const u8, cutset: []const u8, side: TrimSide) Error![]const u8 {
+fn trimCutset(
+    alloc: std.mem.Allocator,
+    s: []const u8,
+    cutset: []const u8,
+    side: TrimSide,
+) Error![]const u8 {
     const set = try decodeRunes(alloc, cutset);
     var start: usize = 0;
     var end: usize = s.len;
@@ -641,7 +675,10 @@ fn trimCutset(alloc: std.mem.Allocator, s: []const u8, cutset: []const u8, side:
         var i: usize = 0;
         while (i < end) {
             const l = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
-            const cp = if (i + l <= s.len) (std.unicode.utf8Decode(s[i .. i + l]) catch @as(u21, s[i])) else @as(u21, s[i]);
+            const cp = if (i + l <= s.len)
+                (std.unicode.utf8Decode(s[i .. i + l]) catch @as(u21, s[i]))
+            else
+                @as(u21, s[i]);
             if (!runeInSet(cp, set)) break;
             i += @max(l, 1);
         }
@@ -653,7 +690,10 @@ fn trimCutset(alloc: std.mem.Allocator, s: []const u8, cutset: []const u8, side:
             var j = i - 1;
             while (j > start and (s[j] & 0xC0) == 0x80) j -= 1;
             const l = std.unicode.utf8ByteSequenceLength(s[j]) catch 1;
-            const cp = if (j + l <= s.len) (std.unicode.utf8Decode(s[j .. j + l]) catch @as(u21, s[j])) else @as(u21, s[j]);
+            const cp = if (j + l <= s.len)
+                (std.unicode.utf8Decode(s[j .. j + l]) catch @as(u21, s[j]))
+            else
+                @as(u21, s[j]);
             if (!runeInSet(cp, set)) break;
             i = j;
         }
@@ -806,7 +846,13 @@ pub fn split(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 /// strings.Split / bytes.Split semantics: empty delimiter splits into runes
 /// (strings) or bytes; otherwise splits on each non-overlapping occurrence.
-fn splitInto(alloc: std.mem.Allocator, out: *std.ArrayList(Value), v: []const u8, delim: []const u8, is_bytes: bool) Error!void {
+fn splitInto(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(Value),
+    v: []const u8,
+    delim: []const u8,
+    is_bytes: bool,
+) Error!void {
     if (delim.len == 0) {
         if (is_bytes) {
             for (v) |b| try out.append(alloc, Value{ .bytes = try alloc.dupe(u8, &.{b}) });
@@ -824,10 +870,16 @@ fn splitInto(alloc: std.mem.Allocator, out: *std.ArrayList(Value), v: []const u8
     while (true) {
         if (std.mem.indexOf(u8, rest, delim)) |idx| {
             const piece = rest[0..idx];
-            try out.append(alloc, if (is_bytes) Value{ .bytes = piece } else Value{ .string = piece });
+            try out.append(
+                alloc,
+                if (is_bytes) Value{ .bytes = piece } else Value{ .string = piece },
+            );
             rest = rest[idx + delim.len ..];
         } else {
-            try out.append(alloc, if (is_bytes) Value{ .bytes = rest } else Value{ .string = rest });
+            try out.append(
+                alloc,
+                if (is_bytes) Value{ .bytes = rest } else Value{ .string = rest },
+            );
             break;
         }
     }
@@ -890,7 +942,11 @@ pub fn translate(alloc: std.mem.Allocator, args: []const Value) Error!Value {
             for (source, 0..) |sr, idx| {
                 if (runeInSet(sr, seen.items)) {
                     var buf: [4]u8 = undefined;
-                    return bind.fail("TRANSLATE: found duplicated source character: {s}", .{encodeRune(&buf, @intCast(sr))}, error.UnsupportedOperation);
+                    return bind.fail(
+                        "TRANSLATE: found duplicated source character: {s}",
+                        .{encodeRune(&buf, @intCast(sr))},
+                        error.UnsupportedOperation,
+                    );
                 }
                 const repl: ?u21 = if (idx < target.len) target[idx] else null;
                 expr = try translateReplaceRunes(alloc, expr, sr, repl);
@@ -920,7 +976,12 @@ pub fn translate(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     }
 }
 
-fn translateReplaceRunes(alloc: std.mem.Allocator, expr: []const u21, from: u21, to: ?u21) Error![]u21 {
+fn translateReplaceRunes(
+    alloc: std.mem.Allocator,
+    expr: []const u21,
+    from: u21,
+    to: ?u21,
+) Error![]u21 {
     var out: std.ArrayList(u21) = .empty;
     for (expr) |cp| {
         if (cp == from) {
@@ -1052,16 +1113,27 @@ pub fn normalizeAndCasefold(alloc: std.mem.Allocator, args: []const Value) Error
     const m = normalizeMode(mode) orelse
         return bind.fail("unexpected normalize mode {s}", .{mode}, error.UnsupportedOperation);
     // Go NORMALIZE_AND_CASEFOLD lowercases (strings.ToLower) then normalizes.
-    const lowered = re.caseMap(alloc, false, try args[0].toString(alloc)) catch |e| return caseMapErr(e);
+    const lowered = re.caseMap(alloc, false, try args[0].toString(alloc)) catch |e|
+        return caseMapErr(e);
     const out = re.normalize(alloc, m, lowered) catch |e| return caseMapErr(e);
     return Value{ .string = out };
 }
 
 /// Go function_string.go CONTAINS_SUBSTR(value, search): NFKC-normalize and
 /// casefold both operands, then test containment.
-fn containsSubstrScalar(alloc: std.mem.Allocator, value: []const u8, search: []const u8) Error!Value {
-    const nv = try normalizeAndCasefold(alloc, &.{ Value{ .string = value }, Value{ .string = "NFKC" } });
-    const ns = try normalizeAndCasefold(alloc, &.{ Value{ .string = search }, Value{ .string = "NFKC" } });
+fn containsSubstrScalar(
+    alloc: std.mem.Allocator,
+    value: []const u8,
+    search: []const u8,
+) Error!Value {
+    const nv = try normalizeAndCasefold(
+        alloc,
+        &.{ Value{ .string = value }, Value{ .string = "NFKC" } },
+    );
+    const ns = try normalizeAndCasefold(
+        alloc,
+        &.{ Value{ .string = search }, Value{ .string = "NFKC" } },
+    );
     const norm_value = try nv.toString(alloc);
     const norm_search = try ns.toString(alloc);
     return Value{ .bool = std.mem.indexOf(u8, norm_value, norm_search) != null };

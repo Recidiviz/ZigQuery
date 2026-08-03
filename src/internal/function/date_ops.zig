@@ -34,9 +34,18 @@ fn weekPartOffset(part: []const u8) ?i64 {
 /// month's last day when it would overflow.
 pub fn addMonth(bt: BrokenTime, m: i64) BrokenTime {
     const c = bt.parts();
-    const first = tu.BrokenTime{ .civ = tu.compose(c.year, c.month, 1, c.hour, c.minute, c.second, c.micro) };
+    const first_civ = tu.compose(c.year, c.month, 1, c.hour, c.minute, c.second, c.micro);
+    const first = tu.BrokenTime{ .civ = first_civ };
     const shifted = first.addDate(0, m, 0).parts(); // year/month of target
-    const after = tu.decompose(tu.compose(shifted.year, shifted.month, c.day, c.hour, c.minute, c.second, c.micro));
+    const after = tu.decompose(tu.compose(
+        shifted.year,
+        shifted.month,
+        c.day,
+        c.hour,
+        c.minute,
+        c.second,
+        c.micro,
+    ));
     if (after.month != shifted.month) {
         return first.addDate(0, m + 1, -1);
     }
@@ -46,9 +55,18 @@ pub fn addMonth(bt: BrokenTime, m: i64) BrokenTime {
 /// Go addYear: same clamp behavior across a year shift (Feb 29 -> Feb 28).
 pub fn addYear(bt: BrokenTime, y: i64) BrokenTime {
     const c = bt.parts();
-    const first = tu.BrokenTime{ .civ = tu.compose(c.year, c.month, 1, c.hour, c.minute, c.second, c.micro) };
+    const first_civ = tu.compose(c.year, c.month, 1, c.hour, c.minute, c.second, c.micro);
+    const first = tu.BrokenTime{ .civ = first_civ };
     const shifted = first.addDate(y, 0, 0).parts();
-    const after = tu.decompose(tu.compose(shifted.year, shifted.month, c.day, c.hour, c.minute, c.second, c.micro));
+    const after = tu.decompose(tu.compose(
+        shifted.year,
+        shifted.month,
+        c.day,
+        c.hour,
+        c.minute,
+        c.second,
+        c.micro,
+    ));
     if (after.month != shifted.month) {
         return first.addDate(y, 1, -1);
     }

@@ -312,7 +312,11 @@ fn unscaledFromFloat(f: f64, scale: usize) ValueError!Wide {
 
 /// Little-endian two's-complement scaled integer (googlesql's NUMERIC and
 /// BIGNUMERIC proto encoding), restated at `to_scale`.
-fn unscaledFromTwosComplement(bytes: []const u8, from_scale: usize, to_scale: usize) ValueError!Wide {
+fn unscaledFromTwosComplement(
+    bytes: []const u8,
+    from_scale: usize,
+    to_scale: usize,
+) ValueError!Wide {
     if (bytes.len == 0) return 0;
     if (bytes.len > 64) return error.FailedConversion;
     var mag: std.meta.Int(.unsigned, @bitSizeOf(Wide)) = 0;
@@ -341,7 +345,8 @@ fn renderDecimal(
 ) ValueError![]u8 {
     const at_prec: Wide = rescale(unscaled, scale, prec);
     const negative = at_prec < 0;
-    const mag: std.meta.Int(.unsigned, @bitSizeOf(Wide)) = @intCast(if (negative) -at_prec else at_prec);
+    const Mag = std.meta.Int(.unsigned, @bitSizeOf(Wide));
+    const mag: Mag = @intCast(if (negative) -at_prec else at_prec);
 
     var digits_buf: [160]u8 = undefined;
     const digits = std.fmt.bufPrint(&digits_buf, "{d}", .{mag}) catch
@@ -518,7 +523,9 @@ pub const Value = union(enum) {
                 // Go DateValue.Add: IntValue adds days; *IntervalValue promotes
                 // to a DATETIME via calendar arithmetic.
                 .int => |n| return Value{ .date = days +% n },
-                .interval => |iv| return Value{ .datetime = addCalendar(days *% day_micros, iv, 1) },
+                .interval => |iv| return Value{
+                    .datetime = addCalendar(days *% day_micros, iv, 1),
+                },
                 else => return fail("failed to use add operator for date", error.UnsupportedOperation),
             },
             // Go TimestampValue/DatetimeValue.Add: only INTERVAL is accepted
@@ -559,7 +566,9 @@ pub const Value = union(enum) {
                 .int => |n| return Value{ .date = days -% n },
                 // Go DateValue.Sub: *IntervalValue -> DATETIME (calendar sub);
                 // any other time-shaped value -> INTERVAL of whole days.
-                .interval => |iv| return Value{ .datetime = addCalendar(days *% day_micros, iv, -1) },
+                .interval => |iv| return Value{
+                    .datetime = addCalendar(days *% day_micros, iv, -1),
+                },
                 else => {
                     const dst = try timeMicrosForCompare(v);
                     const duration_days = @divTrunc(days *% day_micros -% dst, day_micros);
@@ -570,11 +579,15 @@ pub const Value = union(enum) {
             // otherwise => the difference as an INTERVAL (H:M:S.nanos duration).
             .timestamp => |m| switch (v) {
                 .interval => |iv| return Value{ .timestamp = addCalendar(m, iv, -1) },
-                else => return Value{ .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000) },
+                else => return Value{
+                    .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000),
+                },
             },
             .datetime => |m| switch (v) {
                 .interval => |iv| return Value{ .datetime = addCalendar(m, iv, -1) },
-                else => return Value{ .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000) },
+                else => return Value{
+                    .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000),
+                },
             },
             .time => return fail("sub operation is unsupported for time", error.UnsupportedOperation),
             .json => return fail("sub operation is unsupported for json", error.UnsupportedOperation),
@@ -1372,7 +1385,11 @@ pub fn civilFromDays(z_in: i64) CivilDate {
     const z = z_in + 719468;
     const era = @divFloor(z, 146097);
     const doe = z - era * 146097; // [0, 146096]
-    const yoe = @divTrunc(doe - @divTrunc(doe, 1460) + @divTrunc(doe, 36524) - @divTrunc(doe, 146096), 365); // [0, 399]
+    // [0, 399]
+    const yoe = @divTrunc(
+        doe - @divTrunc(doe, 1460) + @divTrunc(doe, 36524) - @divTrunc(doe, 146096),
+        365,
+    );
     const y = yoe + era * 400;
     const doy = doe - (365 * yoe + @divTrunc(yoe, 4) - @divTrunc(yoe, 100)); // [0, 365]
     const mp = @divTrunc(5 * doy + 2, 153); // [0, 11]
@@ -1914,7 +1931,8 @@ pub fn parseTimestampMicros(s: []const u8) ValueError!i64 {
         }
     }
     if (idx != rest.len) return fail("invalid timestamp literal", error.InvalidDate);
-    return (days * 86400 + hour * 3600 + min * 60 + sec) * second_micros + micro - offset_sec * second_micros;
+    const secs = days * 86400 + hour * 3600 + min * 60 + sec;
+    return secs * second_micros + micro - offset_sec * second_micros;
 }
 
 // -- Interval parsing (bigquery.ParseInterval + go-zetasqlite wrapper) -------
@@ -1932,7 +1950,10 @@ fn intervalTrimByte(part: IntervalPart) u8 {
 
 /// Go bigquery getPartValue: trim the part prefix then capture its value.
 /// Returns the parsed value and the remaining slice.
-fn intervalGetPart(part: IntervalPart, s_in: []const u8) ValueError!struct { val: i32, rest: []const u8 } {
+fn intervalGetPart(
+    part: IntervalPart,
+    s_in: []const u8,
+) ValueError!struct { val: i32, rest: []const u8 } {
     var s = s_in;
     const tb = intervalTrimByte(part);
     while (s.len > 0 and s[0] == tb) s = s[1..];
@@ -1982,7 +2003,9 @@ pub fn parseIntervalValue(s: []const u8) ValueError!Interval {
     const is_negative = s[0] == '-';
     var iv = Interval{};
     var rest = s;
-    inline for ([_]IntervalPart{ .years, .months, .days, .hours, .minutes, .seconds, .subsecs }) |part| {
+    inline for ([_]IntervalPart{
+        .years, .months, .days, .hours, .minutes, .seconds, .subsecs,
+    }) |part| {
         const r = try intervalGetPart(part, rest);
         rest = r.rest;
         switch (part) {
@@ -2111,7 +2134,11 @@ pub fn arrayValue(alloc: std.mem.Allocator, elems: []const Value) !Value {
     return Value{ .array = av };
 }
 
-pub fn structValue(alloc: std.mem.Allocator, keys: []const []const u8, values: []const Value) !Value {
+pub fn structValue(
+    alloc: std.mem.Allocator,
+    keys: []const []const u8,
+    values: []const Value,
+) !Value {
     std.debug.assert(keys.len == values.len);
     const sv = try alloc.create(StructValue);
     const owned_keys = try alloc.alloc([]const u8, keys.len);
@@ -2221,8 +2248,16 @@ fn isBigNumeric(v: Value) bool {
 }
 
 /// Convenience for tests: NUMERIC/BIGNUMERIC from its decimal literal.
-pub fn numericFromString(alloc: std.mem.Allocator, s: []const u8, is_bignumeric: bool) ValueError!Value {
-    return numericFromWide(alloc, try unscaledFromString(s, scaleFor(is_bignumeric)), is_bignumeric);
+pub fn numericFromString(
+    alloc: std.mem.Allocator,
+    s: []const u8,
+    is_bignumeric: bool,
+) ValueError!Value {
+    return numericFromWide(
+        alloc,
+        try unscaledFromString(s, scaleFor(is_bignumeric)),
+        is_bignumeric,
+    );
 }
 
 /// Structural equality assertion for tests (floats compared bit-for-bit so
@@ -2449,7 +2484,11 @@ test "struct comparisons match by position, not by field name" {
     const s1 = try structValue(alloc, &.{ "a", "b" }, &.{ Value{ .int = 1 }, Value{ .string = "x" } });
     // Same values in the same order under different names. BigQuery calls this
     // equal; Go's map lookup would pair a-with-a and call it false.
-    const renamed = try structValue(alloc, &.{ "b", "a" }, &.{ Value{ .int = 1 }, Value{ .string = "x" } });
+    const renamed = try structValue(
+        alloc,
+        &.{ "b", "a" },
+        &.{ Value{ .int = 1 }, Value{ .string = "x" } },
+    );
     try std.testing.expect(try s1.eq(renamed));
 
     // Two anonymous fields share the key "", so a by-name lookup answered both
@@ -2460,7 +2499,11 @@ test "struct comparisons match by position, not by field name" {
     try std.testing.expect(try anon1.eq(anon2));
     try std.testing.expect(!try anon1.eq(anon3)); // position carries the meaning
 
-    const differing = try structValue(alloc, &.{ "a", "b" }, &.{ Value{ .int = 2 }, Value{ .string = "x" } });
+    const differing = try structValue(
+        alloc,
+        &.{ "a", "b" },
+        &.{ Value{ .int = 2 }, Value{ .string = "x" } },
+    );
     try std.testing.expect(!try s1.eq(differing));
 
     const shorter = try structValue(alloc, &.{"a"}, &.{Value{ .int = 1 }});
@@ -2765,8 +2808,14 @@ test "numeric value arithmetic / comparisons / conversions" {
     // googlesql NumericValue::To<int64_t> rounds the value half away from
     // zero, so 1.5 is 2. goccy returned the reduced numerator and gave 3.
     try std.testing.expectEqual(@as(i64, 2), try a.toInt64());
-    try std.testing.expectEqual(@as(i64, -2), try (try numericFromString(alloc, "-1.5", false)).toInt64());
-    try std.testing.expectEqual(@as(i64, 1), try (try numericFromString(alloc, "1.4", false)).toInt64());
+    try std.testing.expectEqual(
+        @as(i64, -2),
+        try (try numericFromString(alloc, "-1.5", false)).toInt64(),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        try (try numericFromString(alloc, "1.4", false)).toInt64(),
+    );
     try std.testing.expectEqual(@as(f64, 1.5), try a.toFloat64());
     // googlesql has no NUMERIC -> BOOL cast; goccy read the numerator, which
     // made 1 true, 0 false and 0.5 true.

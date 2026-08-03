@@ -25,7 +25,10 @@ pub fn nowCiv(args: []const Value) Error!i64 {
     // a deterministic time when configured, so this is only for ad-hoc calls.
     var ts: std.posix.timespec = undefined;
     _ = std.posix.system.clock_gettime(.REALTIME, &ts);
-    return @as(i64, @intCast(ts.sec)) * tu.second_micros + @divTrunc(@as(i64, @intCast(ts.nsec)), 1000);
+    return @as(i64, @intCast(ts.sec)) * tu.second_micros + @divTrunc(
+        @as(i64, @intCast(ts.nsec)),
+        1000,
+    );
 }
 
 pub fn currentDate(alloc: std.mem.Allocator, args: []const Value) Error!Value {

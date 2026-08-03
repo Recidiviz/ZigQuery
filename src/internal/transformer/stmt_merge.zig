@@ -123,7 +123,10 @@ pub fn transform(
     // 3. Drop temporary table.
     try statements.append(alloc, "DROP TABLE zetasqlite_merged_table");
 
-    const compound = try sqlbuilder.newCompoundSQLFragment(alloc, try statements.toOwnedSlice(alloc));
+    const compound = try sqlbuilder.newCompoundSQLFragment(
+        alloc,
+        try statements.toOwnedSlice(alloc),
+    );
     return .{ .compound = compound };
 }
 
@@ -316,10 +319,18 @@ fn transformWhenClause(
             subq.from_clause = subq_from;
             const subq_list = try alloc.alloc(*sqlbuilder.SelectListItem, 2);
             subq_list[0] = try create(alloc, sqlbuilder.SelectListItem{
-                .expression = try sqlbuilder.newColumnExpression(alloc, merged_source_column_name, null),
+                .expression = try sqlbuilder.newColumnExpression(
+                    alloc,
+                    merged_source_column_name,
+                    null,
+                ),
             });
             subq_list[1] = try create(alloc, sqlbuilder.SelectListItem{
-                .expression = try sqlbuilder.newColumnExpression(alloc, merged_target_column_name, null),
+                .expression = try sqlbuilder.newColumnExpression(
+                    alloc,
+                    merged_target_column_name,
+                    null,
+                ),
             });
             subq.select_list = subq_list;
             subq.where_clause = from_filter;
@@ -478,7 +489,12 @@ fn createMergedTableStatement(
     const alloc = coord.alloc;
 
     // Distinct column mappings.
-    try createColumnMapping(alloc, source_table_data.column_list, target_table_data.column_list, column_mapping);
+    try createColumnMapping(
+        alloc,
+        source_table_data.column_list,
+        target_table_data.column_list,
+        column_mapping,
+    );
 
     // source LEFT JOIN target.
     const left_join = try createJoinWithColumnMapping(coord, try create(alloc, sqlbuilder.FromItem{
@@ -616,7 +632,11 @@ fn create(alloc: std.mem.Allocator, value: anytype) Error!*@TypeOf(value) {
     return ptr;
 }
 
-fn joinStrings(alloc: std.mem.Allocator, items: []const []const u8, sep: []const u8) Error![]const u8 {
+fn joinStrings(
+    alloc: std.mem.Allocator,
+    items: []const []const u8,
+    sep: []const u8,
+) Error![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     for (items, 0..) |item, i| {
         if (i > 0) try out.appendSlice(alloc, sep);

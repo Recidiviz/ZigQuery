@@ -80,7 +80,8 @@ fn parseFormat(alloc: std.mem.Allocator, fmt: []const u8, args_in: []const Value
         } else {
             const start = i;
             while (i < fmt.len and fmt[i] >= '0' and fmt[i] <= '9') i += 1;
-            if (i > start) param.width = std.fmt.parseInt(i64, fmt[start..i], 10) catch return bind.fail("invalid format width", .{}, error.UnsupportedOperation);
+            if (i > start) param.width = std.fmt.parseInt(i64, fmt[start..i], 10) catch
+                return bind.fail("invalid format width", .{}, error.UnsupportedOperation);
         }
         // precision
         if (i < fmt.len and fmt[i] == '.') {
@@ -91,7 +92,8 @@ fn parseFormat(alloc: std.mem.Allocator, fmt: []const u8, args_in: []const Value
             } else {
                 const start = i;
                 while (i < fmt.len and fmt[i] >= '0' and fmt[i] <= '9') i += 1;
-                if (i > start) param.precision = std.fmt.parseInt(i64, fmt[start..i], 10) catch return bind.fail("invalid format precision", .{}, error.UnsupportedOperation);
+                if (i > start) param.precision = std.fmt.parseInt(i64, fmt[start..i], 10) catch
+                    return bind.fail("invalid format precision", .{}, error.UnsupportedOperation);
             }
         }
         if (i >= fmt.len) return bind.fail("invalid format", .{}, error.UnsupportedOperation);
@@ -212,7 +214,14 @@ fn parseInteger(alloc: std.mem.Allocator, p: Param, args_in: []const Value) Erro
     return body;
 }
 
-fn fmtIntBody(alloc: std.mem.Allocator, v: i64, base: u8, upper: bool, width: usize, zero: bool) Error![]u8 {
+fn fmtIntBody(
+    alloc: std.mem.Allocator,
+    v: i64,
+    base: u8,
+    upper: bool,
+    width: usize,
+    zero: bool,
+) Error![]u8 {
     const neg = v < 0;
     const av: u64 = if (neg) @as(u64, @intCast(-(v + 1))) + 1 else @as(u64, @intCast(v));
     var digits_buf: [24]u8 = undefined;
@@ -309,8 +318,11 @@ fn formatFloatVerb(alloc: std.mem.Allocator, v: f64, specifier: u8, precision: i
             return alloc.dupe(u8, s);
         },
         'e', 'E' => {
-            const s = std.fmt.float.render(&buf, v, .{ .mode = .scientific, .precision = prec }) catch
-                return error.OutOfMemory;
+            const s = std.fmt.float.render(
+                &buf,
+                v,
+                .{ .mode = .scientific, .precision = prec },
+            ) catch return error.OutOfMemory;
             return goScientific(alloc, s, specifier == 'E');
         },
         'g', 'G' => return formatG(alloc, v, specifier == 'G', precision),
@@ -338,8 +350,11 @@ fn formatG(alloc: std.mem.Allocator, v: f64, upper: bool, precision: i64) Error!
             null
         else
             @intCast(@max(precision, 1) - 1);
-        const s = std.fmt.float.render(&buf, av, .{ .mode = .scientific, .precision = sci_prec }) catch
-            return error.OutOfMemory;
+        const s = std.fmt.float.render(
+            &buf,
+            av,
+            .{ .mode = .scientific, .precision = sci_prec },
+        ) catch return error.OutOfMemory;
         const e_idx = std.mem.indexOfScalar(u8, s, 'e') orelse s.len;
         var n: usize = 0;
         for (s[0..e_idx]) |c| {

@@ -19,7 +19,7 @@ const rowvalue = @import("../internal/types/rowvalue.zig");
 
 pub const Error = error{
     /// Go's json.Decode into TableDataInsertAllRequest failed; the handler
-    /// answers 400 invalid.
+    /// answers 400 invalid
     InvalidRequest,
 } || std.mem.Allocator.Error;
 

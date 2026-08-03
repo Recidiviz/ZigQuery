@@ -152,5 +152,8 @@ test "bool and int match Go's %v" {
 
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    try testing.expectEqualStrings("-9223372036854775808", try formatInt(arena_state.allocator(), std.math.minInt(i64)));
+    try testing.expectEqualStrings(
+        "-9223372036854775808",
+        try formatInt(arena_state.allocator(), std.math.minInt(i64)),
+    );
 }

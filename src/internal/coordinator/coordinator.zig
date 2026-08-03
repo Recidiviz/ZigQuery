@@ -120,7 +120,11 @@ pub const QueryCoordinator = struct {
                         .table => {
                             if (create_data.table) |table| {
                                 if (table.as_select != null) {
-                                    return stmt_create_table_as_select.transform(self, stmt_data, ctx);
+                                    return stmt_create_table_as_select.transform(
+                                        self,
+                                        stmt_data,
+                                        ctx,
+                                    );
                                 }
                             }
                             // Go: "unsupported CREATE TABLE statement"
@@ -398,7 +402,11 @@ pub const QueryCoordinator = struct {
 
             var found = false;
             for (expected_columns) |col| {
-                const expected_alias = try context.generateIDBasedAlias(self.alloc, col.name, col.id);
+                const expected_alias = try context.generateIDBasedAlias(
+                    self.alloc,
+                    col.name,
+                    col.id,
+                );
                 if (std.mem.eql(u8, sel_item.alias, expected_alias)) {
                     found = true;
                     break;
@@ -433,10 +441,10 @@ pub const QueryCoordinator = struct {
                     if (from.type == .join) {
                         var items: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;
                         const join = from.join orelse return error.ValidationFailed;
-                        const left_sub = (join.left orelse return error.ValidationFailed).subquery orelse
-                            return error.ValidationFailed;
-                        const right_sub = (join.right orelse return error.ValidationFailed).subquery orelse
-                            return error.ValidationFailed;
+                        const left = join.left orelse return error.ValidationFailed;
+                        const right = join.right orelse return error.ValidationFailed;
+                        const left_sub = left.subquery orelse return error.ValidationFailed;
+                        const right_sub = right.subquery orelse return error.ValidationFailed;
                         if (try self.getSelectListRecursive(left_sub)) |left_items| {
                             try items.appendSlice(self.alloc, left_items);
                         }
@@ -522,7 +530,10 @@ test "transformScan rejects WITH-entry data" {
     try testing.expectError(error.UnsupportedNode, with_entry_via_scan(&coordinator, ctx));
 }
 
-fn with_entry_via_scan(coordinator: *QueryCoordinator, ctx: *TransformContext) Error!*sqlbuilder.WithClause {
+fn with_entry_via_scan(
+    coordinator: *QueryCoordinator,
+    ctx: *TransformContext,
+) Error!*sqlbuilder.WithClause {
     // transformWithEntry with a non-with-entry payload is rejected too.
     return coordinator.transformWithEntry(ScanData{ .type = .project }, ctx);
 }

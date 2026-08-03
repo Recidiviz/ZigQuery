@@ -437,12 +437,22 @@ fn xDelete(vfs: [*c]c.sqlite3_vfs, name: [*c]const u8, sync_dir: c_int) callconv
     return base.*.xDelete.?(base, name, sync_dir);
 }
 
-fn xAccess(vfs: [*c]c.sqlite3_vfs, name: [*c]const u8, flags: c_int, res: [*c]c_int) callconv(.c) c_int {
+fn xAccess(
+    vfs: [*c]c.sqlite3_vfs,
+    name: [*c]const u8,
+    flags: c_int,
+    res: [*c]c_int,
+) callconv(.c) c_int {
     _ = vfs;
     return base.*.xAccess.?(base, name, flags, res);
 }
 
-fn xFullPathname(vfs: [*c]c.sqlite3_vfs, name: [*c]const u8, n: c_int, out: [*c]u8) callconv(.c) c_int {
+fn xFullPathname(
+    vfs: [*c]c.sqlite3_vfs,
+    name: [*c]const u8,
+    n: c_int,
+    out: [*c]u8,
+) callconv(.c) c_int {
     _ = vfs;
     return base.*.xFullPathname.?(base, name, n, out);
 }
@@ -506,7 +516,12 @@ fn fClose(f: [*c]c.sqlite3_file) callconv(.c) c_int {
     return rc;
 }
 
-fn fRead(f: [*c]c.sqlite3_file, buf: ?*anyopaque, amt: c_int, ofst: c.sqlite3_int64) callconv(.c) c_int {
+fn fRead(
+    f: [*c]c.sqlite3_file,
+    buf: ?*anyopaque,
+    amt: c_int,
+    ofst: c.sqlite3_int64,
+) callconv(.c) c_int {
     const s = self(f);
     const t0 = phase.nowNs();
     const rc = s.real.*.pMethods.*.xRead.?(s.real, buf, amt, ofst);
@@ -517,7 +532,12 @@ fn fRead(f: [*c]c.sqlite3_file, buf: ?*anyopaque, amt: c_int, ofst: c.sqlite3_in
     return rc;
 }
 
-fn fWrite(f: [*c]c.sqlite3_file, buf: ?*const anyopaque, amt: c_int, ofst: c.sqlite3_int64) callconv(.c) c_int {
+fn fWrite(
+    f: [*c]c.sqlite3_file,
+    buf: ?*const anyopaque,
+    amt: c_int,
+    ofst: c.sqlite3_int64,
+) callconv(.c) c_int {
     const s = self(f);
     const t0 = phase.nowNs();
     const rc = s.real.*.pMethods.*.xWrite.?(s.real, buf, amt, ofst);
@@ -609,7 +629,12 @@ fn fShmUnmap(f: [*c]c.sqlite3_file, delete_flag: c_int) callconv(.c) c_int {
     return s.real.*.pMethods.*.xShmUnmap.?(s.real, delete_flag);
 }
 
-fn fFetch(f: [*c]c.sqlite3_file, ofst: c.sqlite3_int64, amt: c_int, out: [*c]?*anyopaque) callconv(.c) c_int {
+fn fFetch(
+    f: [*c]c.sqlite3_file,
+    ofst: c.sqlite3_int64,
+    amt: c_int,
+    out: [*c]?*anyopaque,
+) callconv(.c) c_int {
     const s = self(f);
     return s.real.*.pMethods.*.xFetch.?(s.real, ofst, amt, out);
 }
@@ -694,7 +719,11 @@ pub fn writeText(w: anytype) !void {
         try w.print(
             "fd probe:     {d} unlinked regular file(s) open during a temp write, " ++
                 "largest {d:.1} MiB, dev {d}\n",
-            .{ p.unlinked_files, @as(f64, @floatFromInt(p.largest_bytes)) / (1024.0 * 1024.0), p.device },
+            .{
+                p.unlinked_files,
+                @as(f64, @floatFromInt(p.largest_bytes)) / (1024.0 * 1024.0),
+                p.device,
+            },
         );
     } else {
         try w.writeAll("fd probe:     never ran — nothing wrote to a temp file\n");
@@ -704,7 +733,10 @@ pub fn writeText(w: anytype) !void {
 const testing = std.testing;
 
 test "classify maps every open flag to its class" {
-    try testing.expectEqual(Kind.main_db, classify(c.SQLITE_OPEN_MAIN_DB | c.SQLITE_OPEN_READWRITE));
+    try testing.expectEqual(
+        Kind.main_db,
+        classify(c.SQLITE_OPEN_MAIN_DB | c.SQLITE_OPEN_READWRITE),
+    );
     try testing.expectEqual(Kind.temp_db, classify(c.SQLITE_OPEN_TEMP_DB));
     try testing.expectEqual(Kind.transient_db, classify(c.SQLITE_OPEN_TRANSIENT_DB));
     try testing.expectEqual(Kind.temp_journal, classify(c.SQLITE_OPEN_TEMP_JOURNAL));

@@ -1128,7 +1128,13 @@ pub const Db = struct {
                     }
                 },
                 .resolved_create_statement_node => |create_any| {
-                    consumed = try db.execCreateStatement(arena, analyzed.node, create_any, cur_args, opts);
+                    consumed = try db.execCreateStatement(
+                        arena,
+                        analyzed.node,
+                        create_any,
+                        cur_args,
+                        opts,
+                    );
                 },
                 // Go newDMLStmtAction: exec the formatted DML SQL.
                 .resolved_insert_stmt_node,
@@ -1139,7 +1145,13 @@ pub const Db = struct {
                     consumed = try db.execSql(arena, formatted, cur_args);
                 },
                 .resolved_drop_stmt_node => |drop_stmt| {
-                    consumed = try db.execDropStatement(arena, analyzed.node, drop_stmt, cur_args, opts);
+                    consumed = try db.execDropStatement(
+                        arena,
+                        analyzed.node,
+                        drop_stmt,
+                        cur_args,
+                        opts,
+                    );
                 },
                 // Go newDropFunctionStmtAction -> DropStmtAction with
                 // objectType "FUNCTION": delete the catalog spec only (no
@@ -1218,7 +1230,12 @@ pub const Db = struct {
     /// Prepares `sql_text`, binds `args`, and steps it to completion
     /// (Go conn.ExecContext used by every non-query action). Returns the
     /// number of positional args consumed (0 in named mode).
-    fn execSql(db: *Db, arena: std.mem.Allocator, sql_text: []const u8, args: []const Param) Error!usize {
+    fn execSql(
+        db: *Db,
+        arena: std.mem.Allocator,
+        sql_text: []const u8,
+        args: []const Param,
+    ) Error!usize {
         var stmt = db.sqlite_db.prepare(sql_text) catch {
             db.setLastError(db.sqlite_db.errmsg());
             return error.ExecFailed;
@@ -1891,7 +1908,10 @@ fn startsWithKeyword(s: []const u8, kw: []const u8) bool {
 /// Go getParameterMode: scans the literal-stripped query for unquoted `?`
 /// (positional) vs `@name` (named). Mixing the two is rejected; a query with
 /// neither defaults to named.
-fn parameterMode(arena: std.mem.Allocator, sql: []const u8) error{ OutOfMemory, MixedParameters }!ParamMode {
+fn parameterMode(
+    arena: std.mem.Allocator,
+    sql: []const u8,
+) error{ OutOfMemory, MixedParameters }!ParamMode {
     const stripped = try stripSQLLiterals(arena, sql);
     const has_positional = std.mem.indexOfScalar(u8, stripped, '?') != null;
     const has_named = hasNamedParam(stripped);
@@ -2293,7 +2313,12 @@ pub fn translateOn(
                     return error.AnalyzeFailed;
                 },
             };
-            break :blk analyzer_ffi.analyzeNextStatement(arena, sqlz, offset, catalog_json) catch |err| switch (err) {
+            break :blk analyzer_ffi.analyzeNextStatement(
+                arena,
+                sqlz,
+                offset,
+                catalog_json,
+            ) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     db.setLastError(analyzer_ffi.last_error);

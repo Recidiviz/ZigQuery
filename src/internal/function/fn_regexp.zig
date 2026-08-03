@@ -80,7 +80,10 @@ pub fn regexpExtractAll(alloc: std.mem.Allocator, args: []const Value) Error!Val
         const base = m * nsub * 2;
         const last = base + r.ngroups * 2;
         const captured = groupSlice(subj, r.offsets, last);
-        try out.append(alloc, if (is_bytes) Value{ .bytes = captured } else Value{ .string = captured });
+        try out.append(
+            alloc,
+            if (is_bytes) Value{ .bytes = captured } else Value{ .string = captured },
+        );
     }
     return value_mod.arrayValue(alloc, out.items);
 }

@@ -107,7 +107,12 @@ fn sortAndLimit(values: *std.ArrayList(*OrderedValue), opt: ?*const AggregatorOp
 pub const ARRAY = struct {
     values: std.ArrayList(Value) = .empty,
 
-    pub fn step(f: *ARRAY, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *ARRAY,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = opt;
         if (values.len < 1) return bind.fail("ARRAY: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         try f.values.append(alloc, values[0]);
@@ -130,7 +135,12 @@ pub const ANY_VALUE = struct {
     value: Value = .null,
     having_values: std.ArrayList(Pair) = .empty,
 
-    pub fn step(f: *ANY_VALUE, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *ANY_VALUE,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         if (values.len < 1) return bind.fail("ANY_VALUE: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         const v = values[0];
         if (v == .null) return;
@@ -187,7 +197,12 @@ pub const ARRAY_AGG = struct {
     opt: ?*const AggregatorOption = null,
     values: std.ArrayList(*OrderedValue) = .empty,
 
-    pub fn step(f: *ARRAY_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *ARRAY_AGG,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         if (values.len < 1) return bind.fail("ARRAY_AGG: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .null) {
             return bind.fail("ARRAY_AGG: input value must be not null", .{}, error.NullValue);
@@ -217,7 +232,12 @@ pub const ARRAY_CONCAT_AGG = struct {
     opt: ?*const AggregatorOption = null,
     values: std.ArrayList(*OrderedValue) = .empty,
 
-    pub fn step(f: *ARRAY_CONCAT_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *ARRAY_CONCAT_AGG,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         if (values.len < 1) return bind.fail("ARRAY_CONCAT_AGG: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         // Go bindArrayConcatAgg: NULL input rows are skipped.
         if (values[0] == .null) return;
@@ -249,7 +269,12 @@ pub const AVG = struct {
     sum: Value = .null,
     num: i64 = 0,
 
-    pub fn step(f: *AVG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *AVG,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = opt;
         if (values.len < 1) return bind.fail("AVG: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         const v = values[0];
@@ -269,7 +294,12 @@ pub const AVG = struct {
 pub const SUM = struct {
     sum: Value = .null,
 
-    pub fn step(f: *SUM, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *SUM,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = opt;
         if (values.len < 1) return bind.fail("SUM: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         const v = values[0];
@@ -293,7 +323,12 @@ pub const BIT_AND_AGG = struct {
     seen: bool = false,
     value: i64 = -1, // the AND identity (all bits set)
 
-    pub fn step(f: *BIT_AND_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *BIT_AND_AGG,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("BIT_AND: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
@@ -313,7 +348,12 @@ pub const BIT_OR_AGG = struct {
     seen: bool = false,
     value: i64 = 0, // the OR identity, now that "unset" is out of band
 
-    pub fn step(f: *BIT_OR_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *BIT_OR_AGG,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("BIT_OR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
@@ -333,7 +373,12 @@ pub const BIT_XOR_AGG = struct {
     seen: bool = false,
     value: i64 = 0, // the XOR identity
 
-    pub fn step(f: *BIT_XOR_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *BIT_XOR_AGG,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("BIT_XOR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
@@ -356,7 +401,12 @@ pub const BIT_XOR_AGG = struct {
 pub const COUNT = struct {
     count: Value = .null,
 
-    pub fn step(f: *COUNT, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *COUNT,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = opt;
         if (values.len < 1) return bind.fail("COUNT: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .null) return;
@@ -376,7 +426,12 @@ pub const COUNT = struct {
 pub const COUNT_STAR = struct {
     count: i64 = 0,
 
-    pub fn step(f: *COUNT_STAR, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *COUNT_STAR,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = alloc;
         _ = values;
         _ = opt;
@@ -392,7 +447,12 @@ pub const COUNT_STAR = struct {
 pub const COUNTIF = struct {
     count: Value = .null,
 
-    pub fn step(f: *COUNTIF, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *COUNTIF,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = opt;
         if (values.len < 1) return bind.fail("COUNTIF: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .null) return;
@@ -420,7 +480,12 @@ pub const LOGICAL_AND = struct {
     seen: bool = false,
     v: bool = true, // the AND identity
 
-    pub fn step(f: *LOGICAL_AND, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *LOGICAL_AND,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("LOGICAL_AND: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
@@ -440,7 +505,12 @@ pub const LOGICAL_OR = struct {
     seen: bool = false,
     v: bool = false, // the OR identity
 
-    pub fn step(f: *LOGICAL_OR, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *LOGICAL_OR,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("LOGICAL_OR: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
@@ -464,7 +534,12 @@ pub const MAX = struct {
     initialized: bool = false,
     max: Value = .null,
 
-    pub fn step(f: *MAX, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *MAX,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("MAX: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
@@ -488,7 +563,12 @@ pub const MIN = struct {
     initialized: bool = false,
     min: Value = .null,
 
-    pub fn step(f: *MIN, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *MIN,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         _ = alloc;
         _ = opt;
         if (values.len < 1) return bind.fail("MIN: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
@@ -518,7 +598,12 @@ pub const STRING_AGG = struct {
     opt: ?*const AggregatorOption = null,
     values: std.ArrayList(*OrderedValue) = .empty,
 
-    pub fn step(f: *STRING_AGG, alloc: std.mem.Allocator, values: []const Value, opt: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *STRING_AGG,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        opt: *const AggregatorOption,
+    ) Error!void {
         if (values.len < 1) return bind.fail("STRING_AGG: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         // Go bindStringAgg: 1 arg -> delim "", else delim = args[1].ToString().
         var delim: []const u8 = "";
@@ -628,7 +713,12 @@ const PairStat = struct {
 
 pub const CORR = struct {
     inner: PairStat = .{},
-    pub fn step(f: *CORR, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *CORR,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        _: *const AggregatorOption,
+    ) Error!void {
         try f.inner.stepPair(alloc, values);
     }
     pub fn done(f: *CORR, _: std.mem.Allocator) Error!Value {
@@ -639,7 +729,12 @@ pub const CORR = struct {
 
 pub const COVAR_POP = struct {
     inner: PairStat = .{},
-    pub fn step(f: *COVAR_POP, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *COVAR_POP,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        _: *const AggregatorOption,
+    ) Error!void {
         try f.inner.stepPair(alloc, values);
     }
     pub fn done(f: *COVAR_POP, _: std.mem.Allocator) Error!Value {
@@ -650,7 +745,12 @@ pub const COVAR_POP = struct {
 
 pub const COVAR_SAMP = struct {
     inner: PairStat = .{},
-    pub fn step(f: *COVAR_SAMP, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *COVAR_SAMP,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        _: *const AggregatorOption,
+    ) Error!void {
         try f.inner.stepPair(alloc, values);
     }
     pub fn done(f: *COVAR_SAMP, _: std.mem.Allocator) Error!Value {
@@ -664,7 +764,12 @@ pub const COVAR_SAMP = struct {
 fn VarStat(comptime is_stddev: bool, comptime population: bool) type {
     return struct {
         v: std.ArrayList(f64) = .empty,
-        pub fn step(f: *@This(), alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+        pub fn step(
+            f: *@This(),
+            alloc: std.mem.Allocator,
+            values: []const Value,
+            _: *const AggregatorOption,
+        ) Error!void {
             if (values.len < 1) return bind.fail("statistical aggregate: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
             if (values[0] == .null) return;
             try f.v.append(alloc, try values[0].toFloat64());
@@ -692,7 +797,12 @@ pub const VARIANCE = VAR_SAMP;
 pub const APPROX_COUNT_DISTINCT = struct {
     seen: std.StringHashMapUnmanaged(void) = .empty,
 
-    pub fn step(f: *APPROX_COUNT_DISTINCT, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *APPROX_COUNT_DISTINCT,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        _: *const AggregatorOption,
+    ) Error!void {
         if (values.len < 1) return bind.fail("APPROX_COUNT_DISTINCT: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (values[0] == .null) return;
         const key = try values[0].toString(alloc);
@@ -708,7 +818,12 @@ pub const APPROX_QUANTILES = struct {
     num: i64 = 0,
     values: std.ArrayList(Value) = .empty,
 
-    pub fn step(f: *APPROX_QUANTILES, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *APPROX_QUANTILES,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        _: *const AggregatorOption,
+    ) Error!void {
         if (values.len < 2) return bind.fail("APPROX_QUANTILES: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (!f.once) {
             f.once = true;
@@ -767,7 +882,12 @@ pub const APPROX_TOP_COUNT = struct {
     map: std.StringHashMapUnmanaged(usize) = .empty,
     entries: std.ArrayList(TopEntry) = .empty,
 
-    pub fn step(f: *APPROX_TOP_COUNT, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *APPROX_TOP_COUNT,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        _: *const AggregatorOption,
+    ) Error!void {
         if (values.len < 2) return bind.fail("APPROX_TOP_COUNT: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (!f.once) {
             f.once = true;
@@ -780,7 +900,10 @@ pub const APPROX_TOP_COUNT = struct {
             e.acc = .{ .int = (try e.acc.toInt64()) + 1 };
         } else {
             gop.value_ptr.* = f.entries.items.len;
-            try f.entries.append(alloc, .{ .key = values[0], .acc = .{ .int = 1 }, .idx = f.entries.items.len });
+            try f.entries.append(
+                alloc,
+                .{ .key = values[0], .acc = .{ .int = 1 }, .idx = f.entries.items.len },
+            );
         }
     }
     pub fn done(f: *APPROX_TOP_COUNT, alloc: std.mem.Allocator) Error!Value {
@@ -794,7 +917,12 @@ pub const APPROX_TOP_SUM = struct {
     map: std.StringHashMapUnmanaged(usize) = .empty,
     entries: std.ArrayList(TopEntry) = .empty,
 
-    pub fn step(f: *APPROX_TOP_SUM, alloc: std.mem.Allocator, values: []const Value, _: *const AggregatorOption) Error!void {
+    pub fn step(
+        f: *APPROX_TOP_SUM,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        _: *const AggregatorOption,
+    ) Error!void {
         if (values.len < 3) return bind.fail("APPROX_TOP_SUM: invalid argument num {d}", .{values.len}, error.UnsupportedOperation);
         if (!f.once) {
             f.once = true;
@@ -810,7 +938,10 @@ pub const APPROX_TOP_SUM = struct {
             }
         } else {
             gop.value_ptr.* = f.entries.items.len;
-            try f.entries.append(alloc, .{ .key = values[0], .acc = weight, .idx = f.entries.items.len });
+            try f.entries.append(
+                alloc,
+                .{ .key = values[0], .acc = weight, .idx = f.entries.items.len },
+            );
         }
     }
     pub fn done(f: *APPROX_TOP_SUM, alloc: std.mem.Allocator) Error!Value {
@@ -818,7 +949,13 @@ pub const APPROX_TOP_SUM = struct {
     }
 };
 
-fn topDone(alloc: std.mem.Allocator, entries: []TopEntry, num: i64, comptime acc_key: []const u8, comptime name: []const u8) Error!Value {
+fn topDone(
+    alloc: std.mem.Allocator,
+    entries: []TopEntry,
+    num: i64,
+    comptime acc_key: []const u8,
+    comptime name: []const u8,
+) Error!Value {
     if (entries.len == 0) return .null;
     if (@as(i64, @intCast(entries.len)) < num) {
         return bind.fail(name ++ ": required number is larger than number of input values", .{}, error.UnsupportedOperation);

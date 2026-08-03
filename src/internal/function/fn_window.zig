@@ -119,7 +119,11 @@ fn inverseEqual(a: Value, b: Value) bool {
 
 pub const WINDOW_ANY_VALUE = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_ANY_VALUE, _: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_ANY_VALUE,
+        _: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         if (agg.values.items.len == 0) return .null;
         return agg.values.items[0];
     }
@@ -127,14 +131,22 @@ pub const WINDOW_ANY_VALUE = struct {
 
 pub const WINDOW_ARRAY_AGG = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_ARRAY_AGG, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_ARRAY_AGG,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         return value_mod.arrayValue(alloc, try agg.relevantValues(alloc));
     }
 };
 
 pub const WINDOW_AVG = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_AVG, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_AVG,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         var sum: Value = .null;
         var total: i64 = 0;
         for (try agg.relevantValues(alloc)) |v| {
@@ -154,26 +166,43 @@ pub const WINDOW_AVG = struct {
 pub const WINDOW_COUNT = struct {
     pub const window_mode: WindowMode = .single;
     /// Go WINDOW_COUNT.Step: only non-NULL values are buffered.
-    pub fn step(_: *WINDOW_COUNT, alloc: std.mem.Allocator, values: []const Value, agg: *WindowFuncAggregatedStatus) Error!void {
+    pub fn step(
+        _: *WINDOW_COUNT,
+        alloc: std.mem.Allocator,
+        values: []const Value,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!void {
         if (values.len == 0) return;
         if (values[0] == .null) return;
         try agg.step(alloc, values[0]);
     }
-    pub fn done(_: *WINDOW_COUNT, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_COUNT,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         return .{ .int = @intCast((try agg.relevantValues(alloc)).len) };
     }
 };
 
 pub const WINDOW_COUNT_STAR = struct {
     pub const window_mode: WindowMode = .no_args;
-    pub fn done(_: *WINDOW_COUNT_STAR, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_COUNT_STAR,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         return .{ .int = @intCast((try agg.relevantValues(alloc)).len) };
     }
 };
 
 pub const WINDOW_COUNTIF = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_COUNTIF, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_COUNTIF,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         var count: i64 = 0;
         for (try agg.relevantValues(alloc)) |v| {
             if (v == .null) continue;
@@ -185,7 +214,11 @@ pub const WINDOW_COUNTIF = struct {
 
 pub const WINDOW_MAX = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_MAX, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_MAX,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         var max: Value = .null;
         for (try agg.relevantValues(alloc)) |v| {
             if (v == .null) continue;
@@ -201,7 +234,11 @@ pub const WINDOW_MAX = struct {
 
 pub const WINDOW_MIN = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_MIN, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_MIN,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         var min: Value = .null;
         for (try agg.relevantValues(alloc)) |v| {
             if (v == .null) continue;
@@ -219,11 +256,19 @@ pub const WINDOW_STRING_AGG = struct {
     pub const window_mode: WindowMode = .single;
     delim: []const u8 = ",",
 
-    pub fn parseArguments(f: *WINDOW_STRING_AGG, alloc: std.mem.Allocator, args: []const Value) Error!void {
+    pub fn parseArguments(
+        f: *WINDOW_STRING_AGG,
+        alloc: std.mem.Allocator,
+        args: []const Value,
+    ) Error!void {
         f.delim = ",";
         if (args.len > 1) f.delim = try args[1].toString(alloc);
     }
-    pub fn done(f: *WINDOW_STRING_AGG, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_STRING_AGG,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         var out: std.ArrayList(u8) = .empty;
         var wrote = false;
         for (try agg.relevantValues(alloc)) |v| {
@@ -239,7 +284,11 @@ pub const WINDOW_STRING_AGG = struct {
 
 pub const WINDOW_SUM = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_SUM, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_SUM,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         var sum: Value = .null;
         for (try agg.relevantValues(alloc)) |v| {
             if (v == .null) continue;
@@ -255,7 +304,11 @@ pub const WINDOW_SUM = struct {
 
 pub const WINDOW_LOGICAL_AND = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_LOGICAL_AND, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_LOGICAL_AND,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         for (try agg.relevantValues(alloc)) |v| {
             if (!(try v.toBool())) return .{ .bool = false };
         }
@@ -265,7 +318,11 @@ pub const WINDOW_LOGICAL_AND = struct {
 
 pub const WINDOW_LOGICAL_OR = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_LOGICAL_OR, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_LOGICAL_OR,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         for (try agg.relevantValues(alloc)) |v| {
             if (try v.toBool()) return .{ .bool = true };
         }
@@ -279,7 +336,11 @@ pub const WINDOW_LOGICAL_OR = struct {
 
 pub const WINDOW_FIRST_VALUE = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_FIRST_VALUE, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_FIRST_VALUE,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const values = try agg.relevantValues(alloc);
         if (values.len == 0) return .null;
         return values[0];
@@ -288,7 +349,11 @@ pub const WINDOW_FIRST_VALUE = struct {
 
 pub const WINDOW_LAST_VALUE = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_LAST_VALUE, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_LAST_VALUE,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const values = try agg.relevantValues(alloc);
         if (values.len == 0) return .null;
         return values[values.len - 1];
@@ -299,13 +364,21 @@ pub const WINDOW_NTH_VALUE = struct {
     pub const window_mode: WindowMode = .single;
     n: i64 = 0,
 
-    pub fn parseArguments(f: *WINDOW_NTH_VALUE, _: std.mem.Allocator, args: []const Value) Error!void {
+    pub fn parseArguments(
+        f: *WINDOW_NTH_VALUE,
+        _: std.mem.Allocator,
+        args: []const Value,
+    ) Error!void {
         if (args.len < 2 or args[1] == .null) {
             return bind.fail("NTH_VALUE: constant integer expression must be not null value", .{}, error.NullValue);
         }
         f.n = (try args[1].toInt64()) - 1; // ordinal access
     }
-    pub fn done(f: *WINDOW_NTH_VALUE, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_NTH_VALUE,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const values = try agg.relevantValues(alloc);
         if (@as(i64, @intCast(values.len)) - 1 < f.n) return .null;
         return values[@intCast(f.n)];
@@ -329,7 +402,11 @@ pub const WINDOW_LEAD = struct {
         }
         if (args.len > 2) f.default_value = args[2];
     }
-    pub fn done(f: *WINDOW_LEAD, _: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_LEAD,
+        _: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         // Values includes the current row at index 0; LEAD reads offset ahead.
         if (@as(i64, @intCast(agg.values.items.len)) - 1 < f.offset) return f.default_value;
         return agg.values.items[@intCast(f.offset)];
@@ -353,7 +430,11 @@ pub const WINDOW_LAG = struct {
         }
         if (args.len > 2) f.default_value = args[2];
     }
-    pub fn done(f: *WINDOW_LAG, _: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_LAG,
+        _: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         // Values ends at the current row; LAG reads offset back from the end.
         const len: i64 = @intCast(agg.values.items.len);
         if (len - 1 < f.offset) return f.default_value;
@@ -369,7 +450,11 @@ pub const WINDOW_LAG = struct {
 /// buffered count is the rank.
 pub const WINDOW_RANK = struct {
     pub const window_mode: WindowMode = .no_args;
-    pub fn done(_: *WINDOW_RANK, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_RANK,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         return .{ .int = @intCast((try agg.relevantValues(alloc)).len) };
     }
 };
@@ -383,10 +468,19 @@ pub const WINDOW_DENSE_RANK = struct {
     n_step: i64 = 0,
     n_total: i64 = 0,
 
-    pub fn step(f: *WINDOW_DENSE_RANK, _: std.mem.Allocator, _: []const Value, _: *WindowFuncAggregatedStatus) Error!void {
+    pub fn step(
+        f: *WINDOW_DENSE_RANK,
+        _: std.mem.Allocator,
+        _: []const Value,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!void {
         f.n_step = 1;
     }
-    pub fn done(f: *WINDOW_DENSE_RANK, _: std.mem.Allocator, _: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_DENSE_RANK,
+        _: std.mem.Allocator,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         if (f.n_step != 0) f.n_total += 1;
         return .{ .int = f.n_total };
     }
@@ -397,15 +491,31 @@ pub const WINDOW_PERCENT_RANK = struct {
     n_step: i64 = 0,
     n_total: i64 = 0,
 
-    pub fn step(f: *WINDOW_PERCENT_RANK, _: std.mem.Allocator, _: []const Value, _: *WindowFuncAggregatedStatus) Error!void {
+    pub fn step(
+        f: *WINDOW_PERCENT_RANK,
+        _: std.mem.Allocator,
+        _: []const Value,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!void {
         f.n_total += 1;
     }
-    pub fn inverse(f: *WINDOW_PERCENT_RANK, _: std.mem.Allocator, _: []const Value, _: *WindowFuncAggregatedStatus) Error!void {
+    pub fn inverse(
+        f: *WINDOW_PERCENT_RANK,
+        _: std.mem.Allocator,
+        _: []const Value,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!void {
         f.n_step += 1;
     }
-    pub fn done(f: *WINDOW_PERCENT_RANK, _: std.mem.Allocator, _: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_PERCENT_RANK,
+        _: std.mem.Allocator,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         if (f.n_total > 1) {
-            return .{ .float = @as(f64, @floatFromInt(f.n_step)) / @as(f64, @floatFromInt(f.n_total - 1)) };
+            const n_step: f64 = @floatFromInt(f.n_step);
+            const n_total: f64 = @floatFromInt(f.n_total - 1);
+            return .{ .float = n_step / n_total };
         }
         return .{ .float = 0.0 };
     }
@@ -416,13 +526,27 @@ pub const WINDOW_CUME_DIST = struct {
     n_step: i64 = 0,
     n_total: i64 = 0,
 
-    pub fn step(f: *WINDOW_CUME_DIST, _: std.mem.Allocator, _: []const Value, _: *WindowFuncAggregatedStatus) Error!void {
+    pub fn step(
+        f: *WINDOW_CUME_DIST,
+        _: std.mem.Allocator,
+        _: []const Value,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!void {
         f.n_total += 1;
     }
-    pub fn inverse(f: *WINDOW_CUME_DIST, _: std.mem.Allocator, _: []const Value, _: *WindowFuncAggregatedStatus) Error!void {
+    pub fn inverse(
+        f: *WINDOW_CUME_DIST,
+        _: std.mem.Allocator,
+        _: []const Value,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!void {
         f.n_step += 1;
     }
-    pub fn done(f: *WINDOW_CUME_DIST, _: std.mem.Allocator, _: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_CUME_DIST,
+        _: std.mem.Allocator,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         return .{ .float = @as(f64, @floatFromInt(f.n_step)) / @as(f64, @floatFromInt(f.n_total)) };
     }
 };
@@ -440,13 +564,27 @@ pub const WINDOW_NTILE = struct {
         if (value <= 0) return bind.fail("NTILE: constant integer expression must be positive value", .{}, error.UnsupportedOperation);
         f.n_param = value;
     }
-    pub fn step(f: *WINDOW_NTILE, _: std.mem.Allocator, _: []const Value, _: *WindowFuncAggregatedStatus) Error!void {
+    pub fn step(
+        f: *WINDOW_NTILE,
+        _: std.mem.Allocator,
+        _: []const Value,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!void {
         f.n_total += 1;
     }
-    pub fn inverse(f: *WINDOW_NTILE, _: std.mem.Allocator, _: []const Value, _: *WindowFuncAggregatedStatus) Error!void {
+    pub fn inverse(
+        f: *WINDOW_NTILE,
+        _: std.mem.Allocator,
+        _: []const Value,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!void {
         f.i_row += 1;
     }
-    pub fn done(f: *WINDOW_NTILE, _: std.mem.Allocator, _: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_NTILE,
+        _: std.mem.Allocator,
+        _: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const n_size = @divTrunc(f.n_total, f.n_param);
         if (n_size == 0) {
             return .{ .int = f.i_row + 1 };
@@ -465,7 +603,11 @@ pub const WINDOW_NTILE = struct {
 
 pub const WINDOW_ROW_NUMBER = struct {
     pub const window_mode: WindowMode = .no_args;
-    pub fn done(_: *WINDOW_ROW_NUMBER, _: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_ROW_NUMBER,
+        _: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         return .{ .int = @intCast(agg.values.items.len) };
     }
 };
@@ -547,14 +689,22 @@ const stat = struct {
 
 /// Reads the buffered pairs (each a 2-element array) into two float slices.
 /// Returns null-signal via len 0 when fewer than two pairs exist.
-fn tupleFloats(alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus, comptime what: []const u8) Error!?struct { x: []f64, y: []f64 } {
+fn tupleFloats(
+    alloc: std.mem.Allocator,
+    agg: *WindowFuncAggregatedStatus,
+    comptime what: []const u8,
+) Error!?struct { x: []f64, y: []f64 } {
     const values = try agg.relevantValues(alloc);
     if (values.len < 2) return null;
     var xs: std.ArrayList(f64) = .empty;
     var ys: std.ArrayList(f64) = .empty;
     for (values) |value| {
         const arr = try value.toArray();
-        if (arr.values.len != 2) return bind.fail("invalid " ++ what ++ " arguments", .{}, error.UnsupportedOperation);
+        if (arr.values.len != 2) return bind.fail(
+            "invalid " ++ what ++ " arguments",
+            .{},
+            error.UnsupportedOperation,
+        );
         try xs.append(alloc, try arr.values[0].toFloat64());
         try ys.append(alloc, try arr.values[1].toFloat64());
     }
@@ -574,7 +724,11 @@ fn scalarFloats(alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Erro
 
 pub const WINDOW_CORR = struct {
     pub const window_mode: WindowMode = .tuple;
-    pub fn done(_: *WINDOW_CORR, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_CORR,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const pair = (try tupleFloats(alloc, agg, "corr")) orelse return .null;
         return .{ .float = stat.correlation(pair.x, pair.y) };
     }
@@ -582,7 +736,11 @@ pub const WINDOW_CORR = struct {
 
 pub const WINDOW_COVAR_POP = struct {
     pub const window_mode: WindowMode = .tuple;
-    pub fn done(_: *WINDOW_COVAR_POP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_COVAR_POP,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         // Go quirk (goccy/go-zetasqlite#168): uses sample covariance too.
         const pair = (try tupleFloats(alloc, agg, "covar_pop")) orelse return .null;
         return .{ .float = stat.covariance(pair.x, pair.y) };
@@ -591,7 +749,11 @@ pub const WINDOW_COVAR_POP = struct {
 
 pub const WINDOW_COVAR_SAMP = struct {
     pub const window_mode: WindowMode = .tuple;
-    pub fn done(_: *WINDOW_COVAR_SAMP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_COVAR_SAMP,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const pair = (try tupleFloats(alloc, agg, "covar_samp")) orelse return .null;
         return .{ .float = stat.covariance(pair.x, pair.y) };
     }
@@ -599,7 +761,11 @@ pub const WINDOW_COVAR_SAMP = struct {
 
 pub const WINDOW_STDDEV_POP = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_STDDEV_POP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_STDDEV_POP,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const xs = (try scalarFloats(alloc, agg)) orelse return .null;
         return .{ .float = @sqrt(stat.variance(xs, true)) };
     }
@@ -607,7 +773,11 @@ pub const WINDOW_STDDEV_POP = struct {
 
 pub const WINDOW_STDDEV_SAMP = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_STDDEV_SAMP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_STDDEV_SAMP,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const xs = (try scalarFloats(alloc, agg)) orelse return .null;
         return .{ .float = @sqrt(stat.variance(xs, false)) };
     }
@@ -618,7 +788,11 @@ pub const WINDOW_STDDEV = WINDOW_STDDEV_SAMP;
 
 pub const WINDOW_VAR_POP = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_VAR_POP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_VAR_POP,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const xs = (try scalarFloats(alloc, agg)) orelse return .null;
         return .{ .float = stat.variance(xs, true) };
     }
@@ -626,7 +800,11 @@ pub const WINDOW_VAR_POP = struct {
 
 pub const WINDOW_VAR_SAMP = struct {
     pub const window_mode: WindowMode = .single;
-    pub fn done(_: *WINDOW_VAR_SAMP, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        _: *WINDOW_VAR_SAMP,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         const xs = (try scalarFloats(alloc, agg)) orelse return .null;
         return .{ .float = stat.variance(xs, false) };
     }
@@ -643,12 +821,20 @@ pub const WINDOW_PERCENTILE_CONT = struct {
     pub const window_mode: WindowMode = .single;
     percentile: Value = .null,
 
-    pub fn parseArguments(f: *WINDOW_PERCENTILE_CONT, _: std.mem.Allocator, args: []const Value) Error!void {
+    pub fn parseArguments(
+        f: *WINDOW_PERCENTILE_CONT,
+        _: std.mem.Allocator,
+        args: []const Value,
+    ) Error!void {
         if (args.len < 2) return bind.fail("PERCENTILE_CONT: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
         f.percentile = args[1];
     }
 
-    pub fn done(f: *WINDOW_PERCENTILE_CONT, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_PERCENTILE_CONT,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         if (try f.percentile.lt(.{ .int = 0 })) {
             return bind.fail("PERCENTILE_CONT: percentile value must be greater than zero", .{}, error.UnsupportedOperation);
         }
@@ -690,7 +876,9 @@ pub const WINDOW_PERCENTILE_CONT = struct {
             return .{ .float = floor_value };
         }
         // ceil * (row - floor) + floor * (ceil - row)
-        return .{ .float = ceil_value * (row_number - floor_row) + floor_value * (ceil_row - row_number) };
+        const lo = ceil_value * (row_number - floor_row);
+        const hi = floor_value * (ceil_row - row_number);
+        return .{ .float = lo + hi };
     }
 };
 
@@ -698,12 +886,20 @@ pub const WINDOW_PERCENTILE_DISC = struct {
     pub const window_mode: WindowMode = .single;
     percentile: Value = .null,
 
-    pub fn parseArguments(f: *WINDOW_PERCENTILE_DISC, _: std.mem.Allocator, args: []const Value) Error!void {
+    pub fn parseArguments(
+        f: *WINDOW_PERCENTILE_DISC,
+        _: std.mem.Allocator,
+        args: []const Value,
+    ) Error!void {
         if (args.len < 2) return bind.fail("PERCENTILE_DISC: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
         f.percentile = args[1];
     }
 
-    pub fn done(f: *WINDOW_PERCENTILE_DISC, alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!Value {
+    pub fn done(
+        f: *WINDOW_PERCENTILE_DISC,
+        alloc: std.mem.Allocator,
+        agg: *WindowFuncAggregatedStatus,
+    ) Error!Value {
         if (try f.percentile.lt(.{ .int = 0 })) {
             return bind.fail("PERCENTILE_DISC: percentile value must be greater than zero", .{}, error.UnsupportedOperation);
         }

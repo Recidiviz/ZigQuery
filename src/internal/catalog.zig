@@ -386,7 +386,11 @@ pub const Catalog = struct {
     /// Go AddNewTableSpec: in-memory registration plus (unless temporary)
     /// the persisted upsert. The spec is deep-copied into the catalog arena
     /// (via its canonical JSON), so callers may pass short-lived memory.
-    pub fn addNewTableSpec(c: *Catalog, db: *sqlite.Db, table_spec: *const spec.TableSpec) Error!void {
+    pub fn addNewTableSpec(
+        c: *Catalog,
+        db: *sqlite.Db,
+        table_spec: *const spec.TableSpec,
+    ) Error!void {
         const arena = c.arena_state.allocator();
         const encoded = table_spec.toJson(arena) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -426,7 +430,12 @@ pub const Catalog = struct {
     }
 
     /// Go saveTableSpec: the upsert. `encoded` is the spec's JSON.
-    fn saveTableSpec(c: *Catalog, db: *sqlite.Db, table_spec: *const spec.TableSpec, encoded: []const u8) Error!void {
+    fn saveTableSpec(
+        c: *Catalog,
+        db: *sqlite.Db,
+        table_spec: *const spec.TableSpec,
+        encoded: []const u8,
+    ) Error!void {
         var scope = phase.SourceScope.begin(.catalog);
         defer scope.end();
         const arena = c.arena_state.allocator();
@@ -498,7 +507,11 @@ pub const Catalog = struct {
     /// Go AddNewFunctionSpec: in-memory registration plus (unless
     /// temporary) the persisted upsert. Deep-copies via canonical JSON so
     /// callers may pass short-lived memory.
-    pub fn addNewFunctionSpec(c: *Catalog, db: *sqlite.Db, fs: *const spec.FunctionSpec) Error!void {
+    pub fn addNewFunctionSpec(
+        c: *Catalog,
+        db: *sqlite.Db,
+        fs: *const spec.FunctionSpec,
+    ) Error!void {
         const arena = c.arena_state.allocator();
         const encoded = fs.toJson(arena) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -515,7 +528,12 @@ pub const Catalog = struct {
     }
 
     /// Go saveFunctionSpec: the shared catalog upsert with kind='function'.
-    fn saveFunctionSpec(c: *Catalog, db: *sqlite.Db, fs: *const spec.FunctionSpec, encoded: []const u8) Error!void {
+    fn saveFunctionSpec(
+        c: *Catalog,
+        db: *sqlite.Db,
+        fs: *const spec.FunctionSpec,
+        encoded: []const u8,
+    ) Error!void {
         var scope = phase.SourceScope.begin(.catalog);
         defer scope.end();
         const arena = c.arena_state.allocator();
@@ -711,7 +729,10 @@ pub const Catalog = struct {
     /// Renders the catalog as SimpleCatalogProto protobuf-JSON for the
     /// analyzer shim. Returns "{}" (builtins only) when neither tables nor
     /// functions are registered. All memory comes from `alloc`.
-    pub fn catalogJson(c: *const Catalog, alloc: std.mem.Allocator) error{ OutOfMemory, InvalidSpec }![:0]u8 {
+    pub fn catalogJson(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+    ) error{ OutOfMemory, InvalidSpec }![:0]u8 {
         return c.catalogJsonWith(alloc, null);
     }
 
@@ -923,7 +944,11 @@ fn addFunctionToNode(
     try addFunctionToNode(alloc, sub, path[1..], fn_spec);
 }
 
-fn appendNodeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, node: *const Node) error{ OutOfMemory, InvalidSpec }!void {
+fn appendNodeJson(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    node: *const Node,
+) error{ OutOfMemory, InvalidSpec }!void {
     try out.appendSlice(alloc, "{\"name\":");
     try spec.appendJsonString(out, alloc, node.name);
     if (node.entries.items.len > 0) {
@@ -959,7 +984,11 @@ fn appendNodeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, node: *cons
 /// arguments carry `kind` (SignatureArgumentKind name), fixed arguments
 /// carry `type` (TypeProto). Mirrors Go createFunction's
 /// NewFunctionArgumentType3/4 + NewFunctionSignature3 + NewFunction.
-fn appendFunctionJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, entry: FunctionEntry) error{ OutOfMemory, InvalidSpec }!void {
+fn appendFunctionJson(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    entry: FunctionEntry,
+) error{ OutOfMemory, InvalidSpec }!void {
     const fs = entry.fn_spec;
     try out.appendSlice(alloc, "{\"namePath\":[");
     try spec.appendJsonString(out, alloc, entry.registered);
@@ -1012,7 +1041,11 @@ fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.Functio
     // contains_substr(expression ARBITRARY, search_value_literal STRING) -> BOOL
     {
         const expr_t = try alloc.create(spec.Type);
-        expr_t.* = .{ .name = "expression", .kind = @intFromEnum(pb.TypeKind.TYPE_STRING), .signature_kind = arg_arbitrary };
+        expr_t.* = .{
+            .name = "expression",
+            .kind = @intFromEnum(pb.TypeKind.TYPE_STRING),
+            .signature_kind = arg_arbitrary,
+        };
         const search_t = try alloc.create(spec.Type);
         search_t.* = .{ .name = "search_value_literal", .kind = @intFromEnum(pb.TypeKind.TYPE_STRING) };
         const ret_t = try alloc.create(spec.Type);
@@ -1063,7 +1096,11 @@ fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.Functio
     return out;
 }
 
-fn appendTableJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, entry: TableEntry) error{ OutOfMemory, InvalidSpec }!void {
+fn appendTableJson(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    entry: TableEntry,
+) error{ OutOfMemory, InvalidSpec }!void {
     try out.appendSlice(alloc, "{\"name\":");
     try spec.appendJsonString(out, alloc, entry.canonical);
     if (!std.mem.eql(u8, entry.registered, entry.canonical)) {
@@ -1086,7 +1123,11 @@ fn appendTableJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, entry: Tab
 /// arrayType.elementType / structType.field[].fieldName+fieldType
 /// (lowerCamelCase per protobuf JSON; verified against
 /// googlesql/public/type.proto).
-fn appendTypeProtoJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, t: *const spec.Type) error{ OutOfMemory, InvalidSpec }!void {
+fn appendTypeProtoJson(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    t: *const spec.Type,
+) error{ OutOfMemory, InvalidSpec }!void {
     const kind_name = std.enums.tagName(pb.TypeKind, t.typeKind()) orelse return error.InvalidSpec;
     try out.appendSlice(alloc, "{\"typeKind\":\"");
     try out.appendSlice(alloc, kind_name);

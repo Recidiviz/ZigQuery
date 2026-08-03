@@ -18,10 +18,32 @@ pub const c = @cImport({
 const SQLITE_TRANSIENT: isize = -1;
 /// SQLITE_STATIC is (sqlite3_destructor_type)0: SQLite borrows the bytes.
 const SQLITE_STATIC: isize = 0;
-extern fn sqlite3_bind_text(stmt: ?*c.sqlite3_stmt, idx: c_int, v: [*c]const u8, n: c_int, destructor: isize) c_int;
-extern fn sqlite3_bind_blob(stmt: ?*c.sqlite3_stmt, idx: c_int, v: ?*const anyopaque, n: c_int, destructor: isize) c_int;
-extern fn sqlite3_result_text(ctx: ?*c.sqlite3_context, v: [*c]const u8, n: c_int, destructor: isize) void;
-extern fn sqlite3_result_blob(ctx: ?*c.sqlite3_context, v: ?*const anyopaque, n: c_int, destructor: isize) void;
+extern fn sqlite3_bind_text(
+    stmt: ?*c.sqlite3_stmt,
+    idx: c_int,
+    v: [*c]const u8,
+    n: c_int,
+    destructor: isize,
+) c_int;
+extern fn sqlite3_bind_blob(
+    stmt: ?*c.sqlite3_stmt,
+    idx: c_int,
+    v: ?*const anyopaque,
+    n: c_int,
+    destructor: isize,
+) c_int;
+extern fn sqlite3_result_text(
+    ctx: ?*c.sqlite3_context,
+    v: [*c]const u8,
+    n: c_int,
+    destructor: isize,
+) void;
+extern fn sqlite3_result_blob(
+    ctx: ?*c.sqlite3_context,
+    v: ?*const anyopaque,
+    n: c_int,
+    destructor: isize,
+) void;
 
 pub const Error = error{SQLite};
 

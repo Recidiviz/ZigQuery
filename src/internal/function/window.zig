@@ -174,7 +174,11 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
             return slot.*;
         }
 
-        fn xStep(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
+        fn xStep(
+            ctx: ?*c.sqlite3_context,
+            argc: c_int,
+            argv: [*c]?*c.sqlite3_value,
+        ) callconv(.c) void {
             const group = getGroup(ctx) orelse {
                 sqlite.resultError(ctx, "zetasqlite_window_" ++ name ++ ": out of memory");
                 return;
@@ -230,7 +234,11 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
             }
         }
 
-        fn xInverse(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
+        fn xInverse(
+            ctx: ?*c.sqlite3_context,
+            argc: c_int,
+            argv: [*c]?*c.sqlite3_value,
+        ) callconv(.c) void {
             const group = getGroup(ctx) orelse return;
             if (group.failed) return;
             bind.clearDiagnostics();
@@ -393,7 +401,10 @@ const TestEnv = struct {
                 .integer => .{ .int = stmt.columnInt64(0) },
                 .float => .{ .float = stmt.columnDouble(0) },
                 .text => return error.NoRow,
-                .blob => try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) }),
+                .blob => try encoder.DecodeValue(
+                    env.alloc(),
+                    .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) },
+                ),
                 .null => .null,
             };
             try out.append(env.alloc(), v);

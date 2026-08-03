@@ -87,7 +87,12 @@ pub fn main(init: std.process.Init) !void {
     // run stops, because everything after it is building on missing ground.
     var last_from_script: ?[]const u8 = null;
     if (script_path) |path| {
-        const bytes = std.Io.Dir.cwd().readFileAlloc(init.io, path, arena, .limited(1 << 28)) catch |err| {
+        const bytes = std.Io.Dir.cwd().readFileAlloc(
+            init.io,
+            path,
+            arena,
+            .limited(1 << 28),
+        ) catch |err| {
             try out.print("error: cannot read {s}: {s}\n", .{ path, @errorName(err) });
             try out.flush();
             std.process.exit(1);

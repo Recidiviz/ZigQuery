@@ -73,7 +73,12 @@ pub fn formatTime(
     return out.toOwnedSlice(alloc);
 }
 
-fn appendFmt(alloc: std.mem.Allocator, out: *std.ArrayList(u8), comptime fmt: []const u8, args: anytype) Error!void {
+fn appendFmt(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    comptime fmt: []const u8,
+    args: anytype,
+) Error!void {
     try out.print(alloc, fmt, args);
 }
 
@@ -136,7 +141,12 @@ fn appendYear4(alloc: std.mem.Allocator, out: *std.ArrayList(u8), year: i64) Err
     }
 }
 
-fn appendSecondPrecision(alloc: std.mem.Allocator, out: *std.ArrayList(u8), c: Civil, prec: usize) Error!void {
+fn appendSecondPrecision(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    c: Civil,
+    prec: usize,
+) Error!void {
     // Go t.Format("05.<prec zeros>"): second, dot, `prec` fractional digits.
     try appendFmt(alloc, out, "{d:0>2}", .{@as(u64, @intCast(c.second))});
     try out.append(alloc, '.');
@@ -185,7 +195,12 @@ fn formatElement(
         'D', 'x' => try appendFmt(alloc, out, "{d:0>2}/{d:0>2}/{s}", .{ u(c.month), u(c.day), yearLast2(c.year) }),
         'd' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.day)}),
         'e' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.day)}),
-        'F' => try appendFmt(alloc, out, "{d:0>4}-{d:0>2}-{d:0>2}", .{ @as(u64, @intCast(@max(c.year, 0))), u(c.month), u(c.day) }),
+        'F' => try appendFmt(
+            alloc,
+            out,
+            "{d:0>4}-{d:0>2}-{d:0>2}",
+            .{ @as(u64, @intCast(@max(c.year, 0))), u(c.month), u(c.day) },
+        ),
         'G', 'J' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().year}),
         'g' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().year}),
         'H' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.hour)}),
@@ -209,7 +224,14 @@ fn formatElement(
         'p' => try out.appendSlice(alloc, if (c.hour < 12) "AM" else "PM"),
         'Q' => { // quarter from YearDay
             const day = bt.yearDay();
-            const q: u8 = if (day < 90) '1' else if (day < 180) '2' else if (day < 270) '3' else '4';
+            const q: u8 = if (day < 90)
+                '1'
+            else if (day < 180)
+                '2'
+            else if (day < 270)
+                '3'
+            else
+                '4';
             try out.append(alloc, q);
         },
         'R' => try appendFmt(alloc, out, "{d:0>2}:{d:0>2}", .{ u(c.hour), u(c.minute) }),
@@ -235,11 +257,20 @@ inline fn u(x: i64) u64 {
 
 threadlocal var year2_buf: [4]u8 = undefined;
 fn yearLast2(year: i64) []const u8 {
-    const s = std.fmt.bufPrint(&year2_buf, "{d:0>4}", .{@as(u64, @intCast(@max(year, 0)))}) catch unreachable;
+    const s = std.fmt.bufPrint(
+        &year2_buf,
+        "{d:0>4}",
+        .{@as(u64, @intCast(@max(year, 0)))},
+    ) catch unreachable;
     return s[s.len - 2 ..];
 }
 
-fn appendAnsic(alloc: std.mem.Allocator, out: *std.ArrayList(u8), bt: tu.BrokenTime, c: Civil) Error!void {
+fn appendAnsic(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    bt: tu.BrokenTime,
+    c: Civil,
+) Error!void {
     try appendFmt(alloc, out, "{s} {s} {d:0>2} {d:0>2}:{d:0>2}:{d:0>2} {d}", .{
         day_names[@intCast(bt.weekday())][0..3],
         month_names[@intCast(c.month - 1)][0..3],
@@ -345,7 +376,9 @@ fn elementAvailable(spec: u8, typ: FormatType) bool {
     // corpus, but the timestamp-only zone tokens must be rejected elsewhere.
     return switch (spec) {
         'H', 'I', 'M', 'S', 's', 'k', 'l', 'P', 'p', 'R', 'T', 'X' => typ != .date,
-        'A', 'a', 'B', 'b', 'h', 'C', 'D', 'd', 'e', 'F', 'G', 'g', 'J', 'j', 'm', 'Q', 'U', 'W', 'V', 'u', 'w', 'x', 'Y', 'y' => typ != .time,
+        'A', 'a', 'B', 'b', 'h', 'C', 'D', 'd', 'e', 'F' => typ != .time,
+        'G', 'g', 'J', 'j', 'm', 'Q', 'U', 'W', 'V' => typ != .time,
+        'u', 'w', 'x', 'Y', 'y' => typ != .time,
         'c' => typ == .datetime or typ == .timestamp,
         'Z', 'z' => typ == .timestamp,
         'n', 't', '%' => true,
@@ -355,11 +388,21 @@ fn elementAvailable(spec: u8, typ: FormatType) bool {
 
 const StepResult = struct { progress: usize, format_adv: usize };
 
-fn parseCombination(st: *State, rest: []const u8, target: []const u8, typ: FormatType) Error!StepResult {
+fn parseCombination(
+    st: *State,
+    rest: []const u8,
+    target: []const u8,
+    typ: FormatType,
+) Error!StepResult {
     const f0 = rest[0];
     switch (f0) {
         'z' => {
-            if (typ != .timestamp) return failFmt(st.alloc, "unavailable format by {s} type", .{typeName(typ)}, error.InvalidDate);
+            if (typ != .timestamp) return failFmt(
+                st.alloc,
+                "unavailable format by {s} type",
+                .{typeName(typ)},
+                error.InvalidDate,
+            );
             const p = try parseRFC3339Zone(st, target);
             return .{ .progress = p, .format_adv = 1 };
         },
@@ -396,7 +439,12 @@ fn parseCombination(st: *State, rest: []const u8, target: []const u8, typ: Forma
 
 /// Go parseDigitRespectingOptionalPlaces: parse up to len(maxNumber) digits,
 /// stopping at the first non-digit; validate the [min,max] range.
-fn parseDigits(st: *State, text: []const u8, min: i64, max: i64) Error!struct { progress: usize, value: i64 } {
+fn parseDigits(
+    st: *State,
+    text: []const u8,
+    min: i64,
+    max: i64,
+) Error!struct { progress: usize, value: i64 } {
     if (text.len == 0) return failFmt(st.alloc, "empty text", .{}, error.InvalidDate);
     var places: usize = 0;
     {
@@ -674,7 +722,12 @@ fn pfSlash(s: *State, t: []const u8) Error!usize {
     return parseLiteral(s, t, '/');
 }
 
-fn composed(st: *State, target: []const u8, comptime name: []const u8, parsers: []const PF) Error!usize {
+fn composed(
+    st: *State,
+    target: []const u8,
+    comptime name: []const u8,
+    parsers: []const PF,
+) Error!usize {
     var progress: usize = 0;
     for (parsers) |p| {
         const step = p(st, target[progress..]) catch {
@@ -727,7 +780,12 @@ fn parseRFC3339Zone(st: *State, target: []const u8) Error!usize {
     if (target[0] == '+' or target[0] == '-') {
         const sign: i64 = if (target[0] == '-') -1 else 1;
         // Expect exactly "HH:MM".
-        if (target.len < 6 or target[3] != ':') return failFmt(st.alloc, "unexpected offset format", .{}, error.InvalidDate);
+        if (target.len < 6 or target[3] != ':') return failFmt(
+            st.alloc,
+            "unexpected offset format",
+            .{},
+            error.InvalidDate,
+        );
         const h = try twoDigit(st, target[1..3]);
         const m = try twoDigit(st, target[4..6]);
         st.offset_sec = sign * (h * 3600 + m * 60);

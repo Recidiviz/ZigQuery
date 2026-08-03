@@ -351,7 +351,9 @@ fn hostname(auth: []const u8) HostName {
         if (std.mem.indexOfScalar(u8, a, ']')) |rb| return .{ .host = a[1..rb], .bracketed = true };
         return .{ .host = a[1..], .bracketed = true };
     }
-    if (std.mem.indexOfScalar(u8, a, ':')) |colon| return .{ .host = a[0..colon], .bracketed = false };
+    if (std.mem.indexOfScalar(u8, a, ':')) |colon| {
+        return .{ .host = a[0..colon], .bracketed = false };
+    }
     return .{ .host = a, .bracketed = false };
 }
 

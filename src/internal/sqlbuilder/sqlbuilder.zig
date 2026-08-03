@@ -1378,7 +1378,10 @@ pub fn newSelectStatement(allocator: std.mem.Allocator) Error!*SelectStatement {
     return create(allocator, SelectStatement{ .select_type = .standard });
 }
 
-pub fn newSelectStarStatement(allocator: std.mem.Allocator, from: ?*FromItem) Error!*SelectStatement {
+pub fn newSelectStarStatement(
+    allocator: std.mem.Allocator,
+    from: ?*FromItem,
+) Error!*SelectStatement {
     const select_list = try allocator.alloc(*SelectListItem, 1);
     select_list[0] = try create(allocator, SelectListItem{
         .expression = try newStarExpression(allocator, null),

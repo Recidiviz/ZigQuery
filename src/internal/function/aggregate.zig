@@ -99,7 +99,11 @@ pub fn registerAggregates(db: *sqlite.Db, state: *State) !void {
     // so they get both zetasqlite_ and zetasqlite_safe_ names.
     inline for (agg_opt.option_func_table) |info| {
         const Tramp = struct {
-            fn scalar(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
+            fn scalar(
+                ctx: ?*c.sqlite3_context,
+                argc: c_int,
+                argv: [*c]?*c.sqlite3_value,
+            ) callconv(.c) void {
                 invokeOption(info, ctx, argc, argv);
             }
         };
@@ -193,7 +197,11 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
             impl: Impl = .{},
         };
 
-        fn xStep(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
+        fn xStep(
+            ctx: ?*c.sqlite3_context,
+            argc: c_int,
+            argv: [*c]?*c.sqlite3_value,
+        ) callconv(.c) void {
             const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
             const raw = sqlite.aggregateContext(ctx, @sizeOf(?*Group)) orelse {
                 sqlite.resultError(ctx, "zetasqlite_" ++ name ++ ": out of memory");

@@ -181,7 +181,9 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
         // Go CastValue: parseInterval(v.ToString()).
         .TYPE_INTERVAL => switch (v) {
             .interval => return v,
-            else => return Value{ .interval = try value_mod.parseIntervalValue(try v.toString(alloc)) },
+            else => return Value{
+                .interval = try value_mod.parseIntervalValue(try v.toString(alloc)),
+            },
         },
         // Go castValueInternal: NumericValue{Rat: v.ToRat()}, isBigNumeric per
         // the target kind (a numeric input is rewrapped under the new kind).

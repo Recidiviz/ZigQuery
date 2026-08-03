@@ -458,7 +458,8 @@ pub fn valueFromProto(
                 .enum_value => |x| x,
                 else => return error.CorruptData,
             };
-            const enum_name: []const u8 = if (type_proto.enum_type) |et| (et.enum_name orelse "") else "";
+            const enum_name: []const u8 =
+                if (type_proto.enum_type) |et| (et.enum_name orelse "") else "";
             const name = if (std.mem.indexOf(u8, enum_name, "NormalizeMode") != null)
                 (normalizeModeName(idx) orelse return error.Unimplemented)
             else
@@ -508,7 +509,10 @@ test "EncodeValue keeps scalars native" {
 
     try testing.expectEqual(SqliteRepr.null, try EncodeValue(alloc, Value.null));
     try testing.expectEqual(SqliteRepr{ .int = -7 }, try EncodeValue(alloc, Value{ .int = -7 }));
-    try testing.expectEqual(SqliteRepr{ .float = 1.5 }, try EncodeValue(alloc, Value{ .float = 1.5 }));
+    try testing.expectEqual(
+        SqliteRepr{ .float = 1.5 },
+        try EncodeValue(alloc, Value{ .float = 1.5 }),
+    );
     // Bool travels as INTEGER 0/1 (Go bool bound by the sqlite driver).
     try testing.expectEqual(SqliteRepr{ .int = 1 }, try EncodeValue(alloc, Value{ .bool = true }));
     try testing.expectEqual(SqliteRepr{ .int = 0 }, try EncodeValue(alloc, Value{ .bool = false }));
@@ -621,7 +625,10 @@ test "LiteralFromValue formatting" {
 
     try testing.expectEqualStrings("null", try LiteralFromValue(alloc, Value.null));
     try testing.expectEqualStrings("42", try LiteralFromValue(alloc, Value{ .int = 42 }));
-    try testing.expectEqualStrings("-9223372036854775808", try LiteralFromValue(alloc, Value{ .int = std.math.minInt(i64) }));
+    try testing.expectEqualStrings(
+        "-9223372036854775808",
+        try LiteralFromValue(alloc, Value{ .int = std.math.minInt(i64) }),
+    );
     try testing.expectEqualStrings("true", try LiteralFromValue(alloc, Value{ .bool = true }));
     try testing.expectEqualStrings("false", try LiteralFromValue(alloc, Value{ .bool = false }));
 
@@ -655,10 +662,16 @@ test "castValue stub passes same-kind values through" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    try value_mod.expectValueEqual(Value{ .int = 5 }, try castValue(alloc, Value{ .int = 5 }, .int64));
+    try value_mod.expectValueEqual(
+        Value{ .int = 5 },
+        try castValue(alloc, Value{ .int = 5 }, .int64),
+    );
     try value_mod.expectValueEqual(Value.null, try castValue(alloc, Value.null, .string));
     try testing.expectError(error.Unimplemented, castValue(alloc, Value{ .int = 5 }, .string));
-    try testing.expectError(error.Unimplemented, castValue(alloc, Value{ .string = "1" }, .timestamp));
+    try testing.expectError(
+        error.Unimplemented,
+        castValue(alloc, Value{ .string = "1" }, .timestamp),
+    );
 }
 
 // ----------------------------------------------------------------------

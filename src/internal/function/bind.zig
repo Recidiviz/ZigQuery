@@ -147,8 +147,18 @@ pub const func_table = [_]FuncInfo{
     // array / struct access
     .{ .name = "in_array", .min_args = 2, .handler = arr.inArray },
     .{ .name = "get_struct_field", .min_args = 2, .handler = arr.structField },
-    .{ .name = "array_at_offset", .min_args = 2, .handler = arr.arrayAtOffset, .safe_handler = arr.safeArrayAtOffset },
-    .{ .name = "array_at_ordinal", .min_args = 2, .handler = arr.arrayAtOrdinal, .safe_handler = arr.safeArrayAtOrdinal },
+    .{
+        .name = "array_at_offset",
+        .min_args = 2,
+        .handler = arr.arrayAtOffset,
+        .safe_handler = arr.safeArrayAtOffset,
+    },
+    .{
+        .name = "array_at_ordinal",
+        .min_args = 2,
+        .handler = arr.arrayAtOrdinal,
+        .safe_handler = arr.safeArrayAtOrdinal,
+    },
     .{ .name = "safe_negate", .min_args = 1, .handler = math.safeNegate },
     .{ .name = "is_distinct_from", .min_args = 2, .handler = cmp.isDistinctFrom },
     .{ .name = "is_not_distinct_from", .min_args = 2, .handler = cmp.isNotDistinctFrom },

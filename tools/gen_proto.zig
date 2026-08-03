@@ -45,6 +45,10 @@ const pb = @import("pb");
 
 const Ty = pb.FieldDescriptorProto_Type;
 
+/// Column limit the emitted lines are kept under. `zig fmt` does not reflow
+/// long lines, so anything that can overflow has to be split here instead.
+const max_cols = 100;
+
 const Error = error{
     /// A descriptor was missing a field protoc always sets.
     MalformedDescriptor,
@@ -407,45 +411,63 @@ const Gen = struct {
 
         // decode() entry point and decodeReader().
         try g.line("", .{});
-        try g.line(
-            "    pub fn decode(a: std.mem.Allocator, buf: []const u8) wire.DecodeError!*{s} {{",
-            .{zname},
-        );
+        // Params go one per line: message names reach 48 characters, so the
+        // flat signature blows the column limit for most of the 510 messages.
+        // The trailing comma is what keeps zig fmt from folding it back.
+        try g.line("    pub fn decode(", .{});
+        try g.line("        a: std.mem.Allocator,", .{});
+        try g.line("        buf: []const u8,", .{});
+        try g.line("    ) wire.DecodeError!*{s} {{", .{zname});
         try g.line("        var r = wire.Reader.init(buf);", .{});
         try g.line("        return decodeReader(a, &r);", .{});
         try g.line("    }}", .{});
         try g.line("", .{});
-        try g.line(
-            "    pub fn decodeReader(a: std.mem.Allocator, r: *wire.Reader) wire.DecodeError!*{s} {{",
-            .{zname},
-        );
+        // Not pub: every caller (decode() and the nested-message cases of
+        // sibling messages) lives in this same file, and `pub` only gates
+        // access from other files.
+        try g.line("    fn decodeReader(", .{});
+        try g.line("        a: std.mem.Allocator,", .{});
+        try g.line("        r: *wire.Reader,", .{});
+        try g.line("    ) wire.DecodeError!*{s} {{", .{zname});
         try g.line("        const msg = try a.create({s});", .{zname});
         try g.line("        msg.* = .{{}};", .{});
 
         for (plain.items) |f| {
             if (f.label != .LABEL_REPEATED) continue;
             const t = try g.fieldZigType(f);
-            const is_msg = f.type.? == .TYPE_MESSAGE;
-            try g.line("        var list_{s}: std.ArrayList({s}{s}) = .empty;", .{
-                f.name.?,
-                if (is_msg) "*" else "",
-                t,
-            });
+            const ptr = if (f.type.? == .TYPE_MESSAGE) "*" else "";
+            const flat = "        var list_: std.ArrayList() = .empty;".len +
+                f.name.?.len + ptr.len + t.len;
+            if (flat <= max_cols) {
+                try g.line("        var list_{s}: std.ArrayList({s}{s}) = .empty;", .{
+                    f.name.?,
+                    ptr,
+                    t,
+                });
+            } else {
+                try g.line("        var list_{s}: std.ArrayList(", .{f.name.?});
+                try g.line("            {s}{s},", .{ ptr, t });
+                try g.line("        ) = .empty;", .{});
+            }
         }
 
-        try g.line("        while (try r.next()) |tag| {{", .{});
-        try g.line("            switch (tag.field) {{", .{});
+        // `while ... switch` rather than a switch nested in a block: one less
+        // indent level, which is 4 columns back for every line of every case.
+        try g.line("        while (try r.next()) |tag| switch (tag.field) {{", .{});
         for (d.field) |f| try g.genFieldCase(d, f);
-        try g.line("                else => try r.skip(tag.wire),", .{});
-        try g.line("            }}", .{});
-        try g.line("        }}", .{});
+        try g.line("            else => try r.skip(tag.wire),", .{});
+        try g.line("        }};", .{});
 
         for (plain.items) |f| {
             if (f.label != .LABEL_REPEATED) continue;
-            try g.line("        msg.{s} = try list_{s}.toOwnedSlice(a);", .{
-                try zid(g.a, f.name.?),
-                f.name.?,
-            });
+            const fname = try zid(g.a, f.name.?);
+            const flat = "        msg. = try list_.toOwnedSlice(a);".len + fname.len + f.name.?.len;
+            if (flat <= max_cols) {
+                try g.line("        msg.{s} = try list_{s}.toOwnedSlice(a);", .{ fname, f.name.? });
+            } else {
+                try g.line("        msg.{s} =", .{fname});
+                try g.line("            try list_{s}.toOwnedSlice(a);", .{f.name.?});
+            }
         }
         try g.line("        return msg;", .{});
         try g.line("    }}", .{});
@@ -459,53 +481,116 @@ const Gen = struct {
         const t = f.type orelse return error.MalformedDescriptor;
         const is_oneof = f.oneof_index != null;
 
-        try g.line("                {d} => {{", .{number});
+        try g.line("            {d} => {{", .{number});
         if (f.label == .LABEL_REPEATED and !is_oneof) {
             if (isPackable(t)) {
                 // Accept both packed and unpacked encodings.
-                try g.line("                    if (tag.wire == .len) {{", .{});
-                try g.line("                        var sub = try r.subReader();", .{});
-                try g.line("                        while (!sub.atEnd()) {{", .{});
-                try g.line("                            try list_{s}.append(a, {s});", .{
-                    name,
-                    try scalarRead(g.a, t, "sub"),
-                });
-                try g.line("                        }}", .{});
-                try g.line("                    }} else {{", .{});
-                try g.line("                        try list_{s}.append(a, {s});", .{
-                    name,
-                    try scalarRead(g.a, t, "r"),
-                });
-                try g.line("                    }}", .{});
-            } else if (t == .TYPE_MESSAGE) {
+                try g.line("                if (tag.wire == .len) {{", .{});
                 try g.line("                    var sub = try r.subReader();", .{});
-                try g.line("                    try list_{s}.append(a, {s});", .{
-                    name,
-                    try g.readExpr(f),
-                });
-            } else { // string/bytes, and enums (never packed here)
-                try g.line("                    try list_{s}.append(a, {s});", .{
-                    name,
-                    try g.readExpr(f),
-                });
+                try g.line("                    while (!sub.atEnd()) {{", .{});
+                try g.genAppend("                        ", name, try scalarRead(g.a, t, "sub"));
+                try g.line("                    }}", .{});
+                try g.line("                }} else {{", .{});
+                try g.genAppend("                    ", name, try scalarRead(g.a, t, "r"));
+                try g.line("                }}", .{});
+            } else if (t == .TYPE_MESSAGE) {
+                try g.line("                var sub = try r.subReader();", .{});
+                try g.genSubDecode(f);
+                try g.genAppend("                ", name, "v");
+            } else if (t == .TYPE_ENUM) {
+                try g.genEnumRead(f, "r");
+                try g.genAppend("                ", name, "v");
+            } else { // string/bytes
+                try g.genAppend("                ", name, try g.readExpr(f));
             }
         } else {
-            if (t == .TYPE_MESSAGE) {
-                try g.line("                    var sub = try r.subReader();", .{});
-            }
-            const val = try g.readExpr(f);
+            // Message and enum reads land in a local first: the flat statement
+            // carries both the field name and a type name, and the longer ones
+            // run past the column limit.
+            const val = switch (t) {
+                .TYPE_MESSAGE => blk: {
+                    try g.line("                var sub = try r.subReader();", .{});
+                    try g.genSubDecode(f);
+                    break :blk "v";
+                },
+                .TYPE_ENUM => blk: {
+                    try g.genEnumRead(f, "r");
+                    break :blk "v";
+                },
+                else => try g.readExpr(f),
+            };
             if (is_oneof) {
-                const decl = d.oneof_decl[@intCast(f.oneof_index.?)];
-                try g.line("                    msg.{s} = .{{ .{s} = {s} }};", .{
-                    try zid(g.a, decl.name orelse return error.MalformedDescriptor),
-                    try zid(g.a, name),
-                    val,
-                });
+                const oname = try zid(g.a, d.oneof_decl[@intCast(f.oneof_index.?)].name orelse
+                    return error.MalformedDescriptor);
+                const fname = try zid(g.a, name);
+                const flat = "                msg. = .{ . =  };".len + oname.len + fname.len + val.len;
+                if (flat <= max_cols) {
+                    try g.line("                msg.{s} = .{{ .{s} = {s} }};", .{ oname, fname, val });
+                } else {
+                    // Some oneof member names are themselves ~60 characters.
+                    try g.line("                msg.{s} = .{{", .{oname});
+                    try g.line("                    .{s} = {s},", .{ fname, val });
+                    try g.line("                }};", .{});
+                }
             } else {
-                try g.line("                    msg.{s} = {s};", .{ try zid(g.a, name), val });
+                try g.line("                msg.{s} = {s};", .{ try zid(g.a, name), val });
             }
         }
-        try g.line("                }},", .{});
+        try g.line("            }},", .{});
+    }
+
+    /// `const v = try <Type>.decodeReader(a, &sub);` at case-body indent,
+    /// split across lines when the type name alone would overflow. The
+    /// trailing comma survives the `zig fmt` pass that follows generation.
+    fn genSubDecode(g: *Gen, f: *pb.FieldDescriptorProto) Error!void {
+        const tname = try g.typeName(f);
+        const flat = "                const v = try ".len + tname.len + ".decodeReader(a, &sub);".len;
+        if (flat <= max_cols) {
+            try g.line("                const v = try {s}.decodeReader(a, &sub);", .{tname});
+        } else {
+            try g.line("                const v = try {s}.decodeReader(", .{tname});
+            try g.line("                    a,", .{});
+            try g.line("                    &sub,", .{});
+            try g.line("                );", .{});
+        }
+    }
+
+    /// `const v: <Enum> = @enumFromInt(try <recv>.readInt32());`, broken after
+    /// the `=` when the enum name is too long to fit beside it.
+    fn genEnumRead(g: *Gen, f: *pb.FieldDescriptorProto, recv: []const u8) Error!void {
+        const tname = try g.typeName(f);
+        const flat = "                const v:  = @enumFromInt(try .readInt32());".len +
+            tname.len + recv.len;
+        if (flat <= max_cols) {
+            try g.line("                const v: {s} = @enumFromInt(try {s}.readInt32());", .{
+                tname,
+                recv,
+            });
+        } else if ("                const v:  =".len + tname.len <= max_cols) {
+            try g.line("                const v: {s} =", .{tname});
+            try g.line("                    @enumFromInt(try {s}.readInt32());", .{recv});
+        } else {
+            // Enum names run to 71 characters, past what even a bare `const
+            // v: <Enum> =` fits; only @as puts the name on a line of its own.
+            try g.line("                const v = @as(", .{});
+            try g.line("                    {s},", .{tname});
+            try g.line("                    @enumFromInt(try {s}.readInt32()),", .{recv});
+            try g.line("                );", .{});
+        }
+    }
+
+    /// `try list_<name>.append(a, <val>);` at `pad` indent, argument-wrapped
+    /// when the list name and value together overflow.
+    fn genAppend(g: *Gen, pad: []const u8, name: []const u8, val: []const u8) Error!void {
+        const flat = pad.len + "try list_.append(a, );".len + name.len + val.len;
+        if (flat <= max_cols) {
+            try g.line("{s}try list_{s}.append(a, {s});", .{ pad, name, val });
+        } else {
+            try g.line("{s}try list_{s}.append(", .{ pad, name });
+            try g.line("{s}    a,", .{pad});
+            try g.line("{s}    {s},", .{ pad, val });
+            try g.line("{s});", .{pad});
+        }
     }
 };
 

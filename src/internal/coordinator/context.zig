@@ -399,7 +399,10 @@ pub const TransformContext = struct {
     }
 
     /// GetWithEntryMapping retrieves column mappings for a WITH query.
-    pub fn getWithEntryMapping(self: *const TransformContext, name: []const u8) ?[]const []const u8 {
+    pub fn getWithEntryMapping(
+        self: *const TransformContext,
+        name: []const u8,
+    ) ?[]const []const u8 {
         return self.with_mappings.get(name);
     }
 

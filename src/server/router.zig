@@ -115,7 +115,9 @@ pub fn match(method: http.Method, path: []const u8) Outcome {
         var captures: Captures = .{};
         if (!matchPattern(route.pattern, p, &captures)) continue;
         path_matched = true;
-        if (route.method == method) return .{ .matched = .{ .route = route.id, .captures = captures } };
+        if (route.method == method) return .{
+            .matched = .{ .route = route.id, .captures = captures },
+        };
     }
     return if (path_matched) .method_not_allowed else .not_found;
 }

@@ -419,7 +419,11 @@ fn appendJsonStringArray(
 
 /// Minimal JSON string escaping (", \, control chars) — matches what Go
 /// emits for the identifier/timestamp/SQL-text strings that appear in specs.
-pub fn appendJsonString(out: *std.ArrayList(u8), alloc: std.mem.Allocator, s: []const u8) error{OutOfMemory}!void {
+pub fn appendJsonString(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    s: []const u8,
+) error{OutOfMemory}!void {
     try out.append(alloc, '"');
     for (s) |c| {
         switch (c) {
@@ -670,13 +674,19 @@ pub const FunctionSpec = struct {
                 try out.appendSlice(alloc, "{\"name\":");
                 try appendJsonString(&out, alloc, arg.name);
                 try out.appendSlice(alloc, ",\"type\":");
-                if (arg.type) |t| try appendTypeJson(&out, alloc, t) else try out.appendSlice(alloc, "null");
+                if (arg.type) |t| try appendTypeJson(&out, alloc, t) else try out.appendSlice(
+                    alloc,
+                    "null",
+                );
                 try out.append(alloc, '}');
             }
             try out.append(alloc, ']');
         }
         try out.appendSlice(alloc, ",\"return\":");
-        if (self.return_type) |t| try appendTypeJson(&out, alloc, t) else try out.appendSlice(alloc, "null");
+        if (self.return_type) |t| try appendTypeJson(&out, alloc, t) else try out.appendSlice(
+            alloc,
+            "null",
+        );
         try out.appendSlice(alloc, ",\"body\":");
         if (self.body) |b| try appendJsonString(&out, alloc, b) else try out.appendSlice(alloc, "null");
         try out.appendSlice(alloc, ",\"code\":");

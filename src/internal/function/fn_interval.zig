@@ -17,7 +17,23 @@ pub fn interval(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     const v: i32 = @intCast(try args[0].toInt64());
     const part = try fd.partStr(args[1]);
     var iv = Interval{};
-    if (std.mem.eql(u8, part, "YEAR")) iv.years = v else if (std.mem.eql(u8, part, "MONTH")) iv.months = v else if (std.mem.eql(u8, part, "DAY")) iv.days = v else if (std.mem.eql(u8, part, "HOUR")) iv.hours = v else if (std.mem.eql(u8, part, "MINUTE")) iv.minutes = v else if (std.mem.eql(u8, part, "SECOND")) iv.seconds = v else if (std.mem.eql(u8, part, "NANOSECOND")) iv.sub_second_nanos = v else return bind.fail("unexpected interval part: {s}", .{part}, error.UnsupportedOperation);
+    if (std.mem.eql(u8, part, "YEAR")) {
+        iv.years = v;
+    } else if (std.mem.eql(u8, part, "MONTH")) {
+        iv.months = v;
+    } else if (std.mem.eql(u8, part, "DAY")) {
+        iv.days = v;
+    } else if (std.mem.eql(u8, part, "HOUR")) {
+        iv.hours = v;
+    } else if (std.mem.eql(u8, part, "MINUTE")) {
+        iv.minutes = v;
+    } else if (std.mem.eql(u8, part, "SECOND")) {
+        iv.seconds = v;
+    } else if (std.mem.eql(u8, part, "NANOSECOND")) {
+        iv.sub_second_nanos = v;
+    } else {
+        return bind.fail("unexpected interval part: {s}", .{part}, error.UnsupportedOperation);
+    }
     return Value{ .interval = iv };
 }
 

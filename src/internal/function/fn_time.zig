@@ -91,10 +91,19 @@ pub fn timeTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     const part = try fd.partStr(args[1]);
     const c = bt.parts();
     if (std.mem.eql(u8, part, "MICROSECOND")) return tu.timeValue(bt);
-    if (std.mem.eql(u8, part, "MILLISECOND")) return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0) });
-    if (std.mem.eql(u8, part, "SECOND")) return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) });
-    if (std.mem.eql(u8, part, "MINUTE")) return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) });
-    if (std.mem.eql(u8, part, "HOUR")) return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, 0, 0, 0) });
+    if (std.mem.eql(u8, part, "MILLISECOND")) {
+        const civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0);
+        return tu.timeValue(.{ .civ = civ });
+    }
+    if (std.mem.eql(u8, part, "SECOND")) {
+        return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) });
+    }
+    if (std.mem.eql(u8, part, "MINUTE")) {
+        return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) });
+    }
+    if (std.mem.eql(u8, part, "HOUR")) {
+        return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, 0, 0, 0) });
+    }
     return bind.fail("TIME_TRUNC: unexpected part value {s}", .{part}, error.UnsupportedOperation);
 }
 

@@ -18,7 +18,12 @@ const null_v = Value.null;
 // Cryptographic hashes (Go crypto/md5, crypto/sha1, crypto/sha256, crypto/sha512)
 // ----------------------------------------------------------------------
 
-fn hashBytes(comptime H: type, alloc: std.mem.Allocator, comptime name: []const u8, args: []const Value) Error!Value {
+fn hashBytes(
+    comptime H: type,
+    alloc: std.mem.Allocator,
+    comptime name: []const u8,
+    args: []const Value,
+) Error!Value {
     if (args.len != 1) return bind.fail(name ++ ": invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
     const v = try args[0].toBytes(alloc);
@@ -163,7 +168,14 @@ fn weakHashLen32WithSeedsWords(w: u64, x: u64, y: u64, z: u64, a_in: u64, b_in: 
 }
 
 fn weakHashLen32WithSeeds(s: []const u8, a: u64, b: u64) WeakHash {
-    return weakHashLen32WithSeedsWords(load64(s, 0), load64(s, 8), load64(s, 16), load64(s, 24), a, b);
+    return weakHashLen32WithSeedsWords(
+        load64(s, 0),
+        load64(s, 8),
+        load64(s, 16),
+        load64(s, 24),
+        a,
+        b,
+    );
 }
 
 fn hashLen33to64(s: []const u8) u64 {
@@ -231,7 +243,11 @@ pub fn fingerprint64(input: []const u8) u64 {
     const tmp = x;
     x = z;
     z = tmp;
-    return hashLen16Mul(hashLen16Mul(v.lo, w.lo, mul) +% shiftMix(y) *% k0 +% z, hashLen16Mul(v.hi, w.hi, mul) +% x, mul);
+    return hashLen16Mul(
+        hashLen16Mul(v.lo, w.lo, mul) +% shiftMix(y) *% k0 +% z,
+        hashLen16Mul(v.hi, w.hi, mul) +% x,
+        mul,
+    );
 }
 
 // ----------------------------------------------------------------------
@@ -259,7 +275,10 @@ test "md5/sha hashes" {
 
     const md5v = try md5(alloc, &.{.{ .string = "Hello World" }});
     // MD5("Hello World") = b10a8db164e0754105b7a99be72e3fe5
-    const md5_expected = [_]u8{ 0xb1, 0x0a, 0x8d, 0xb1, 0x64, 0xe0, 0x75, 0x41, 0x05, 0xb7, 0xa9, 0x9b, 0xe7, 0x2e, 0x3f, 0xe5 };
+    const md5_expected = [_]u8{
+        0xb1, 0x0a, 0x8d, 0xb1, 0x64, 0xe0, 0x75, 0x41,
+        0x05, 0xb7, 0xa9, 0x9b, 0xe7, 0x2e, 0x3f, 0xe5,
+    };
     try testing.expectEqualSlices(u8, &md5_expected, md5v.bytes);
 
     const s256 = try sha256(alloc, &.{.{ .string = "Hello World" }});

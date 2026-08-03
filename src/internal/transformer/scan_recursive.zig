@@ -25,7 +25,10 @@ pub fn transform(
     const alloc = coord.alloc;
 
     // Transform the non-recursive term (base case).
-    const non_recursive_fragment = try coord.transformStatement(recursive_scan_data.non_recursive_term, ctx);
+    const non_recursive_fragment = try coord.transformStatement(
+        recursive_scan_data.non_recursive_term,
+        ctx,
+    );
     // Go: "non-recursive term is not a SELECT statement"
     const non_recursive_select: *sqlbuilder.SelectStatement = switch (non_recursive_fragment) {
         .select_statement => |stmt| @constCast(stmt),
@@ -33,7 +36,10 @@ pub fn transform(
     };
 
     // Transform the recursive term (recursive case).
-    const recursive_fragment = try coord.transformStatement(recursive_scan_data.recursive_term, ctx);
+    const recursive_fragment = try coord.transformStatement(
+        recursive_scan_data.recursive_term,
+        ctx,
+    );
     // Go: "recursive term is not a SELECT statement"
     var recursive_select: *sqlbuilder.SelectStatement = switch (recursive_fragment) {
         .select_statement => |stmt| @constCast(stmt),
@@ -65,7 +71,11 @@ pub fn transform(
     for (items) |item| {
         for (data.column_list, 0..) |column, i| {
             if (i < item.select_list.len) {
-                item.select_list[i].alias = try context.generateIDBasedAlias(alloc, column.name, column.id);
+                item.select_list[i].alias = try context.generateIDBasedAlias(
+                    alloc,
+                    column.name,
+                    column.id,
+                );
             }
         }
     }

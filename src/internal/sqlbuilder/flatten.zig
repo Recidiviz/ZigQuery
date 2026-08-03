@@ -36,7 +36,10 @@ fn create(alloc: std.mem.Allocator, value: anytype) Error!*@TypeOf(value) {
 }
 
 /// Go flattenSelectForRecursiveCTE.
-pub fn flattenSelectForRecursiveCTE(alloc: std.mem.Allocator, stmt: ?*SelectStatement) Error!?*SelectStatement {
+pub fn flattenSelectForRecursiveCTE(
+    alloc: std.mem.Allocator,
+    stmt: ?*SelectStatement,
+) Error!?*SelectStatement {
     const s = stmt orelse return stmt;
 
     // First, recursively flatten any JOINs in the FROM clause and collect
@@ -50,7 +53,12 @@ pub fn flattenSelectForRecursiveCTE(alloc: std.mem.Allocator, stmt: ?*SelectStat
                 const new_list = try alloc.alloc(*SelectListItem, s.select_list.len);
                 for (s.select_list, 0..) |item, i| {
                     new_list[i] = try create(alloc, SelectListItem{
-                        .expression = (try substituteColumnRefs(alloc, item.expression, &join_alias_map, "")).?,
+                        .expression = (try substituteColumnRefs(
+                            alloc,
+                            item.expression,
+                            &join_alias_map,
+                            "",
+                        )).?,
                         .alias = item.alias,
                         .is_star_expansion = item.is_star_expansion,
                         .except_columns = item.except_columns,
@@ -58,7 +66,12 @@ pub fn flattenSelectForRecursiveCTE(alloc: std.mem.Allocator, stmt: ?*SelectStat
                     });
                 }
                 s.select_list = new_list;
-                s.where_clause = try substituteColumnRefs(alloc, s.where_clause, &join_alias_map, "");
+                s.where_clause = try substituteColumnRefs(
+                    alloc,
+                    s.where_clause,
+                    &join_alias_map,
+                    "",
+                );
 
                 try substituteInJoinConditions(alloc, s.from_clause, &join_alias_map);
             }
@@ -94,7 +107,12 @@ pub fn flattenSelectForRecursiveCTE(alloc: std.mem.Allocator, stmt: ?*SelectStat
     const new_select_list = try alloc.alloc(*SelectListItem, s.select_list.len);
     for (s.select_list, 0..) |item, i| {
         new_select_list[i] = try create(alloc, SelectListItem{
-            .expression = (try substituteColumnRefs(alloc, item.expression, &alias_map, from_clause.alias)).?,
+            .expression = (try substituteColumnRefs(
+                alloc,
+                item.expression,
+                &alias_map,
+                from_clause.alias,
+            )).?,
             .alias = item.alias,
             .is_star_expansion = item.is_star_expansion,
             .except_columns = item.except_columns,
@@ -117,7 +135,11 @@ pub fn flattenSelectForRecursiveCTE(alloc: std.mem.Allocator, stmt: ?*SelectStat
 }
 
 /// Go flattenJoinFromItem.
-fn flattenJoinFromItem(alloc: std.mem.Allocator, from_item: ?*FromItem, alias_map: *AliasMap) Error!?*FromItem {
+fn flattenJoinFromItem(
+    alloc: std.mem.Allocator,
+    from_item: ?*FromItem,
+    alias_map: *AliasMap,
+) Error!?*FromItem {
     const fi = from_item orelse return from_item;
     if (fi.type != .join) return fi;
     const join = fi.join orelse return fi;
@@ -129,7 +151,11 @@ fn flattenJoinFromItem(alloc: std.mem.Allocator, from_item: ?*FromItem, alias_ma
 }
 
 /// Go flattenFromItemInJoin.
-fn flattenFromItemInJoin(alloc: std.mem.Allocator, from_item: ?*FromItem, alias_map: *AliasMap) Error!?*FromItem {
+fn flattenFromItemInJoin(
+    alloc: std.mem.Allocator,
+    from_item: ?*FromItem,
+    alias_map: *AliasMap,
+) Error!?*FromItem {
     const fi = from_item orelse return null;
 
     // If this is a subquery, try to unwrap it if it's just a pass-through.
@@ -301,7 +327,13 @@ fn substituteColumnRefsWithDepth(
             const fc = e.function_call orelse return e;
             const new_args = try alloc.alloc(*SQLExpression, fc.arguments.len);
             for (fc.arguments, 0..) |arg, i| {
-                new_args[i] = (try substituteColumnRefsWithDepth(alloc, arg, alias_map, table_alias, depth + 1)).?;
+                new_args[i] = (try substituteColumnRefsWithDepth(
+                    alloc,
+                    arg,
+                    alias_map,
+                    table_alias,
+                    depth + 1,
+                )).?;
             }
             return try create(alloc, SQLExpression{
                 .type = .function,
@@ -319,9 +351,21 @@ fn substituteColumnRefsWithDepth(
             return try create(alloc, SQLExpression{
                 .type = .binary,
                 .binary_expression = try create(alloc, BinaryExpression{
-                    .left = try substituteColumnRefsWithDepth(alloc, b.left, alias_map, table_alias, depth + 1),
+                    .left = try substituteColumnRefsWithDepth(
+                        alloc,
+                        b.left,
+                        alias_map,
+                        table_alias,
+                        depth + 1,
+                    ),
                     .operator = b.operator,
-                    .right = try substituteColumnRefsWithDepth(alloc, b.right, alias_map, table_alias, depth + 1),
+                    .right = try substituteColumnRefsWithDepth(
+                        alloc,
+                        b.right,
+                        alias_map,
+                        table_alias,
+                        depth + 1,
+                    ),
                 }),
                 .collation = e.collation,
             });
@@ -332,7 +376,13 @@ fn substituteColumnRefsWithDepth(
                 .type = .unary,
                 .unary_expression = try create(alloc, UnaryExpression{
                     .operator = u.operator,
-                    .expression = (try substituteColumnRefsWithDepth(alloc, u.expression, alias_map, table_alias, depth + 1)).?,
+                    .expression = (try substituteColumnRefsWithDepth(
+                        alloc,
+                        u.expression,
+                        alias_map,
+                        table_alias,
+                        depth + 1,
+                    )).?,
                 }),
                 .collation = e.collation,
             });
@@ -341,7 +391,13 @@ fn substituteColumnRefsWithDepth(
             const l = e.list_expression orelse return e;
             const new_exprs = try alloc.alloc(*SQLExpression, l.expressions.len);
             for (l.expressions, 0..) |le, i| {
-                new_exprs[i] = (try substituteColumnRefsWithDepth(alloc, le, alias_map, table_alias, depth + 1)).?;
+                new_exprs[i] = (try substituteColumnRefsWithDepth(
+                    alloc,
+                    le,
+                    alias_map,
+                    table_alias,
+                    depth + 1,
+                )).?;
             }
             return try create(alloc, SQLExpression{
                 .type = .list,
@@ -354,16 +410,40 @@ fn substituteColumnRefsWithDepth(
             const new_when = try alloc.alloc(*WhenClause, c.when_clauses.len);
             for (c.when_clauses, 0..) |w, i| {
                 new_when[i] = try create(alloc, WhenClause{
-                    .condition = (try substituteColumnRefsWithDepth(alloc, w.condition, alias_map, table_alias, depth + 1)).?,
-                    .result = (try substituteColumnRefsWithDepth(alloc, w.result, alias_map, table_alias, depth + 1)).?,
+                    .condition = (try substituteColumnRefsWithDepth(
+                        alloc,
+                        w.condition,
+                        alias_map,
+                        table_alias,
+                        depth + 1,
+                    )).?,
+                    .result = (try substituteColumnRefsWithDepth(
+                        alloc,
+                        w.result,
+                        alias_map,
+                        table_alias,
+                        depth + 1,
+                    )).?,
                 });
             }
             return try create(alloc, SQLExpression{
                 .type = .case,
                 .case_expression = try create(alloc, CaseExpression{
-                    .case_expr = try substituteColumnRefsWithDepth(alloc, c.case_expr, alias_map, table_alias, depth + 1),
+                    .case_expr = try substituteColumnRefsWithDepth(
+                        alloc,
+                        c.case_expr,
+                        alias_map,
+                        table_alias,
+                        depth + 1,
+                    ),
                     .when_clauses = new_when,
-                    .else_expr = try substituteColumnRefsWithDepth(alloc, c.else_expr, alias_map, table_alias, depth + 1),
+                    .else_expr = try substituteColumnRefsWithDepth(
+                        alloc,
+                        c.else_expr,
+                        alias_map,
+                        table_alias,
+                        depth + 1,
+                    ),
                 }),
                 .collation = e.collation,
             });
@@ -441,7 +521,11 @@ fn copyExpression(alloc: std.mem.Allocator, expr: ?*SQLExpression) Error!?*SQLEx
 }
 
 /// Go substituteInJoinConditions.
-fn substituteInJoinConditions(alloc: std.mem.Allocator, from_item: ?*FromItem, alias_map: *AliasMap) Error!void {
+fn substituteInJoinConditions(
+    alloc: std.mem.Allocator,
+    from_item: ?*FromItem,
+    alias_map: *AliasMap,
+) Error!void {
     const fi = from_item orelse return;
     if (fi.type != .join) return;
     const join = fi.join orelse return;
