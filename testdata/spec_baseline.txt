@@ -189,8 +189,14 @@ googlesql/functions/math/abs	positive integer is unchanged
 googlesql/functions/math/abs	zero
 googlesql/functions/math/abs	negative float
 googlesql/functions/math/abs	null propagates
+googlesql/functions/math/acos	acos(1) is 0
+googlesql/functions/math/acosh	ACOSH(1) is 0
+googlesql/functions/math/asin	asin(0) is 0
+googlesql/functions/math/asinh	ASINH(0) is 0
 googlesql/functions/math/atan	atan(0) is 0
 googlesql/functions/math/atan2	atan2(0, 1) is 0
+googlesql/functions/math/atanh	ATANH(0) is 0
+googlesql/functions/math/cbrt	cbrt of typical input is finite
 googlesql/functions/math/ceil	rounds up positive fraction
 googlesql/functions/math/ceil	rounds toward zero on negative fraction
 googlesql/functions/math/ceil	integer value is unchanged
@@ -198,7 +204,16 @@ googlesql/functions/math/ceil	null propagates
 googlesql/functions/math/ceiling	ceiling positive fraction
 googlesql/functions/math/ceiling	ceiling integer
 googlesql/functions/math/cos	cos(0) is 1
+googlesql/functions/math/cosh	cosh(0) is 1
+googlesql/functions/math/cosine_distance	orthogonal vectors have distance 1
+googlesql/functions/math/cosine_distance	identical vectors have distance 0
+googlesql/functions/math/cot	cot of typical input is finite
+googlesql/functions/math/coth	coth of typical input is finite
+googlesql/functions/math/csc	csc of typical input is finite
+googlesql/functions/math/csch	csch of typical input is finite
 googlesql/functions/math/div	integer division
+googlesql/functions/math/euclidean_distance	distance between two vectors
+googlesql/functions/math/euclidean_distance	zero distance for identical vectors
 googlesql/functions/math/exp	e^0
 googlesql/functions/math/floor	rounds down positive fraction
 googlesql/functions/math/floor	rounds away from zero on negative fraction
@@ -215,8 +230,14 @@ googlesql/functions/math/log	LOG with no base is natural log
 googlesql/functions/math/log10	log10 of 100
 googlesql/functions/math/mod	positive mod
 googlesql/functions/math/mod	zero mod is the dividend
+googlesql/functions/math/pi	PI returns 3.14159...
+googlesql/functions/math/pi_bignumeric	PI_BIGNUMERIC returns a non-NULL bignumeric value
+googlesql/functions/math/pi_numeric	PI_NUMERIC returns a non-NULL numeric value
 googlesql/functions/math/pow	2 to the 3
 googlesql/functions/math/power	2 to the 10
+googlesql/functions/math/rand	RAND() returns a value in [0, 1)
+googlesql/functions/math/range_bucket	bucket index when value falls between boundaries
+googlesql/functions/math/range_bucket	bucket 0 when value is below all boundaries
 googlesql/functions/math/round	half rounds away from zero
 googlesql/functions/math/round	round negative
 googlesql/functions/math/safe_add	regular add
@@ -225,16 +246,20 @@ googlesql/functions/math/safe_divide	divide by zero is NULL
 googlesql/functions/math/safe_multiply	regular multiply
 googlesql/functions/math/safe_negate	negate integer
 googlesql/functions/math/safe_subtract	regular subtract
+googlesql/functions/math/sec	sec of typical input is finite
+googlesql/functions/math/sech	sech of typical input is finite
 googlesql/functions/math/sign	negative
 googlesql/functions/math/sign	zero
 googlesql/functions/math/sign	positive
 googlesql/functions/math/sign	null propagates
 googlesql/functions/math/sin	sin(0) is 0
+googlesql/functions/math/sinh	sinh(0) is 0
 googlesql/functions/math/sqrt	square root of perfect square
 googlesql/functions/math/sqrt	zero
 googlesql/functions/math/sqrt	one
 googlesql/functions/math/sqrt	null propagates
 googlesql/functions/math/tan	TAN(0) is 0
+googlesql/functions/math/tanh	tanh(0) is 0
 googlesql/functions/math/trunc	truncate positive fraction
 googlesql/functions/math/trunc	truncate negative fraction
 googlesql/functions/net/net_host	net_host extracts the expected piece

@@ -1009,6 +1009,160 @@ test "math sign / bit_count" {
     try env.expectInt(16, try env.fmt("SELECT zetasqlite_bit_count({s})", .{try env.enc(Value{ .bytes = "\xFF\xFF" })}));
 }
 
+test "inverse / hyperbolic / reciprocal trigonometry" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    try env.expectFloat(0.0, "SELECT zetasqlite_acos(1.0)");
+    try env.expectFloat(std.math.pi, "SELECT zetasqlite_acos(-1.0)");
+    try env.expectFloat(0.0, "SELECT zetasqlite_acosh(1.0)");
+    try env.expectFloat(0.0, "SELECT zetasqlite_asin(0.0)");
+    try env.expectFloat(0.0, "SELECT zetasqlite_asinh(0.0)");
+    try env.expectFloat(0.0, "SELECT zetasqlite_atanh(0.0)");
+    try env.expectFloat(1.0, "SELECT zetasqlite_cosh(0.0)");
+    try env.expectFloat(0.0, "SELECT zetasqlite_sinh(0.0)");
+    try env.expectFloat(0.0, "SELECT zetasqlite_tanh(0.0)");
+    try env.expectFloat(1.0, "SELECT zetasqlite_sec(0.0)");
+    try env.expectFloat(1.0, "SELECT zetasqlite_sech(0.0)");
+    try env.expectFloat(3.0, "SELECT zetasqlite_cbrt(27.0)");
+
+    // A finite argument that leaves the domain is an execution error, and the
+    // message is the one googlesql prints (math.h SetFloatingPointError).
+    try env.expectErrorMsg("Floating point error in function: ACOS(2)", "SELECT zetasqlite_acos(2.0)");
+    try env.expectErrorMsg("Floating point error in function: ASIN(2)", "SELECT zetasqlite_asin(2.0)");
+    try env.expectErrorMsg("Floating point error in function: ACOSH(0.5)", "SELECT zetasqlite_acosh(0.5)");
+    try env.expectErrorMsg("Floating point error in function: ATANH(2)", "SELECT zetasqlite_atanh(2.0)");
+    // The reciprocals go singular at 0 rather than out of range.
+    try env.expectErrorMsg("Floating point error in function: COT(0)", "SELECT zetasqlite_cot(0.0)");
+    try env.expectErrorMsg("Floating point error in function: COTH(0)", "SELECT zetasqlite_coth(0.0)");
+    try env.expectErrorMsg("Floating point error in function: CSC(0)", "SELECT zetasqlite_csc(0.0)");
+    try env.expectErrorMsg("Floating point error in function: CSCH(0)", "SELECT zetasqlite_csch(0.0)");
+    // COSH/SINH overflow instead, which upstream words differently.
+    try env.expectErrorMsg("Floating point overflow in function: COSH(1000)", "SELECT zetasqlite_cosh(1000.0)");
+    try env.expectErrorMsg("Floating point overflow in function: SINH(1000)", "SELECT zetasqlite_sinh(1000.0)");
+
+    // A non-finite argument is never an error, whatever comes out — the docs'
+    // per-function tables reduce to that one distinction.
+    //
+    // The NaN rows read as NULL rather than NaN, and that is SQLite rather
+    // than this code: sqlite3_result_double() turns a NaN into SQL NULL, so no
+    // NaN survives a function boundary here. What these two assert is that
+    // ACOS(+inf) and SEC(+inf) *do not raise*, which is the part `checked`
+    // decides.
+    const inf = "zetasqlite_ieee_divide(1.0, 0.0)";
+    try env.expectNullResult("SELECT zetasqlite_acos(" ++ inf ++ ")");
+    try env.expectNullResult("SELECT zetasqlite_sec(" ++ inf ++ ")");
+    try env.expectInt(1, "SELECT zetasqlite_is_inf(zetasqlite_acosh(" ++ inf ++ "))");
+    try env.expectFloat(1.0, "SELECT zetasqlite_tanh(" ++ inf ++ ")");
+    try env.expectFloat(0.0, "SELECT zetasqlite_sech(" ++ inf ++ ")");
+
+    try env.expectNullResult("SELECT zetasqlite_acos(NULL)");
+    try env.expectNullResult("SELECT zetasqlite_cot(NULL)");
+    // SAFE. turns the domain error into NULL, via the automatic safe_ wrapper.
+    try env.expectNullResult("SELECT zetasqlite_safe_acos(2.0)");
+}
+
+test "rand stays inside [0, 1) and is not folded across rows" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.expectInt(1, "SELECT zetasqlite_rand() >= 0.0 AND zetasqlite_rand() < 1.0");
+    // The point of `deterministic = false` in the bind table: with
+    // SQLITE_DETERMINISTIC set, SQLite hoists this zero-argument call out of
+    // the loop and every row sees one value.
+    try env.expectInt(20, "SELECT COUNT(DISTINCT zetasqlite_rand()) FROM " ++
+        "(WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r WHERE i < 20) SELECT i FROM r)");
+}
+
+test "range_bucket counts boundaries at or below the point" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const b = "zetasqlite_make_array(0, 10, 20, 30, 40)";
+    // A point that is in the array lands past its own last copy.
+    try env.expectInt(3, "SELECT zetasqlite_range_bucket(20, " ++ b ++ ")");
+    try env.expectInt(4, "SELECT zetasqlite_range_bucket(20, zetasqlite_make_array(0, 10, 20, 20, 40, 40))");
+    try env.expectInt(3, "SELECT zetasqlite_range_bucket(25, " ++ b ++ ")");
+    try env.expectInt(0, "SELECT zetasqlite_range_bucket(-10, " ++ b ++ ")");
+    try env.expectInt(5, "SELECT zetasqlite_range_bucket(80, " ++ b ++ ")");
+    try env.expectInt(0, "SELECT zetasqlite_range_bucket(80, zetasqlite_make_array())");
+    try env.expectInt(1, try env.fmt(
+        "SELECT zetasqlite_range_bucket({s}, zetasqlite_make_array({s}, {s}, {s}))",
+        .{ try env.encStr("a"), try env.encStr("a"), try env.encStr("b"), try env.encStr("c") },
+    ));
+
+    // A NULL or NaN *point* is NULL; the same inside the array is an error.
+    // (The NaN case arrives already collapsed to NULL — see the trigonometry
+    // test — so this only pins the observable half of the rule.)
+    try env.expectNullResult("SELECT zetasqlite_range_bucket(NULL, " ++ b ++ ")");
+    try env.expectNullResult("SELECT zetasqlite_range_bucket(" ++
+        "zetasqlite_ieee_divide(0.0, 0.0), zetasqlite_make_array(1.0, 2.0))");
+    try env.expectErrorMsg(
+        "boundaries_array must not contain NULL or NaN",
+        "SELECT zetasqlite_range_bucket(80, zetasqlite_make_array(NULL, 10, 20))",
+    );
+    try env.expectErrorMsg(
+        "boundaries_array must be sorted in ascending order",
+        "SELECT zetasqlite_range_bucket(30, zetasqlite_make_array(10, 30, 20, 40))",
+    );
+}
+
+test "vector distances over dense and sparse vectors" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    try env.expectFloat(5.0, "SELECT zetasqlite_euclidean_distance(" ++
+        "zetasqlite_make_array(1.0, 2.0), zetasqlite_make_array(4.0, 6.0))");
+    try env.expectFloat(0.0, "SELECT zetasqlite_euclidean_distance(" ++
+        "zetasqlite_make_array(1.0, 2.0, 3.0), zetasqlite_make_array(1.0, 2.0, 3.0))");
+    try env.expectFloat(1.0, "SELECT zetasqlite_cosine_distance(" ++
+        "zetasqlite_make_array(1.0, 0.0), zetasqlite_make_array(0.0, 1.0))");
+    try env.expectFloat(0.0, "SELECT zetasqlite_cosine_distance(" ++
+        "zetasqlite_make_array(1.0, 2.0, 3.0), zetasqlite_make_array(1.0, 2.0, 3.0))");
+    // Opposite directions are the far end of the range.
+    try env.expectFloat(2.0, "SELECT zetasqlite_cosine_distance(" ++
+        "zetasqlite_make_array(1.0, 0.0), zetasqlite_make_array(-1.0, 0.0))");
+
+    // A zero vector has a Euclidean distance but no direction.
+    try env.expectFloat(5.0, "SELECT zetasqlite_euclidean_distance(" ++
+        "zetasqlite_make_array(3.0, 4.0), zetasqlite_make_array(0.0, 0.0))");
+    try env.expectErrorMsg("must not be a zero vector", "SELECT zetasqlite_cosine_distance(" ++
+        "zetasqlite_make_array(3.0, 4.0), zetasqlite_make_array(0.0, 0.0))");
+
+    try env.expectErrorMsg("must share the same dimensions", "SELECT zetasqlite_euclidean_distance(" ++
+        "zetasqlite_make_array(1.0, 2.0), zetasqlite_make_array(1.0, 2.0, 3.0))");
+    try env.expectErrorMsg("must not be NULL", "SELECT zetasqlite_euclidean_distance(" ++
+        "zetasqlite_make_array(1.0, NULL), zetasqlite_make_array(1.0, 2.0))");
+    try env.expectNullResult("SELECT zetasqlite_euclidean_distance(NULL, zetasqlite_make_array(1.0))");
+
+    // Sparse form: dimensions are named, absent ones are zero. 'x' and 'y' do
+    // not overlap, so the vectors are orthogonal and 3-4-5 applies.
+    const sparse_a = try env.fmt("zetasqlite_make_array(zetasqlite_make_struct({s}, {s}, {s}, 3.0))", .{
+        try env.encStr("dimension"), try env.encStr("x"), try env.encStr("magnitude"),
+    });
+    const sparse_b = try env.fmt("zetasqlite_make_array(zetasqlite_make_struct({s}, {s}, {s}, 4.0))", .{
+        try env.encStr("dimension"), try env.encStr("y"), try env.encStr("magnitude"),
+    });
+    try env.expectFloat(5.0, try env.fmt(
+        "SELECT zetasqlite_euclidean_distance({s}, {s})",
+        .{ sparse_a, sparse_b },
+    ));
+    try env.expectFloat(1.0, try env.fmt(
+        "SELECT zetasqlite_cosine_distance({s}, {s})",
+        .{ sparse_a, sparse_b },
+    ));
+    // A shared dimension pairs up rather than adding a second axis.
+    const sparse_c = try env.fmt("zetasqlite_make_array(zetasqlite_make_struct({s}, {s}, {s}, 7.0))", .{
+        try env.encStr("dimension"), try env.encStr("x"), try env.encStr("magnitude"),
+    });
+    try env.expectFloat(4.0, try env.fmt(
+        "SELECT zetasqlite_euclidean_distance({s}, {s})",
+        .{ sparse_a, sparse_c },
+    ));
+    try env.expectErrorMsg("same representation", try env.fmt(
+        "SELECT zetasqlite_euclidean_distance({s}, zetasqlite_make_array(3.0))",
+        .{sparse_a},
+    ));
+}
+
 test "net functions" {
     var env = try TestEnv.init();
     defer env.deinit();

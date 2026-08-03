@@ -129,6 +129,12 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // the feature is disabled ("The GROUP BY clause only supports ROLLUP when
     // there are no other grouping elements").
     googlesql::FEATURE_GROUPING_SETS,
+    // CBRT and the PI/PI_NUMERIC/PI_BIGNUMERIC constants, both of which
+    // BigQuery exposes. PI's signatures carry SetDefinitionForInlining, so the
+    // analyzer folds them to literals and no UDF is reachable for them; CBRT
+    // resolves to an ordinary call that fn_math.zig answers.
+    googlesql::FEATURE_CBRT_FUNCTIONS,
+    googlesql::FEATURE_PI_FUNCTIONS,
 };
 
 // Ported verbatim from internal/analyzer.go `supportedStatementKinds`.
