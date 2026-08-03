@@ -10,7 +10,7 @@ const re = @import("../../regexp_ffi.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 fn runeCount(s: []const u8) usize {
     var i: usize = 0;

@@ -13,7 +13,7 @@ const re = @import("../../regexp_ffi.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 // Rune helpers -----------------------------------------------------------
 
@@ -62,7 +62,7 @@ pub fn length(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (args.len != 1)
         return bind.fail("LENGTH: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     return switch (args[0]) {
         .string => |s| Value{ .int = @intCast(runeCount(s)) },
         .bytes => |b| Value{ .int = @intCast(b.len) },
@@ -139,7 +139,7 @@ pub fn lower(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 pub fn upper(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len != 1)
         return bind.fail("UPPER: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     switch (args[0]) {
         .string => |s| return Value{ .string = re.caseMap(alloc, true, s) catch |e| return caseMapErr(e) },
         .bytes => |b| return Value{ .bytes = try asciiMapCase(alloc, b, .upper) },
@@ -278,7 +278,7 @@ fn mapRuneCase(alloc: std.mem.Allocator, out: *std.ArrayList(u8), cp: u21, to_up
 
 /// Go ASCII: returns the first byte's value (or 0 for empty; NULL for NULL).
 pub fn ascii(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const s = try args[0].toString(alloc);
     if (s.len == 0) return Value{ .int = 0 };
     return Value{ .int = s[0] };
@@ -286,21 +286,21 @@ pub fn ascii(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 /// Go BYTE_LENGTH / OCTET_LENGTH: byte length.
 pub fn byteLength(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const b = try args[0].toBytes(alloc);
     return Value{ .int = @intCast(b.len) };
 }
 
 /// Go CHAR_LENGTH / CHARACTER_LENGTH: rune count.
 pub fn charLength(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const b = try args[0].toBytes(alloc);
     return Value{ .int = @intCast(runeCount(b)) };
 }
 
 /// Go CHR: codepoint -> UTF-8 string (0 -> "").
 pub fn chr(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const v = try args[0].toInt64();
     if (v == 0) return Value{ .string = "" };
     var buf: [4]u8 = undefined;
@@ -309,7 +309,7 @@ pub fn chr(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 /// Go CODE_POINTS_TO_BYTES: array of int64 -> bytes (each truncated to byte).
 pub fn codePointsToBytes(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const arr = try args[0].toArray();
     const out = try alloc.alloc(u8, arr.values.len);
     for (arr.values, out) |v, *o| o.* = @truncate(@as(u64, @bitCast(try v.toInt64())));
@@ -319,12 +319,12 @@ pub fn codePointsToBytes(alloc: std.mem.Allocator, args: []const Value) Error!Va
 /// Go CODE_POINTS_TO_STRING: array of int64 -> UTF-8 string (0 skipped, NULL
 /// element -> NULL result).
 pub fn codePointsToString(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const arr = try args[0].toArray();
     var out: std.ArrayList(u8) = .empty;
     var buf: [4]u8 = undefined;
     for (arr.values) |v| {
-        if (v == .@"null") return null_v;
+        if (v == .null) return null_v;
         const i = try v.toInt64();
         if (i == 0) continue;
         try out.appendSlice(alloc, encodeRune(&buf, i));
@@ -335,7 +335,7 @@ pub fn codePointsToString(alloc: std.mem.Allocator, args: []const Value) Error!V
 /// Go TO_CODE_POINTS: STRING -> array of rune codepoints; BYTES -> array of
 /// byte values.
 pub fn toCodePoints(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return value_mod.arrayValue(alloc, &.{});
+    if (args[0] == .null) return value_mod.arrayValue(alloc, &.{});
     switch (args[0]) {
         .string => |s| {
             const runes = try decodeRunes(alloc, s);
@@ -689,7 +689,7 @@ const PadSide = enum { left, right };
 fn padImpl(alloc: std.mem.Allocator, args: []const Value, side: PadSide) Error!Value {
     if (bind.existsNull(args)) return null_v;
     const return_length = try args[1].toInt64();
-    const has_pat = args.len > 2 and args[2] != .@"null";
+    const has_pat = args.len > 2 and args[2] != .null;
     switch (args[0]) {
         .string => {
             if (return_length < 0)
@@ -943,7 +943,7 @@ fn translateReplaceBytes(alloc: std.mem.Allocator, expr: []const u8, from: u8, t
 // UNICODE ---------------------------------------------------------------
 
 pub fn unicode(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const runes = try decodeRunes(alloc, try args[0].toString(alloc));
     if (runes.len == 0) return Value{ .int = 0 };
     return Value{ .int = @intCast(runes[0]) };
@@ -1073,7 +1073,7 @@ fn containsSubstrScalar(alloc: std.mem.Allocator, value: []const u8, search: []c
 pub fn containsSubstr(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     // A null search literal is an error (distinct from a null expression,
     // which yields NULL below).
-    if (args[1] == .@"null") {
+    if (args[1] == .null) {
         return bind.failMsg("CONTAINS_SUBSTR: search literal must be not null", error.UnsupportedOperation);
     }
     if (bind.existsNull(args)) return null_v;
@@ -1081,7 +1081,7 @@ pub fn containsSubstr(alloc: std.mem.Allocator, args: []const Value) Error!Value
     if (args[0] == .struct_) {
         var null_exists = false;
         for (args[0].struct_.values) |field| {
-            if (field == .@"null") {
+            if (field == .null) {
                 null_exists = true;
                 continue;
             }
@@ -1108,7 +1108,7 @@ pub fn toBase32(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 pub fn fromBase32(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const s = try args[0].toString(alloc);
     return Value{ .bytes = base32Decode(alloc, s) catch
         return bind.fail("FROM_BASE32: invalid base32 input", .{}, error.FailedConversion) };
@@ -1123,7 +1123,7 @@ pub fn toBase64(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 pub fn fromBase64(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const s = try args[0].toString(alloc);
     const dec = std.base64.standard.Decoder;
     const n = dec.calcSizeForSlice(s) catch
@@ -1147,7 +1147,7 @@ pub fn toHex(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 pub fn fromHex(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     var s = try args[0].toString(alloc);
     if (s.len % 2 != 0) {
         const padded = try alloc.alloc(u8, s.len + 1);

@@ -129,11 +129,11 @@ pub fn main(init: std.process.Init) !void {
         \\--   analyze {d:.1} ms   transform {d:.1} ms
         \\
     , .{
-        replay_ms,                        stmts.len,
-        n_table,                          n_view,
-        n_index,                          ddl_bytes,
-        translate_ms,                     prepare_ms,
-        final_bytes,                      msNs(phase.totalNs(.analyze)),
+        replay_ms,                       stmts.len,
+        n_table,                         n_view,
+        n_index,                         ddl_bytes,
+        translate_ms,                    prepare_ms,
+        final_bytes,                     msNs(phase.totalNs(.analyze)),
         msNs(phase.totalNs(.transform)),
     });
     try e.flush();

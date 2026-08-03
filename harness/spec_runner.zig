@@ -616,7 +616,7 @@ fn report(
     try out.print(
         "{d} PASS / {d} FAIL / {d} UNSUPPORTED / {d} SKIP  (of {d})\n\n",
         .{
-            counts.get(.pass),      counts.get(.fail),
+            counts.get(.pass),        counts.get(.fail),
             counts.get(.unsupported), counts.get(.skip),
             results.len,
         },
@@ -654,8 +654,7 @@ fn report(
     if (opts.update_baseline) {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(arena);
-        try buf.appendSlice(arena,
-            "# Cases that must keep passing. Regenerate: zig build spec -- --update-baseline\n");
+        try buf.appendSlice(arena, "# Cases that must keep passing. Regenerate: zig build spec -- --update-baseline\n");
         for (results) |r| {
             if (r.outcome != .pass) continue;
             try buf.print(arena, "{s}\t{s}\n", .{ r.spec, r.desc });

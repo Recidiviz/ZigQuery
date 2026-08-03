@@ -151,7 +151,7 @@ fn decodeArgs(
     const args = try alloc.alloc(Value, n);
     for (0..n) |i| {
         args[i] = switch (sqlite.valueType(argv[i])) {
-            .null => Value.@"null",
+            .null => Value.null,
             .integer => Value{ .int = sqlite.valueInt64(argv[i]) },
             .float => Value{ .float = sqlite.valueDouble(argv[i]) },
             // TEXT has no engine meaning since storage format 3.
@@ -164,7 +164,7 @@ fn decodeArgs(
 
 fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void {
     switch (try encoder.EncodeValue(alloc, v)) {
-        .@"null" => sqlite.resultNull(ctx),
+        .null => sqlite.resultNull(ctx),
         .int => |i| sqlite.resultInt64(ctx, i),
         .float => |f| sqlite.resultDouble(ctx, f),
         .blob => |b| sqlite.resultBlob(ctx, b),
@@ -230,7 +230,7 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
             if (opt.ignore_nulls) {
                 var kept: usize = 0;
                 for (values) |v| {
-                    if (v == .@"null") continue;
+                    if (v == .null) continue;
                     values[kept] = v;
                     kept += 1;
                 }
@@ -246,7 +246,7 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                         error.UnsupportedOperation,
                     );
                 }
-                if (values[0] == .@"null") {
+                if (values[0] == .null) {
                     if (group.distinct_nil) return;
                     group.distinct_nil = true;
                 } else {
@@ -355,7 +355,7 @@ const TestEnv = struct {
                 const b = try env.alloc().dupe(u8, stmt.columnBlob(0));
                 break :blk try encoder.DecodeValue(env.alloc(), .{ .blob = b });
             },
-            .null => Value.@"null",
+            .null => Value.null,
         };
     }
 
@@ -370,7 +370,7 @@ const TestEnv = struct {
     }
 
     fn expectNullResult(env: *TestEnv, sql: []const u8) !void {
-        try testing.expect(try env.queryValue(sql) == .@"null");
+        try testing.expect(try env.queryValue(sql) == .null);
     }
 
     fn expectStringResult(env: *TestEnv, expected: []const u8, sql: []const u8) !void {

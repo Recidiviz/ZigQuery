@@ -654,7 +654,6 @@ fn testSumFinal(ctx: ?*c.sqlite3_context) callconv(.c) void {
     resultInt64(ctx, state.total);
 }
 
-
 test "open, query, scalar UDF, aggregate, collation" {
     var db = try Db.open(":memory:");
     defer db.close();

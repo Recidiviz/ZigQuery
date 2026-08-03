@@ -21,7 +21,7 @@ pub const ValueError = value_mod.ValueError;
 
 /// The value as it crosses the SQLite boundary (Go: driver.Value).
 pub const SqliteRepr = union(enum) {
-    @"null",
+    null,
     int: i64,
     float: f64,
     /// The binary codec, in either payload shape; the tag byte says which.
@@ -35,7 +35,7 @@ pub fn EncodeValue(alloc: std.mem.Allocator, v: Value) ValueError!SqliteRepr {
     var t = phase.CodecTimer.begin(.codec_encode);
     defer t.end();
     switch (v) {
-        .@"null" => return .@"null",
+        .null => return .null,
         .int => |i| return .{ .int = i },
         .float => |f| return .{ .float = f },
         // Go returns ToBool() (a Go bool); the sqlite driver stores it as
@@ -65,7 +65,7 @@ pub fn LiteralFromValue(alloc: std.mem.Allocator, v: Value) ValueError![]u8 {
     var t = phase.CodecTimer.begin(.codec_literal);
     defer t.end();
     switch (v) {
-        .@"null" => return alloc.dupe(u8, "null"),
+        .null => return alloc.dupe(u8, "null"),
         .int => |i| return std.fmt.allocPrint(alloc, "{d}", .{i}),
         .float => |f| {
             var buf: [32]u8 = undefined;
@@ -144,7 +144,7 @@ fn decodeRepr(
     var t = phase.CodecTimer.begin(.codec_decode);
     defer t.end();
     switch (repr) {
-        .@"null" => return Value.@"null",
+        .null => return Value.null,
         .int => |i| return Value{ .int = i },
         .float => |f| return Value{ .float = f },
         // Two payload shapes travel in a BLOB, told apart by tag range: the
@@ -196,7 +196,7 @@ pub const TypeKind = enum {
 pub fn castValue(alloc: std.mem.Allocator, v: Value, to: TypeKind) ValueError!Value {
     _ = alloc;
     // Go CastValue: nil input stays nil regardless of target type.
-    if (v == .@"null") return Value.@"null";
+    if (v == .null) return Value.null;
     const inner = if (v == .safe) v.safe.* else v;
     const same = switch (to) {
         .int64 => inner == .int,
@@ -326,7 +326,7 @@ pub fn valueFromProto(
     value_proto: *const pb.ValueProto,
     type_proto: *const pb.TypeProto,
 ) ValueError!Value {
-    const v = value_proto.value orelse return Value.@"null";
+    const v = value_proto.value orelse return Value.null;
     const kind = type_proto.type_kind orelse return error.Unimplemented;
     switch (kind) {
         // Go: intValueFromLiteral over the SQL literal; here the proto
@@ -506,7 +506,7 @@ test "EncodeValue keeps scalars native" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    try testing.expectEqual(SqliteRepr.@"null", try EncodeValue(alloc, Value.@"null"));
+    try testing.expectEqual(SqliteRepr.null, try EncodeValue(alloc, Value.null));
     try testing.expectEqual(SqliteRepr{ .int = -7 }, try EncodeValue(alloc, Value{ .int = -7 }));
     try testing.expectEqual(SqliteRepr{ .float = 1.5 }, try EncodeValue(alloc, Value{ .float = 1.5 }));
     // Bool travels as INTEGER 0/1 (Go bool bound by the sqlite driver).
@@ -530,7 +530,7 @@ test "EncodeValue splits non-scalar kinds by storage format" {
 
     // Kinds with no ordering also become BLOBs, carrying the self-delimiting
     // codec (tag 0x0e here) rather than the memcomparable one.
-    const arr = try value_mod.arrayValue(alloc, &.{ Value{ .int = 1 }, Value.@"null" });
+    const arr = try value_mod.arrayValue(alloc, &.{ Value{ .int = 1 }, Value.null });
     const arr_repr = try EncodeValue(alloc, arr);
     try testing.expect(arr_repr == .blob);
     try testing.expectEqual(@as(u8, 0x0e), arr_repr.blob[0]);
@@ -551,7 +551,7 @@ test "DecodeValue(EncodeValue(v)) round trips foundation kinds" {
     const alloc = arena.allocator();
 
     const identity_cases = [_]Value{
-        Value.@"null",
+        Value.null,
         Value{ .int = 42 },
         Value{ .int = std.math.minInt(i64) },
         Value{ .float = -1.5 },
@@ -562,7 +562,7 @@ test "DecodeValue(EncodeValue(v)) round trips foundation kinds" {
         Value{ .date = try value_mod.parseDateDays("2021-03-04") },
         try value_mod.arrayValue(alloc, &.{
             Value{ .int = 1 },
-            Value.@"null",
+            Value.null,
             try value_mod.structValue(alloc, &.{"k"}, &.{Value{ .string = "v" }}),
         }),
         try value_mod.structValue(
@@ -619,7 +619,7 @@ test "LiteralFromValue formatting" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    try testing.expectEqualStrings("null", try LiteralFromValue(alloc, Value.@"null"));
+    try testing.expectEqualStrings("null", try LiteralFromValue(alloc, Value.null));
     try testing.expectEqualStrings("42", try LiteralFromValue(alloc, Value{ .int = 42 }));
     try testing.expectEqualStrings("-9223372036854775808", try LiteralFromValue(alloc, Value{ .int = std.math.minInt(i64) }));
     try testing.expectEqualStrings("true", try LiteralFromValue(alloc, Value{ .bool = true }));
@@ -656,7 +656,7 @@ test "castValue stub passes same-kind values through" {
     const alloc = arena.allocator();
 
     try value_mod.expectValueEqual(Value{ .int = 5 }, try castValue(alloc, Value{ .int = 5 }, .int64));
-    try value_mod.expectValueEqual(Value.@"null", try castValue(alloc, Value.@"null", .string));
+    try value_mod.expectValueEqual(Value.null, try castValue(alloc, Value.null, .string));
     try testing.expectError(error.Unimplemented, castValue(alloc, Value{ .int = 5 }, .string));
     try testing.expectError(error.Unimplemented, castValue(alloc, Value{ .string = "1" }, .timestamp));
 }
@@ -674,7 +674,7 @@ fn literalValueOf(alloc: std.mem.Allocator, sql: [:0]const u8) !Value {
     const scan = query.query.?.node.?.resolved_project_scan_node;
     const literal = scan.expr_list[0].expr.?.node.?.resolved_literal_node;
     const vwt = literal.value.?;
-    return valueFromProto(alloc, vwt.value.?, vwt.@"type".?);
+    return valueFromProto(alloc, vwt.value.?, vwt.type.?);
 }
 
 test "valueFromProto numeric / bignumeric literals" {
@@ -719,7 +719,7 @@ test "valueFromProto scalar literals" {
     try value_mod.expectValueEqual(Value{ .string = "héllo" }, try literalValueOf(alloc, "SELECT 'héllo'"));
     try value_mod.expectValueEqual(Value{ .bytes = "ab\x00" }, try literalValueOf(alloc, "SELECT b'ab\\x00'"));
     // NULL literal: ValueProto with no oneof member set.
-    try value_mod.expectValueEqual(Value.@"null", try literalValueOf(alloc, "SELECT NULL"));
+    try value_mod.expectValueEqual(Value.null, try literalValueOf(alloc, "SELECT NULL"));
 }
 
 test "valueFromProto date literal" {
@@ -752,7 +752,7 @@ test "valueFromProto array literal" {
 
     // NULL array is NULL.
     const null_array = try literalValueOf(alloc, "SELECT CAST(NULL AS ARRAY<INT64>)");
-    try value_mod.expectValueEqual(Value.@"null", null_array);
+    try value_mod.expectValueEqual(Value.null, null_array);
 }
 
 test "valueFromProto struct literal" {

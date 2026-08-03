@@ -981,13 +981,14 @@ pub const Db = struct {
 
         const catalog_json = if (opts.catalog_scope == .none)
             try arena.dupeZ(u8, "{}")
-        else db.statelessCatalogJson(arena) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => {
-                db.setLastError(@errorName(err));
-                return error.AnalyzeFailed;
-            },
-        };
+        else
+            db.statelessCatalogJson(arena) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    db.setLastError(@errorName(err));
+                    return error.AnalyzeFailed;
+                },
+            };
         return analyzer_ffi.analyzeNextStatementOpts(
             arena,
             sqlz,
@@ -2210,7 +2211,7 @@ fn optionSpecsFrom(
             else => continue,
         };
         const vwt = lit.value orelse continue;
-        const type_proto = vwt.@"type" orelse continue;
+        const type_proto = vwt.type orelse continue;
         const value_proto = vwt.value orelse continue;
         const v = encoder.valueFromProto(arena, value_proto, type_proto) catch continue;
 
@@ -2763,7 +2764,6 @@ pub const Rows = struct {
                 // A column here means something outside the engine wrote it.
                 // No engine value is TEXT.
                 .text => return r.db.failDecode(error.CorruptData),
-
             };
             // Safe to borrow: cellFromValue copies into the rows arena before
             // the next step invalidates SQLite's column memory.

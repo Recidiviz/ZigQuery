@@ -2589,8 +2589,7 @@ test "extract SUM OVER with PARTITION BY and explicit frame" {
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
 
-    const stmt = try TestHarness.statementData(
-        alloc,
+    const stmt = try TestHarness.statementData(alloc,
         \\SELECT SUM(x) OVER (PARTITION BY y ORDER BY x DESC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
         \\FROM UNNEST([STRUCT(1 AS x, 'a' AS y)])
     );

@@ -320,14 +320,14 @@ test "parseAggregateOptions round trip" {
         try IGNORE_NULLS(alloc),
         try HAVING_MAX(alloc, .{ .date = try value_mod.parseDateDays("2021-05-06") }),
         .{ .string = "plain arg" },
-        .@"null",
+        .null,
     };
     const parsed = try parseAggregateOptions(alloc, &args);
 
     try testing.expectEqual(@as(usize, 3), parsed.values.len);
     try value_mod.expectValueEqual(.{ .int = 7 }, parsed.values[0]);
     try value_mod.expectValueEqual(.{ .string = "plain arg" }, parsed.values[1]);
-    try value_mod.expectValueEqual(.@"null", parsed.values[2]);
+    try value_mod.expectValueEqual(.null, parsed.values[2]);
 
     try testing.expect(parsed.opt.distinct);
     try testing.expect(parsed.opt.ignore_nulls);
@@ -350,12 +350,12 @@ test "order_by markers preserve per-row NULL sort keys" {
 
     const args = [_]Value{
         .{ .int = 1 },
-        try ORDER_BY(alloc, .@"null", true),
+        try ORDER_BY(alloc, .null, true),
     };
     const parsed = try parseAggregateOptions(alloc, &args);
     try testing.expectEqual(@as(usize, 1), parsed.opt.order_by.len);
     try testing.expect(parsed.opt.order_by[0].is_asc);
-    try value_mod.expectValueEqual(.@"null", parsed.opt.order_by[0].value);
+    try value_mod.expectValueEqual(.null, parsed.opt.order_by[0].value);
 }
 
 test "non-marker strings stay in the argument list" {

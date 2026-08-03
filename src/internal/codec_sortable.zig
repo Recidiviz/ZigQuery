@@ -208,7 +208,6 @@ test "round trips every eligible kind" {
     }
 }
 
-
 test "BIGNUMERIC encodes to the biased big-endian test vectors" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -244,12 +243,11 @@ test "numeric round trips at both scales, including the range bounds" {
 
     const num_max: i256 = value_mod.numeric_unscaled_max;
     const unscaled = [_]struct { u: i256, big: bool }{
-        .{ .u = 0, .big = false },              .{ .u = 1, .big = false },
-        .{ .u = -1, .big = false },             .{ .u = num_max, .big = false },
-        .{ .u = -num_max, .big = false },       .{ .u = 0, .big = true },
-        .{ .u = 1, .big = true },               .{ .u = -1, .big = true },
-        .{ .u = std.math.maxInt(i256), .big = true },
-        .{ .u = std.math.minInt(i256), .big = true },
+        .{ .u = 0, .big = false },                    .{ .u = 1, .big = false },
+        .{ .u = -1, .big = false },                   .{ .u = num_max, .big = false },
+        .{ .u = -num_max, .big = false },             .{ .u = 0, .big = true },
+        .{ .u = 1, .big = true },                     .{ .u = -1, .big = true },
+        .{ .u = std.math.maxInt(i256), .big = true }, .{ .u = std.math.minInt(i256), .big = true },
     };
     for (unscaled) |tc| {
         const v = try value_mod.numericFromUnscaled(alloc, tc.u, tc.big);
@@ -298,8 +296,8 @@ test "memcmp over encodings matches compareForCollation" {
     // BLOB columns of that kind sort wrongly with no error anywhere.
     const groups = [_][]const Value{
         &.{
-            .{ .string = "" },   .{ .string = "a" },  .{ .string = "aa" },
-            .{ .string = "ab" }, .{ .string = "b" },  .{ .string = "\xff" },
+            .{ .string = "" },   .{ .string = "a" }, .{ .string = "aa" },
+            .{ .string = "ab" }, .{ .string = "b" }, .{ .string = "\xff" },
         },
         &.{ .{ .bytes = "" }, .{ .bytes = "\x00" }, .{ .bytes = "\x00\x00" }, .{ .bytes = "\xff" } },
         // Pre-epoch values are the ones a naive big-endian encoding gets wrong:

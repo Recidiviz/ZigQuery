@@ -964,7 +964,7 @@ pub const HLL_COUNT_INIT = struct {
         if (values.len == 2) {
             // Go bindHllCountInit skips the whole row when the precision
             // argument is NULL (and validates that it is an integer).
-            if (values[1] == .@"null") return;
+            if (values[1] == .null) return;
             _ = try values[1].toInt64();
         }
         if (f.hll == null) f.hll = Hll.init(defaultSettings());
@@ -972,7 +972,7 @@ pub const HLL_COUNT_INIT = struct {
     }
 
     pub fn done(f: *HLL_COUNT_INIT, alloc: std.mem.Allocator) Error!Value {
-        if (f.hll == null) return .@"null";
+        if (f.hll == null) return .null;
         return .{ .bytes = try f.hll.?.toBytes(alloc) };
     }
 };
@@ -986,7 +986,7 @@ fn mergeStep(hll: *?Hll, alloc: std.mem.Allocator, values: []const Value) Error!
             error.UnsupportedOperation,
         );
     }
-    if (values[0] == .@"null") return;
+    if (values[0] == .null) return;
     const sketch = try values[0].toBytes(alloc);
     const other = try Hll.fromBytes(alloc, sketch);
     if (hll.* == null) {
@@ -1027,14 +1027,14 @@ pub const HLL_COUNT_MERGE_PARTIAL = struct {
     }
 
     pub fn done(f: *HLL_COUNT_MERGE_PARTIAL, alloc: std.mem.Allocator) Error!Value {
-        if (f.hll == null) return .@"null";
+        if (f.hll == null) return .null;
         return .{ .bytes = try f.hll.?.toBytes(alloc) };
     }
 };
 
 /// Go bindHllCountExtract + HLL_COUNT_EXTRACT (a scalar function).
 pub fn hllCountExtract(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return .@"null";
+    if (args[0] == .null) return .null;
     const sketch = try args[0].toBytes(alloc);
     const h = try Hll.fromBytes(alloc, sketch);
     return .{ .int = @bitCast(h.cardinality()) };

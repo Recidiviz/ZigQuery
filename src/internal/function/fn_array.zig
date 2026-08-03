@@ -9,7 +9,7 @@ const value_mod = bind.value_mod;
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 /// Go bindInArray -> ARRAY_IN -> ArrayValue.Has (element-wise EQ, nil skipped).
 pub fn inArray(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -17,7 +17,7 @@ pub fn inArray(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (bind.existsNull(args)) return null_v;
     const arr = try args[1].toArray();
     for (arr.values) |elem| {
-        if (elem == .@"null") continue;
+        if (elem == .null) continue;
         if (try elem.eq(args[0])) return Value{ .bool = true };
     }
     return Value{ .bool = false };
@@ -115,7 +115,7 @@ pub fn arrayToString(alloc: std.mem.Allocator, args: []const Value) Error!Value 
     var out: std.ArrayList(u8) = .empty;
     var first = true;
     for (arr.values) |v| {
-        const piece: []const u8 = if (v == .@"null") (null_text orelse continue) else try v.format('t', alloc);
+        const piece: []const u8 = if (v == .null) (null_text orelse continue) else try v.format('t', alloc);
         if (!first) try out.appendSlice(alloc, delim);
         try out.appendSlice(alloc, piece);
         first = false;

@@ -156,9 +156,9 @@ pub const Server = struct {
                 "loaded {d} projects, {d} datasets, {d} tables ({d} failed), " ++
                     "{d} rows ({d} failed) from {s}",
                 .{
-                    stats.projects,    stats.datasets,
-                    stats.tables,      stats.failed_tables,
-                    stats.rows,        stats.failed_rows,
+                    stats.projects, stats.datasets,
+                    stats.tables,   stats.failed_tables,
+                    stats.rows,     stats.failed_rows,
                     path,
                 },
             );
@@ -329,21 +329,19 @@ pub const Server = struct {
         const reqs = http_server.stat_requests.load(.monotonic);
         const wait_ms = @as(f64, @floatFromInt(http_server.stat_wait_ns.load(.monotonic))) / 1e6;
         const handle_ms = @as(f64, @floatFromInt(http_server.stat_handle_ns.load(.monotonic))) / 1e6;
-        try out.print(arena,
-            ",\"contention\":{{\"requests\":{d},\"totalWaitMs\":{d:.1}," ++
-                "\"totalHandleMs\":{d:.1},\"meanWaitMs\":{d:.3}," ++
-                "\"meanHandleMs\":{d:.3},\"waitFraction\":{d:.3}," ++
-                "\"maxWaiters\":{d},\"waitersNow\":{d}}}",
-            .{
-                reqs,
-                wait_ms,
-                handle_ms,
-                if (reqs == 0) 0 else wait_ms / @as(f64, @floatFromInt(reqs)),
-                if (reqs == 0) 0 else handle_ms / @as(f64, @floatFromInt(reqs)),
-                if (wait_ms + handle_ms == 0) 0 else wait_ms / (wait_ms + handle_ms),
-                http_server.stat_waiters_max.load(.monotonic),
-                http_server.stat_waiters_now.load(.monotonic),
-            });
+        try out.print(arena, ",\"contention\":{{\"requests\":{d},\"totalWaitMs\":{d:.1}," ++
+            "\"totalHandleMs\":{d:.1},\"meanWaitMs\":{d:.3}," ++
+            "\"meanHandleMs\":{d:.3},\"waitFraction\":{d:.3}," ++
+            "\"maxWaiters\":{d},\"waitersNow\":{d}}}", .{
+            reqs,
+            wait_ms,
+            handle_ms,
+            if (reqs == 0) 0 else wait_ms / @as(f64, @floatFromInt(reqs)),
+            if (reqs == 0) 0 else handle_ms / @as(f64, @floatFromInt(reqs)),
+            if (wait_ms + handle_ms == 0) 0 else wait_ms / (wait_ms + handle_ms),
+            http_server.stat_waiters_max.load(.monotonic),
+            http_server.stat_waiters_now.load(.monotonic),
+        });
         // Where engine time goes. `analysisFraction` is the number that
         // decides whether running analysis concurrently is worth anything:
         // wall time under N parallel analyzers is bounded by (1-f) + f/N, and
@@ -358,60 +356,56 @@ pub const Server = struct {
         const analyze_ms = ms(phase.totalNs(.analyze));
         const transform_ms = ms(phase.totalNs(.transform));
         const sqlite_ms = ms(phase.sqliteTotalNs());
-        try out.print(arena,
-            ",\"phases\":{{\"analyzeMs\":{d:.1},\"analyzeCount\":{d}," ++
-                "\"transformMs\":{d:.1},\"transformCount\":{d}," ++
-                "\"sqliteMs\":{d:.1}," ++
-                "\"sqlite\":{{" ++
-                "\"prepareMs\":{d:.1},\"prepareCount\":{d}," ++
-                "\"stepMs\":{d:.1},\"stepCount\":{d}," ++
-                "\"execMs\":{d:.1},\"execCount\":{d}," ++
-                "\"engineMs\":{d:.1},\"catalogMs\":{d:.1},\"metadataMs\":{d:.1}," ++
-                "\"catalogPrepareMs\":{d:.1},\"catalogPrepareCount\":{d}," ++
-                "\"catalogStepMs\":{d:.1}}}," ++
-                "\"preparedSqlBytes\":{d},\"codecMs\":{d:.1},\"codecCount\":{d},",
-            .{
-                analyze_ms,
-                phase.count(.analyze),
-                transform_ms,
-                phase.count(.transform),
-                sqlite_ms,
-                ms(phase.totalNs(.sqlite_prepare)),
-                phase.count(.sqlite_prepare),
-                ms(phase.totalNs(.sqlite_step)),
-                phase.count(.sqlite_step),
-                ms(phase.totalNs(.sqlite_exec)),
-                phase.count(.sqlite_exec),
-                ms(phase.sqliteTotalNsFrom(.engine)),
-                ms(phase.sqliteTotalNsFrom(.catalog)),
-                ms(phase.sqliteTotalNsFrom(.metadata)),
-                ms(phase.totalNsFrom(.sqlite_prepare, .catalog)),
-                phase.countFrom(.sqlite_prepare, .catalog),
-                ms(phase.totalNsFrom(.sqlite_step, .catalog)),
-                phase.preparedBytes(),
-                ms(phase.codecTotalNs()),
-                phase.codecCount(),
-            });
+        try out.print(arena, ",\"phases\":{{\"analyzeMs\":{d:.1},\"analyzeCount\":{d}," ++
+            "\"transformMs\":{d:.1},\"transformCount\":{d}," ++
+            "\"sqliteMs\":{d:.1}," ++
+            "\"sqlite\":{{" ++
+            "\"prepareMs\":{d:.1},\"prepareCount\":{d}," ++
+            "\"stepMs\":{d:.1},\"stepCount\":{d}," ++
+            "\"execMs\":{d:.1},\"execCount\":{d}," ++
+            "\"engineMs\":{d:.1},\"catalogMs\":{d:.1},\"metadataMs\":{d:.1}," ++
+            "\"catalogPrepareMs\":{d:.1},\"catalogPrepareCount\":{d}," ++
+            "\"catalogStepMs\":{d:.1}}}," ++
+            "\"preparedSqlBytes\":{d},\"codecMs\":{d:.1},\"codecCount\":{d},", .{
+            analyze_ms,
+            phase.count(.analyze),
+            transform_ms,
+            phase.count(.transform),
+            sqlite_ms,
+            ms(phase.totalNs(.sqlite_prepare)),
+            phase.count(.sqlite_prepare),
+            ms(phase.totalNs(.sqlite_step)),
+            phase.count(.sqlite_step),
+            ms(phase.totalNs(.sqlite_exec)),
+            phase.count(.sqlite_exec),
+            ms(phase.sqliteTotalNsFrom(.engine)),
+            ms(phase.sqliteTotalNsFrom(.catalog)),
+            ms(phase.sqliteTotalNsFrom(.metadata)),
+            ms(phase.totalNsFrom(.sqlite_prepare, .catalog)),
+            phase.countFrom(.sqlite_prepare, .catalog),
+            ms(phase.totalNsFrom(.sqlite_step, .catalog)),
+            phase.preparedBytes(),
+            ms(phase.codecTotalNs()),
+            phase.codecCount(),
+        });
         // Split from the print above only because Zig caps a format call at 32
         // arguments. `codec.*` partitions `codecMs`.
-        try out.print(arena,
-            "\"codec\":{{\"timersEnabled\":{},\"encodeMs\":{d:.1},\"encodeCount\":{d}," ++
-                "\"decodeMs\":{d:.1},\"decodeCount\":{d}," ++
-                "\"literalMs\":{d:.1},\"literalCount\":{d}}}," ++
-                "\"analysisFraction\":{d:.3},\"sqliteFraction\":{d:.3}}}",
-            .{
-                // Zeros below mean "not instrumented" when this is false, not
-                // "no codec work happened". See -Dcodec-timers.
-                phase.codec_timers_enabled,
-                ms(phase.totalNs(.codec_encode)),
-                phase.count(.codec_encode),
-                ms(phase.totalNs(.codec_decode)),
-                phase.count(.codec_decode),
-                ms(phase.totalNs(.codec_literal)),
-                phase.count(.codec_literal),
-                if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
-                if (handle_ms == 0) 0 else sqlite_ms / handle_ms,
-            });
+        try out.print(arena, "\"codec\":{{\"timersEnabled\":{},\"encodeMs\":{d:.1},\"encodeCount\":{d}," ++
+            "\"decodeMs\":{d:.1},\"decodeCount\":{d}," ++
+            "\"literalMs\":{d:.1},\"literalCount\":{d}}}," ++
+            "\"analysisFraction\":{d:.3},\"sqliteFraction\":{d:.3}}}", .{
+            // Zeros below mean "not instrumented" when this is false, not
+            // "no codec work happened". See -Dcodec-timers.
+            phase.codec_timers_enabled,
+            ms(phase.totalNs(.codec_encode)),
+            phase.count(.codec_encode),
+            ms(phase.totalNs(.codec_decode)),
+            phase.count(.codec_decode),
+            ms(phase.totalNs(.codec_literal)),
+            phase.count(.codec_literal),
+            if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
+            if (handle_ms == 0) 0 else sqlite_ms / handle_ms,
+        });
         // SQLite's own allocator accounting.
         //
         // `lookaside.hitRate` is the number that matters. Lookaside is a
@@ -466,7 +460,7 @@ pub const Server = struct {
                     "\"writeBytes\":{d},\"writeMs\":{d:.1},\"reads\":{d}," ++
                     "\"readBytes\":{d},\"readMs\":{d:.1},\"syncs\":{d}," ++
                     "\"syncMs\":{d:.1},\"maxOffsetBytes\":{d}}}", .{
-                    k.label(),   st.opens,   st.writes,  st.write_bytes,
+                    k.label(),   st.opens,   st.writes,     st.write_bytes,
                     st.write_ms, st.reads,   st.read_bytes, st.read_ms,
                     st.syncs,    st.sync_ms, st.max_offset,
                 });
@@ -1583,11 +1577,7 @@ test "insertAll writes rows that a later query can read" {
 
     // `age` arrives as a JSON string, which is what google-cloud-bigquery's
     // insert_rows sends for an INTEGER column.
-    const res = try request(
-        s,
-        arena,
-        .POST,
-        "/projects/test/datasets/ds1/tables/streamed/insertAll",
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/streamed/insertAll",
         \\{"kind":"bigquery#tableDataInsertAllRequest","rows":[
         \\  {"insertId":"a","json":{"name":"Alice","age":"30"}},
         \\  {"insertId":"b","json":{"name":"Bob","age":"25"}}
@@ -1696,7 +1686,7 @@ test "creating a view answers with the schema the view resolves to" {
         u8,
         created.body,
         \\"schema":{"fields":[{"name":"string_field","type":"STRING"}]}
-    ,
+        ,
     ) != null);
     try testing.expect(std.mem.indexOf(u8, created.body, "\"type\":\"VIEW\"") != null);
 
@@ -1774,7 +1764,7 @@ test "an INT column is an INT64 column, not a STRING one" {
         u8,
         q.body,
         \\{"fields":[{"name":"person_id","type":"INTEGER"},{"name":"sentence_inferred_group_id","type":"INTEGER"}]}
-    ,
+        ,
     ) != null);
 }
 
@@ -1803,11 +1793,7 @@ test "insertAll under the /bigquery/v2 prefix reaches the same handler" {
     defer s.deinit();
     try createStreamTable(s, arena, "prefixed");
 
-    const res = try request(
-        s,
-        arena,
-        .POST,
-        "/bigquery/v2/projects/test/datasets/ds1/tables/prefixed/insertAll",
+    const res = try request(s, arena, .POST, "/bigquery/v2/projects/test/datasets/ds1/tables/prefixed/insertAll",
         \\{"rows":[{"json":{"name":"x","age":1}}]}
     );
     try testing.expectEqual(std.http.Status.ok, res.status);
@@ -1822,11 +1808,7 @@ test "insertAll into a missing table is a 404" {
     var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
-    const res = try request(
-        s,
-        arena,
-        .POST,
-        "/projects/test/datasets/ds1/tables/nope/insertAll",
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/nope/insertAll",
         \\{"rows":[{"json":{"a":1}}]}
     );
     try testing.expectEqual(std.http.Status.not_found, res.status);
@@ -1846,11 +1828,7 @@ test "an unknown field rejects the whole batch with 200 and insertErrors" {
 
     // emulator_test.py test_insert_unknown_fields_mixed_valid_and_invalid:
     // rows 1 and 3 are invalid, and rows 0 and 2 report `stopped` after them.
-    const res = try request(
-        s,
-        arena,
-        .POST,
-        "/projects/test/datasets/ds1/tables/rejected/insertAll",
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/rejected/insertAll",
         \\{"rows":[
         \\  {"json":{"name":"ok1","age":1}},
         \\  {"json":{"name":"bad1","bad_field":"x"}},
@@ -1880,11 +1858,7 @@ test "insertAll surfaces a bad value as a 500, not as insertErrors" {
     try createStreamTable(s, arena, "badvalue");
 
     // Go maps every storage-layer failure to errInternalError.
-    const res = try request(
-        s,
-        arena,
-        .POST,
-        "/projects/test/datasets/ds1/tables/badvalue/insertAll",
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/badvalue/insertAll",
         \\{"rows":[{"json":{"name":"a","age":"not a number"}}]}
     );
     try testing.expectEqual(std.http.Status.internal_server_error, res.status);
@@ -1900,11 +1874,7 @@ test "insertAll with no rows is a no-op" {
     defer s.deinit();
     try createStreamTable(s, arena, "empty");
 
-    const res = try request(
-        s,
-        arena,
-        .POST,
-        "/projects/test/datasets/ds1/tables/empty/insertAll",
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/empty/insertAll",
         \\{"kind":"bigquery#tableDataInsertAllRequest"}
     );
     try testing.expectEqual(std.http.Status.ok, res.status);

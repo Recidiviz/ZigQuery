@@ -9,7 +9,7 @@ const value_mod = @import("../value.zig");
 const Value = bind.Value;
 const Error = bind.Error;
 const Interval = value_mod.Interval;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 pub fn interval(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;

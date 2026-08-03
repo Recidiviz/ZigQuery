@@ -12,7 +12,7 @@ const bind = @import("bind.zig");
 const value_mod = bind.value_mod;
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 // ----------------------------------------------------------------------
 // Cryptographic hashes (Go crypto/md5, crypto/sha1, crypto/sha256, crypto/sha512)
@@ -266,7 +266,7 @@ test "md5/sha hashes" {
     try testing.expectEqual(@as(usize, 32), s256.bytes.len);
 
     // NULL argument yields NULL.
-    try testing.expect((try md5(alloc, &.{null_v})) == .@"null");
+    try testing.expect((try md5(alloc, &.{null_v})) == .null);
 }
 
 test "session_user returns dummy" {

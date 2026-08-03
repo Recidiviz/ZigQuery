@@ -247,7 +247,7 @@ fn xColumn(
             const v = codec.decodeBinaryValueBorrowing(alloc, st.elems[st.row]) catch
                 return c.SQLITE_ERROR;
             switch (encoder.EncodeValue(alloc, v) catch return c.SQLITE_ERROR) {
-                .@"null" => sqlite.resultNull(ctx),
+                .null => sqlite.resultNull(ctx),
                 .int => |i| sqlite.resultInt64(ctx, i),
                 .float => |f| sqlite.resultDouble(ctx, f),
                 .blob => |b| sqlite.resultBlob(ctx, b),

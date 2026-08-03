@@ -11,7 +11,7 @@ const value_mod = @import("../value.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 pub fn currentTimestamp(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
@@ -232,7 +232,7 @@ pub fn unixMicros(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 pub fn generateTimestampArray(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len != 4)
         return bind.fail("GENERATE_TIMESTAMP_ARRAY: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    if (args[0] == .@"null" or args[1] == .@"null")
+    if (args[0] == .null or args[1] == .null)
         return value_mod.arrayValue(alloc, &.{});
     var cur = (try tu.broken(args[0])).civ;
     const end = (try tu.broken(args[1])).civ;

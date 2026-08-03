@@ -10,7 +10,7 @@ const value_mod = @import("../value.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 fn brokenOf(v: Value) Error!tu.BrokenTime {
     return tu.broken(v);
@@ -213,7 +213,7 @@ pub fn generateDateArray(alloc: std.mem.Allocator, args: []const Value) Error!Va
     if (args.len != 2 and args.len != 4)
         return bind.fail("GENERATE_DATE_ARRAY: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     // NULL start/end -> empty array (Go returns &ArrayValue{}).
-    if (args[0] == .@"null" or args[1] == .@"null")
+    if (args[0] == .null or args[1] == .null)
         return value_mod.arrayValue(alloc, &.{});
     var start = try brokenOf(args[0]);
     const end = try brokenOf(args[1]);

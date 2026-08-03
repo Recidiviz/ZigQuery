@@ -8,11 +8,11 @@ const pb = @import("../../proto/resolved_ast.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 /// Go bindError: NULL message -> NULL, otherwise raise the message verbatim.
 pub fn errorFn(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const msg = try args[0].toString(alloc);
     return bind.failMsg(msg, error.UnsupportedOperation);
 }
@@ -114,7 +114,7 @@ fn parseTypeJson(alloc: std.mem.Allocator, s: []const u8) !std.json.Value {
 // ---------------------------------------------------------------------
 
 fn parseNumericImpl(alloc: std.mem.Allocator, args: []const Value, is_big: bool) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const s = try args[0].toString(alloc);
     return value_mod.numericFromString(alloc, s, is_big) catch |err| switch (err) {
         error.NumericOutOfRange => bind.fail(
@@ -143,7 +143,7 @@ fn typeKindOf(t: std.json.Value) Error!pb.TypeKind {
 
 /// Go encoder.go CastValue, foundation kinds. NULL input stays NULL.
 fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value {
-    if (v == .@"null") return null_v;
+    if (v == .null) return null_v;
     const kind = try typeKindOf(t);
     switch (kind) {
         .TYPE_INT32, .TYPE_INT64, .TYPE_UINT32, .TYPE_UINT64 => {

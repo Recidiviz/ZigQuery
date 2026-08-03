@@ -22,7 +22,7 @@ const value_mod = @import("../value.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 // ----------------------------------------------------------------------
 // JSONPath parser (goccy decoder.PathBuilder port)
@@ -417,8 +417,8 @@ pub fn toJsonString(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return bind.fail("TO_JSON_STRING: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     // Go: a NULL second arg (pretty-print) yields NULL; a NULL first arg
     // yields the string "null".
-    if (args.len == 2 and args[1] == .@"null") return null_v;
-    if (args[0] == .@"null") return Value{ .string = try alloc.dupe(u8, "null") };
+    if (args.len == 2 and args[1] == .null) return null_v;
+    if (args[0] == .null) return Value{ .string = try alloc.dupe(u8, "null") };
     return Value{ .string = try args[0].toJson(alloc) };
 }
 
@@ -556,9 +556,9 @@ test "jsonExtract null result is NULL" {
     defer arena.deinit();
     const a = arena.allocator();
     const args = [_]Value{ strArg("{\"a\":null}"), strArg("$.a") };
-    try testing.expect((try jsonExtract(a, &args)) == .@"null");
+    try testing.expect((try jsonExtract(a, &args)) == .null);
     const args2 = [_]Value{ strArg("{\"a\":null}"), strArg("$.b") };
-    try testing.expect((try jsonExtract(a, &args2)) == .@"null");
+    try testing.expect((try jsonExtract(a, &args2)) == .null);
 }
 
 test "jsonExtractScalar" {
@@ -570,7 +570,7 @@ test "jsonExtractScalar" {
     try testing.expectEqualStrings("6", r.string);
     // array target -> NULL
     const args2 = [_]Value{ strArg("{\"fruits\":[\"apple\",\"banana\"]}"), strArg("$.fruits") };
-    try testing.expect((try jsonExtractScalar(a, &args2)) == .@"null");
+    try testing.expect((try jsonExtractScalar(a, &args2)) == .null);
 }
 
 test "jsonExtractArray produces JsonValue elements" {
@@ -592,10 +592,10 @@ test "jsonExtractStringArray unquotes" {
     try testing.expectEqualStrings("apples", r.array.values[0].string);
     // invalid json -> NULL
     const bad = [_]Value{ strArg("}}"), strArg("$") };
-    try testing.expect((try jsonExtractStringArray(a, &bad)) == .@"null");
+    try testing.expect((try jsonExtractStringArray(a, &bad)) == .null);
     // nested object element -> NULL
     const nested = [_]Value{ strArg("{\"a\":[{\"b\":1}]}"), strArg("$.a") };
-    try testing.expect((try jsonExtractStringArray(a, &nested)) == .@"null");
+    try testing.expect((try jsonExtractStringArray(a, &nested)) == .null);
 }
 
 test "parseJsonFn preserves order" {

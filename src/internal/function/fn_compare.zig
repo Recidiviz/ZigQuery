@@ -7,7 +7,7 @@ const bind = @import("bind.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 pub fn equal(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
@@ -70,8 +70,8 @@ pub fn lessOrEqual(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 /// Go IS_DISTINCT_FROM: NULLs compare as equal to each other only.
 pub fn isDistinctFrom(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    if (args[0] == .@"null" or args[1] == .@"null") {
-        const both_null = args[0] == .@"null" and args[1] == .@"null";
+    if (args[0] == .null or args[1] == .null) {
+        const both_null = args[0] == .null and args[1] == .null;
         return Value{ .bool = !both_null };
     }
     return Value{ .bool = !try args[0].eq(args[1]) };
@@ -79,8 +79,8 @@ pub fn isDistinctFrom(alloc: std.mem.Allocator, args: []const Value) Error!Value
 
 pub fn isNotDistinctFrom(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    if (args[0] == .@"null" or args[1] == .@"null") {
-        return Value{ .bool = args[0] == .@"null" and args[1] == .@"null" };
+    if (args[0] == .null or args[1] == .null) {
+        return Value{ .bool = args[0] == .null and args[1] == .null };
     }
     return Value{ .bool = try args[0].eq(args[1]) };
 }
@@ -137,7 +137,7 @@ pub fn in(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (bind.existsNull(args)) return null_v;
     for (args[1..]) |v| {
-        if (v == .@"null") continue;
+        if (v == .null) continue;
         if (try args[0].eq(v)) return Value{ .bool = true };
     }
     return Value{ .bool = false };
@@ -149,7 +149,7 @@ pub fn in(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 pub fn isNull(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    return Value{ .bool = args[0] == .@"null" };
+    return Value{ .bool = args[0] == .null };
 }
 
 pub fn isTrue(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -175,7 +175,7 @@ pub fn not(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 pub fn @"and"(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     for (args) |v| {
-        if (v == .@"null") continue;
+        if (v == .null) continue;
         if (!try v.toBool()) return Value{ .bool = false };
     }
     if (bind.existsNull(args)) return null_v;
@@ -186,7 +186,7 @@ pub fn @"and"(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 pub fn @"or"(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     for (args) |v| {
-        if (v == .@"null") continue;
+        if (v == .null) continue;
         if (try v.toBool()) return Value{ .bool = true };
     }
     if (bind.existsNull(args)) return null_v;
@@ -202,7 +202,7 @@ pub fn coalesce(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len == 0)
         return bind.fail("COALESCE: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     for (args) |arg| {
-        if (arg == .@"null") continue;
+        if (arg == .null) continue;
         return arg;
     }
     return null_v;
@@ -213,7 +213,7 @@ pub fn @"if"(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (args.len != 3)
         return bind.fail("IF: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    if (args[0] == .@"null") return args[2];
+    if (args[0] == .null) return args[2];
     return if (try args[0].toBool()) args[1] else args[2];
 }
 
@@ -221,7 +221,7 @@ pub fn ifnull(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (args.len != 2)
         return bind.fail("IFNULL: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    if (args[0] == .@"null") return args[1];
+    if (args[0] == .null) return args[1];
     return args[0];
 }
 
@@ -229,7 +229,7 @@ pub fn nullif(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (args.len != 2)
         return bind.fail("NULLIF: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     if (try args[0].eq(args[1])) return null_v;
     return args[0];
 }

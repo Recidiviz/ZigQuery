@@ -290,10 +290,7 @@ test "a batch of rows lands, with absent keys as NULL" {
     var db = try driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    try insertInto(
-        arena,
-        db,
-        "CREATE TABLE `p.d.t` (`i` INT64, `s` STRING)",
+    try insertInto(arena, db, "CREATE TABLE `p.d.t` (`i` INT64, `s` STRING)",
         \\[{"name":"i","type":"INTEGER"},{"name":"s","type":"STRING"}]
     ,
         // Row 2 omits `s` entirely — Go binds nil for it.
@@ -338,10 +335,7 @@ test "INT64 posted as JSON text stores as a number" {
     var db = try driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    try insertInto(
-        arena,
-        db,
-        "CREATE TABLE `p.d.t` (`i` INT64)",
+    try insertInto(arena, db, "CREATE TABLE `p.d.t` (`i` INT64)",
         \\[{"name":"i","type":"INTEGER"}]
     ,
         \\[{"i":"10"},{"i":"9"},{"i":"2"}]
@@ -364,10 +358,7 @@ test "TIMESTAMP accepts both the epoch form and RFC3339" {
 
     // The first goes through Go's TimeFromTimestampValue; the second fails
     // that and falls through to CastValue's ToTime, as in Go.
-    try insertInto(
-        arena,
-        db,
-        "CREATE TABLE `p.d.t` (`k` INT64, `ts` TIMESTAMP)",
+    try insertInto(arena, db, "CREATE TABLE `p.d.t` (`k` INT64, `ts` TIMESTAMP)",
         \\[{"name":"k","type":"INTEGER"},{"name":"ts","type":"TIMESTAMP"}]
     ,
         \\[{"k":1,"ts":"1704164645.0"},{"k":2,"ts":"2024-01-02T03:04:05.000000"}]
@@ -389,10 +380,7 @@ test "BYTES are base64-decoded exactly once" {
 
     // bytes_field_test.go: "Hello" -> SGVsbG8=, and reading it back must give
     // that same string, not base64(base64(...)).
-    try insertInto(
-        arena,
-        db,
-        "CREATE TABLE `p.d.t` (`k` INT64, `b` BYTES)",
+    try insertInto(arena, db, "CREATE TABLE `p.d.t` (`k` INT64, `b` BYTES)",
         \\[{"name":"k","type":"INTEGER"},{"name":"b","type":"BYTES"}]
     ,
         \\[{"k":1,"b":"SGVsbG8="},{"k":2,"b":""},{"k":3,"b":null}]
@@ -417,10 +405,7 @@ test "a JSON column stores the document, not a quoted string" {
     defer db.close();
 
     // server_test.go TestJson posts the column as a JSON *string*.
-    try insertInto(
-        arena,
-        db,
-        "CREATE TABLE `p.d.t` (`j` JSON)",
+    try insertInto(arena, db, "CREATE TABLE `p.d.t` (`j` JSON)",
         \\[{"name":"j","type":"JSON"}]
     ,
         \\[{"j":"{\"a_date\":\"2024-01-01\",\"b_float\":1.2,\"c\":{\"test\":\"v\"}}"}]
@@ -488,10 +473,7 @@ test "ARRAY and STRUCT columns round-trip" {
     var db = try driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    try insertInto(
-        arena,
-        db,
-        "CREATE TABLE `p.d.t` (`xs` ARRAY<INT64>, `s` STRUCT<`a` INT64, `b` STRING>)",
+    try insertInto(arena, db, "CREATE TABLE `p.d.t` (`xs` ARRAY<INT64>, `s` STRUCT<`a` INT64, `b` STRING>)",
         \\[{"name":"xs","type":"INTEGER","mode":"REPEATED"},
         \\ {"name":"s","type":"RECORD","fields":[{"name":"a","type":"INTEGER"},{"name":"b","type":"STRING"}]}]
     ,
@@ -521,10 +503,7 @@ test "an empty REPEATED value stays empty" {
     var db = try driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    try insertInto(
-        arena,
-        db,
-        "CREATE TABLE `p.d.t` (`items` ARRAY<STRING>)",
+    try insertInto(arena, db, "CREATE TABLE `p.d.t` (`items` ARRAY<STRING>)",
         \\[{"name":"items","type":"STRING","mode":"REPEATED"}]
     ,
         \\[{"items":[]}]

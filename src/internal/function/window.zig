@@ -112,7 +112,7 @@ fn decodeArgs(alloc: std.mem.Allocator, argv: [*c]?*c.sqlite3_value, n: usize) !
     const args = try alloc.alloc(Value, n);
     for (0..n) |i| {
         args[i] = switch (sqlite.valueType(argv[i])) {
-            .null => Value.@"null",
+            .null => Value.null,
             .integer => Value{ .int = sqlite.valueInt64(argv[i]) },
             .float => Value{ .float = sqlite.valueDouble(argv[i]) },
             // TEXT has no engine meaning since storage format 3.
@@ -125,7 +125,7 @@ fn decodeArgs(alloc: std.mem.Allocator, argv: [*c]?*c.sqlite3_value, n: usize) !
 
 fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void {
     switch (try encoder.EncodeValue(alloc, v)) {
-        .@"null" => sqlite.resultNull(ctx),
+        .null => sqlite.resultNull(ctx),
         .int => |i| sqlite.resultInt64(ctx, i),
         .float => |f| sqlite.resultDouble(ctx, f),
         .blob => |b| sqlite.resultBlob(ctx, b),
@@ -224,7 +224,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                     }
                     const x = parsed.values[0];
                     const y = parsed.values[1];
-                    if (x == .@"null" or y == .@"null") return;
+                    if (x == .null or y == .null) return;
                     try group.agg.step(alloc, try value_mod.arrayValue(alloc, &.{ x, y }));
                 },
             }
@@ -255,7 +255,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 },
                 // Go newTupleItemWindowAggregator inverse removes the oldest NULL
                 // (never matches a buffered [x, y] array): a no-op in practice.
-                .tuple => try group.agg.inverse(.@"null"),
+                .tuple => try group.agg.inverse(.null),
             }
         }
 
@@ -394,7 +394,7 @@ const TestEnv = struct {
                 .float => .{ .float = stmt.columnDouble(0) },
                 .text => return error.NoRow,
                 .blob => try encoder.DecodeValue(env.alloc(), .{ .blob = try env.alloc().dupe(u8, stmt.columnBlob(0)) }),
-                .null => .@"null",
+                .null => .null,
             };
             try out.append(env.alloc(), v);
         }
@@ -489,7 +489,7 @@ test "lag / lead with defaults" {
     {
         const got = try env.column("SELECT zetasqlite_window_lag(v) OVER (ORDER BY v " ++ F_LAG ++ ") FROM t");
         try testing.expectEqual(@as(usize, 3), got.len);
-        try testing.expect(got[0] == .@"null");
+        try testing.expect(got[0] == .null);
         try testing.expectEqual(@as(i64, 10), got[1].int);
         try testing.expectEqual(@as(i64, 20), got[2].int);
     }
@@ -504,7 +504,7 @@ test "lag / lead with defaults" {
         try testing.expectEqual(@as(usize, 3), got.len);
         try testing.expectEqual(@as(i64, 20), got[0].int);
         try testing.expectEqual(@as(i64, 30), got[1].int);
-        try testing.expect(got[2] == .@"null");
+        try testing.expect(got[2] == .null);
     }
 }
 
@@ -573,7 +573,7 @@ test "statistical window functions (stddev / var / corr)" {
     try env.exec("INSERT INTO one VALUES (5)");
     const got = try env.column("SELECT zetasqlite_window_stddev(v) OVER () FROM one");
     try testing.expectEqual(@as(usize, 1), got.len);
-    try testing.expect(got[0] == .@"null");
+    try testing.expect(got[0] == .null);
 }
 
 test "corr window over packed [x, y] pairs" {

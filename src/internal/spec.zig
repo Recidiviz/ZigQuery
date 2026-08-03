@@ -445,9 +445,9 @@ pub fn appendJsonString(out: *std.ArrayList(u8), alloc: std.mem.Allocator, s: []
 pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*TableSpec {
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, json_text, .{}) catch |err|
         switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidType,
-    };
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidType,
+        };
     if (parsed != .object) return error.InvalidType;
     const obj = parsed.object;
 

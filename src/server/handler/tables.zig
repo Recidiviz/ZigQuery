@@ -79,8 +79,8 @@ pub fn writeTableListEntry(
 /// Keys the emulator always computes, whatever the client posted.
 fn isServerComputedKey(k: []const u8) bool {
     const computed = [_][]const u8{
-        "creationTime",   "id",         "kind",   "lastModifiedTime",
-        "selfLink",       "schema",     "type",   "tableReference",
+        "creationTime", "id",     "kind", "lastModifiedTime",
+        "selfLink",     "schema", "type", "tableReference",
     };
     for (computed) |c| {
         if (std.mem.eql(u8, k, c)) return true;

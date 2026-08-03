@@ -387,7 +387,6 @@ fn unscaledToFloat(unscaled: i256, scale: usize) f64 {
     return if (negative) -q else q;
 }
 
-
 /// 10^e for every exponent NUMERIC and BIGNUMERIC can ask for. BIGNUMERIC's
 /// scale of 38 is the largest, and 10^38 < 2^128, so the whole table is a
 /// native integer each entry can be set from directly.
@@ -397,9 +396,6 @@ const pow_ten_table: [39]u128 = blk: {
     for (1..39) |i| t[i] = t[i - 1] * 10;
     break :blk t;
 };
-
-
-
 
 /// NUMERIC is decimal(38,9) and BIGNUMERIC decimal(76,38), so each value is
 /// exactly an integer at its scale. `numericValue` enforces that, which is what
@@ -462,7 +458,7 @@ pub const Numeric = struct {
 };
 
 pub const Value = union(enum) {
-    @"null",
+    null,
     int: i64,
     float: f64,
     bool: bool,
@@ -500,7 +496,7 @@ pub const Value = union(enum) {
 
     pub fn add(self: Value, alloc: std.mem.Allocator, v: Value) ValueError!Value {
         switch (self) {
-            .@"null" => return fail("add on null value", error.NullValue),
+            .null => return fail("add on null value", error.NullValue),
             .int => |i| return Value{ .int = i +% try v.toInt64() },
             .float => |f| return Value{ .float = f + try v.toFloat64() },
             .string => |s| {
@@ -547,13 +543,13 @@ pub const Value = union(enum) {
             ),
             .array => return fail("add operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("add operation is unsupported for struct", error.UnsupportedOperation),
-            .safe => |p| return p.add(alloc, v) catch Value.@"null",
+            .safe => |p| return p.add(alloc, v) catch Value.null,
         }
     }
 
     pub fn sub(self: Value, alloc: std.mem.Allocator, v: Value) ValueError!Value {
         switch (self) {
-            .@"null" => return fail("sub on null value", error.NullValue),
+            .null => return fail("sub on null value", error.NullValue),
             .int => |i| return Value{ .int = i -% try v.toInt64() },
             .float => |f| return Value{ .float = f - try v.toFloat64() },
             .string => return fail("sub operation is unsupported for string", error.UnsupportedOperation),
@@ -591,13 +587,13 @@ pub const Value = union(enum) {
             ),
             .array => return fail("sub operation is unsupported for array", error.UnsupportedOperation),
             .struct_ => return fail("sub operation is unsupported for struct", error.UnsupportedOperation),
-            .safe => |p| return p.sub(alloc, v) catch Value.@"null",
+            .safe => |p| return p.sub(alloc, v) catch Value.null,
         }
     }
 
     pub fn mul(self: Value, alloc: std.mem.Allocator, v: Value) ValueError!Value {
         switch (self) {
-            .@"null" => return fail("mul on null value", error.NullValue),
+            .null => return fail("mul on null value", error.NullValue),
             .int => |i| return Value{ .int = i *% try v.toInt64() },
             .float => |f| return Value{ .float = f * try v.toFloat64() },
             .numeric => |n| return numericArith(
@@ -606,14 +602,14 @@ pub const Value = union(enum) {
                 v,
                 .mul,
             ),
-            .safe => |p| return p.mul(alloc, v) catch Value.@"null",
+            .safe => |p| return p.mul(alloc, v) catch Value.null,
             else => return fail("mul operation is unsupported for this type", error.UnsupportedOperation),
         }
     }
 
     pub fn div(self: Value, alloc: std.mem.Allocator, v: Value) ValueError!Value {
         switch (self) {
-            .@"null" => return fail("div on null value", error.NullValue),
+            .null => return fail("div on null value", error.NullValue),
             .int => |i| {
                 const v2 = try v.toInt64();
                 if (v2 == 0) return fail("zero divided error", error.DivideByZero);
@@ -631,7 +627,7 @@ pub const Value = union(enum) {
                 v,
                 .div,
             ),
-            .safe => |p| return p.div(alloc, v) catch Value.@"null",
+            .safe => |p| return p.div(alloc, v) catch Value.null,
             else => return fail("div operation is unsupported for this type", error.UnsupportedOperation),
         }
     }
@@ -661,7 +657,7 @@ pub const Value = union(enum) {
 
     fn compareOp(self: Value, op: CmpOp, v: Value) ValueError!bool {
         switch (self) {
-            .@"null" => return fail("comparison on null value", error.NullValue),
+            .null => return fail("comparison on null value", error.NullValue),
             .int => |i| {
                 const v2 = v.toInt64() catch return fail("failed to convert to int64", error.FailedConversion);
                 return applyOrder(op, std.math.order(i, v2));
@@ -789,7 +785,7 @@ pub const Value = union(enum) {
 
     pub fn toInt64(self: Value) ValueError!i64 {
         switch (self) {
-            .@"null" => return fail("toInt64 on null value", error.NullValue),
+            .null => return fail("toInt64 on null value", error.NullValue),
             .int => |i| return i,
             // Go: int64(fv). gc's behavior for NaN/out-of-range is
             // arch-specific; we saturate (arm64 semantics), NaN => 0.
@@ -835,7 +831,7 @@ pub const Value = union(enum) {
 
     pub fn toFloat64(self: Value) ValueError!f64 {
         switch (self) {
-            .@"null" => return fail("toFloat64 on null value", error.NullValue),
+            .null => return fail("toFloat64 on null value", error.NullValue),
             .int => |i| return @floatFromInt(i),
             .float => |f| return f,
             .bool => |b| return if (b) 1 else 0,
@@ -867,7 +863,7 @@ pub const Value = union(enum) {
 
     pub fn toBool(self: Value) ValueError!bool {
         switch (self) {
-            .@"null" => return fail("toBool on null value", error.NullValue),
+            .null => return fail("toBool on null value", error.NullValue),
             .int => |i| switch (i) {
                 0 => return false,
                 1 => return true,
@@ -911,7 +907,7 @@ pub const Value = union(enum) {
 
     pub fn toString(self: Value, alloc: std.mem.Allocator) ValueError![]u8 {
         switch (self) {
-            .@"null" => return fail("toString on null value", error.NullValue),
+            .null => return fail("toString on null value", error.NullValue),
             .int => |i| return std.fmt.allocPrint(alloc, "{d}", .{i}),
             .float => |f| {
                 var buf: [32]u8 = undefined;
@@ -965,7 +961,7 @@ pub const Value = union(enum) {
 
     pub fn toArray(self: Value) ValueError!*ArrayValue {
         switch (self) {
-            .@"null" => return fail("toArray on null value", error.NullValue),
+            .null => return fail("toArray on null value", error.NullValue),
             .array => |a| return a,
             // Go: StringValue("").ToArray() returns (nil, nil) i.e. a null
             // array; represent that as NullValue here.
@@ -980,7 +976,7 @@ pub const Value = union(enum) {
 
     pub fn toStruct(self: Value) ValueError!*StructValue {
         switch (self) {
-            .@"null" => return fail("toStruct on null value", error.NullValue),
+            .null => return fail("toStruct on null value", error.NullValue),
             .struct_ => |s| return s,
             .string => |s| {
                 if (s.len == 0) return fail("empty string converts to null struct", error.NullValue);
@@ -1005,7 +1001,7 @@ pub const Value = union(enum) {
     /// with preserved key order; json passes through verbatim.
     pub fn toJson(self: Value, alloc: std.mem.Allocator) ValueError![]u8 {
         switch (self) {
-            .@"null" => return alloc.dupe(u8, "null"),
+            .null => return alloc.dupe(u8, "null"),
             .int => |i| return std.fmt.allocPrint(alloc, "{d}", .{i}),
             .float => |f| {
                 var buf: [32]u8 = undefined;
@@ -1089,7 +1085,7 @@ pub const Value = union(enum) {
     /// arithmetic paths depend on.
     pub fn toUnscaled(self: Value, scale: usize) ValueError!Wide {
         switch (self) {
-            .@"null" => return fail("toUnscaled on null value", error.NullValue),
+            .null => return fail("toUnscaled on null value", error.NullValue),
             .int => |i| return @as(Wide, i) * pow10(Wide, scale),
             .float => |f| return unscaledFromFloat(f, scale),
             .bool => |b| return @as(Wide, @intFromBool(b)) * pow10(Wide, scale),
@@ -1156,7 +1152,7 @@ pub const Value = union(enum) {
     /// by FORMAT. Other verbs fall through to the printable form.
     pub fn format(self: Value, verb: u8, alloc: std.mem.Allocator) ValueError![]u8 {
         switch (self) {
-            .@"null" => return alloc.dupe(u8, "NULL"),
+            .null => return alloc.dupe(u8, "NULL"),
             .int => |i| return std.fmt.allocPrint(alloc, "{d}", .{i}),
             .float => |f| {
                 var buf: [40]u8 = undefined;
@@ -1207,7 +1203,7 @@ pub const Value = union(enum) {
                 try out.append(alloc, '[');
                 for (a.values, 0..) |v, i| {
                     if (i > 0) try out.appendSlice(alloc, ", ");
-                    if (v == .@"null") {
+                    if (v == .null) {
                         try out.appendSlice(alloc, "NULL");
                     } else {
                         try out.appendSlice(alloc, try v.format(verb, alloc));
@@ -1221,7 +1217,7 @@ pub const Value = union(enum) {
                 try out.append(alloc, '(');
                 for (s.values, 0..) |v, i| {
                     if (i > 0) try out.appendSlice(alloc, ", ");
-                    if (v == .@"null") {
+                    if (v == .null) {
                         try out.appendSlice(alloc, "NULL");
                     } else {
                         try out.appendSlice(alloc, try v.format(verb, alloc));
@@ -1285,7 +1281,7 @@ fn goQuote(alloc: std.mem.Allocator, s: []const u8) ValueError![]u8 {
 /// scalars into `buf` (needs >= 32 bytes) and aliases string/bytes payloads.
 fn coerceToStringForCmp(v: Value, buf: []u8) ValueError![]const u8 {
     switch (v) {
-        .@"null" => return error.NullValue,
+        .null => return error.NullValue,
         .string => |s| return s,
         .bytes => |b| return b,
         .json => |s| return s,
@@ -1320,7 +1316,7 @@ const zero_time_days: i64 = daysFromCivil(1, 1, 1); // Go's time.Time{}
 /// rhs.ToTime() as used by date comparisons, projected onto civil days.
 fn dateDaysFromValue(v: Value) ValueError!i64 {
     switch (v) {
-        .@"null" => return error.NullValue,
+        .null => return error.NullValue,
         .date => |days| return days,
         .string => |s| return dateDaysFromText(s),
         .bytes => |b| return dateDaysFromText(b),
@@ -1763,7 +1759,7 @@ pub fn toUnixMicros(v: Value) ValueError!i64 {
 /// The rhs of a time-kind comparison as unix microseconds (Go: v.ToTime()).
 fn timeMicrosForCompare(v: Value) ValueError!i64 {
     switch (v) {
-        .@"null" => return error.NullValue,
+        .null => return error.NullValue,
         .timestamp => |m| return m,
         .datetime => |m| return m,
         .time => |m| return time_base_micros +% m,
@@ -2234,7 +2230,7 @@ pub fn numericFromString(alloc: std.mem.Allocator, s: []const u8, is_bignumeric:
 pub fn expectValueEqual(expected: Value, actual: Value) !void {
     try std.testing.expectEqual(std.meta.activeTag(expected), std.meta.activeTag(actual));
     switch (expected) {
-        .@"null" => {},
+        .null => {},
         .int => |i| try std.testing.expectEqual(i, actual.int),
         .float => |f| try std.testing.expectEqual(
             @as(u64, @bitCast(f)),
@@ -2478,7 +2474,7 @@ test "safe value swallows errors" {
 
     const safe_int = try safeValue(alloc, Value{ .int = 10 });
     // SAFE.DIVIDE(10, 0) => NULL instead of an error.
-    try expectValueEqual(Value.@"null", try safe_int.div(alloc, Value{ .int = 0 }));
+    try expectValueEqual(Value.null, try safe_int.div(alloc, Value{ .int = 0 }));
     // Successful ops pass through unwrapped.
     try expectValueEqual(Value{ .int = 5 }, try safe_int.div(alloc, Value{ .int = 2 }));
     // Failed conversions become zero values.

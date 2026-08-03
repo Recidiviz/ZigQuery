@@ -98,8 +98,8 @@ pub const views = [_]View{
         .view = "TABLES",
         .module = "zetasqlite_info_schema_tables",
         .columns = &.{
-            "table_catalog",      "table_schema", "table_name",
-            "table_type",         "is_typed",     "is_insertable_into",
+            "table_catalog", "table_schema", "table_name",
+            "table_type",    "is_typed",     "is_insertable_into",
             "creation_time",
         },
         .name_col = 2,
@@ -109,10 +109,10 @@ pub const views = [_]View{
         .view = "COLUMNS",
         .module = "zetasqlite_info_schema_columns",
         .columns = &.{
-            "table_catalog",          "table_schema", "table_name",
-            "column_name",            "ordinal_position", "is_nullable",
-            "data_type",              "is_partitioning_column",
-            "is_hidden",              "is_system_defined",
+            "table_catalog",     "table_schema",           "table_name",
+            "column_name",       "ordinal_position",       "is_nullable",
+            "data_type",         "is_partitioning_column", "is_hidden",
+            "is_system_defined",
         },
         .name_col = 2,
         .build = buildColumns,
@@ -629,13 +629,13 @@ fn xColumn(
         return c.SQLITE_OK;
     }
     const v: Value = switch (row[idx]) {
-        .null => Value.@"null",
+        .null => Value.null,
         .string => |s| Value{ .string = s },
         .int => |i| Value{ .int = i },
     };
     const alloc = st.arena.allocator();
     switch (encoder.EncodeValue(alloc, v) catch return c.SQLITE_ERROR) {
-        .@"null" => sqlite.resultNull(ctx),
+        .null => sqlite.resultNull(ctx),
         .int => |i| sqlite.resultInt64(ctx, i),
         .float => |f| sqlite.resultDouble(ctx, f),
         .blob => |b| sqlite.resultBlob(ctx, b),

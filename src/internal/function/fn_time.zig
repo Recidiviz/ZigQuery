@@ -8,7 +8,7 @@ const fd = @import("fn_date.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 pub fn currentTime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;

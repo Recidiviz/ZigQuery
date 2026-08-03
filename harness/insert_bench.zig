@@ -96,15 +96,15 @@ pub fn main(init: std.process.Init) !void {
         \\{s:<22}{d:>10.1} ms
         \\
     , .{
-        rows.len,          fields.len,
-        errs.len,          "std.json parse",
-        parse_ms,          pct(parse_ms, total),
-        "rowsFromBody",    rows_ms,
-        pct(rows_ms, total), "validate",
-        val_ms,            pct(val_ms, total),
-        "addTableData",    insert_ms,
+        rows.len,              fields.len,
+        errs.len,              "std.json parse",
+        parse_ms,              pct(parse_ms, total),
+        "rowsFromBody",        rows_ms,
+        pct(rows_ms, total),   "validate",
+        val_ms,                pct(val_ms, total),
+        "addTableData",        insert_ms,
         pct(insert_ms, total), per_row,
-        "total",           total,
+        "total",               total,
     });
     try o.flush();
 }

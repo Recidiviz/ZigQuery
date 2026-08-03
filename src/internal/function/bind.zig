@@ -94,7 +94,7 @@ pub fn failMsg(msg: []const u8, err: Error) Error {
 /// Go function.go existsNull: any SQL NULL among the arguments.
 pub fn existsNull(args: []const Value) bool {
     for (args) |v| {
-        if (v == .@"null") return true;
+        if (v == .null) return true;
     }
     return false;
 }

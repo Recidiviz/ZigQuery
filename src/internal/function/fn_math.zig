@@ -8,7 +8,7 @@ const bind = @import("bind.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 // ---------------------------------------------------------------------
 // add / subtract / multiply / divide (Go bindAdd/bindSub/bindMul/bindOpDiv)

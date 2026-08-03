@@ -55,7 +55,6 @@ const ScanData = types_data.ScanData;
 const ColumnData = types_data.ColumnData;
 const TransformContext = context.TransformContext;
 
-
 /// Orchestrates the transformation of the extracted query data
 /// to by delegating to
 /// the appropriate transformers.
@@ -171,23 +170,23 @@ pub const QueryCoordinator = struct {
 
         var query: *sqlbuilder.SelectStatement = undefined;
         query = switch (scan_data.type) {
-            .table          => try scan_table.transform(self, scan_data, ctx),
-            .join           => try scan_join.transform(self, scan_data, ctx),
-            .filter         => try scan_filter.transform(self, scan_data, ctx),
-            .project        => try scan_project.transform(self, scan_data, ctx),
-            .aggregate      => try scan_aggregate.transform(self, scan_data, ctx),
-            .order_by       => try scan_orderby.transform(self, scan_data, ctx),
-            .limit          => try scan_limit.transform(self, scan_data, ctx),
-            .set_op         => try scan_setop.transform(self, scan_data, ctx),
-            .single_row     => try scan_single_row.transform(self, scan_data, ctx),
-            .with           => try scan_with.transform(self, scan_data, ctx),
-            .with_ref       => try scan_with_ref.transform(self, scan_data, ctx),
+            .table => try scan_table.transform(self, scan_data, ctx),
+            .join => try scan_join.transform(self, scan_data, ctx),
+            .filter => try scan_filter.transform(self, scan_data, ctx),
+            .project => try scan_project.transform(self, scan_data, ctx),
+            .aggregate => try scan_aggregate.transform(self, scan_data, ctx),
+            .order_by => try scan_orderby.transform(self, scan_data, ctx),
+            .limit => try scan_limit.transform(self, scan_data, ctx),
+            .set_op => try scan_setop.transform(self, scan_data, ctx),
+            .single_row => try scan_single_row.transform(self, scan_data, ctx),
+            .with => try scan_with.transform(self, scan_data, ctx),
+            .with_ref => try scan_with_ref.transform(self, scan_data, ctx),
             // WithEntry scans should use TransformWithEntry method
-            .with_entry     => return error.UnsupportedNode,
-            .array          => try scan_array.transform(self, scan_data, ctx),
-            .analytic       => try scan_analytic.transform(self, scan_data, ctx),
-            .recursive      => try scan_recursive.transform(self, scan_data, ctx),
-            .recursive_ref  => try scan_recursive_ref.transform(self, scan_data, ctx)
+            .with_entry => return error.UnsupportedNode,
+            .array => try scan_array.transform(self, scan_data, ctx),
+            .analytic => try scan_analytic.transform(self, scan_data, ctx),
+            .recursive => try scan_recursive.transform(self, scan_data, ctx),
+            .recursive_ref => try scan_recursive_ref.transform(self, scan_data, ctx),
         };
 
         return .{

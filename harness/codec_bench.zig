@@ -339,9 +339,12 @@ fn report(o: anytype, s: Stage, overhead_ns: f64) !void {
         "{s:<26} encode {d:>6.1}ms /{d:>9}   decode {d:>6.1}ms /{d:>9}   literal {d:>5.1}ms /{d:>6}\n",
         .{
             "",
-            ms(s.encode_ns),  s.encode_calls,
-            ms(s.decode_ns),  s.decode_calls,
-            ms(phase_literal_ns(s)), s.codec_calls - s.encode_calls - s.decode_calls,
+            ms(s.encode_ns),
+            s.encode_calls,
+            ms(s.decode_ns),
+            s.decode_calls,
+            ms(phase_literal_ns(s)),
+            s.codec_calls - s.encode_calls - s.decode_calls,
         },
     );
 }

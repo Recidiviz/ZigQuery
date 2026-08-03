@@ -30,9 +30,7 @@ const sqlite_cflags = [_][]const u8{
 // only build inputs from outside this repo are Zig and Bazel.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const opts: std.Build.StandardOptimizeOptionOptions = .{
-        .preferred_optimize_mode = std.builtin.OptimizeMode.ReleaseFast
-    };
+    const opts: std.Build.StandardOptimizeOptionOptions = .{ .preferred_optimize_mode = std.builtin.OptimizeMode.ReleaseFast };
     const optimize = b.standardOptimizeOption(opts);
 
     // The shim (//shim) and the googlesql submodule (//third_party/googlesql)
@@ -103,11 +101,11 @@ pub fn build(b: *std.Build) void {
 
     const maybe_bazel: ?*std.Build.Step.Run = if (build_shim) blk: {
         const bazel = b.addSystemCommand(&.{
-            "bazel",       "build",
-            "-c",          "opt",
+            "bazel",                          "build",
+            "-c",                             "opt",
             // Explicit on the command line because ~/.bazelrc is read after
             // the workspace .bazelrc and would otherwise win.
-            "--jobs=4",    "--local_resources=cpu=4",
+            "--jobs=4",                       "--local_resources=cpu=4",
             "//shim:libgooglesql_shim.dylib",
         });
         bazel.setCwd(.{ .cwd_relative = repo_root });
@@ -340,7 +338,6 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_ioprobe.addArgs(args);
     b.step("io-probe", "Measure SQLite temp-file traffic on an in-memory db")
         .dependOn(&run_ioprobe.step);
-
 
     // ---- bigquery-emulator server ----
     //

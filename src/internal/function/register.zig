@@ -141,12 +141,12 @@ fn decodeArgs(
         // CAST's type documents that waste is two codec round trips per row.
         if (cached_args != 0 and i < 8 and (cached_args >> @intCast(i)) & 1 == 1) {
             if (sqlite.getAuxdata(ctx, @intCast(i)) != null) {
-                args[i] = Value.@"null";
+                args[i] = Value.null;
                 continue;
             }
         }
         args[i] = switch (sqlite.valueType(argv[i])) {
-            .null => Value.@"null",
+            .null => Value.null,
             .integer => Value{ .int = sqlite.valueInt64(argv[i]) },
             .float => Value{ .float = sqlite.valueDouble(argv[i]) },
             // TEXT has no engine meaning since storage format 3.
@@ -159,7 +159,7 @@ fn decodeArgs(
 
 fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void {
     switch (try encoder.EncodeValue(alloc, v)) {
-        .@"null" => sqlite.resultNull(ctx),
+        .null => sqlite.resultNull(ctx),
         .int => |i| sqlite.resultInt64(ctx, i),
         .float => |f| sqlite.resultDouble(ctx, f),
         .blob => |b| sqlite.resultBlob(ctx, b),
@@ -200,7 +200,7 @@ fn groupByImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqli
     const args = try decodeArgs(alloc, ctx, 0, @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})), 1);
     const decoded = if (args[0] == .safe) args[0].safe.* else args[0];
     switch (decoded) {
-        .@"null" => sqlite.resultNull(ctx),
+        .null => sqlite.resultNull(ctx),
         .array => |a| sqlite.resultText(ctx, try joinToString(alloc, a.values)),
         .struct_ => |s| sqlite.resultText(ctx, try joinToString(alloc, s.values)),
         // Scalars: Go decoded.Interface().
@@ -317,7 +317,7 @@ const TestEnv = struct {
                 const b = try env.alloc().dupe(u8, stmt.columnBlob(0));
                 break :blk try encoder.DecodeValue(env.alloc(), .{ .blob = b });
             },
-            .null => Value.@"null",
+            .null => Value.null,
         };
     }
 
@@ -342,7 +342,7 @@ const TestEnv = struct {
 
     fn expectNullResult(env: *TestEnv, sql: []const u8) !void {
         const v = try env.queryValue(sql);
-        try testing.expect(v == .@"null");
+        try testing.expect(v == .null);
     }
 
     fn expectStringResult(env: *TestEnv, expected: []const u8, sql: []const u8) !void {

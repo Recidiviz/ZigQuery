@@ -370,7 +370,7 @@ test "zetasqlite_ifnull rewrites to CASE" {
     const ctx = try testCtx(a);
 
     const fn_args = try a.alloc(ExpressionData, 2);
-    fn_args[0] = try literalExprData(a, .@"null");
+    fn_args[0] = try literalExprData(a, .null);
     fn_args[1] = try literalExprData(a, .{ .int = 2 });
     const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_ifnull", fn_args);
 
@@ -482,7 +482,7 @@ test "fast-path lowering of primitive comparisons and logic" {
     {
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = try literalExprData(a, .{ .int = 1 });
-        fn_args[1] = try literalExprData(a, .@"null");
+        fn_args[1] = try literalExprData(a, .null);
         const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("zetasqlite_equal(1, null)", try expr.toString(a));

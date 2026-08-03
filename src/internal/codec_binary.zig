@@ -60,7 +60,7 @@ fn appendBinaryString(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, tag: u8
 
 fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value) ValueError!void {
     switch (v) {
-        .@"null" => try buf.append(alloc, bin_tag_null),
+        .null => try buf.append(alloc, bin_tag_null),
         .safe => |p| try appendBinaryValue(buf, alloc, p.*),
         .int => |i| {
             try buf.append(alloc, bin_tag_int);
@@ -194,7 +194,7 @@ const BinReader = struct {
     fn value(r: *BinReader, alloc: std.mem.Allocator, comptime borrow: bool) ValueError!Value {
         const tag = try r.byte();
         switch (tag) {
-            bin_tag_null => return Value.@"null",
+            bin_tag_null => return Value.null,
             bin_tag_int => return Value{ .int = @bitCast(try r.fixed64()) },
             bin_tag_float => return Value{ .float = @bitCast(try r.fixed64()) },
             bin_tag_bool => return Value{ .bool = (try r.byte()) == 1 },
@@ -366,7 +366,7 @@ test "ArrayWalker yields element slices that decode to the originals" {
     const elems = [_]Value{
         .{ .int = 7 },
         .{ .string = "hello" },
-        .{ .@"null" = {} },
+        .{ .null = {} },
         .{ .bool = true },
         .{ .float = 1.5 },
         .{ .timestamp = 123 },
@@ -406,7 +406,7 @@ test "binary codec scalar round trips" {
     const alloc = arena.allocator();
 
     const cases = [_]Value{
-        Value.@"null",
+        Value.null,
         Value{ .int = 0 },
         Value{ .int = 42 },
         Value{ .int = -42 },
@@ -474,7 +474,7 @@ test "binary codec tag bytes match the Go format" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    try testing.expectEqual(bin_tag_null, (try encodeBinaryValue(alloc, Value.@"null"))[0]);
+    try testing.expectEqual(bin_tag_null, (try encodeBinaryValue(alloc, Value.null))[0]);
     try testing.expectEqual(bin_tag_int, (try encodeBinaryValue(alloc, Value{ .int = 7 }))[0]);
     try testing.expectEqual(bin_tag_float, (try encodeBinaryValue(alloc, Value{ .float = 7 }))[0]);
     try testing.expectEqual(bin_tag_bool, (try encodeBinaryValue(alloc, Value{ .bool = true }))[0]);
@@ -503,7 +503,7 @@ test "binary codec array and struct round trips" {
     // Array with null elements and mixed scalars.
     const mixed = try value_mod.arrayValue(alloc, &.{
         Value{ .int = 1 },
-        Value.@"null",
+        Value.null,
         Value{ .string = "x" },
         Value{ .float = std.math.nan(f64) },
     });
@@ -514,7 +514,7 @@ test "binary codec array and struct round trips" {
     const st1 = try value_mod.structValue(
         alloc,
         &.{ "id", "name", "tags", "missing" },
-        &.{ Value{ .int = 1 }, Value{ .string = "héllo" }, inner_arr, Value.@"null" },
+        &.{ Value{ .int = 1 }, Value{ .string = "héllo" }, inner_arr, Value.null },
     );
     const st2 = try value_mod.structValue(
         alloc,

@@ -9,7 +9,7 @@ const value_mod = bind.value_mod;
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 const Flag = enum { none, minus, plus, space, sharp, zero, quote };
 

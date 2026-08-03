@@ -249,12 +249,12 @@ pub fn main(init: std.process.Init) !void {
         try out.print("{d} newly passing (append to {s}):\n", .{ newly_passing, baseline_path });
         for (results.items) |r| {
             // Trim to match loadBaseline's per-line trim (case names in the Go
-        // suite can carry trailing whitespace, e.g. corpus case 598).
-        const key = std.mem.trim(
-            u8,
-            try std.fmt.allocPrint(arena, "{d}\t{s}", .{ r.idx, r.name }),
-            " \r\t",
-        );
+            // suite can carry trailing whitespace, e.g. corpus case 598).
+            const key = std.mem.trim(
+                u8,
+                try std.fmt.allocPrint(arena, "{d}\t{s}", .{ r.idx, r.name }),
+                " \r\t",
+            );
             if (r.outcome == .pass and !baseline.contains(key)) {
                 try out.print("{d}\t{s}\n", .{ r.idx, r.name });
             }

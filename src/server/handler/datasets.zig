@@ -98,7 +98,9 @@ test "extracts datasetId from an insert body" {
     , .{});
     try testing.expectEqualStrings("ds1", datasetIdFromBody(v).?);
 
-    for ([_][]const u8{ "{}", \\{"datasetReference":{}}
+    for ([_][]const u8{
+        "{}",
+        \\{"datasetReference":{}}
     }) |body| {
         const bad = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
         try testing.expectEqual(@as(?[]const u8, null), datasetIdFromBody(bad));

@@ -14,7 +14,7 @@ const bind = @import("bind.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
-const null_v = Value.@"null";
+const null_v = Value.null;
 
 // GENERATE_UUID ---------------------------------------------------------
 
@@ -49,7 +49,7 @@ pub fn generateUuid(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 // IP parsing / formatting ----------------------------------------------
 
 pub fn netIpFromString(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const s = try args[0].toString(alloc);
     const ip = try parseIp(alloc, s) orelse
         return bind.fail("NET.IP_FROM_STRING: invalid ip address {s}", .{s}, error.FailedConversion);
@@ -57,7 +57,7 @@ pub fn netIpFromString(alloc: std.mem.Allocator, args: []const Value) Error!Valu
 }
 
 pub fn netSafeIpFromString(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const s = try args[0].toString(alloc);
     const ip = try parseIp(alloc, s) orelse return null_v;
     return Value{ .bytes = ip };
@@ -281,7 +281,7 @@ fn formatIpv6(alloc: std.mem.Allocator, b: []const u8) Error![]u8 {
 // NET.HOST / PUBLIC_SUFFIX / REG_DOMAIN --------------------------------
 
 pub fn netHost(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const v = try args[0].toString(alloc);
     const auth = authority(v) orelse return null_v;
     const h = hostname(auth);
@@ -291,7 +291,7 @@ pub fn netHost(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 pub fn netPublicSuffix(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const v = try args[0].toString(alloc);
     const auth = authority(v) orelse return null_v;
     const host = hostname(auth).host;
@@ -301,7 +301,7 @@ pub fn netPublicSuffix(alloc: std.mem.Allocator, args: []const Value) Error!Valu
 }
 
 pub fn netRegDomain(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    if (args[0] == .@"null") return null_v;
+    if (args[0] == .null) return null_v;
     const v = try args[0].toString(alloc);
     const auth = authority(v) orelse return null_v;
     const host = hostname(auth).host;
