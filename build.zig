@@ -172,6 +172,48 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_spec.addArgs(args);
     b.step("spec", "Run the GoogleSQL spec corpus").dependOn(&run_spec.step);
 
+    // Regenerates src/proto/resolved_ast.zig from the committed
+    // proto/googlesql.fdset. Run when the googlesql submodule (and with it the
+    // .fdset) moves — never as part of `test`, exactly as the Python script it
+    // replaced was run by hand.
+    //
+    // The generator is self-hosting: `pb` below is the very file the run step
+    // overwrites, because --include_imports put descriptor.proto's own decoders
+    // in there. See the header of tools/gen_proto.zig.
+    const gen_proto = b.addExecutable(.{
+        .name = "gen-proto",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/gen_proto.zig"),
+            // A build tool: it runs here, so it follows the host and not
+            // -Dtarget. -ODebug because it is a second of work on a 190 KB
+            // input, and optimizing it would cost more than it saves.
+            .target = b.graph.host,
+            .optimize = .Debug,
+            .imports = &.{.{
+                .name = "pb",
+                .module = b.createModule(.{
+                    .root_source_file = b.path("src/proto/resolved_ast.zig"),
+                    .target = b.graph.host,
+                    .optimize = .Debug,
+                }),
+            }},
+        }),
+    });
+    const run_gen_proto = b.addRunArtifact(gen_proto);
+    run_gen_proto.addFileArg(b.path("proto/googlesql.fdset"));
+    run_gen_proto.addArg(b.pathFromRoot("src/proto/resolved_ast.zig"));
+    run_gen_proto.has_side_effects = true;
+
+    // The generator emits structurally correct Zig and leaves layout to `zig
+    // fmt`, so the committed file stays canonical and future diffs stay small.
+    const fmt_gen_proto = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
+    fmt_gen_proto.addArg(b.pathFromRoot("src/proto/resolved_ast.zig"));
+    fmt_gen_proto.has_side_effects = true;
+    fmt_gen_proto.step.dependOn(&run_gen_proto.step);
+
+    b.step("gen-proto", "Regenerate src/proto/resolved_ast.zig from proto/googlesql.fdset")
+        .dependOn(&fmt_gen_proto.step);
+
     // Concurrency gating experiment: is the analyzer stack safe to drive from
     // several threads, one Db each? Not part of `test` — it is a deliberate
     // experiment, run on demand.
