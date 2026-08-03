@@ -36,6 +36,10 @@
             .url = "https://sqlite.org/2026/sqlite-amalgamation-3530300.zip",
             .hash = "N-V-__8AAE9krgByKNN5S4cuFUqn5FS8FvM4S3K1qQ-3sEHC",
         },
+        .ephor = .{
+            .url = "https://codeberg.org/RhyosLabs/ephor/archive/v0.14.2.tar.gz",
+            .hash = "ephor-0.14.2-p-Eoi3CRFQAKLECH5wnEI78GscKz2AUYXXf0qlr-sOfX",
+        },
     },
     .paths = .{
         "build.zig",

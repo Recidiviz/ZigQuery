@@ -441,6 +441,22 @@ pub fn build(b: *std.Build) void {
 
     b.step("coverage", b.fmt("Line coverage for the unit tests -> {s}/index.html", .{cov_report}))
         .dependOn(&kcov_merge.step);
+
+    // Ephor static analysis
+    const ephor_dep = b.dependency("ephor", .{ .target = target, .optimize = .ReleaseSafe });
+    const ephor_artifact = ephor_dep.artifact("ephor");
+    const ephor_cmd = b.addRunArtifact(ephor_artifact);
+    if (b.args) |args| {
+        ephor_cmd.addArgs(args);
+    }
+    const ephor_step = b.step("ephor", "Run ephor static analysis");
+    ephor_step.dependOn(&ephor_cmd.step);
+
+    // Ephor upgrade
+    const ephor_upgrade_cmd = b.addRunArtifact(ephor_artifact);
+    ephor_upgrade_cmd.addArgs(&.{"upgrade"});
+    const ephor_upgrade_step = b.step("ephor-upgrade", "Upgrade ephor to latest version");
+    ephor_upgrade_step.dependOn(&ephor_upgrade_cmd.step);
 }
 
 /// Everything the engine module needs beyond an optimize mode.
