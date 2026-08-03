@@ -248,6 +248,15 @@ fn groupByImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqli
             var buf: [96]u8 = undefined;
             sqlite.resultText(ctx, value_mod.formatInterval(&buf, iv));
         },
+        // RANGE group key: the canonical "[start, end)" text. RangeType
+        // overrides SupportsGroupingImpl to true, so GROUP BY over a range
+        // column is legal, and distinct ranges of one element kind render to
+        // distinct text. Two kinds could collide on "[UNBOUNDED, UNBOUNDED)",
+        // which cannot arise: a column carries one static element type.
+        .range => |r| {
+            var buf: [96]u8 = undefined;
+            sqlite.resultText(ctx, value_mod.formatRange(&buf, r));
+        },
         // NUMERIC/BIGNUMERIC group key: the decimal rendering (distinct
         // numeric values render to distinct text, so grouping is exact).
         .numeric => |n| sqlite.resultText(ctx, try n.toText(alloc)),
@@ -353,6 +362,10 @@ const TestEnv = struct {
         const v = try env.queryValue(sql);
         try testing.expect(v == .float);
         try testing.expectApproxEqAbs(expected, v.float, 1e-12);
+    }
+
+    fn expectValue(env: *TestEnv, expected: Value, sql: []const u8) !void {
+        try value_mod.expectValueEqual(expected, try env.queryValue(sql));
     }
 
     fn expectNullResult(env: *TestEnv, sql: []const u8) !void {
@@ -1160,6 +1173,208 @@ test "vector distances over dense and sparse vectors" {
     try env.expectErrorMsg("same representation", try env.fmt(
         "SELECT zetasqlite_euclidean_distance({s}, zetasqlite_make_array(3.0))",
         .{sparse_a},
+    ));
+}
+
+test "range constructor, accessors and predicates" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    const day = value_mod.daysFromCivil;
+    const rng = value_mod.rangeValue;
+    // A range as an X'..' literal, which is how one reaches a UDF from SQL.
+    const lit = struct {
+        fn f(e: *TestEnv, v: Value) ![]u8 {
+            return e.enc(v);
+        }
+    }.f;
+
+    const jan22 = day(2022, 1, 1);
+    const jan23 = day(2023, 1, 1);
+    const outer = try lit(&env, rng(.date, jan22, jan23));
+
+    // Constructor: bounds in order, either one NULL for UNBOUNDED.
+    try env.expectValue(rng(.date, day(2022, 12, 1), day(2022, 12, 31)), try env.fmt(
+        "SELECT zetasqlite_range({s}, {s})",
+        .{
+            try lit(&env, .{ .date = day(2022, 12, 1) }),
+            try lit(&env, .{ .date = day(2022, 12, 31) }),
+        },
+    ));
+    try env.expectValue(rng(.date, null, day(2022, 12, 31)), try env.fmt(
+        "SELECT zetasqlite_range(NULL, {s})",
+        .{try lit(&env, .{ .date = day(2022, 12, 31) })},
+    ));
+
+    // start >= end is googlesql's error, verbatim; SAFE. turns it into NULL.
+    const backwards = try env.fmt("zetasqlite_range({s}, {s})", .{
+        try lit(&env, .{ .date = jan23 }), try lit(&env, .{ .date = jan22 }),
+    });
+    try env.expectErrorMsg(
+        "Range start element must be smaller than range end element",
+        try env.fmt("SELECT {s}", .{backwards}),
+    );
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_safe_range({s}, {s})", .{
+        try lit(&env, .{ .date = jan23 }), try lit(&env, .{ .date = jan22 }),
+    }));
+    // Equal bounds are empty, not valid: the upper bound is exclusive.
+    try env.expectErrorMsg("must be smaller", try env.fmt("SELECT zetasqlite_range({s}, {s})", .{
+        try lit(&env, .{ .date = jan22 }), try lit(&env, .{ .date = jan22 }),
+    }));
+
+    // Accessors, including UNBOUNDED reading back as NULL.
+    try env.expectValue(.{ .date = jan22 }, try env.fmt("SELECT zetasqlite_range_start({s})", .{outer}));
+    try env.expectValue(.{ .date = jan23 }, try env.fmt("SELECT zetasqlite_range_end({s})", .{outer}));
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_range_start({s})", .{
+        try lit(&env, rng(.date, null, jan23)),
+    }));
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_range_end({s})", .{
+        try lit(&env, rng(.date, jan22, null)),
+    }));
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_is_start_unbounded({s})", .{
+        try lit(&env, rng(.date, null, jan23)),
+    }));
+
+    // RANGE_CONTAINS, range overload.
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+        outer, try lit(&env, rng(.date, day(2022, 4, 1), day(2022, 7, 1))),
+    }));
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+        outer, try lit(&env, rng(.date, jan23, day(2023, 4, 1))),
+    }));
+    // RANGE_CONTAINS, element overload — dispatched purely on arg[1]'s tag.
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+        outer, try lit(&env, .{ .date = day(2022, 4, 1) }),
+    }));
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+        outer, try lit(&env, .{ .date = day(2023, 4, 1) }),
+    }));
+    // The half-open edges: the lower bound is in, the upper is not.
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+        outer, try lit(&env, .{ .date = jan22 }),
+    }));
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+        outer, try lit(&env, .{ .date = jan23 }),
+    }));
+
+    // RANGE_OVERLAPS is strict: abutting ranges do not overlap, which is the
+    // whole difference between the MEETS and OVERLAPS sessionize modes.
+    try env.expectInt(0, try env.fmt("SELECT zetasqlite_range_overlaps({s}, {s})", .{
+        outer, try lit(&env, rng(.date, jan23, day(2023, 6, 1))),
+    }));
+    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_overlaps({s}, {s})", .{
+        try lit(&env, rng(.date, day(2022, 2, 1), null)),
+        try lit(&env, rng(.date, day(2021, 6, 15), null)),
+    }));
+
+    // RANGE_INTERSECT, including UNBOUNDED surviving into the result.
+    try env.expectValue(rng(.date, day(2022, 2, 1), day(2022, 4, 15)), try env.fmt(
+        "SELECT zetasqlite_range_intersect({s}, {s})",
+        .{
+            try lit(&env, rng(.date, day(2022, 2, 1), null)),
+            try lit(&env, rng(.date, day(2021, 6, 15), day(2022, 4, 15))),
+        },
+    ));
+    try env.expectValue(rng(.date, day(2022, 2, 1), null), try env.fmt(
+        "SELECT zetasqlite_range_intersect({s}, {s})",
+        .{
+            try lit(&env, rng(.date, day(2022, 2, 1), null)),
+            try lit(&env, rng(.date, day(2021, 6, 15), null)),
+        },
+    ));
+    const disjoint = try env.fmt("zetasqlite_range_intersect({s}, {s})", .{
+        try lit(&env, rng(.date, day(2020, 2, 1), day(2020, 9, 1))),
+        try lit(&env, rng(.date, day(2021, 6, 15), day(2022, 4, 15))),
+    });
+    try env.expectErrorMsg("do not overlap", try env.fmt("SELECT {s}", .{disjoint}));
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_safe_range_intersect({s}, {s})", .{
+        try lit(&env, rng(.date, day(2020, 2, 1), day(2020, 9, 1))),
+        try lit(&env, rng(.date, day(2021, 6, 15), day(2022, 4, 15))),
+    }));
+
+    // NULL in, NULL out for every predicate.
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_range_contains({s}, NULL)", .{outer}));
+    try env.expectNullResult(try env.fmt("SELECT zetasqlite_range_overlaps({s}, NULL)", .{outer}));
+}
+
+test "generate_range_array splits a range and validates its step" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    const day = value_mod.daysFromCivil;
+    const rng = value_mod.rangeValue;
+    const jan1 = day(2020, 1, 1);
+    const jan6 = day(2020, 1, 6);
+    const src = try env.enc(rng(.date, jan1, jan6));
+    const one_day = try env.enc(.{ .interval = .{ .days = 1 } });
+    const two_days = try env.enc(.{ .interval = .{ .days = 2 } });
+
+    // Exact fit: five one-day subranges, no partial.
+    try env.expectInt(5, try env.fmt(
+        "SELECT zetasqlite_array_length(zetasqlite_generate_range_array({s}, {s}))",
+        .{ src, one_day },
+    ));
+    try env.expectValue(rng(.date, jan1, day(2020, 1, 2)), try env.fmt(
+        "SELECT zetasqlite_array_at_offset(zetasqlite_generate_range_array({s}, {s}), 0)",
+        .{ src, one_day },
+    ));
+
+    // Two-day steps leave a one-day remainder: kept by default, kept when the
+    // third argument is TRUE, dropped when it is FALSE.
+    try env.expectInt(3, try env.fmt(
+        "SELECT zetasqlite_array_length(zetasqlite_generate_range_array({s}, {s}))",
+        .{ src, two_days },
+    ));
+    try env.expectInt(3, try env.fmt(
+        "SELECT zetasqlite_array_length(zetasqlite_generate_range_array({s}, {s}, true))",
+        .{ src, two_days },
+    ));
+    try env.expectInt(2, try env.fmt(
+        "SELECT zetasqlite_array_length(zetasqlite_generate_range_array({s}, {s}, false))",
+        .{ src, two_days },
+    ));
+    // The trailing subrange is clipped to the range's own end, not to a full step.
+    try env.expectValue(rng(.date, day(2020, 1, 5), jan6), try env.fmt(
+        "SELECT zetasqlite_array_at_offset(zetasqlite_generate_range_array({s}, {s}), 2)",
+        .{ src, two_days },
+    ));
+
+    // A month step is measured from the original start every iteration, so it
+    // clamps at short months rather than drifting. Jan 31 + 1 month is Feb 29
+    // in 2020, and + 2 months is Mar 31 — not Mar 2 and May 1, which is what
+    // stepping from the previous end (or normalising instead of clamping)
+    // would give. No spec case covers this; the corpus only steps by days.
+    const month_src = try env.enc(rng(.date, day(2020, 1, 31), day(2020, 5, 1)));
+    const one_month = try env.enc(.{ .interval = .{ .months = 1 } });
+    try env.expectValue(rng(.date, day(2020, 1, 31), day(2020, 2, 29)), try env.fmt(
+        "SELECT zetasqlite_array_at_offset(zetasqlite_generate_range_array({s}, {s}), 0)",
+        .{ month_src, one_month },
+    ));
+    try env.expectValue(rng(.date, day(2020, 2, 29), day(2020, 3, 31)), try env.fmt(
+        "SELECT zetasqlite_array_at_offset(zetasqlite_generate_range_array({s}, {s}), 1)",
+        .{ month_src, one_month },
+    ));
+
+    // Step validation, messages as googlesql words them.
+    try env.expectErrorMsg("step cannot be 0", try env.fmt(
+        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        .{ src, try env.enc(.{ .interval = .{} }) },
+    ));
+    try env.expectErrorMsg("step cannot be negative", try env.fmt(
+        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        .{ src, try env.enc(.{ .interval = .{ .days = -1 } }) },
+    ));
+    try env.expectErrorMsg("step should either have the Y-M part or the DAY part", try env.fmt(
+        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        .{ src, try env.enc(.{ .interval = .{ .months = 1, .days = 1 } }) },
+    ));
+    try env.expectErrorMsg("step with non-zero (H:M:S[.F]) part is not supported", try env.fmt(
+        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        .{ src, try env.enc(.{ .interval = .{ .hours = 1 } }) },
+    ));
+    try env.expectErrorMsg("input RANGE cannot have UNBOUNDED endpoints", try env.fmt(
+        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        .{ try env.enc(rng(.date, jan1, null)), one_day },
     ));
 }
 

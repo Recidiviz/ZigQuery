@@ -20,6 +20,12 @@
 //! elements in the self-delimiting codec instead — as do JSON and INTERVAL,
 //! which have no order to preserve (`compareOp` errors on every operator).
 //!
+//! RANGE is the one kind that takes *both* codecs. It is ordered
+//! (`Type::SupportsOrdering` excludes only GEOGRAPHY and TOKENLIST), so a
+//! top-level range needs these bytes; but a range nested in an ARRAY — which
+//! GENERATE_RANGE_ARRAY returns by the handful — needs to be self-delimiting,
+//! so it has a tag in codec_binary.zig too.
+//!
 //! One known divergence, in NUMERIC vs BIGNUMERIC. `Rat.cmp` is kind-agnostic,
 //! so `compareForCollation` calls `NUMERIC '1.5'` and `BIGNUMERIC '1.5'` equal,
 //! while memcmp here puts every NUMERIC below every BIGNUMERIC because the tag
@@ -46,6 +52,28 @@ pub const tag_string: u8 = 0x60;
 pub const tag_bytes: u8 = 0x68;
 pub const tag_numeric: u8 = 0x70;
 pub const tag_bignumeric: u8 = 0x78;
+pub const tag_range: u8 = 0x80;
+
+/// The first tag this codec owns. `encoder.decodeRepr` splits the two codecs
+/// on it, so the boundary lives here with the tags rather than as a literal at
+/// the call site — everything below is codec_binary.zig's, including the room
+/// between its highest tag and this one.
+pub const tag_min: u8 = 0x40;
+
+/// Fixed payload: element kind, then a presence byte and an 8-byte scalar per
+/// bound. Fixed width because the format has no framing (see the header).
+const range_bytes = 1 + 1 + 8 + 1 + 8;
+
+/// An absent bound is not a missing value, it is an infinity — and which one
+/// depends on the end it sits at. So the two presence bytes are deliberately
+/// *inverted* relative to each other: an unbounded start writes 0x00 and sorts
+/// below every bounded start, while an unbounded end writes 0x01 and sorts
+/// above every bounded end. Reading these as one shared "is present" flag is
+/// the easy mistake, and it silently mis-sorts `[x, UNBOUNDED)`.
+const range_start_unbounded: u8 = 0x00;
+const range_start_bounded: u8 = 0x01;
+const range_end_bounded: u8 = 0x00;
+const range_end_unbounded: u8 = 0x01;
 
 /// Payload widths for the two decimal kinds: the unscaled integer, biased into
 /// unsigned space, big-endian. NUMERIC's 38 digits need 127 bits, BIGNUMERIC's
@@ -122,6 +150,20 @@ pub fn encode(alloc: std.mem.Allocator, v: Value) ValueError!?[]u8 {
             std.mem.writeInt(u128, out[1..][0..numeric_bytes], bias(u128, narrow), .big);
             return out;
         },
+        // The scalar slot under an absent bound is zero-filled rather than
+        // left to chance: `rangeValue` already guarantees the struct field is
+        // 0, but writing zeros explicitly means a hand-built Range cannot make
+        // two equal ranges encode differently and break DISTINCT.
+        .range => |r| {
+            const out = try alloc.alloc(u8, 1 + range_bytes);
+            out[0] = tag_range;
+            out[1] = @intFromEnum(r.elem);
+            out[2] = if (r.has_start) range_start_bounded else range_start_unbounded;
+            std.mem.writeInt(u64, out[3..11], if (r.has_start) orderable(r.start) else 0, .big);
+            out[11] = if (r.has_end) range_end_bounded else range_end_unbounded;
+            std.mem.writeInt(u64, out[12..20], if (r.has_end) orderable(r.end) else 0, .big);
+            return out;
+        },
         else => return null,
     }
 }
@@ -173,6 +215,22 @@ pub fn decode(alloc: std.mem.Allocator, buf: []const u8) ValueError!Value {
             const u = std.mem.readInt(u256, payload[0..bignumeric_bytes], .big);
             return value_mod.numericFromUnscaled(alloc, unbias(i256, u), true);
         },
+        tag_range => {
+            if (payload.len != range_bytes) return error.CorruptData;
+            const kind = std.enums.fromInt(value_mod.Range.ElemKind, payload[0]) orelse
+                return error.CorruptData;
+            const start: ?i64 = switch (payload[1]) {
+                range_start_bounded => unorderable(std.mem.readInt(u64, payload[2..10], .big)),
+                range_start_unbounded => null,
+                else => return error.CorruptData,
+            };
+            const end: ?i64 = switch (payload[10]) {
+                range_end_bounded => unorderable(std.mem.readInt(u64, payload[11..19], .big)),
+                range_end_unbounded => null,
+                else => return error.CorruptData,
+            };
+            return value_mod.rangeValue(kind, start, end);
+        },
         else => return error.CorruptData, // unexpected tag
     }
 }
@@ -201,6 +259,15 @@ test "round trips every eligible kind" {
         .{ .datetime = -1 },
         .{ .timestamp = std.math.minInt(i64) },
         .{ .timestamp = std.math.maxInt(i64) },
+        // All four boundedness combinations, at every element kind: the
+        // presence bytes and the zero-fill under an absent bound are what
+        // these check survive a round trip.
+        value_mod.rangeValue(.date, 100, 200),
+        value_mod.rangeValue(.date, null, 200),
+        value_mod.rangeValue(.date, 100, null),
+        value_mod.rangeValue(.date, null, null),
+        value_mod.rangeValue(.datetime, -5, 5),
+        value_mod.rangeValue(.timestamp, std.math.minInt(i64), std.math.maxInt(i64)),
     };
     for (vals) |v| {
         const enc = (try encode(alloc, v)).?;
@@ -316,6 +383,35 @@ test "memcmp over encodings matches compareForCollation" {
         },
         &.{ .{ .datetime = -5 }, .{ .datetime = 0 }, .{ .datetime = 5 } },
         &.{ .{ .time = 0 }, .{ .time = 1 }, .{ .time = 86_399_999_999 } },
+        // RANGE, listed in ascending order by hand. This is the group that
+        // pins the two presence bytes being *inverted* relative to each other:
+        // an unbounded start is -inf and must come first, an unbounded end is
+        // +inf and must come last within a shared start. Read them as one
+        // shared "is present" flag and [x, UNBOUNDED) silently sorts below
+        // [x, anything), which nothing else here would catch.
+        &.{
+            value_mod.rangeValue(.date, null, 100),
+            value_mod.rangeValue(.date, null, 200),
+            value_mod.rangeValue(.date, null, null),
+            value_mod.rangeValue(.date, 100, 150),
+            value_mod.rangeValue(.date, 100, 200),
+            value_mod.rangeValue(.date, 100, null),
+            value_mod.rangeValue(.date, 200, 250),
+        },
+        &.{
+            value_mod.rangeValue(.timestamp, null, null),
+            value_mod.rangeValue(.timestamp, -1, 0),
+            value_mod.rangeValue(.timestamp, 0, 1),
+            value_mod.rangeValue(.timestamp, 0, null),
+        },
+        // Cross-kind. Unreachable through analyzed SQL — a column carries one
+        // static element type — but total anyway, which is why RANGE needs no
+        // documented divergence of the kind NUMERIC/BIGNUMERIC has above.
+        &.{
+            value_mod.rangeValue(.date, 0, 1),
+            value_mod.rangeValue(.datetime, 0, 1),
+            value_mod.rangeValue(.timestamp, 0, 1),
+        },
     };
     // Numerics need their own groups because they must be constructed, not
     // written as literals. Same-kind only: cross-kind is a known divergence,

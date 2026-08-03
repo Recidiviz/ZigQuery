@@ -135,6 +135,17 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // resolves to an ordinary call that fn_math.zig answers.
     googlesql::FEATURE_CBRT_FUNCTIONS,
     googlesql::FEATURE_PI_FUNCTIONS,
+    // RANGE<DATE|DATETIME|TIMESTAMP>. Gates three separate things: the RANGE
+    // column type in DDL (resolver_stmt.cc), RANGE literals
+    // (resolver_expr.cc), and every range builtin
+    // (builtin_function_range.cc AddRequiredLanguageFeature).
+    //
+    // It does *not* gate TypeDeserializer, which is why enabling it is the
+    // last step rather than the first: with the flag on and catalog.zig's
+    // rangeType arm missing, `CREATE TABLE ... RANGE<DATE>` starts succeeding
+    // and writes a catalog row whose TypeProto googlesql then rejects on every
+    // subsequent statement, since the whole catalog is re-parsed per analyze.
+    googlesql::FEATURE_RANGE_TYPE,
 };
 
 // Ported verbatim from internal/analyzer.go `supportedStatementKinds`.

@@ -66,6 +66,104 @@ pub const Interval = struct {
     sub_second_nanos: i32 = 0,
 };
 
+/// RANGE<T>: a contiguous span, lower bound inclusive and upper exclusive.
+/// googlesql allows exactly three element types (range_type.cc IsSupported-
+/// ElementTypeKind), so the element is an enum rather than a nested Type.
+///
+/// Stored inline like Interval: 24 bytes, trivially copyable, no arena needed.
+pub const Range = struct {
+    /// Carried explicitly rather than inferred from whichever bound is
+    /// present, because `[UNBOUNDED, UNBOUNDED)` has neither.
+    elem: ElemKind,
+    /// false is UNBOUNDED. A flag beside a plain `i64` rather than the `?i64`
+    /// the accessors below hand back: two optionals are 32 bytes on their own
+    /// and take Range to 40, past Interval's 28, which is what currently sets
+    /// the union payload — Value would grow from 40 bytes to 48 for every
+    /// value of every kind. Flags keep Range at 24 and Value where it was.
+    has_start: bool = false,
+    has_end: bool = false,
+    /// Units match the sibling Value variant exactly, so a bound converts to
+    /// and from its scalar kind without rescaling: civil days for `.date`,
+    /// civil micros for `.datetime`, unix micros UTC for `.timestamp`.
+    ///
+    /// Zero whenever the matching flag is false. `rangeValue` is the only
+    /// constructor and enforces it, so two ranges that differ solely in the
+    /// junk under an absent bound cannot exist — which is what lets the
+    /// sortable encoding zero-fill that slot and stay canonical.
+    start: i64 = 0,
+    end: i64 = 0,
+
+    pub const ElemKind = enum(u8) { date = 1, datetime = 2, timestamp = 3 };
+
+    pub fn startBound(self: Range) ?i64 {
+        return if (self.has_start) self.start else null;
+    }
+
+    pub fn endBound(self: Range) ?i64 {
+        return if (self.has_end) self.end else null;
+    }
+
+    /// The bound as the scalar Value it denotes; `.null` for UNBOUNDED.
+    pub fn startValue(self: Range) Value {
+        return boundValue(self.elem, self.startBound());
+    }
+
+    pub fn endValue(self: Range) Value {
+        return boundValue(self.elem, self.endBound());
+    }
+
+    fn boundValue(elem: ElemKind, bound: ?i64) Value {
+        const n = bound orelse return Value.null;
+        return switch (elem) {
+            .date => .{ .date = n },
+            .datetime => .{ .datetime = n },
+            .timestamp => .{ .timestamp = n },
+        };
+    }
+};
+
+/// The sole construction point for a range Value, so the "zero under an absent
+/// bound" invariant holds everywhere — the same doctrine `numericValue` uses
+/// for its fixed-scale invariant.
+///
+/// Deliberately does *not* enforce `start < end`. RANGE_INTERSECT builds
+/// `[max(starts), min(ends))` behind an overlap test that already guarantees
+/// it, and both decoders have to be able to materialise whatever bytes they
+/// were handed. The check belongs to the `RANGE()` constructor alone, which is
+/// where googlesql puts it too (value.cc MakeRange).
+pub fn rangeValue(elem: Range.ElemKind, start: ?i64, end: ?i64) Value {
+    return .{ .range = .{
+        .elem = elem,
+        .has_start = start != null,
+        .has_end = end != null,
+        .start = start orelse 0,
+        .end = end orelse 0,
+    } };
+}
+
+/// The raw scalar behind an element Value, in the units `Range` stores.
+///
+/// Deliberately not `toInt64`, which is a *conversion* and rescales: it hands
+/// back unix seconds for a `.date` (days x 86400) and for a `.timestamp`. A
+/// bound needs the number as stored — civil days, civil micros, unix micros.
+pub fn rangeElementScalar(v: Value) ValueError!i64 {
+    return switch (if (v == .safe) v.safe.* else v) {
+        .date, .datetime, .timestamp => |n| n,
+        else => fail("value is not a valid range element", error.FailedConversion),
+    };
+}
+
+/// The element kind a scalar bound denotes, or null if it is not one of the
+/// three kinds a range can be built over.
+pub fn rangeElementOf(v: Value) ?Range.ElemKind {
+    return switch (if (v == .safe) v.safe.* else v) {
+        .date => .date,
+        .datetime => .datetime,
+        .timestamp => .timestamp,
+        else => null,
+    };
+}
+
 // Microsecond scale factors and the civil-time constants shared by the
 // timestamp / datetime / time value kinds (all UTC; Go uses time.Time with
 // locations, the corpus pins TZ=UTC — see module docs).
@@ -487,6 +585,9 @@ pub const Value = union(enum) {
     time: i64,
     /// INTERVAL: bigquery.IntervalValue components (Go wraps it in *IntervalValue).
     interval: Interval,
+    /// RANGE<DATE|DATETIME|TIMESTAMP>. No go-zetasqlite counterpart — this
+    /// kind is new here, so nothing about it is constrained by Go's shapes.
+    range: Range,
     /// NUMERIC / BIGNUMERIC (Go *NumericValue); arena-allocated.
     numeric: *Numeric,
     array: *ArrayValue,
@@ -541,6 +642,8 @@ pub const Value = union(enum) {
             .time => return fail("add operation is unsupported for time", error.UnsupportedOperation),
             .json => return fail("add operation is unsupported for json", error.UnsupportedOperation),
             .interval => return fail("unsupported add operator for interval value", error.UnsupportedOperation),
+            // "The range type doesn't support arithmetic operators." (data-types.md)
+            .range => return fail("unsupported add operator for range value", error.UnsupportedOperation),
             // Result takes the wider operand's kind; see numericArith.
             .numeric => |n| return numericArith(
                 alloc,
@@ -592,6 +695,7 @@ pub const Value = union(enum) {
             .time => return fail("sub operation is unsupported for time", error.UnsupportedOperation),
             .json => return fail("sub operation is unsupported for json", error.UnsupportedOperation),
             .interval => return fail("unsupported sub operator for interval value", error.UnsupportedOperation),
+            .range => return fail("unsupported sub operator for range value", error.UnsupportedOperation),
             .numeric => |n| return numericArith(
                 alloc,
                 n,
@@ -731,6 +835,17 @@ pub const Value = union(enum) {
             .json => return fail("comparison operation is unsupported for json", error.UnsupportedOperation),
             // Go: every comparison operator errors for IntervalValue.
             .interval => return fail("unsupported comparison operator for interval value", error.UnsupportedOperation),
+            // RANGE *is* ordered — Type::SupportsOrdering excludes only
+            // GEOGRAPHY and TOKENLIST — which is why it gets a real order here
+            // and a memcomparable encoding in codec_sortable.zig, where JSON
+            // and INTERVAL above get neither. The two must agree exactly; the
+            // invariant test in that file is what holds them together.
+            .range => |r| {
+                const other = if (v == .safe) v.safe.* else v;
+                if (other != .range)
+                    return fail("failed to convert to range", error.FailedConversion);
+                return applyOrder(op, rangeOrder(r, other.range));
+            },
             // googlesql compares the scaled integers. Both sides are restated
             // at BIGNUMERIC's scale first, which is exact for either kind and
             // keeps the comparison kind-agnostic the way Rat.cmp was — and
@@ -831,6 +946,7 @@ pub const Value = union(enum) {
             .json => |s| return std.fmt.parseInt(i64, s, 0) catch
                 fail("failed to convert json to int64", error.FailedConversion),
             .interval => return fail("unsupported int64 cast for interval value", error.FailedConversion),
+            .range => return fail("unsupported int64 cast for range value", error.FailedConversion),
             // googlesql NumericValue::To<int64_t>: the value rounded to a
             // whole integer, half away from zero (public/numeric_value.h:223).
             // goccy returned the reduced fraction's numerator instead, so
@@ -867,6 +983,7 @@ pub const Value = union(enum) {
             .json => |s| return std.fmt.parseFloat(f64, s) catch
                 fail("failed to convert json to float64", error.FailedConversion),
             .interval => return fail("unsupported float64 cast for interval value", error.FailedConversion),
+            .range => return fail("unsupported float64 cast for range value", error.FailedConversion),
             .numeric => |n| return n.toFloat(),
             .array => return fail("failed to convert float64 from array", error.FailedConversion),
             .struct_ => return fail("failed to convert float64 from struct", error.FailedConversion),
@@ -907,6 +1024,7 @@ pub const Value = union(enum) {
             .json => |s| return parseGoBool(s) orelse
                 fail("failed to parse bool from json", error.FailedConversion),
             .interval => return fail("unsupported bool cast for interval value", error.FailedConversion),
+            .range => return fail("unsupported bool cast for range value", error.FailedConversion),
             // googlesql has no NUMERIC -> BOOL cast at all: cast.cc carries no
             // FCT(TYPE_NUMERIC, TYPE_BOOL), so the legal targets are the
             // integer and float widths, BIGNUMERIC, STRING and JSON. goccy
@@ -951,6 +1069,10 @@ pub const Value = union(enum) {
             .interval => |iv| {
                 var buf: [96]u8 = undefined;
                 return alloc.dupe(u8, formatInterval(&buf, iv));
+            },
+            .range => |r| {
+                var buf: [96]u8 = undefined;
+                return alloc.dupe(u8, formatRange(&buf, r));
             },
             // Go NumericValue.ToString: trimmed FloatString(9|38).
             .numeric => |n| return n.toText(alloc),
@@ -1056,6 +1178,10 @@ pub const Value = union(enum) {
                 var buf: [96]u8 = undefined;
                 return quoteJsonString(alloc, formatInterval(&buf, iv));
             },
+            .range => |r| {
+                var buf: [96]u8 = undefined;
+                return quoteJsonString(alloc, formatRange(&buf, r));
+            },
             // Go NumericValue.ToJSON: the unquoted decimal rendering.
             .numeric => |n| return n.toText(alloc),
             // Go ArrayValue.ToString: "[elem,elem,...]", nil -> "null".
@@ -1153,6 +1279,10 @@ pub const Value = union(enum) {
                 var buf: [96]u8 = undefined;
                 return alloc.dupe(u8, formatInterval(&buf, iv));
             },
+            .range => |r| {
+                var buf: [96]u8 = undefined;
+                return alloc.dupe(u8, formatRange(&buf, r));
+            },
             // Go JsonValue.ToApiString == ToString: the raw JSON string.
             .json => |s| return alloc.dupe(u8, s),
             // Go NumericValue.ToApiString == toString().
@@ -1208,6 +1338,10 @@ pub const Value = union(enum) {
             .interval => |iv| {
                 var buf: [96]u8 = undefined;
                 return alloc.dupe(u8, formatInterval(&buf, iv));
+            },
+            .range => |r| {
+                var buf: [96]u8 = undefined;
+                return alloc.dupe(u8, formatRange(&buf, r));
             },
             // Go NumericValue.Format: toString() for every verb.
             .numeric => |n| return n.toText(alloc),
@@ -1308,6 +1442,10 @@ fn coerceToStringForCmp(v: Value, buf: []u8) ValueError![]const u8 {
         .datetime => |m| return formatDatetimeString(buf, m),
         .time => |m| return formatTimeString(buf, m),
         .interval => return error.Unimplemented,
+        // A range never coerces to a string for comparison: comparing it
+        // against a non-range is an error in compareOp, so nothing gets
+        // here needing the fallback this function exists to provide.
+        .range => return error.Unimplemented,
         // Numeric renders into the caller's scratch buffer (BIGNUMERIC
         // extremes wider than the buffer degrade to FailedConversion).
         .numeric => |n| {
@@ -1695,6 +1833,131 @@ pub fn formatInterval(buf: []u8, iv_in: Interval) []const u8 {
         w += end;
     }
     return buf[0..w];
+}
+
+/// One bound of a range, in the form the reference docs print *inside* a
+/// range — which is not the form the same kind uses on its own:
+///
+///   DATE       2022-12-01                     (same as formatDateDays)
+///   DATETIME   2022-10-01 14:53:27            (space separator)
+///   TIMESTAMP  2022-10-01 21:53:27.000000+00  (always six digits, UTC)
+///
+/// The TIMESTAMP row is the one that diverges from every existing renderer:
+/// formatTimestampString drops the fraction entirely on a whole second
+/// (writeFracMicros returns 0), and toApiString gives "sec.remainder". A
+/// range prints all six digits regardless, so it needs its own writer.
+fn writeRangeBound(buf: []u8, elem: Range.ElemKind, bound: ?i64) usize {
+    const n = bound orelse {
+        @memcpy(buf[0..9], "UNBOUNDED");
+        return 9;
+    };
+    return switch (elem) {
+        .date => formatDateDays(buf, n).len,
+        .datetime => formatDatetimeString(buf, n).len,
+        .timestamp => blk: {
+            const d = decomposeMicros(n);
+            var w = writeCivilPrefix(buf, d, ' ');
+            w += (std.fmt.bufPrint(buf[w..], ".{d:0>6}+00", .{d.micro}) catch unreachable).len;
+            break :blk w;
+        },
+    };
+}
+
+/// Total order over ranges: element kind, then lower bound, then upper.
+///
+/// UNBOUNDED is not a missing value here, it is an infinity, and which
+/// infinity depends on the end it sits at — an absent lower bound is below
+/// every date, an absent upper bound is above every date. That asymmetry is
+/// the whole of the ordering, and `codec_sortable.zig` reproduces it in bytes
+/// by giving the two ends different presence flags.
+///
+/// Element kind leads so two kinds never interleave. Comparing across kinds is
+/// not something GoogleSQL permits, so the arm this feeds rejects it; the
+/// tie-break exists for the byte encoding's benefit, which has no such gate.
+pub fn rangeOrder(a: Range, b: Range) std.math.Order {
+    const ka = @intFromEnum(a.elem);
+    const kb = @intFromEnum(b.elem);
+    if (ka != kb) return std.math.order(ka, kb);
+    const s = orderBound(a.startBound(), b.startBound(), .low);
+    if (s != .eq) return s;
+    return orderBound(a.endBound(), b.endBound(), .high);
+}
+
+/// Which infinity an absent bound stands for.
+const Unbounded = enum { low, high };
+
+fn orderBound(a: ?i64, b: ?i64, absent: Unbounded) std.math.Order {
+    if (a) |x| {
+        const y = b orelse return if (absent == .low) .gt else .lt;
+        return std.math.order(x, y);
+    }
+    if (b == null) return .eq;
+    return if (absent == .low) .lt else .gt;
+}
+
+/// RangeValue.ToString: "[lower, upper)", either bound possibly UNBOUNDED.
+/// The single source of truth for range text — every text-producing arm below
+/// routes here, the way the date/time kinds route through their formatters.
+/// `buf` needs >= 96 bytes.
+pub fn formatRange(buf: []u8, r: Range) []const u8 {
+    buf[0] = '[';
+    var w: usize = 1;
+    w += writeRangeBound(buf[w..], r.elem, r.startBound());
+    @memcpy(buf[w .. w + 2], ", ");
+    w += 2;
+    w += writeRangeBound(buf[w..], r.elem, r.endBound());
+    buf[w] = ')';
+    return buf[0 .. w + 1];
+}
+
+/// Inverse of `formatRange`, for a range that has been through a result cell
+/// and is on its way back in as a bound parameter.
+///
+/// The element kind is inferred from the shape of the first bounded end, since
+/// the text does not name it: no space is a DATE, a trailing UTC offset is a
+/// TIMESTAMP, and anything else is a DATETIME. `[UNBOUNDED, UNBOUNDED)` has no
+/// shape to read and falls back to DATE — harmless, because it renders and
+/// orders identically whichever kind it claims, and because `castParamValue`
+/// re-stamps the kind from the declared column type immediately afterwards.
+pub fn parseRangeValue(s: []const u8) ValueError!Range {
+    if (s.len < 4 or s[0] != '[' or s[s.len - 1] != ')')
+        return fail("failed to convert range from string", error.FailedConversion);
+    const body = s[1 .. s.len - 1];
+    // A single ", " separates the bounds; neither bound can contain one.
+    const comma = std.mem.indexOf(u8, body, ", ") orelse
+        return fail("failed to convert range from string", error.FailedConversion);
+    const lo = body[0..comma];
+    const hi = body[comma + 2 ..];
+
+    const elem: Range.ElemKind = blk: {
+        const shaped = if (!std.mem.eql(u8, lo, "UNBOUNDED"))
+            lo
+        else if (!std.mem.eql(u8, hi, "UNBOUNDED"))
+            hi
+        else
+            break :blk .date;
+        if (std.mem.indexOfScalar(u8, shaped, ' ') == null) break :blk .date;
+        break :blk if (std.mem.indexOfAny(u8, shaped[11..], "+-Z") != null)
+            .timestamp
+        else
+            .datetime;
+    };
+
+    return .{
+        .elem = elem,
+        .has_start = !std.mem.eql(u8, lo, "UNBOUNDED"),
+        .has_end = !std.mem.eql(u8, hi, "UNBOUNDED"),
+        .start = if (std.mem.eql(u8, lo, "UNBOUNDED")) 0 else try parseRangeBound(elem, lo),
+        .end = if (std.mem.eql(u8, hi, "UNBOUNDED")) 0 else try parseRangeBound(elem, hi),
+    };
+}
+
+fn parseRangeBound(elem: Range.ElemKind, s: []const u8) ValueError!i64 {
+    return switch (elem) {
+        .date => parseDateDays(s),
+        .datetime => parseDatetimeMicros(s),
+        .timestamp => parseTimestampMicros(s),
+    };
 }
 
 /// bigquery.IntervalValueFromDuration: only the H/M/S/subsecond parts.
@@ -2280,6 +2543,7 @@ pub fn expectValueEqual(expected: Value, actual: Value) !void {
         .datetime => |m| try std.testing.expectEqual(m, actual.datetime),
         .time => |m| try std.testing.expectEqual(m, actual.time),
         .interval => |iv| try std.testing.expectEqual(iv, actual.interval),
+        .range => |r| try std.testing.expectEqual(r, actual.range),
         .numeric => |n| {
             var scratch = std.heap.ArenaAllocator.init(std.testing.allocator);
             defer scratch.deinit();
@@ -2941,4 +3205,98 @@ test "BYTES is base64 in JSON, at every nesting depth" {
     // Bytes that are not valid UTF-8 survive, where quoting them did not.
     const raw = Value{ .bytes = &[_]u8{ 0xff, 0x00, 0x80 } };
     try std.testing.expectEqualStrings("\"/wCA\"", try raw.toJson(alloc));
+}
+
+test "range renders each element kind the way the reference docs print it" {
+    var buf: [96]u8 = undefined;
+
+    // DATE: the plain civil date.
+    const d = rangeValue(.date, daysFromCivil(2022, 12, 1), daysFromCivil(2022, 12, 31));
+    try std.testing.expectEqualStrings("[2022-12-01, 2022-12-31)", formatRange(&buf, d.range));
+
+    // DATETIME: space-separated, fraction trimmed when it is zero.
+    const oct1 = daysFromCivil(2022, 10, 1) * day_micros;
+    const hms = struct {
+        fn f(h: i64, m: i64, s: i64) i64 {
+            return h * hour_micros + m * minute_micros + s * second_micros;
+        }
+    }.f;
+    const dt = rangeValue(.datetime, oct1 + hms(14, 53, 27), oct1 + hms(16, 0, 0));
+    try std.testing.expectEqualStrings(
+        "[2022-10-01 14:53:27, 2022-10-01 16:00:00)",
+        formatRange(&buf, dt.range),
+    );
+
+    // TIMESTAMP: six fractional digits *always*, plus the UTC offset. This is
+    // the one that diverges from every other renderer — formatTimestampString
+    // drops ".000000" entirely, and toApiString gives "sec.remainder".
+    const ts = rangeValue(.timestamp, oct1 + hms(21, 53, 27), oct1 + hms(23, 0, 0));
+    try std.testing.expectEqualStrings(
+        "[2022-10-01 21:53:27.000000+00, 2022-10-01 23:00:00.000000+00)",
+        formatRange(&buf, ts.range),
+    );
+
+    // UNBOUNDED on either side, and on both.
+    try std.testing.expectEqualStrings(
+        "[UNBOUNDED, 2022-12-31)",
+        formatRange(&buf, rangeValue(.date, null, daysFromCivil(2022, 12, 31)).range),
+    );
+    try std.testing.expectEqualStrings(
+        "[2022-10-01, UNBOUNDED)",
+        formatRange(&buf, rangeValue(.date, daysFromCivil(2022, 10, 1), null).range),
+    );
+    try std.testing.expectEqualStrings(
+        "[UNBOUNDED, UNBOUNDED)",
+        formatRange(&buf, rangeValue(.date, null, null).range),
+    );
+}
+
+test "range text round trips, inferring the element kind from the bound shape" {
+    var buf: [96]u8 = undefined;
+    const cases = [_]Value{
+        rangeValue(.date, daysFromCivil(2022, 1, 1), daysFromCivil(2023, 1, 1)),
+        rangeValue(.date, null, daysFromCivil(2023, 1, 1)),
+        rangeValue(.date, daysFromCivil(2022, 1, 1), null),
+        rangeValue(.datetime, 5 * day_micros + 3 * hour_micros, 6 * day_micros),
+        rangeValue(.timestamp, 5 * day_micros + 3 * hour_micros, 6 * day_micros),
+    };
+    for (cases) |v| {
+        const text = formatRange(&buf, v.range);
+        try std.testing.expectEqual(v.range, try parseRangeValue(text));
+    }
+
+    // `[UNBOUNDED, UNBOUNDED)` is the one shape with nothing to infer from, so
+    // it reads back as DATE whatever it was written as. Harmless: it renders
+    // and orders identically for every element kind, and castParamValue
+    // re-stamps the kind from the declared column type.
+    const both = rangeValue(.timestamp, null, null);
+    const parsed = try parseRangeValue(formatRange(&buf, both.range));
+    try std.testing.expectEqual(Range.ElemKind.date, parsed.elem);
+    try std.testing.expect(parsed.startBound() == null and parsed.endBound() == null);
+}
+
+test "range ordering puts an unbounded start first and an unbounded end last" {
+    // Ascending. Note where `[UNBOUNDED, UNBOUNDED)` lands: its start is -inf
+    // so it precedes every bounded start, but among the unbounded-start ranges
+    // its +inf end puts it *last*. Reading both bounds as "missing sorts
+    // first" is the natural mistake and gets this pair backwards.
+    const ascending = [_]Value{
+        rangeValue(.date, null, 100),
+        rangeValue(.date, null, 200),
+        rangeValue(.date, null, null),
+        rangeValue(.date, 100, 150),
+        rangeValue(.date, 100, null),
+        rangeValue(.date, 200, 250),
+    };
+    for (ascending, 0..) |a, i| {
+        for (ascending, 0..) |b, j| {
+            const want: std.math.Order = if (i < j) .lt else if (i > j) .gt else .eq;
+            try std.testing.expectEqual(want, rangeOrder(a.range, b.range));
+        }
+    }
+    // Ranges compare only against ranges; anything else is a conversion error.
+    try std.testing.expectError(
+        error.FailedConversion,
+        ascending[0].eq(Value{ .date = 100 }),
+    );
 }

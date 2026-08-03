@@ -121,7 +121,10 @@ const normal_func_names = std.StaticStringMap(void).initComptime(.{
     .{"net_host"},                     .{"net_ip_from_string"},   .{"net_ip_net_mask"},
     .{"net_ip_to_string"},             .{"net_ip_trunc"},         .{"net_ipv4_from_int64"},
     .{"net_ipv4_to_int64"},            .{"net_public_suffix"},    .{"net_reg_domain"},
-    .{"net_safe_ip_from_string"},
+    .{"net_safe_ip_from_string"},      .{"range"},                .{"range_start"},
+    .{"range_end"},                    .{"range_overlaps"},       .{"range_intersect"},
+    .{"range_contains"},               .{"generate_range_array"}, .{"range_is_start_unbounded"},
+    .{"range_is_end_unbounded"},
 });
 
 /// internal/function_register.go aggregateFuncs names.

@@ -117,6 +117,7 @@ const fdatetime = @import("fn_datetime.zig");
 const ftime = @import("fn_time.zig");
 const ftimestamp = @import("fn_timestamp.zig");
 const fintv = @import("fn_interval.zig");
+const frange = @import("fn_range.zig");
 const fjson = @import("fn_json.zig");
 const hash = @import("fn_hash.zig");
 const fhll = @import("fn_hll.zig");
@@ -409,4 +410,18 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "justify_days", .min_args = 1, .handler = fintv.justifyDaysFn },
     .{ .name = "justify_hours", .min_args = 1, .handler = fintv.justifyHoursFn },
     .{ .name = "justify_interval", .min_args = 1, .handler = fintv.justifyIntervalFn },
+
+    // range family (googlesql/reference_impl/functions/range.cc). Every one
+    // gets a zetasqlite_safe_ twin for free from register.zig, which is what
+    // SAFE.RANGE and SAFE.RANGE_INTERSECT resolve to.
+    .{ .name = "range", .min_args = 2, .handler = frange.range },
+    .{ .name = "range_start", .min_args = 1, .handler = frange.rangeStart },
+    .{ .name = "range_end", .min_args = 1, .handler = frange.rangeEnd },
+    .{ .name = "range_overlaps", .min_args = 2, .handler = frange.rangeOverlaps },
+    .{ .name = "range_intersect", .min_args = 2, .handler = frange.rangeIntersect },
+    .{ .name = "range_contains", .min_args = 2, .handler = frange.rangeContains },
+    .{ .name = "generate_range_array", .min_args = 2, .handler = frange.generateRangeArray },
+    // Not in the corpus, but they complete the builtin set and cost a line.
+    .{ .name = "range_is_start_unbounded", .min_args = 1, .handler = frange.rangeIsStartUnbounded },
+    .{ .name = "range_is_end_unbounded", .min_args = 1, .handler = frange.rangeIsEndUnbounded },
 };

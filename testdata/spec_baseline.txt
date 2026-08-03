@@ -273,6 +273,30 @@ googlesql/functions/net/net_parse_ip	identity round-trip via IP_TO_STRING(IP_FRO
 googlesql/functions/net/net_public_suffix	net_public_suffix extracts the expected piece
 googlesql/functions/net/net_reg_domain	net_reg_domain extracts the expected piece
 googlesql/functions/net/net_safe_ip_from_string	invalid IP returns NULL
+googlesql/functions/range/generate_range_array	upstream example 1 — 1-day buckets covering the full range
+googlesql/functions/range/generate_range_array	upstream example 2 — 2-day buckets, trailing bucket clipped to the end
+googlesql/functions/range/generate_range_array	upstream example 3 — 2-day buckets with explicit `last_partial_range = TRUE`
+googlesql/functions/range/generate_range_array	upstream example 4 — `last_partial_range = FALSE` drops the trailing partial
+googlesql/functions/range/range	upstream example 1
+googlesql/functions/range/range	upstream example 2
+googlesql/functions/range/range	upstream example 3
+googlesql/functions/range/range	upstream example 4
+googlesql/functions/range/range	upstream example 5
+googlesql/functions/range/range_contains	upstream example 1
+googlesql/functions/range/range_contains	upstream example 2
+googlesql/functions/range/range_contains	upstream example 3
+googlesql/functions/range/range_contains	upstream example 4
+googlesql/functions/range/range_end	upstream example 1
+googlesql/functions/range/range_end	upstream example 2
+googlesql/functions/range/range_intersect	upstream example 1
+googlesql/functions/range/range_intersect	upstream example 2
+googlesql/functions/range/range_intersect	upstream example 3
+googlesql/functions/range/range_overlaps	upstream example 1
+googlesql/functions/range/range_overlaps	upstream example 2
+googlesql/functions/range/range_overlaps	upstream example 3
+googlesql/functions/range/range_sessionize	upstream example 1
+googlesql/functions/range/range_start	upstream example 1
+googlesql/functions/range/range_start	upstream example 2
 googlesql/functions/security/session_user	SESSION_USER returns a non-NULL identifier
 googlesql/functions/string/ascii	uppercase letter
 googlesql/functions/string/ascii	lowercase letter
@@ -527,6 +551,8 @@ googlesql/types/json	JSON literal scalar
 googlesql/types/json	JSON literal string
 googlesql/types/numeric	cast int to NUMERIC
 googlesql/types/numeric	NUMERIC literal
+googlesql/types/range	RANGE_START on date range
+googlesql/types/range	RANGE_END on date range
 googlesql/types/string	simple string literal
 googlesql/types/string	single-quoted string literal
 googlesql/types/struct	nested subquery field b

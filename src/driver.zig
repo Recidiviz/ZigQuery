@@ -75,6 +75,8 @@ pub const Cell = union(enum) {
     datetime: []const u8,
     time: []const u8,
     interval: []const u8,
+    /// RANGE, as its canonical "[start, end)" text with UNBOUNDED for an open bound.
+    range: []const u8,
     array: []Cell,
     struct_: []Field,
 
@@ -2444,6 +2446,21 @@ fn castParamValue(
             }
             return value_mod.arrayValue(alloc, values);
         },
+        // Re-stamp the element kind from the declared type. parseRangeValue
+        // has to infer it from the text's shape, which cannot distinguish
+        // `[UNBOUNDED, UNBOUNDED)` at all; the column type knows, so a range
+        // that made a round trip through a result cell recovers here.
+        .TYPE_RANGE => {
+            if (v != .range) return v;
+            const elem_type = t.element_type orelse return v;
+            const elem: value_mod.Range.ElemKind = switch (elem_type.typeKind()) {
+                .TYPE_DATE => .date,
+                .TYPE_DATETIME => .datetime,
+                .TYPE_TIMESTAMP => .timestamp,
+                else => return v,
+            };
+            return value_mod.rangeValue(elem, v.range.startBound(), v.range.endBound());
+        },
 
         .TYPE_INT32, .TYPE_INT64, .TYPE_UINT32, .TYPE_UINT64 => {
             return .{ .int = try v.toInt64() };
@@ -2505,6 +2522,7 @@ fn valueFromCell(alloc: std.mem.Allocator, cell: Cell) !value_mod.Value {
         .datetime => |s| return .{ .datetime = try value_mod.parseDatetimeMicros(s) },
         .time => |s| return .{ .time = try value_mod.parseTimeMicros(s) },
         .interval => |s| return .{ .interval = try value_mod.parseIntervalValue(s) },
+        .range => |s| return .{ .range = try value_mod.parseRangeValue(s) },
         .array => |cells| {
             const values = try alloc.alloc(value_mod.Value, cells.len);
             for (cells, 0..) |c, i| values[i] = try valueFromCell(alloc, c);
@@ -2588,6 +2606,16 @@ fn cellFromValue(
             .interval => return .{ .interval = try v.toApiString(alloc) },
             .string => |s| return .{ .interval = try (value_mod.Value{
                 .interval = try value_mod.parseIntervalValue(s),
+            }).toApiString(alloc) },
+            else => return error.FailedConversion,
+        },
+        // ARRAY<RANGE<...>> needs no arm of its own: the TYPE_ARRAY case below
+        // recurses on element_type and lands back here per element, which is
+        // what makes GENERATE_RANGE_ARRAY render.
+        .TYPE_RANGE => switch (v) {
+            .range => return .{ .range = try v.toApiString(alloc) },
+            .string => |s| return .{ .range = try (value_mod.Value{
+                .range = try value_mod.parseRangeValue(s),
             }).toApiString(alloc) },
             else => return error.FailedConversion,
         },

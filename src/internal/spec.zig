@@ -64,6 +64,10 @@ pub const Type = struct {
                 const elem = self.element_type orelse return error.InvalidType;
                 return std.fmt.allocPrint(alloc, "ARRAY<{s}>", .{try elem.formatType(alloc)});
             },
+            .TYPE_RANGE => {
+                const elem = self.element_type orelse return error.InvalidType;
+                return std.fmt.allocPrint(alloc, "RANGE<{s}>", .{try elem.formatType(alloc)});
+            },
             else => return bigQueryTypeName(self.typeKind()),
         }
     }
@@ -79,6 +83,15 @@ pub fn newTypeFromProto(alloc: std.mem.Allocator, tp: *const pb.TypeProto) Error
         .TYPE_ARRAY => {
             const at = tp.array_type orelse return error.InvalidType;
             const elem = at.element_type orelse return error.InvalidType;
+            t.element_type = try newTypeFromProto(alloc, elem);
+        },
+        // RANGE reuses element_type, the same slot ARRAY uses. Without this
+        // the element is dropped silently, and nothing downstream can tell a
+        // RANGE<DATE> from a RANGE<TIMESTAMP> — including catalog.zig, which
+        // then emits a TypeProto googlesql rejects outright.
+        .TYPE_RANGE => {
+            const rt = tp.range_type orelse return error.InvalidType;
+            const elem = rt.element_type orelse return error.InvalidType;
             t.element_type = try newTypeFromProto(alloc, elem);
         },
         .TYPE_STRUCT => {
@@ -117,6 +130,9 @@ pub fn bigQueryTypeName(k: pb.TypeKind) []const u8 {
         .TYPE_JSON => "JSON",
         .TYPE_INTERVAL => "INTERVAL",
         .TYPE_GEOGRAPHY => "GEOGRAPHY",
+        // Unparameterised: formatType above renders RANGE<elem>, and this
+        // is only reached for a bare kind with no element in hand.
+        .TYPE_RANGE => "RANGE",
         // Go falls back to TypeKind.String(); we use the proto tag name.
         else => @tagName(k),
     };
@@ -145,6 +161,7 @@ pub fn sqliteTypeName(k: pb.TypeKind) []const u8 {
         .TYPE_BIGNUMERIC,
         .TYPE_EXTENDED,
         .TYPE_INTERVAL,
+        .TYPE_RANGE,
         => "TEXT",
         else => "UNKNOWN",
     };

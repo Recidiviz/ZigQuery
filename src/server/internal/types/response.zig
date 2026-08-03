@@ -60,6 +60,7 @@ fn writeCellValue(
         .datetime,
         .time,
         .interval,
+        .range,
         => |v| try errors.writeJsonString(arena, out, v),
         .array => |items| {
             try out.append(arena, '[');
@@ -152,7 +153,7 @@ fn cellByteLen(arena: std.mem.Allocator, cell: driver.Cell) std.mem.Allocator.Er
         .int => |v| (try govalue.formatInt(arena, v)).len,
         .float => |v| (try govalue.formatFloat(arena, v)).len,
         .bool => |v| govalue.formatBool(v).len,
-        .string, .bytes, .json, .date, .timestamp, .datetime, .time, .interval => |v| v.len,
+        .string, .bytes, .json, .date, .timestamp, .datetime, .time, .interval, .range => |v| v.len,
         .array => |items| blk: {
             var n: usize = 0;
             for (items) |it| n += try cellByteLen(arena, it);

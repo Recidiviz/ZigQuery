@@ -1139,6 +1139,18 @@ fn appendTypeProtoJson(
             try appendTypeProtoJson(out, alloc, elem);
             try out.appendSlice(alloc, "}");
         },
+        // googlesql's ValidateTypeProto (type_deserializer.cc) accepts a
+        // TYPE_RANGE only when the proto also carries `range_type` — the same
+        // iff it enforces for ARRAY and STRUCT. Emitting the bare kind is what
+        // made a `RANGE<DATE>` column fail with "Invalid TypeProto provided
+        // for deserialization", and it failed on the *next* statement rather
+        // than the DDL, because the whole catalog is re-parsed per analyze.
+        .TYPE_RANGE => {
+            const elem = t.element_type orelse return error.InvalidSpec;
+            try out.appendSlice(alloc, ",\"rangeType\":{\"elementType\":");
+            try appendTypeProtoJson(out, alloc, elem);
+            try out.appendSlice(alloc, "}");
+        },
         .TYPE_STRUCT => {
             try out.appendSlice(alloc, ",\"structType\":{\"field\":[");
             for (t.field_types, 0..) |field, i| {

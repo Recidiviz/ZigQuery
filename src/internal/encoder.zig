@@ -4,11 +4,15 @@
 //!
 //!   0x40+       the memcomparable encoding (codec_sortable.zig), for the kinds
 //!               that can be ordered: STRING, BYTES, DATE, TIME, DATETIME,
-//!               TIMESTAMP.
-//!   0x00-0x0f   the self-delimiting codec (codec_binary.zig), for the kinds
+//!               TIMESTAMP, RANGE.
+//!   0x00-0x3f   the self-delimiting codec (codec_binary.zig), for the kinds
 //!               that cannot: ARRAY, STRUCT, JSON, INTERVAL. Its uvarint length
 //!               prefixes would sort by length before content, which does not
-//!               matter for a kind the analyzer refuses to ORDER BY.
+//!               matter for a kind the analyzer refuses to ORDER BY. Tags run
+//!               0x00-0x10 today; the rest of the range is growth room.
+//!
+//! RANGE appears in both lists on purpose: ordered at the top level, but
+//! self-delimiting when nested inside an ARRAY or STRUCT.
 
 const std = @import("std");
 const value_mod = @import("value.zig");
@@ -148,11 +152,11 @@ fn decodeRepr(
         .int => |i| return Value{ .int = i },
         .float => |f| return Value{ .float = f },
         // Two payload shapes travel in a BLOB, told apart by tag range: the
-        // self-delimiting codec uses 0x00-0x0f, the memcomparable one 0x40 and
-        // up. This is a dispatch on *kind*, not a compatibility fallback —
-        // which shape a kind uses is fixed, and a database in an older format
-        // is refused at open (see Db.storage_format_version) rather than
-        // sniffed for here.
+        // self-delimiting codec owns everything below `sortable.tag_min`, the
+        // memcomparable one everything from it up. This is a dispatch on
+        // *kind*, not a compatibility fallback — which shape a kind uses is
+        // fixed, and a database in an older format is refused at open (see
+        // Db.storage_format_version) rather than sniffed for here.
         //
         // Borrows from `b`, which belongs to SQLite and stays valid for the
         // statement step or UDF call that produced it — long enough for every
@@ -163,7 +167,7 @@ fn decodeRepr(
             // Copy first when the Value must outlive this call; the decode is
             // identical either way.
             const src = if (borrow_blob) b else try alloc.dupe(u8, b);
-            if (src[0] < 0x10) return codec.decodeBinaryValueBorrowing(alloc, src);
+            if (src[0] < sortable.tag_min) return codec.decodeBinaryValueBorrowing(alloc, src);
             return sortable.decode(alloc, src);
         },
     }
@@ -438,6 +442,35 @@ pub fn valueFromProto(
                 values[i] = try valueFromProto(alloc, field, field_type);
             }
             return value_mod.structValue(alloc, keys, values);
+        },
+        // RANGE literal: `range_value` holds the two bounds as nested
+        // ValueProtos, so this recurses on the element type the way TYPE_ARRAY
+        // does. googlesql always sets both fields and clears the one standing
+        // for UNBOUNDED (value.proto: "Start and end values must always be
+        // present"), so an absent field and a null one both mean unbounded.
+        .TYPE_RANGE => {
+            const rv = switch (v) {
+                .range_value => |x| x,
+                else => return error.CorruptData,
+            };
+            const range_type = type_proto.range_type orelse return error.CorruptData;
+            const elem_type = range_type.element_type orelse return error.CorruptData;
+            const elem_kind = elem_type.type_kind orelse .TYPE_UNKNOWN;
+            const elem: value_mod.Range.ElemKind = switch (elem_kind) {
+                .TYPE_DATE => .date,
+                .TYPE_DATETIME => .datetime,
+                .TYPE_TIMESTAMP => .timestamp,
+                // range_type.cc IsSupportedElementTypeKind allows only these
+                // three, so anything else means a proto we did not build.
+                else => return error.Unimplemented,
+            };
+            const start = if (rv.start) |p| try valueFromProto(alloc, p, elem_type) else Value.null;
+            const end = if (rv.end) |p| try valueFromProto(alloc, p, elem_type) else Value.null;
+            return value_mod.rangeValue(
+                elem,
+                if (start == .null) null else try value_mod.rangeElementScalar(start),
+                if (end == .null) null else try value_mod.rangeElementScalar(end),
+            );
         },
         // INTERVAL literal: the proto carries interval_value as googlesql's
         // 16-byte binary interval encoding. Go reads the canonical string via

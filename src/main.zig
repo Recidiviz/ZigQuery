@@ -249,7 +249,7 @@ fn printCell(out: *std.Io.Writer, cell: driver.Cell) std.Io.Writer.Error!void {
         .bool => |b| try out.writeAll(if (b) "true" else "false"),
         .string, .json => |s| try out.print("{s}", .{s}),
         .date => |s| try out.print("{s}", .{s}),
-        .timestamp, .datetime, .time, .interval => |s| try out.print("{s}", .{s}),
+        .timestamp, .datetime, .time, .interval, .range => |s| try out.print("{s}", .{s}),
         .bytes => |b| {
             for (b) |c| try out.print("{x:0>2}", .{c});
         },

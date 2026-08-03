@@ -143,7 +143,7 @@ fn stringMatch(
     switch (got) {
         // Date/time kinds render as their Go ToApiString forms, which is what
         // the doc tables print.
-        .string, .json, .date, .timestamp, .datetime, .time, .interval => |s| {
+        .string, .json, .date, .timestamp, .datetime, .time, .interval, .range => |s| {
             if (std.mem.eql(u8, want, s)) return true;
             // A quoted number in the docs against a NUMERIC-as-string cell.
             const w = std.fmt.parseFloat(f64, want) catch return false;
@@ -183,7 +183,7 @@ fn writeCell(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), cell: driver.Cell)
         .bool => |b| try buf.appendSlice(gpa, if (b) "true" else "false"),
         .int => |v| try buf.print(gpa, "{d}", .{v}),
         .float => |v| try buf.print(gpa, "{d}", .{v}),
-        .string, .json, .date, .timestamp, .datetime, .time, .interval => |s| {
+        .string, .json, .date, .timestamp, .datetime, .time, .interval, .range => |s| {
             try buf.appendSlice(gpa, s);
         },
         .bytes => |b| try buf.appendSlice(gpa, b),

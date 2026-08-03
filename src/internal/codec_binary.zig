@@ -5,8 +5,9 @@
 //! which is what lets it nest.
 //!
 //! JSON, INTERVAL, ARRAY and STRUCT — plus every value nested inside a
-//! composite, including numerics. Carried as a raw BLOB; the tag range (0x00-
-//! 0x0f here, 0x40+ in codec_sortable.zig) says which shape a payload is.
+//! composite, including numerics and ranges. Carried as a raw BLOB; the tag
+//! range (below codec_sortable.tag_min here, at or above it there) says which
+//! shape a payload is.
 
 const std = @import("std");
 const value_mod = @import("value.zig");
@@ -31,6 +32,20 @@ pub const bin_tag_timestamp: u8 = 0x0c;
 pub const bin_tag_interval: u8 = 0x0d;
 pub const bin_tag_array: u8 = 0x0e;
 pub const bin_tag_struct: u8 = 0x0f;
+/// RANGE. First tag past the sixteen go-zetasqlite inherited, which is why it
+/// is also the first free to design: there is no Go RangeValue whose bytes
+/// this has to match.
+///
+/// Components rather than the canonical string its date/datetime/interval
+/// neighbours store, because the string is ambiguous —
+/// `[UNBOUNDED, UNBOUNDED)` renders identically for all three element kinds,
+/// so a text payload could not say which one it held.
+pub const bin_tag_range: u8 = 0x10;
+
+/// Which bounds follow the element byte. An absent bound writes no payload at
+/// all, so `[UNBOUNDED, UNBOUNDED)` costs three bytes.
+const range_flag_start: u8 = 1 << 0;
+const range_flag_end: u8 = 1 << 1;
 
 // Pre-sizing this list with a computed hint was tried and measured neutral
 // (encode 137.9ms -> 136.0ms over 2.4M values, inside run-to-run noise): on an
@@ -112,6 +127,24 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
             var le: [8]u8 = undefined;
             std.mem.writeInt(u64, &le, @bitCast(m), .little);
             try buf.appendSlice(alloc, &le);
+        },
+        // tag, element kind, presence flags, then only the bounds present.
+        .range => |r| {
+            try buf.append(alloc, bin_tag_range);
+            try buf.append(alloc, @intFromEnum(r.elem));
+            var flags: u8 = 0;
+            if (r.has_start) flags |= range_flag_start;
+            if (r.has_end) flags |= range_flag_end;
+            try buf.append(alloc, flags);
+            var le: [8]u8 = undefined;
+            if (r.startBound()) |n| {
+                std.mem.writeInt(u64, &le, @bitCast(n), .little);
+                try buf.appendSlice(alloc, &le);
+            }
+            if (r.endBound()) |n| {
+                std.mem.writeInt(u64, &le, @bitCast(n), .little);
+                try buf.appendSlice(alloc, &le);
+            }
         },
         // Go stores *IntervalValue as its ToString string.
         .interval => |iv| {
@@ -229,6 +262,23 @@ const BinReader = struct {
             bin_tag_interval => return Value{
                 .interval = try value_mod.parseIntervalValue(try r.lenBytes()),
             },
+            bin_tag_range => {
+                const kind = std.enums.fromInt(value_mod.Range.ElemKind, try r.byte()) orelse
+                    return error.CorruptData;
+                const flags = try r.byte();
+                // Any bit outside the two defined ones means these bytes were
+                // not written by appendBinaryValue.
+                if (flags & ~(range_flag_start | range_flag_end) != 0) return error.CorruptData;
+                const start: ?i64 = if (flags & range_flag_start != 0)
+                    @bitCast(try r.fixed64())
+                else
+                    null;
+                const end: ?i64 = if (flags & range_flag_end != 0)
+                    @bitCast(try r.fixed64())
+                else
+                    null;
+                return value_mod.rangeValue(kind, start, end);
+            },
             // Go: JsonValue(string(b)) — the raw JSON string.
             bin_tag_json => return Value{ .json = try r.payload(alloc, borrow) },
             // The unscaled integer written above, read back at the scale the
@@ -316,6 +366,15 @@ fn skipValue(r: *BinReader) ValueError!void {
         bin_tag_numeric,
         bin_tag_bignumeric,
         => _ = try r.lenBytes(),
+        // Element byte, presence flags, then one fixed64 per bound present.
+        // The compiler cannot see this omission — a missing arm here surfaces
+        // only as CorruptData out of UNNEST over an ARRAY<RANGE<...>>.
+        bin_tag_range => {
+            _ = try r.byte(); // element kind
+            const flags = try r.byte();
+            if (flags & range_flag_start != 0) _ = try r.fixed64();
+            if (flags & range_flag_end != 0) _ = try r.fixed64();
+        },
         bin_tag_array => {
             const n = try r.uvarint();
             if (n > r.buf.len - r.pos) return error.CorruptData;
@@ -396,6 +455,16 @@ test "ArrayWalker yields element slices that decode to the originals" {
         .{ .date = 100 },
         try value_mod.arrayValue(alloc, &.{ .{ .int = 1 }, .{ .string = "x" } }),
         try value_mod.structValue(alloc, &.{ "k", "" }, &.{ .{ .int = 2 }, .{ .bytes = "b" } }),
+        // A range's payload width depends on its presence byte, so all four
+        // combinations are here: skipValue reads that byte to know how many
+        // bounds follow, and a wrong count desynchronises the whole walk
+        // rather than erroring where the mistake is. Nothing about this is
+        // visible to the compiler — GENERATE_RANGE_ARRAY feeding UNNEST is
+        // what would find it otherwise.
+        value_mod.rangeValue(.date, 100, 200),
+        value_mod.rangeValue(.date, null, 200),
+        value_mod.rangeValue(.timestamp, 100, null),
+        value_mod.rangeValue(.datetime, null, null),
     };
     const encoded = try encodeBinaryValue(alloc, try value_mod.arrayValue(alloc, &elems));
 
