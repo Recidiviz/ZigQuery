@@ -17,6 +17,10 @@ bigquery/functions/string/contains_substr	case-insensitive match
 bigquery/functions/string/contains_substr	substring absent
 bigquery/functions/utility/generate_uuid	returns a UUID in canonical 8-4-4-4-12 form
 bigquery/functions/utility/generate_uuid	distinct rows get distinct UUIDs
+bigquery/functions/utility/typeof	integer literal reports INT64
+bigquery/functions/utility/typeof	string literal reports STRING
+bigquery/functions/utility/typeof	floating-point literal reports DOUBLE
+bigquery/functions/utility/typeof	NULL collapses to INT64 supertype
 googlesql/functions/aggregate/any_value	returns the only value
 googlesql/functions/aggregate/any_value	upstream Example — ANY_VALUE returns one row from the group
 googlesql/functions/aggregate/any_value	HAVING MAX picks the value associated with the largest sold count
@@ -146,6 +150,7 @@ googlesql/functions/debug/error	run_else
 googlesql/functions/debug/error	run_elseif
 googlesql/functions/debug/error	run_if_with_elses
 googlesql/functions/debug/error	run_no_case
+googlesql/functions/debug/error	typeof_error_function
 googlesql/functions/debug/error	unselected_cases_dont_run
 googlesql/functions/hash/farm_fingerprint	empty string fingerprint is non-null
 googlesql/functions/hash/md5	md5 of empty bytes

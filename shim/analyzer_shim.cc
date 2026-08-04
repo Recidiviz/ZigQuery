@@ -164,6 +164,20 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // free the same way: the resolver picks the branch and emits its scans, so
     // nothing new reaches the extractor.
     googlesql::FEATURE_PIPE_IF,
+    // TYPEOF(expr) -> the type's name. No `zetasqlite_typeof` answers it and
+    // none is needed: the type is a static property of the expression, so the
+    // analyzer's rewriter has already resolved it by the time the extractor
+    // runs. What arrives is a constant-true CASE whose taken branch is the
+    // name as a literal —
+    //
+    //   CASE WHEN true THEN X'60494e543634'   -- "INT64"
+    //        ELSE zetasqlite_cast(zetasqlite_is_null(x), ...) END
+    //
+    // with the untaken branch built from functions the engine already has, and
+    // never evaluated because SQLite short-circuits CASE. It works over columns
+    // and expressions, not only literals: TYPEOF(a + 1), TYPEOF(SUM(a)),
+    // TYPEOF(arr) -> "ARRAY<INT64>" and TYPEOF(s) -> "STRUCT<f INT64>".
+    googlesql::FEATURE_TYPEOF_FUNCTION,
 };
 
 // Ported verbatim from internal/analyzer.go `supportedStatementKinds`.
