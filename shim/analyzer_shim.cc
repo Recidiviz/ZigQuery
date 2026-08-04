@@ -146,6 +146,24 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // and writes a catalog row whose TypeProto googlesql then rejects on every
     // subsequent statement, since the whole catalog is re-parsed per analyze.
     googlesql::FEATURE_RANGE_TYPE,
+    // Pipe syntax: `FROM t |> WHERE x > 1 |> SELECT y`. The base feature covers
+    // the operators that resolve into the ordinary scan nodes the transformer
+    // already walks — WHERE, SELECT, EXTEND, SET, DROP, RENAME, AS, AGGREGATE,
+    // ORDER BY, LIMIT/OFFSET, JOIN, DISTINCT, UNION and friends — so it is
+    // syntax the resolver desugars rather than a new shape downstream.
+    //
+    // The operators that *do* introduce their own resolved nodes each have
+    // their own feature and stay off until something handles them:
+    // FEATURE_PIPE_ASSERT (ResolvedAssertScan), FEATURE_PIPE_STATIC_DESCRIBE,
+    // FEATURE_PIPE_LOG, FEATURE_PIPE_FORK, FEATURE_PIPE_TEE, FEATURE_PIPE_WITH,
+    // FEATURE_PIPE_EXPORT_DATA, FEATURE_PIPE_CREATE_TABLE, FEATURE_PIPE_INSERT
+    // and FEATURE_PIPE_FINISH. Each of those is a clean "Pipe X not supported"
+    // from the analyzer while its feature is off, not a surprise further down.
+    googlesql::FEATURE_PIPES,
+    // `|> IF cond THEN (...) ELSE (...)`. Separate from the base feature, but
+    // free the same way: the resolver picks the branch and emits its scans, so
+    // nothing new reaches the extractor.
+    googlesql::FEATURE_PIPE_IF,
 };
 
 // Ported verbatim from internal/analyzer.go `supportedStatementKinds`.

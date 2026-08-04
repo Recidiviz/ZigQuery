@@ -142,6 +142,11 @@ googlesql/functions/datetime/last_day	last day of month from datetime
 googlesql/functions/datetime/parse_datetime	ISO datetime
 googlesql/functions/debug/error	default_error_no_rows
 googlesql/functions/debug/error	if_no_error
+googlesql/functions/debug/error	run_else
+googlesql/functions/debug/error	run_elseif
+googlesql/functions/debug/error	run_if_with_elses
+googlesql/functions/debug/error	run_no_case
+googlesql/functions/debug/error	unselected_cases_dont_run
 googlesql/functions/hash/farm_fingerprint	empty string fingerprint is non-null
 googlesql/functions/hash/md5	md5 of empty bytes
 googlesql/functions/hash/sha1	sha1 of empty bytes
@@ -460,6 +465,33 @@ googlesql/syntax/dml/truncate_table	TRUNCATE TABLE — 3-segment project.dataset
 googlesql/syntax/dml/truncate_table	TRUNCATE TABLE — backquoted compound path
 googlesql/syntax/dml/update	UPDATE the row matching a WHERE predicate
 googlesql/syntax/dml/update	UPDATE WHERE TRUE updates every row
+googlesql/syntax/pipe/aggregate	count rows with no GROUP BY
+googlesql/syntax/pipe/aggregate	aggregate with GROUP BY
+googlesql/syntax/pipe/as	AS names the table; columns are qualifiable
+googlesql/syntax/pipe/distinct	distinct collapses duplicate rows
+googlesql/syntax/pipe/drop	drop one column
+googlesql/syntax/pipe/drop	drop multiple columns
+googlesql/syntax/pipe/except	except distinct
+googlesql/syntax/pipe/extend	extend with a doubled column
+googlesql/syntax/pipe/extend	extend with multiple expressions
+googlesql/syntax/pipe/intersect	intersect distinct
+googlesql/syntax/pipe/join	inner join on equality
+googlesql/syntax/pipe/join	left outer join keeps left-side row when no match
+googlesql/syntax/pipe/limit	limit caps the row count
+googlesql/syntax/pipe/limit	limit with offset skips initial rows
+googlesql/syntax/pipe/order_by	order ASC by default
+googlesql/syntax/pipe/order_by	order DESC
+googlesql/syntax/pipe/rename	rename single column
+googlesql/syntax/pipe/rename	rename multiple columns
+googlesql/syntax/pipe/select	rename single column via pipe SELECT
+googlesql/syntax/pipe/select	project two columns in declared order
+googlesql/syntax/pipe/select	arithmetic expression in pipe SELECT
+googlesql/syntax/pipe/set	set updates an existing column
+googlesql/syntax/pipe/set	set two columns in one operator
+googlesql/syntax/pipe/union	union all retains duplicates
+googlesql/syntax/pipe/union	union distinct deduplicates
+googlesql/syntax/pipe/where	filter integers above threshold
+googlesql/syntax/pipe/where	chained WHERE acts as AND
 googlesql/syntax/query/array_subscript	OFFSET is zero-based
 googlesql/syntax/query/array_subscript	ORDINAL is one-based
 googlesql/syntax/query/array_subscript	SAFE_OFFSET returns NULL out of range
