@@ -350,7 +350,8 @@ pub const func_table = [_]FuncInfo{
 
     // array functions
     .{ .name = "array_concat", .handler = arr.arrayConcat },
-    .{ .name = "array_length", .handler = arr.arrayLength },
+    // Reads the element count off the encoded array without decoding it.
+    .{ .name = "array_length", .handler = arr.arrayLength, .raw_args = 0b01 },
     .{ .name = "make_array", .handler = arr.makeArray },
     .{ .name = "make_struct", .handler = arr.makeStruct },
     .{ .name = "array_to_string", .min_args = 2, .handler = arr.arrayToString },

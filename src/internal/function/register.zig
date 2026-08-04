@@ -632,6 +632,22 @@ test "array and struct functions" {
     try env.expectNullResult("SELECT zetasqlite_safe_array_at_ordinal(zetasqlite_make_array(7), 0)");
 
     try env.expectInt(4, "SELECT zetasqlite_array_length(zetasqlite_array_concat(zetasqlite_make_array(1, 2), zetasqlite_make_array(3, 4)))");
+    // ARRAY_LENGTH reads the count off the encoded array, so these check it
+    // against the cases where a count and a decode could disagree: nothing to
+    // decode, and an element that decodes to nothing.
+    try env.expectInt(0, "SELECT zetasqlite_array_length(zetasqlite_make_array())");
+    try env.expectInt(3, "SELECT zetasqlite_array_length(zetasqlite_make_array(1, NULL, 3))");
+    try env.expectInt(
+        2,
+        try env.fmt(
+            "SELECT zetasqlite_array_length(zetasqlite_make_array({s}, {s}))",
+            .{ try env.encStr("a"), try env.encStr("bb") },
+        ),
+    );
+    try env.expectErrorMsg(
+        "failed to convert to array type",
+        "SELECT zetasqlite_array_length(1)",
+    );
     try env.expectNullResult("SELECT zetasqlite_array_concat(zetasqlite_make_array(1), NULL)");
 
     try env.expectInt(1, "SELECT zetasqlite_in_array(2, zetasqlite_make_array(1, 2, 3))");

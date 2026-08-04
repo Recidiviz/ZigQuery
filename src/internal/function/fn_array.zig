@@ -16,10 +16,12 @@ const null_v = Value.null;
 // ----------------------------------------------------------------------
 // Reading one entry out of a composite.
 //
-// These three functions are marked `raw_args` in bind.zig, so argument 0
-// arrives as the encoded bytes rather than a decoded Value and only the entry
-// asked for is materialized. Everything else here still takes decoded values:
-// ARRAY_CONCAT and ARRAY_LENGTH and friends read the whole composite anyway.
+// The field and element accessors, plus ARRAY_LENGTH, are marked `raw_args` in
+// bind.zig: argument 0 arrives as the encoded bytes rather than a decoded Value,
+// and only the entry asked for is materialized — none at all for a length, which
+// is a count sitting behind the tag. Everything else here still takes decoded
+// values, because ARRAY_CONCAT and ARRAY_REVERSE and friends read every element
+// anyway.
 // ----------------------------------------------------------------------
 
 /// The composite argument as a `CompositeRef`, or null when these bytes are not
@@ -145,13 +147,16 @@ pub fn arrayConcat(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return value_mod.arrayValue(alloc, out.items);
 }
 
+/// The count is a uvarint sitting right behind the array's tag, so this reads a
+/// byte or two and stops — where decoding the array to take `.len` materialized
+/// every element to count things it then threw away.
 pub fn arrayLength(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
     if (args.len != 1)
         return bind.fail("ARRAY_LENGTH: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
-    const arr = try args[0].toArray();
-    return Value{ .int = @intCast(arr.values.len) };
+    if (compositeArg(args[0], .array)) |arr| return Value{ .int = @intCast(arr.count) };
+    const a = try (try slowValue(alloc, args[0])).toArray();
+    return Value{ .int = @intCast(a.values.len) };
 }
 
 /// Go bindMakeArray -> MAKE_ARRAY: keeps NULL elements as elements.
