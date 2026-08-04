@@ -21,9 +21,10 @@ const null_v = Value.null;
 /// could be added.
 ///
 /// Each part reduces to one of the three units googlesql bounds — months, days,
-/// microseconds — which is also the shape the canonical form takes. WEEK and
-/// MICROSECOND therefore need no new field: a week is seven days, and
-/// microseconds are what the sub-day fields are made of.
+/// microseconds — which is also the shape the canonical form takes. That is why
+/// ten parts need no field of their own: a quarter is three months, a week is
+/// seven days, and milliseconds and microseconds are what the sub-day fields are
+/// made of.
 pub fn interval(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (bind.existsNull(args)) return null_v;
@@ -41,8 +42,14 @@ pub fn interval(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     var months: i64 = 0;
     var days: i64 = 0;
     var micros: i64 = 0;
+    // The complete set BigQuery accepts, checked part by part against it: it
+    // answers "Invalid interval datetime field X" for everything else, ISOYEAR
+    // and DAYOFWEEK and PICOSECOND included. They are EXTRACT parts, not
+    // interval ones.
     if (std.mem.eql(u8, part, "YEAR")) {
         months = mulOr(n, 12, value_mod.interval_max_months);
+    } else if (std.mem.eql(u8, part, "QUARTER")) {
+        months = mulOr(n, 3, value_mod.interval_max_months);
     } else if (std.mem.eql(u8, part, "MONTH")) {
         months = n;
     } else if (std.mem.eql(u8, part, "WEEK")) {
@@ -55,10 +62,19 @@ pub fn interval(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         micros = mulOr(n, 60 * 1_000_000, value_mod.interval_max_micros);
     } else if (std.mem.eql(u8, part, "SECOND")) {
         micros = mulOr(n, 1_000_000, value_mod.interval_max_micros);
+    } else if (std.mem.eql(u8, part, "MILLISECOND")) {
+        micros = mulOr(n, 1_000, value_mod.interval_max_micros);
     } else if (std.mem.eql(u8, part, "MICROSECOND")) {
         micros = n;
     } else {
-        return bind.fail("unexpected interval part: {s}", .{part}, error.UnsupportedOperation);
+        // BigQuery's wording. Nothing depended on the old "unexpected interval
+        // part", and the parts that land here — ISOYEAR, DAYOFWEEK,
+        // PICOSECOND — are ones it names this way.
+        return bind.fail(
+            "Invalid interval datetime field {s}; error in INTERVAL expression",
+            .{part},
+            error.UnsupportedOperation,
+        );
     }
 
     // googlesql bounds the canonical fields, not the literal, and names the
@@ -210,6 +226,36 @@ test "INTERVAL WEEK and MICROSECOND reduce to days and to the sub-day fields" {
     try testing.expectEqualStrings("0-0 0 0:0:0", try canonical(&buf, 0, "MICROSECOND"));
 }
 
+test "INTERVAL QUARTER and MILLISECOND reduce to months and microseconds" {
+    var buf: [96]u8 = undefined;
+    // A quarter is three months and a millisecond is a thousand microseconds,
+    // so neither needs a field either — and both canonicalize onward, 5
+    // quarters becoming a year and three months.
+    try testing.expectEqualStrings("0-9 0 0:0:0", try canonical(&buf, 3, "QUARTER"));
+    try testing.expectEqualStrings("1-3 0 0:0:0", try canonical(&buf, 5, "QUARTER"));
+    try testing.expectEqualStrings("-0-6 0 0:0:0", try canonical(&buf, -2, "QUARTER"));
+    try testing.expectEqualStrings("0-0 0 0:0:0.003", try canonical(&buf, 3, "MILLISECOND"));
+    try testing.expectEqualStrings("0-0 0 0:0:5", try canonical(&buf, 5_000, "MILLISECOND"));
+}
+
+test "INTERVAL takes the ten parts BigQuery takes, and no others" {
+    var buf: [96]u8 = undefined;
+    for ([_][]const u8{
+        "YEAR", "QUARTER", "MONTH",  "WEEK",        "DAY",
+        "HOUR", "MINUTE",  "SECOND", "MILLISECOND", "MICROSECOND",
+    }) |part| {
+        _ = canonical(&buf, 1, part) catch |err| {
+            std.debug.print("part {s} rejected: {s}\n", .{ part, @errorName(err) });
+            return err;
+        };
+    }
+    // Everything else is an EXTRACT part rather than an interval one, and
+    // BigQuery says so: "Invalid interval datetime field ISOYEAR".
+    for ([_][]const u8{ "ISOYEAR", "ISOWEEK", "DAYOFWEEK", "DAYOFYEAR", "PICOSECOND" }) |part| {
+        try testing.expectError(error.UnsupportedOperation, canonical(&buf, 1, part));
+    }
+}
+
 test "INTERVAL counts past i32 are values, not crashes" {
     var buf: [96]u8 = undefined;
     // Regression: the count was `@intCast(...toInt64())` into an i32, which
@@ -253,9 +299,11 @@ test "INTERVAL bounds the canonical field, and names it" {
     }
 }
 
-test "INTERVAL still refuses a part it has no unit for" {
+test "INTERVAL names the part it refuses, the way BigQuery does" {
     var buf: [96]u8 = undefined;
     bind.clearDiagnostics();
-    try testing.expectError(error.UnsupportedOperation, canonical(&buf, 1, "MILLISECOND"));
-    try testing.expect(std.mem.indexOf(u8, bind.message.?, "unexpected interval part") != null);
+    try testing.expectError(error.UnsupportedOperation, canonical(&buf, 1, "ISOYEAR"));
+    try testing.expect(
+        std.mem.indexOf(u8, bind.message.?, "Invalid interval datetime field ISOYEAR") != null,
+    );
 }
