@@ -7,19 +7,25 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/net_functions.md#netformat_packed_ip-deprecated",
     .cases = .{
+    // NET.FORMAT_PACKED_IP is not a GoogleSQL function in BigQuery: real BigQuery answers
+    // `Function not found: NET.FORMAT_PACKED_IP` (bq CLI, 2026-08-04). It exists in BigQuery's
+    // *legacy* SQL — `bq query --use_legacy_sql=true "SELECT FORMAT_PACKED_IP(...)"` answers
+    // normally — and GoogleSQL's own docs mark it deprecated (see the anchor in
+    // .upstream above). This engine emulates GoogleSQL-dialect BigQuery, so
+    // implementing it would add surface production does not have.
+    //
+    // Restated as the refusal so the case still pins something. The assertion
+    // is deliberately loose: the engine reports UnsupportedFunction without
+    // naming the function, so this says "not implemented here", not which.
         .{
             .desc = "round-trip via IP_FROM_STRING",
             .sql = "SELECT NET.FORMAT_PACKED_IP(NET.IP_FROM_STRING('192.168.1.0')) AS v",
-            .rows = .{
-                .{"192.168.1.0"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "ipv4 high-bit address",
             .sql = "SELECT NET.FORMAT_PACKED_IP(NET.IP_FROM_STRING('255.255.255.255')) AS v",
-            .rows = .{
-                .{"255.255.255.255"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
     },
 }

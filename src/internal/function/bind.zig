@@ -286,6 +286,7 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "generate_uuid", .handler = net.generateUuid, .deterministic = false },
     .{ .name = "net_host", .min_args = 1, .handler = net.netHost },
     .{ .name = "net_ip_from_string", .min_args = 1, .handler = net.netIpFromString },
+    .{ .name = "net_ip_in_net", .min_args = 2, .handler = net.netIpInNet },
     .{ .name = "net_ip_net_mask", .min_args = 2, .handler = net.netIpNetMask },
     .{ .name = "net_ip_to_string", .min_args = 1, .handler = net.netIpToString },
     .{ .name = "net_ip_trunc", .min_args = 2, .handler = net.netIpTrunc },

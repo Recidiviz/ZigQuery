@@ -101,6 +101,58 @@ pub fn netIpTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return Value{ .bytes = out };
 }
 
+/// NET.IP_IN_NET(ip STRING, net STRING) -> BOOL: is `ip` inside the CIDR `net`.
+///
+/// Two asymmetries, both taken from real BigQuery rather than assumed, and both
+/// the things a plausible implementation gets wrong:
+///
+///   - A *malformed* net is an error, but a net of a different **family** is a
+///     plain false: NET.IP_IN_NET('1.2.3.4', '2001:db8::/32') is false, not a
+///     complaint about mixing v4 and v6.
+///   - A net with no prefix is a host net, so '1.2.3.4' contains only itself,
+///     while host bits inside a prefixed net are masked away rather than
+///     rejected — '1.2.3.4/24' is read as 1.2.3.0/24 and contains 1.2.3.4.
+pub fn netIpInNet(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (bind.existsNull(args)) return null_v;
+    const ip = try parseIp(alloc, try args[0].toString(alloc)) orelse
+        return bind.fail(
+            "NET.IP_IN_NET() encountered an unparseable IP-address",
+            .{},
+            error.FailedConversion,
+        );
+
+    const net_s = try args[1].toString(alloc);
+    const slash = std.mem.indexOfScalar(u8, net_s, '/');
+    const addr_s = if (slash) |i| net_s[0..i] else net_s;
+    const net_ip = try parseIp(alloc, addr_s) orelse return unparseableNet();
+
+    const bits: i64 = @intCast(net_ip.len * 8);
+    // No prefix means every bit is significant: the net holds one address.
+    const prefix: i64 = if (slash) |i|
+        (std.fmt.parseInt(i64, net_s[i + 1 ..], 10) catch return unparseableNet())
+    else
+        bits;
+    if (prefix < 0 or prefix > bits) return unparseableNet();
+
+    // Different families cannot overlap, which is a false rather than an error.
+    if (ip.len != net_ip.len) return Value{ .bool = false };
+
+    const mask = try alloc.alloc(u8, net_ip.len);
+    fillMask(mask, @intCast(prefix));
+    for (ip, net_ip, mask) |a, b, m| {
+        if ((a & m) != (b & m)) return Value{ .bool = false };
+    }
+    return Value{ .bool = true };
+}
+
+fn unparseableNet() Error {
+    return bind.fail(
+        "NET.IP_IN_NET() encountered an unparseable net",
+        .{},
+        error.FailedConversion,
+    );
+}
+
 pub fn netIpv4FromInt64(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (bind.existsNull(args)) return null_v;
     const v: u32 = @truncate(@as(u64, @bitCast(try args[0].toInt64())));
@@ -416,4 +468,80 @@ fn labelStart(s: []const u8, idx: usize) usize {
         }
     }
     return s.len;
+}
+
+// ----------------------------------------------------------------------
+// Tests. Every expectation is what real BigQuery answers for the same call.
+// ----------------------------------------------------------------------
+
+const testing = std.testing;
+
+fn inNet(alloc: std.mem.Allocator, ip: []const u8, net_s: []const u8) Error!Value {
+    return netIpInNet(alloc, &.{ .{ .string = ip }, .{ .string = net_s } });
+}
+
+test "NET.IP_IN_NET matches within a prefix, both families" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const cases = [_]struct { ip: []const u8, net: []const u8, want: bool }{
+        .{ .ip = "10.0.0.5", .net = "10.0.0.0/8", .want = true },
+        .{ .ip = "192.168.0.1", .net = "10.0.0.0/8", .want = false },
+        .{ .ip = "2001:db8::1", .net = "2001:db8::/32", .want = true },
+        .{ .ip = "2001:dba::1", .net = "2001:db8::/32", .want = false },
+        // Prefix 0 is every address, which is the boundary fillMask has to get
+        // right at the other end from a host net.
+        .{ .ip = "8.8.8.8", .net = "0.0.0.0/0", .want = true },
+    };
+    for (cases) |c| {
+        const got = try inNet(alloc, c.ip, c.net);
+        try testing.expectEqual(c.want, got.bool);
+    }
+}
+
+test "NET.IP_IN_NET treats a family mismatch as false, not as an error" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // The asymmetry worth pinning: a *malformed* net raises, but a v4 address
+    // against a v6 net simply is not in it. BigQuery agrees.
+    try testing.expectEqual(false, (try inNet(alloc, "1.2.3.4", "2001:db8::/32")).bool);
+    try testing.expectEqual(false, (try inNet(alloc, "2001:db8::1", "1.2.3.0/24")).bool);
+}
+
+test "NET.IP_IN_NET reads a bare address as a host net, and masks host bits" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // No prefix means every bit counts, so the net holds exactly itself...
+    try testing.expectEqual(true, (try inNet(alloc, "1.2.3.4", "1.2.3.4")).bool);
+    try testing.expectEqual(false, (try inNet(alloc, "1.2.3.5", "1.2.3.4")).bool);
+    // ...while host bits *inside* a prefixed net are masked away rather than
+    // rejected: 1.2.3.4/24 is read as 1.2.3.0/24.
+    try testing.expectEqual(true, (try inNet(alloc, "1.2.3.4", "1.2.3.4/24")).bool);
+    try testing.expectEqual(true, (try inNet(alloc, "1.2.3.99", "1.2.3.4/24")).bool);
+}
+
+test "NET.IP_IN_NET propagates NULL and refuses what cannot be parsed" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    try testing.expect((try netIpInNet(alloc, &.{ null_v, .{ .string = "1.2.3.0/24" } })) == .null);
+    try testing.expect((try netIpInNet(alloc, &.{ .{ .string = "1.2.3.4" }, null_v })) == .null);
+
+    const bad = [_]struct { ip: []const u8, net: []const u8, msg: []const u8 }{
+        .{ .ip = "not-an-ip", .net = "1.2.3.0/24", .msg = "unparseable IP-address" },
+        .{ .ip = "1.2.3.4", .net = "1.2.3.0/33", .msg = "unparseable net" },
+        .{ .ip = "1.2.3.4", .net = "", .msg = "unparseable net" },
+        .{ .ip = "1.2.3.4", .net = "1.2.3.0/x", .msg = "unparseable net" },
+    };
+    for (bad) |c| {
+        bind.clearDiagnostics();
+        try testing.expectError(error.FailedConversion, inNet(alloc, c.ip, c.net));
+        try testing.expect(std.mem.indexOf(u8, bind.message.?, c.msg) != null);
+    }
 }

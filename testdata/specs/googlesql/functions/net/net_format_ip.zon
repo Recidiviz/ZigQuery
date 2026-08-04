@@ -7,19 +7,25 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/net_functions.md#netformat_ip-deprecated",
     .cases = .{
+    // NET.FORMAT_IP is not a GoogleSQL function in BigQuery: real BigQuery answers
+    // `Function not found: NET.FORMAT_IP` (bq CLI, 2026-08-04). It exists in BigQuery's
+    // *legacy* SQL — `bq query --use_legacy_sql=true "SELECT FORMAT_IP(16909060)"` answers
+    // normally — and GoogleSQL's own docs mark it deprecated (see the anchor in
+    // .upstream above). This engine emulates GoogleSQL-dialect BigQuery, so
+    // implementing it would add surface production does not have.
+    //
+    // Restated as the refusal so the case still pins something. The assertion
+    // is deliberately loose: the engine reports UnsupportedFunction without
+    // naming the function, so this says "not implemented here", not which.
         .{
             .desc = "format 0 as 0.0.0.0",
             .sql = "SELECT NET.FORMAT_IP(0)",
-            .rows = .{
-                .{"0.0.0.0"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "format 16909060 as 1.2.3.4",
             .sql = "SELECT NET.FORMAT_IP(16909060)",
-            .rows = .{
-                .{"1.2.3.4"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
     },
 }

@@ -7,19 +7,25 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/net_functions.md#netparse_packed_ip-deprecated",
     .cases = .{
+    // NET.PARSE_PACKED_IP is not a GoogleSQL function in BigQuery: real BigQuery answers
+    // `Function not found: NET.PARSE_PACKED_IP` (bq CLI, 2026-08-04). It exists in BigQuery's
+    // *legacy* SQL — `bq query --use_legacy_sql=true "SELECT PARSE_PACKED_IP(...)"` answers
+    // normally — and GoogleSQL's own docs mark it deprecated (see the anchor in
+    // .upstream above). This engine emulates GoogleSQL-dialect BigQuery, so
+    // implementing it would add surface production does not have.
+    //
+    // Restated as the refusal so the case still pins something. The assertion
+    // is deliberately loose: the engine reports UnsupportedFunction without
+    // naming the function, so this says "not implemented here", not which.
         .{
             .desc = "round-trip via IP_TO_STRING",
             .sql = "SELECT NET.IP_TO_STRING(NET.PARSE_PACKED_IP('192.168.1.0')) AS v",
-            .rows = .{
-                .{"192.168.1.0"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "zero address round-trip",
             .sql = "SELECT NET.IP_TO_STRING(NET.PARSE_PACKED_IP('0.0.0.0')) AS v",
-            .rows = .{
-                .{"0.0.0.0"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
     },
 }

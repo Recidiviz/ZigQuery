@@ -308,14 +308,26 @@ googlesql/functions/math/tan	TAN(0) is 0
 googlesql/functions/math/tanh	tanh(0) is 0
 googlesql/functions/math/trunc	truncate positive fraction
 googlesql/functions/math/trunc	truncate negative fraction
+googlesql/functions/net/net_format_ip	format 0 as 0.0.0.0
+googlesql/functions/net/net_format_ip	format 16909060 as 1.2.3.4
+googlesql/functions/net/net_format_packed_ip	round-trip via IP_FROM_STRING
+googlesql/functions/net/net_format_packed_ip	ipv4 high-bit address
 googlesql/functions/net/net_host	net_host extracts the expected piece
 googlesql/functions/net/net_ip_from_string	IPv4 round-trip through bytes and back to string
+googlesql/functions/net/net_ip_in_net	IP inside the network
+googlesql/functions/net/net_ip_in_net	IP outside the network
 googlesql/functions/net/net_ip_net_mask	NET.IP_NET_MASK returns a non-null bytes mask
 googlesql/functions/net/net_ip_to_string	dotted-decimal preserved through byte form
 googlesql/functions/net/net_ip_trunc	NET.IP_TRUNC of an IPv4 to /24 returns the network bytes
 googlesql/functions/net/net_ipv4_from_int64	packed-int round-trip via int64
 googlesql/functions/net/net_ipv4_to_int64	int64 round-trip via packed bytes
+googlesql/functions/net/net_make_net	basic IPv4 prefix
+googlesql/functions/net/net_make_net	host-level IPv4
+googlesql/functions/net/net_make_net	zero-prefix anywhere-net
 googlesql/functions/net/net_parse_ip	identity round-trip via IP_TO_STRING(IP_FROM_STRING(x))
+googlesql/functions/net/net_parse_ip	null propagates through PARSE_IP
+googlesql/functions/net/net_parse_packed_ip	round-trip via IP_TO_STRING
+googlesql/functions/net/net_parse_packed_ip	zero address round-trip
 googlesql/functions/net/net_public_suffix	net_public_suffix extracts the expected piece
 googlesql/functions/net/net_reg_domain	net_reg_domain extracts the expected piece
 googlesql/functions/net/net_safe_ip_from_string	invalid IP returns NULL
