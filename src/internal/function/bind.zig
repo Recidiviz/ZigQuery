@@ -347,6 +347,10 @@ pub const func_table = [_]FuncInfo{
     // math functions (cont.)
     .{ .name = "sign", .min_args = 1, .handler = math.sign },
     .{ .name = "bit_count", .min_args = 1, .handler = math.bitCount },
+    .{ .name = "bit_cast_to_int32", .min_args = 1, .handler = math.bitCastToInt32 },
+    .{ .name = "bit_cast_to_int64", .min_args = 1, .handler = math.bitCastToInt64 },
+    .{ .name = "bit_cast_to_uint32", .min_args = 1, .handler = math.bitCastToUint32 },
+    .{ .name = "bit_cast_to_uint64", .min_args = 1, .handler = math.bitCastToUint64 },
 
     // array functions
     .{ .name = "array_concat", .handler = arr.arrayConcat },

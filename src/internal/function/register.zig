@@ -1251,6 +1251,42 @@ test "vector distances over dense and sparse vectors" {
     ));
 }
 
+test "bit_cast reinterprets the bit pattern, not the value" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    // Positive values are identity at every width.
+    try env.expectInt(123, "SELECT zetasqlite_bit_cast_to_int32(123)");
+    try env.expectInt(123, "SELECT zetasqlite_bit_cast_to_int64(123)");
+    try env.expectInt(123, "SELECT zetasqlite_bit_cast_to_uint32(123)");
+    try env.expectInt(123, "SELECT zetasqlite_bit_cast_to_uint64(123)");
+
+    // The 32-bit forms differ only in how they re-widen the low 32 bits:
+    // INT32 sign-extends, UINT32 zero-extends. This is the pair the docs'
+    // examples turn on, and the corpus never exercises a negative input.
+    try env.expectInt(4294967295, "SELECT zetasqlite_bit_cast_to_uint32(-1)");
+    try env.expectInt(-1, "SELECT zetasqlite_bit_cast_to_int32(-1)");
+    try env.expectInt(-1, "SELECT zetasqlite_bit_cast_to_int32(zetasqlite_bit_cast_to_uint32(-1))");
+    try env.expectInt(-2147483648, "SELECT zetasqlite_bit_cast_to_int32(2147483648)");
+    try env.expectInt(2147483648, "SELECT zetasqlite_bit_cast_to_uint32(2147483648)");
+
+    // Anything above 32 bits is truncated away by the 32-bit forms.
+    try env.expectInt(1, "SELECT zetasqlite_bit_cast_to_uint32(4294967297)");
+
+    // The 64-bit forms preserve every bit, so the docs' round trip holds even
+    // though BIT_CAST_TO_UINT64(-1) renders as -1 rather than
+    // 18446744073709551615 — Value has no unsigned kind to render it with.
+    try env.expectInt(-1, "SELECT zetasqlite_bit_cast_to_uint64(-1)");
+    try env.expectInt(-1, "SELECT zetasqlite_bit_cast_to_int64(zetasqlite_bit_cast_to_uint64(-1))");
+    try env.expectInt(
+        std.math.minInt(i64),
+        "SELECT zetasqlite_bit_cast_to_int64(zetasqlite_bit_cast_to_uint64(-9223372036854775808))",
+    );
+
+    try env.expectNullResult("SELECT zetasqlite_bit_cast_to_int32(NULL)");
+    try env.expectNullResult("SELECT zetasqlite_bit_cast_to_uint64(NULL)");
+}
+
 test "range constructor, accessors and predicates" {
     var env = try TestEnv.init();
     defer env.deinit();

@@ -202,6 +202,55 @@ pub fn bitCount(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     }
 }
 
+// ---------------------------------------------------------------------
+// BIT_CAST_TO_{INT,UINT}{32,64} (bit_functions.md): reinterpret the bit
+// pattern instead of the value it denotes.
+//
+// The 32-bit forms truncate to the low 32 bits and re-widen — signed for
+// INT32, so 0xFFFFFFFF reads back as -1; zero-extended for UINT32, so it
+// reads as 4294967295, which i64 holds comfortably.
+//
+// The 64-bit forms are the identity on the bits, and for both directions,
+// because Value carries a single signed `int`. BIT_CAST_TO_UINT64 therefore
+// returns a value whose bits are right but whose *rendering* is the signed
+// reading: BIT_CAST_TO_UINT64(-1) shows as -1 rather than
+// 18446744073709551615. That is the engine's standing UINT64 limit — there is
+// no unsigned Value kind, and encoder.valueFromProto already refuses a UINT64
+// literal past i64's max — not something bit-casting introduces. It is also
+// invisible to a round trip, which is what the docs' own examples do:
+// BIT_CAST_TO_INT64(BIT_CAST_TO_UINT64(x)) is x for every x.
+// ---------------------------------------------------------------------
+
+pub fn bitCastToInt32(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("BIT_CAST_TO_INT32", args);
+    if (bind.existsNull(args)) return null_v;
+    const bits: u64 = @bitCast(try args[0].toInt64());
+    return Value{ .int = @as(i32, @bitCast(@as(u32, @truncate(bits)))) };
+}
+
+pub fn bitCastToUint32(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("BIT_CAST_TO_UINT32", args);
+    if (bind.existsNull(args)) return null_v;
+    const bits: u64 = @bitCast(try args[0].toInt64());
+    return Value{ .int = @as(u32, @truncate(bits)) };
+}
+
+pub fn bitCastToInt64(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("BIT_CAST_TO_INT64", args);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .int = try args[0].toInt64() };
+}
+
+pub fn bitCastToUint64(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    try oneArg("BIT_CAST_TO_UINT64", args);
+    if (bind.existsNull(args)) return null_v;
+    return Value{ .int = try args[0].toInt64() };
+}
+
 /// Go FLOOR: largest integral value not greater than x.
 pub fn floor(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
@@ -598,7 +647,11 @@ fn isSparse(arr: *const value_mod.ArrayValue) bool {
     return arr.values.len > 0 and arr.values[0] == .struct_;
 }
 
-fn sums(a: *const value_mod.ArrayValue, b: *const value_mod.ArrayValue, name: []const u8) Error!Sums {
+fn sums(
+    a: *const value_mod.ArrayValue,
+    b: *const value_mod.ArrayValue,
+    name: []const u8,
+) Error!Sums {
     var s: Sums = .{};
     if (isSparse(a) != isSparse(b))
         return bind.fail("{s}: both vectors must use the same representation", .{name}, error.UnsupportedOperation);

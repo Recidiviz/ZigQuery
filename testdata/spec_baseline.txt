@@ -100,8 +100,17 @@ googlesql/functions/array/generate_array	1 to 5 step 1
 googlesql/functions/array/generate_array	1 to 10 step 3
 googlesql/functions/array/generate_date_array	array length matches inclusive day range
 googlesql/functions/array/generate_timestamp_array	hourly bucket from 00:00 to 03:00 has 4 entries
+googlesql/functions/bit/bit_cast_to_int32	positive round-trip
+googlesql/functions/bit/bit_cast_to_int64	positive round-trip
+googlesql/functions/bit/bit_cast_to_int64	nested round-trip with UINT64
+googlesql/functions/bit/bit_cast_to_uint32	positive round-trip
+googlesql/functions/bit/bit_cast_to_uint64	positive value passes through
 googlesql/functions/bit/bit_count	count set bits
 googlesql/functions/bit/bit_count	zero is zero bits
+googlesql/functions/conversion/bit_cast_to_int32	bit-cast preserves int width 32 cycle
+googlesql/functions/conversion/bit_cast_to_int64	bit-cast a positive int64 is identity
+googlesql/functions/conversion/bit_cast_to_uint32	bit-cast unsigned 32 round-trip
+googlesql/functions/conversion/bit_cast_to_uint64	bit-cast unsigned 64 round-trip
 googlesql/functions/conversion/cast	int to string
 googlesql/functions/conversion/cast	string to int
 googlesql/functions/conversion/cast	int to float
