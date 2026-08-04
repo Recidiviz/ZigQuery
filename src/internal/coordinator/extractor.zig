@@ -64,6 +64,7 @@ const normal_func_names = std.StaticStringMap(void).initComptime(.{
     .{"current_timestamp"},            .{"string"},                  .{"timestamp"},
     .{"timestamp_add"},                .{"timestamp_sub"},           .{"timestamp_diff"},
     .{"timestamp_trunc"},              .{"format_timestamp"},        .{"parse_timestamp"},
+    .{"date_bucket"},                  .{"datetime_bucket"},         .{"timestamp_bucket"},
     .{"timestamp_seconds"},            .{"timestamp_millis"},        .{"timestamp_micros"},
     .{"unix_seconds"},                 .{"unix_millis"},             .{"unix_micros"},
     .{"like"},                         .{"between"},                 .{"in"},

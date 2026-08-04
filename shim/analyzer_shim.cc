@@ -184,6 +184,12 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // time: the answer is fixed per grouping set, and the transformer inlines
     // it per UNION branch (transformer/scan_aggregate.zig).
     googlesql::FEATURE_GROUPING_BUILTIN,
+    // DATE_BUCKET / DATETIME_BUCKET / TIMESTAMP_BUCKET. All three are in real
+    // BigQuery (bq CLI, 2026-08-04), which was also the source for every rule
+    // the handlers enforce — the default 1950-01-01 origin, the floor toward
+    // -infinity before it, which width parts each type takes, and the wording
+    // of each refusal. See date_ops.bucket.
+    googlesql::FEATURE_TIME_BUCKET_FUNCTIONS,
 };
 
 // Deliberately absent, because BigQuery does not have them. Each was enabled,

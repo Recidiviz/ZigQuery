@@ -129,6 +129,26 @@ pub fn timestampDiff(alloc: std.mem.Allocator, args: []const Value) Error!Value 
     return .{ .int = try ops.dateDiff(a, b, part) };
 }
 
+/// TIMESTAMP_BUCKET(timestamp, width[, origin]). The origin defaults to
+/// 1950-01-01 00:00:00 UTC. No timezone argument: BigQuery's signature has
+/// none, and the arithmetic is on the instant. See `date_ops.bucket`.
+pub fn timestampBucket(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 2 and args.len != 3)
+        return bind.fail("TIMESTAMP_BUCKET: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const origin = if (args.len == 3)
+        try tu.broken(args[2])
+    else
+        ops.defaultBucketOrigin();
+    return tu.timestampValue(try ops.bucket(
+        .timestamp,
+        try tu.broken(args[0]),
+        try fd.intervalOf(args[1]),
+        origin,
+    ));
+}
+
 pub fn timestampTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (args.len != 2 and args.len != 3)

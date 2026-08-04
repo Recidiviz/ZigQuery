@@ -16,6 +16,26 @@ pub fn currentDatetime(alloc: std.mem.Allocator, args: []const Value) Error!Valu
     return tu.datetimeValue(.{ .civ = try fd.nowCiv(args) });
 }
 
+/// DATETIME_BUCKET(datetime, width[, origin]). The origin defaults to
+/// 1950-01-01 00:00:00, and its time-of-day is kept, not truncated. See
+/// `date_ops.bucket`.
+pub fn datetimeBucket(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 2 and args.len != 3)
+        return bind.fail("DATETIME_BUCKET: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const origin = if (args.len == 3)
+        try tu.broken(args[2])
+    else
+        ops.defaultBucketOrigin();
+    return tu.datetimeValue(try ops.bucket(
+        .datetime,
+        try tu.broken(args[0]),
+        try fd.intervalOf(args[1]),
+        origin,
+    ));
+}
+
 pub fn datetime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (bind.existsNull(args)) return null_v;

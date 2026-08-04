@@ -93,6 +93,35 @@ pub fn dateTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return tu.dateValue(try ops.dateTrunc(bt, part));
 }
 
+/// DATE_BUCKET(date, width[, origin]). The origin defaults to 1950-01-01, not
+/// to the epoch. See `date_ops.bucket`.
+pub fn dateBucket(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 2 and args.len != 3)
+        return bind.fail("DATE_BUCKET: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const origin = if (args.len == 3)
+        try brokenOf(args[2])
+    else
+        ops.defaultBucketOrigin();
+    return tu.dateValue(try ops.bucket(
+        .date,
+        try brokenOf(args[0]),
+        try intervalOf(args[1]),
+        origin,
+    ));
+}
+
+/// The bucket width, which is always an INTERVAL. Shared with the DATETIME and
+/// TIMESTAMP handlers.
+pub fn intervalOf(v: Value) Error!value_mod.Interval {
+    return switch (v) {
+        .interval => |iv| iv,
+        .safe => |p| intervalOf(p.*),
+        else => error.FailedConversion,
+    };
+}
+
 pub fn dateFromUnixDate(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (args.len != 1) return bind.fail("DATE_FROM_UNIX_DATE: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);

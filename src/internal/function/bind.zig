@@ -369,6 +369,8 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "date_sub", .min_args = 3, .handler = fdate.dateSub },
     .{ .name = "date_diff", .min_args = 3, .handler = fdate.dateDiff },
     .{ .name = "date_trunc", .min_args = 2, .handler = fdate.dateTrunc },
+    // The origin argument is optional, hence min_args 2 for a 3-arg signature.
+    .{ .name = "date_bucket", .min_args = 2, .handler = fdate.dateBucket },
     .{ .name = "date_from_unix_date", .min_args = 1, .handler = fdate.dateFromUnixDate },
     .{ .name = "format_date", .min_args = 2, .handler = fdate.formatDate },
     .{ .name = "last_day", .min_args = 1, .handler = fdate.lastDay },
@@ -385,6 +387,7 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "datetime_sub", .min_args = 3, .handler = fdatetime.datetimeSub },
     .{ .name = "datetime_diff", .min_args = 3, .handler = fdatetime.datetimeDiff },
     .{ .name = "datetime_trunc", .min_args = 2, .handler = fdatetime.datetimeTrunc },
+    .{ .name = "datetime_bucket", .min_args = 2, .handler = fdatetime.datetimeBucket },
     .{ .name = "format_datetime", .min_args = 2, .handler = fdatetime.formatDatetime },
     .{ .name = "parse_datetime", .min_args = 2, .handler = fdatetime.parseDatetime },
 
@@ -406,6 +409,7 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "timestamp_sub", .min_args = 3, .handler = ftimestamp.timestampSub },
     .{ .name = "timestamp_diff", .min_args = 3, .handler = ftimestamp.timestampDiff },
     .{ .name = "timestamp_trunc", .min_args = 2, .handler = ftimestamp.timestampTrunc },
+    .{ .name = "timestamp_bucket", .min_args = 2, .handler = ftimestamp.timestampBucket },
     .{ .name = "format_timestamp", .min_args = 2, .handler = ftimestamp.formatTimestamp },
     .{ .name = "parse_timestamp", .min_args = 2, .handler = ftimestamp.parseTimestamp },
     .{ .name = "timestamp_seconds", .min_args = 1, .handler = ftimestamp.timestampSeconds },

@@ -15,6 +15,23 @@ bigquery/functions/json/float64	NULL JSON returns NULL
 bigquery/functions/string/contains_substr	simple substring match returns TRUE
 bigquery/functions/string/contains_substr	case-insensitive match
 bigquery/functions/string/contains_substr	substring absent
+bigquery/functions/time_series/date_bucket	default origin 1950-01-01, 2-day buckets — before origin
+bigquery/functions/time_series/date_bucket	default origin 1950-01-01, 2-day buckets — aligned just below
+bigquery/functions/time_series/date_bucket	default origin 1950-01-01, 2-day buckets — at origin
+bigquery/functions/time_series/date_bucket	default origin 1950-01-01, 2-day buckets — third bucket
+bigquery/functions/time_series/date_bucket	custom origin, 7-day buckets — before origin
+bigquery/functions/time_series/date_bucket	custom origin, 7-day buckets — at origin
+bigquery/functions/time_series/date_bucket	NULL input propagates
+bigquery/functions/time_series/datetime_bucket	default origin 1950-01-01 00:00:00, 12-hour bucket — earlier half
+bigquery/functions/time_series/datetime_bucket	default origin 1950-01-01 00:00:00, 12-hour bucket — at origin
+bigquery/functions/time_series/datetime_bucket	default origin 1950-01-01 00:00:00, 12-hour bucket — afternoon half
+bigquery/functions/time_series/datetime_bucket	custom origin, 7-day bucket — at origin
+bigquery/functions/time_series/datetime_bucket	custom origin, 7-day bucket — before origin
+bigquery/functions/time_series/datetime_bucket	NULL input propagates
+bigquery/functions/time_series/timestamp_bucket	default origin 1950-01-01 00:00:00 UTC, 12-hour bucket — afternoon
+bigquery/functions/time_series/timestamp_bucket	default origin 1950-01-01 00:00:00 UTC, 12-hour bucket — at origin
+bigquery/functions/time_series/timestamp_bucket	default origin 1950-01-01 00:00:00 UTC, 12-hour bucket — before origin
+bigquery/functions/time_series/timestamp_bucket	NULL input propagates
 bigquery/functions/utility/generate_uuid	returns a UUID in canonical 8-4-4-4-12 form
 bigquery/functions/utility/generate_uuid	distinct rows get distinct UUIDs
 bigquery/functions/utility/typeof	integer literal reports INT64
