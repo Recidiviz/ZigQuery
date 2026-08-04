@@ -5,11 +5,46 @@
 
 const std = @import("std");
 const bind = @import("bind.zig");
+const codec = @import("../codec_binary.zig");
+const encoder = @import("../encoder.zig");
 const value_mod = bind.value_mod;
 
 const Value = bind.Value;
 const Error = bind.Error;
 const null_v = Value.null;
+
+// ----------------------------------------------------------------------
+// Reading one entry out of a composite.
+//
+// These three functions are marked `raw_args` in bind.zig, so argument 0
+// arrives as the encoded bytes rather than a decoded Value and only the entry
+// asked for is materialized. Everything else here still takes decoded values:
+// ARRAY_CONCAT and ARRAY_LENGTH and friends read the whole composite anyway.
+// ----------------------------------------------------------------------
+
+/// The composite argument as a `CompositeRef`, or null when these bytes are not
+/// one — which is not this layer's error to report. `raw_args` promises only
+/// that a BLOB arrives verbatim: an INTEGER argument is still an `.int`, and a
+/// BYTES value is a BLOB that is not a composite at all. Both fall through to
+/// `slowValue` below, which reproduces exactly what the old path said.
+fn compositeArg(v: Value, kind: codec.CompositeRef.Kind) ?codec.CompositeRef {
+    const raw = switch (v) {
+        .bytes => |b| b,
+        else => return null,
+    };
+    const ref = codec.CompositeRef.init(raw) catch return null;
+    return if (ref.kind == kind) ref else null;
+}
+
+/// The raw argument decoded the way it would have been without `raw_args`, for
+/// the paths that fall back. Only reached when the value is not the composite
+/// it was supposed to be, i.e. on the way to an error.
+fn slowValue(alloc: std.mem.Allocator, v: Value) Error!Value {
+    return switch (v) {
+        .bytes => |b| encoder.DecodeValueBorrowing(alloc, .{ .blob = b }),
+        else => v,
+    };
+}
 
 /// Go bindInArray -> ARRAY_IN -> ArrayValue.Has (element-wise EQ, nil skipped).
 pub fn inArray(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -24,56 +59,77 @@ pub fn inArray(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 /// Go bindStructField -> STRUCT_FIELD (index-based field access).
+///
+/// The analyzer has already turned the field *name* into this index, and the
+/// generated SQL emits one of these per referenced field per row — so decoding
+/// the struct here cost every field on every reference. Only the field asked
+/// for is decoded now; the walk to it allocates nothing.
 pub fn structField(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
     if (bind.existsNull(args)) return null_v;
     const idx = try args[1].toInt64();
-    const sv = try args[0].toStruct();
-    if (idx < 0 or idx >= @as(i64, @intCast(sv.values.len)))
-        return bind.fail(
-            "struct field index {d} out of range (struct has {d} fields)",
-            .{ idx, sv.values.len },
-            error.UnsupportedOperation,
-        );
-    return sv.values[@intCast(idx)];
+    const st = compositeArg(args[0], .struct_) orelse {
+        // Not a struct. Decode it and let toStruct say so, in the words it
+        // always used.
+        const sv = try (try slowValue(alloc, args[0])).toStruct();
+        return outOfStructRange(idx, sv.values.len);
+    };
+    if (idx >= 0) {
+        if (try st.at(alloc, @intCast(idx))) |v| return v;
+    }
+    return outOfStructRange(idx, st.count);
+}
+
+fn outOfStructRange(idx: i64, count: usize) Error!Value {
+    return bind.fail(
+        "struct field index {d} out of range (struct has {d} fields)",
+        .{ idx, count },
+        error.UnsupportedOperation,
+    );
+}
+
+/// The `idx`-th element (0-based), or null when there is no such element —
+/// including when argument 0 is not an array at all, which `toArray` is left to
+/// report.
+fn elementAt(alloc: std.mem.Allocator, arg: Value, idx: i64) Error!?Value {
+    const arr = compositeArg(arg, .array) orelse {
+        const a = try (try slowValue(alloc, arg)).toArray();
+        if (idx < 0 or idx >= @as(i64, @intCast(a.values.len))) return null;
+        return a.values[@intCast(idx)];
+    };
+    if (idx < 0) return null;
+    return arr.at(alloc, @intCast(idx));
 }
 
 pub fn arrayAtOffset(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
     if (bind.existsNull(args)) return null_v;
     const idx = try args[1].toInt64();
-    const arr = try args[0].toArray();
-    if (idx < 0 or idx >= @as(i64, @intCast(arr.values.len)))
-        return bind.fail("OFFSET({d}) is out of range", .{idx}, error.UnsupportedOperation);
-    return arr.values[@intCast(idx)];
+    return (try elementAt(alloc, args[0], idx)) orelse
+        bind.fail("OFFSET({d}) is out of range", .{idx}, error.UnsupportedOperation);
 }
 
 pub fn safeArrayAtOffset(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
     if (bind.existsNull(args)) return null_v;
     const idx = try args[1].toInt64();
-    const arr = try args[0].toArray();
-    if (idx < 0 or idx >= @as(i64, @intCast(arr.values.len))) return null_v;
-    return arr.values[@intCast(idx)];
+    return (try elementAt(alloc, args[0], idx)) orelse null_v;
 }
 
 pub fn arrayAtOrdinal(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
     if (bind.existsNull(args)) return null_v;
     const idx = try args[1].toInt64();
-    const arr = try args[0].toArray();
-    if (idx < 1 or idx > @as(i64, @intCast(arr.values.len)))
+    // ORDINAL is 1-based, and ORDINAL(0) is out of range rather than the last
+    // element — so the subtraction has to happen after the bound check.
+    if (idx < 1) {
         return bind.fail("ORDINAL({d}) is out of range", .{idx}, error.UnsupportedOperation);
-    return arr.values[@intCast(idx - 1)];
+    }
+    return (try elementAt(alloc, args[0], idx - 1)) orelse
+        bind.fail("ORDINAL({d}) is out of range", .{idx}, error.UnsupportedOperation);
 }
 
 pub fn safeArrayAtOrdinal(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
     if (bind.existsNull(args)) return null_v;
     const idx = try args[1].toInt64();
-    const arr = try args[0].toArray();
-    if (idx < 1 or idx > @as(i64, @intCast(arr.values.len))) return null_v;
-    return arr.values[@intCast(idx - 1)];
+    if (idx < 1) return null_v;
+    return (try elementAt(alloc, args[0], idx - 1)) orelse null_v;
 }
 
 /// Go bindArrayConcat: no args is an error, any NULL argument yields NULL.

@@ -61,6 +61,24 @@ pub const FuncInfo = struct {
     /// it. Handlers must still cope with the argument being absent, which is
     /// what a cache hit means.
     cached_args: u8 = 0,
+    /// Bit i asks for argument i **undecoded**: when SQLite hands it over as a
+    /// BLOB the handler receives a `.bytes` Value holding those encoded bytes
+    /// verbatim, rather than the value they decode to.
+    ///
+    /// For the handful of functions that read one entry out of a composite.
+    /// Decoding a STRUCT materializes every field and both of its slices, and
+    /// `x.a` wants one field — so the decode is asked for at the entry rather
+    /// than at the argument, through `codec_binary.CompositeRef`.
+    ///
+    /// A handler that sets this must cope with the argument arriving in any
+    /// other shape too: only a BLOB is passed through raw, an INTEGER or REAL
+    /// still decodes natively, and NULL is still `.null`. The bytes belong to
+    /// SQLite and are valid for the call, no longer.
+    ///
+    /// Honoured by the scalar trampoline in register.zig only. The aggregate
+    /// and window trampolines have their own `decodeArgs` and ignore it, as
+    /// they do `cached_args`.
+    raw_args: u8 = 0,
 };
 
 // ----------------------------------------------------------------------
@@ -147,18 +165,27 @@ pub const func_table = [_]FuncInfo{
 
     // array / struct access
     .{ .name = "in_array", .min_args = 2, .handler = arr.inArray },
-    .{ .name = "get_struct_field", .min_args = 2, .handler = arr.structField },
+    // The three that read one entry out of a composite take it encoded
+    // (`raw_args`) and decode only the entry asked for.
+    .{
+        .name = "get_struct_field",
+        .min_args = 2,
+        .handler = arr.structField,
+        .raw_args = 0b01,
+    },
     .{
         .name = "array_at_offset",
         .min_args = 2,
         .handler = arr.arrayAtOffset,
         .safe_handler = arr.safeArrayAtOffset,
+        .raw_args = 0b01,
     },
     .{
         .name = "array_at_ordinal",
         .min_args = 2,
         .handler = arr.arrayAtOrdinal,
         .safe_handler = arr.safeArrayAtOrdinal,
+        .raw_args = 0b01,
     },
     .{ .name = "safe_negate", .min_args = 1, .handler = math.safeNegate },
     .{ .name = "is_distinct_from", .min_args = 2, .handler = cmp.isDistinctFrom },

@@ -1,5 +1,3 @@
-//! Faithful port of go-zetasqlite internal/codec_binary.go.
-//!
 //! Binary value codec: each value is [tag byte][payload]; variable-length
 //! payloads are uvarint-length-prefixed so every value is self-delimiting,
 //! which is what lets it nest.
@@ -8,6 +6,21 @@
 //! composite, including numerics and ranges. Carried as a raw BLOB; the tag
 //! range (below codec_sortable.tag_min here, at or above it there) says which
 //! shape a payload is.
+//!
+//! Started as a port of go-zetasqlite internal/codec_binary.go and no longer
+//! is. Go stored DATE, DATETIME and TIME as their `ToString` renderings and
+//! NUMERIC as `Rat.MarshalText`, so a value that was an integer in a register
+//! was formatted to decimal text on the way out and parsed back on the way in,
+//! once per nested value per row. They are fixed-width little-endian integers
+//! here instead — the same shape the neighbouring INT64 and TIMESTAMP tags
+//! always had.
+//!
+//! Nothing was owed to Go's bytes by then: the RANGE tag (0x10) has no Go
+//! counterpart, storage format 3 had already replaced the NUMERIC payload with
+//! a scaled integer in decimal, and a database in an older format is refused at
+//! open rather than migrated (`Db.storage_format_version`). What the text form
+//! cost is a format-and-parse pair per value; what it bought, by then, was
+//! nothing.
 
 const std = @import("std");
 const value_mod = @import("value.zig");
@@ -47,6 +60,21 @@ pub const bin_tag_range: u8 = 0x10;
 const range_flag_start: u8 = 1 << 0;
 const range_flag_end: u8 = 1 << 1;
 
+/// Payload widths for the two decimal kinds: the unscaled integer, two's
+/// complement little-endian, at the width its scale needs. NUMERIC's 38 digits
+/// need 127 bits and BIGNUMERIC's 76 need 255 — the same widths
+/// codec_sortable.zig uses, minus the bias it needs and this does not, since
+/// nothing compares these bytes.
+///
+/// Fixed rather than minimal-length: it makes both directions a memcpy, and a
+/// length prefix would cost a byte of its own on most values anyway. The
+/// tradeoff is real but small and one-directional — a NUMERIC below ~10^29
+/// grows by a few bytes against the decimal text (`1.5` was 12 bytes, is 17),
+/// while one at full precision drops from 40 to 17 and every BIGNUMERIC drops
+/// from up to 41 to 33.
+const numeric_bytes: usize = 16;
+const bignumeric_bytes: usize = 32;
+
 // Pre-sizing this list with a computed hint was tried and measured neutral
 // (encode 137.9ms -> 136.0ms over 2.4M values, inside run-to-run noise): on an
 // arena the list is the most recent allocation, so growth extends in place
@@ -78,22 +106,28 @@ fn appendBinaryString(
     try buf.appendSlice(alloc, s);
 }
 
+/// A tag and its fixed-width little-endian payload. `T`'s width *is* the
+/// payload's, so the tag alone says how many bytes to read back — which is what
+/// keeps the format self-delimiting without a length prefix.
+fn appendBinaryFixed(
+    buf: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    tag: u8,
+    comptime T: type,
+    v: T,
+) ValueError!void {
+    try buf.append(alloc, tag);
+    var le: [@divExact(@typeInfo(T).int.bits, 8)]u8 = undefined;
+    std.mem.writeInt(T, &le, v, .little);
+    try buf.appendSlice(alloc, &le);
+}
+
 fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value) ValueError!void {
     switch (v) {
         .null => try buf.append(alloc, bin_tag_null),
         .safe => |p| try appendBinaryValue(buf, alloc, p.*),
-        .int => |i| {
-            try buf.append(alloc, bin_tag_int);
-            var le: [8]u8 = undefined;
-            std.mem.writeInt(u64, &le, @bitCast(i), .little);
-            try buf.appendSlice(alloc, &le);
-        },
-        .float => |f| {
-            try buf.append(alloc, bin_tag_float);
-            var le: [8]u8 = undefined;
-            std.mem.writeInt(u64, &le, @bitCast(f), .little);
-            try buf.appendSlice(alloc, &le);
-        },
+        .int => |i| try appendBinaryFixed(buf, alloc, bin_tag_int, i64, i),
+        .float => |f| try appendBinaryFixed(buf, alloc, bin_tag_float, u64, @bitCast(f)),
         .bool => |b| {
             try buf.append(alloc, bin_tag_bool);
             try buf.append(alloc, @intFromBool(b));
@@ -102,32 +136,14 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
         .bytes => |b| try appendBinaryString(buf, alloc, bin_tag_bytes, b),
         // Go stores JsonValue as a length-prefixed raw JSON string (tag 0x08).
         .json => |s| try appendBinaryString(buf, alloc, bin_tag_json, s),
-        .date => |days| {
-            // Go stores the DateValue.ToString() form ("YYYY-MM-DD").
-            var tmp: [32]u8 = undefined;
-            try appendBinaryString(buf, alloc, bin_tag_date, value_mod.formatDateDays(&tmp, days));
-        },
-        // Go stores DatetimeValue/TimeValue as their ToString strings.
-        .datetime => |m| {
-            var tmp: [40]u8 = undefined;
-            try appendBinaryString(
-                buf,
-                alloc,
-                bin_tag_datetime,
-                value_mod.formatDatetimeString(&tmp, m),
-            );
-        },
-        .time => |m| {
-            var tmp: [24]u8 = undefined;
-            try appendBinaryString(buf, alloc, bin_tag_time, value_mod.formatTimeString(&tmp, m));
-        },
-        // Go stores TimestampValue as fixed64 little-endian UnixMicro.
-        .timestamp => |m| {
-            try buf.append(alloc, bin_tag_timestamp);
-            var le: [8]u8 = undefined;
-            std.mem.writeInt(u64, &le, @bitCast(m), .little);
-            try buf.appendSlice(alloc, &le);
-        },
+        // The four time kinds are all one i64 in the units their Value variant
+        // stores — civil days, civil micros, micros since midnight, unix
+        // micros. Go rendered the first three as text and parsed them back; the
+        // number was always right there.
+        .date => |days| try appendBinaryFixed(buf, alloc, bin_tag_date, i64, days),
+        .datetime => |m| try appendBinaryFixed(buf, alloc, bin_tag_datetime, i64, m),
+        .time => |m| try appendBinaryFixed(buf, alloc, bin_tag_time, i64, m),
+        .timestamp => |m| try appendBinaryFixed(buf, alloc, bin_tag_timestamp, i64, m),
         // tag, element kind, presence flags, then only the bounds present.
         .range => |r| {
             try buf.append(alloc, bin_tag_range);
@@ -138,11 +154,11 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
             try buf.append(alloc, flags);
             var le: [8]u8 = undefined;
             if (r.startBound()) |n| {
-                std.mem.writeInt(u64, &le, @bitCast(n), .little);
+                std.mem.writeInt(i64, &le, n, .little);
                 try buf.appendSlice(alloc, &le);
             }
             if (r.endBound()) |n| {
-                std.mem.writeInt(u64, &le, @bitCast(n), .little);
+                std.mem.writeInt(i64, &le, n, .little);
                 try buf.appendSlice(alloc, &le);
             }
         },
@@ -156,16 +172,21 @@ fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value
                 value_mod.formatInterval(&tmp, iv),
             );
         },
-        // The scaled integer googlesql stores, in decimal, tagged by kind —
-        // the tag supplies the scale on the way back in. goccy wrote
-        // Rat.MarshalText here ("3/2" for 1.5), which only had a numerator and
-        // denominator to write because the value was held as a fraction.
+        // The scaled integer googlesql stores, as an integer, tagged by kind —
+        // the tag supplies both the scale and the width on the way back in.
+        // Storage format 3 wrote the same integer in decimal (goccy wrote
+        // Rat.MarshalText, "3/2" for 1.5); rendering a 256-bit value to decimal
+        // is a chain of divisions, and parsing it back another.
         .numeric => |n| {
-            const tag: u8 = if (n.is_bignumeric) bin_tag_bignumeric else bin_tag_numeric;
-            var tmp: [96]u8 = undefined;
-            const s = std.fmt.bufPrint(&tmp, "{d}", .{n.unscaled}) catch
-                return error.OutOfMemory;
-            try appendBinaryString(buf, alloc, tag, s);
+            if (n.is_bignumeric) {
+                return appendBinaryFixed(buf, alloc, bin_tag_bignumeric, i256, n.unscaled);
+            }
+            // Narrowing is safe by the construction-time bound, but checked
+            // rather than asserted: an unchecked cast would silently truncate
+            // in release, and the value would decode as a different number.
+            const narrow = std.math.cast(i128, n.unscaled) orelse
+                return error.NumericOutOfRange;
+            try appendBinaryFixed(buf, alloc, bin_tag_numeric, i128, narrow);
         },
         .array => |arr| {
             try buf.append(alloc, bin_tag_array);
@@ -215,11 +236,29 @@ const BinReader = struct {
         }
     }
 
-    fn fixed64(r: *BinReader) ValueError!u64 {
-        if (r.pos + 8 > r.buf.len) return error.CorruptData; // truncated fixed64
-        const u = std.mem.readInt(u64, r.buf[r.pos..][0..8], .little);
-        r.pos += 8;
-        return u;
+    /// A fixed-width little-endian integer. The width comes from `T`, which the
+    /// tag fixes, so there is nothing to read to find out how far to advance.
+    fn fixed(r: *BinReader, comptime T: type) ValueError!T {
+        const n = comptime @divExact(@typeInfo(T).int.bits, 8);
+        if (r.pos + n > r.buf.len) return error.CorruptData; // truncated payload
+        const v = std.mem.readInt(T, r.buf[r.pos..][0..n], .little);
+        r.pos += n;
+        return v;
+    }
+
+    /// How far `fixed` would advance for `tag`, or null if the tag's payload is
+    /// not fixed-width. Keeping the widths in one place is what stops `value`
+    /// and `skipValue` from disagreeing about a tag — a disagreement the
+    /// compiler cannot see and that surfaces only as CorruptData somewhere far
+    /// away, in a struct field read or an UNNEST.
+    fn fixedWidth(tag: u8) ?usize {
+        return switch (tag) {
+            bin_tag_int, bin_tag_float, bin_tag_timestamp => 8,
+            bin_tag_date, bin_tag_datetime, bin_tag_time => 8,
+            bin_tag_numeric => numeric_bytes,
+            bin_tag_bignumeric => bignumeric_bytes,
+            else => null,
+        };
     }
 
     /// Reads a varint length then that many bytes; the returned slice
@@ -247,18 +286,15 @@ const BinReader = struct {
         const tag = try r.byte();
         switch (tag) {
             bin_tag_null => return Value.null,
-            bin_tag_int => return Value{ .int = @bitCast(try r.fixed64()) },
-            bin_tag_float => return Value{ .float = @bitCast(try r.fixed64()) },
+            bin_tag_int => return Value{ .int = try r.fixed(i64) },
+            bin_tag_float => return Value{ .float = @bitCast(try r.fixed(u64)) },
             bin_tag_bool => return Value{ .bool = (try r.byte()) == 1 },
             bin_tag_string => return Value{ .string = try r.payload(alloc, borrow) },
             bin_tag_bytes => return Value{ .bytes = try r.payload(alloc, borrow) },
-            bin_tag_date => return Value{ .date = try value_mod.parseDateDays(try r.lenBytes()) },
-            // Go parses the stored ToString back into the civil value.
-            bin_tag_datetime => return Value{
-                .datetime = try value_mod.parseDatetimeMicros(try r.lenBytes()),
-            },
-            bin_tag_time => return Value{ .time = try value_mod.parseTimeMicros(try r.lenBytes()) },
-            bin_tag_timestamp => return Value{ .timestamp = @bitCast(try r.fixed64()) },
+            bin_tag_date => return Value{ .date = try r.fixed(i64) },
+            bin_tag_datetime => return Value{ .datetime = try r.fixed(i64) },
+            bin_tag_time => return Value{ .time = try r.fixed(i64) },
+            bin_tag_timestamp => return Value{ .timestamp = try r.fixed(i64) },
             bin_tag_interval => return Value{
                 .interval = try value_mod.parseIntervalValue(try r.lenBytes()),
             },
@@ -270,23 +306,24 @@ const BinReader = struct {
                 // not written by appendBinaryValue.
                 if (flags & ~(range_flag_start | range_flag_end) != 0) return error.CorruptData;
                 const start: ?i64 = if (flags & range_flag_start != 0)
-                    @bitCast(try r.fixed64())
+                    try r.fixed(i64)
                 else
                     null;
                 const end: ?i64 = if (flags & range_flag_end != 0)
-                    @bitCast(try r.fixed64())
+                    try r.fixed(i64)
                 else
                     null;
                 return value_mod.rangeValue(kind, start, end);
             },
             // Go: JsonValue(string(b)) — the raw JSON string.
             bin_tag_json => return Value{ .json = try r.payload(alloc, borrow) },
-            // The unscaled integer written above, read back at the scale the
-            // tag names.
+            // The unscaled integer written above, read back at the width and
+            // scale the tag names.
             bin_tag_numeric, bin_tag_bignumeric => {
-                const b = try r.lenBytes();
-                const unscaled = std.fmt.parseInt(i256, b, 10) catch
-                    return error.CorruptData; // invalid numeric payload
+                const unscaled: i256 = if (tag == bin_tag_bignumeric)
+                    try r.fixed(i256)
+                else
+                    try r.fixed(i128);
                 return value_mod.numericFromUnscaled(
                     alloc,
                     unscaled,
@@ -352,28 +389,29 @@ pub fn decodeBinaryValueBorrowing(alloc: std.mem.Allocator, buf: []const u8) Val
 /// tags and length prefixes.
 fn skipValue(r: *BinReader) ValueError!void {
     const tag = try r.byte();
+    // Every fixed-width payload in one line, from the table `value` reads with,
+    // so the two cannot drift apart.
+    if (BinReader.fixedWidth(tag)) |n| {
+        if (r.pos + n > r.buf.len) return error.CorruptData;
+        r.pos += n;
+        return;
+    }
     switch (tag) {
         bin_tag_null => {},
         bin_tag_bool => _ = try r.byte(),
-        bin_tag_int, bin_tag_float, bin_tag_timestamp => _ = try r.fixed64(),
         bin_tag_string,
         bin_tag_bytes,
         bin_tag_json,
-        bin_tag_date,
-        bin_tag_datetime,
-        bin_tag_time,
         bin_tag_interval,
-        bin_tag_numeric,
-        bin_tag_bignumeric,
         => _ = try r.lenBytes(),
-        // Element byte, presence flags, then one fixed64 per bound present.
+        // Element byte, presence flags, then one i64 per bound present.
         // The compiler cannot see this omission — a missing arm here surfaces
         // only as CorruptData out of UNNEST over an ARRAY<RANGE<...>>.
         bin_tag_range => {
             _ = try r.byte(); // element kind
             const flags = try r.byte();
-            if (flags & range_flag_start != 0) _ = try r.fixed64();
-            if (flags & range_flag_end != 0) _ = try r.fixed64();
+            if (flags & range_flag_start != 0) _ = try r.fixed(i64);
+            if (flags & range_flag_end != 0) _ = try r.fixed(i64);
         },
         bin_tag_array => {
             const n = try r.uvarint();
@@ -391,6 +429,64 @@ fn skipValue(r: *BinReader) ValueError!void {
         else => return error.CorruptData, // unexpected tag
     }
 }
+
+/// An encoded ARRAY or STRUCT, positioned for reading one entry out of it.
+///
+/// `ArrayWalker` below streams every element in order, which is what UNNEST
+/// wants. This is the other access pattern, and the more common one: `x.field`
+/// and `x[OFFSET(n)]` read a *single* entry, the analyzer has already resolved
+/// the name to an index, and the generated SQL emits one call per referenced
+/// field per row — three on one line of `testdata/sql_snapshot.txt`:
+///
+///     zetasqlite_lpad(zetasqlite_get_struct_field(`$array_4`.`value`, 0),
+///                     zetasqlite_get_struct_field(`$array_4`.`value`, 1),
+///                     zetasqlite_get_struct_field(`$array_4`.`value`, 2))
+///
+/// Decoding the whole composite for each of those cost fields x references per
+/// row. Walking to the entry with `skipValue` and decoding only it costs the
+/// walk, which allocates nothing.
+pub const CompositeRef = struct {
+    kind: Kind,
+    /// Entries in the composite, whether or not the index asked for is one of
+    /// them — the out-of-range messages quote it.
+    count: u64,
+    /// Positioned at the first entry.
+    r: BinReader,
+
+    pub const Kind = enum { array, struct_ };
+
+    /// Fails with CorruptData if `buf` is not an encoded ARRAY or STRUCT.
+    pub fn init(buf: []const u8) ValueError!CompositeRef {
+        var r = BinReader{ .buf = buf };
+        const kind: Kind = switch (try r.byte()) {
+            bin_tag_array => .array,
+            bin_tag_struct => .struct_,
+            else => return error.CorruptData,
+        };
+        const n = try r.uvarint();
+        // Every entry occupies at least its tag byte.
+        if (n > r.buf.len - r.pos) return error.CorruptData;
+        return .{ .kind = kind, .count = n, .r = r };
+    }
+
+    /// Entry `idx`, decoded on its own, or null when `idx` is past the end —
+    /// which callers report differently (OFFSET, ORDINAL and struct fields all
+    /// word it their own way) and so is not an error here.
+    ///
+    /// Strings, bytes, JSON and struct keys inside the result alias `buf`, as
+    /// `decodeBinaryValueBorrowing` does and for the same reason: the caller is
+    /// a UDF that consumes the value before returning.
+    pub fn at(self: CompositeRef, alloc: std.mem.Allocator, idx: u64) ValueError!?Value {
+        if (idx >= self.count) return null;
+        var r = self.r;
+        for (0..@intCast(idx)) |_| {
+            if (self.kind == .struct_) _ = try r.lenBytes(); // key
+            try skipValue(&r);
+        }
+        if (self.kind == .struct_) _ = try r.lenBytes(); // the wanted entry's key
+        return try r.value(alloc, true);
+    }
+};
 
 /// Walks an encoded ARRAY element by element, handing back each element's
 /// slice of the buffer without decoding it.
@@ -435,6 +531,100 @@ const testing = std.testing;
 fn roundTrip(alloc: std.mem.Allocator, v: Value) !Value {
     const encoded = try encodeBinaryValue(alloc, v);
     return decodeBinaryValue(alloc, encoded);
+}
+
+/// One value of every tag the codec writes. Shared by the tests below that
+/// need to cover the whole format rather than one kind of it.
+fn oneOfEveryKind(alloc: std.mem.Allocator) ![]const Value {
+    const vals = [_]Value{
+        Value.null,
+        .{ .int = -2 },
+        .{ .float = 1.5 },
+        .{ .bool = true },
+        .{ .string = "hello" },
+        .{ .bytes = "\x00\xff" },
+        .{ .json = "{\"a\":1}" },
+        .{ .date = -719162 },
+        .{ .datetime = try value_mod.parseDatetimeMicros("2024-01-15 10:30:15.123456") },
+        .{ .time = try value_mod.parseTimeMicros("10:30:15.5") },
+        .{ .timestamp = 1136239445_000000 },
+        .{ .interval = try value_mod.parseIntervalValue("1-2 3 4:5:6") },
+        value_mod.rangeValue(.date, 10, 20),
+        value_mod.rangeValue(.timestamp, null, null),
+        try value_mod.numericFromString(alloc, "1.5", false),
+        try value_mod.numericFromString(alloc, "-1.5", true),
+        try value_mod.arrayValue(alloc, &.{ .{ .int = 1 }, .{ .string = "x" } }),
+        try value_mod.structValue(alloc, &.{ "k", "" }, &.{ .{ .int = 2 }, .{ .bytes = "b" } }),
+    };
+    return alloc.dupe(Value, &vals);
+}
+
+test "skipValue advances exactly as far as decoding does, for every kind" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // The invariant the whole self-delimiting format rests on, and the one the
+    // compiler cannot check: `value` and `skipValue` each decide how wide a
+    // payload is, and if they ever disagree the walk desynchronises silently —
+    // surfacing as CorruptData somewhere unrelated, in a struct field read or
+    // an UNNEST, rather than here. Moving DATE/DATETIME/TIME/NUMERIC to
+    // fixed-width payloads changed four of these widths at once.
+    for (try oneOfEveryKind(alloc)) |v| {
+        const enc = try encodeBinaryValue(alloc, v);
+
+        var decoding = BinReader{ .buf = enc };
+        _ = try decoding.value(alloc, true);
+
+        var skipping = BinReader{ .buf = enc };
+        try skipValue(&skipping);
+
+        try testing.expectEqual(decoding.pos, skipping.pos);
+        // And both consumed the whole value, with nothing left over.
+        try testing.expectEqual(enc.len, skipping.pos);
+    }
+}
+
+test "CompositeRef reads one entry without decoding the others" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const elems = try oneOfEveryKind(alloc);
+
+    // As an ARRAY: every element reachable by index, in any order, and each
+    // equal to what a full decode would have produced.
+    const arr = try encodeBinaryValue(alloc, try value_mod.arrayValue(alloc, elems));
+    const as_array = try CompositeRef.init(arr);
+    try testing.expectEqual(elems.len, @as(usize, @intCast(as_array.count)));
+    var i: usize = elems.len;
+    while (i > 0) {
+        i -= 1;
+        try value_mod.expectValueEqual(elems[i], (try as_array.at(alloc, i)).?);
+    }
+    // Past the end is null, not an error — the callers word that differently.
+    try testing.expectEqual(@as(?Value, null), try as_array.at(alloc, elems.len));
+
+    // As a STRUCT, where each entry is preceded by its key, so the walk has an
+    // extra length prefix to step over per entry.
+    const keys = try alloc.alloc([]const u8, elems.len);
+    for (keys, 0..) |*k, n| k.* = try std.fmt.allocPrint(alloc, "f{d}", .{n});
+    const st = try encodeBinaryValue(alloc, try value_mod.structValue(alloc, keys, elems));
+    const as_struct = try CompositeRef.init(st);
+    try testing.expectEqual(CompositeRef.Kind.struct_, as_struct.kind);
+    for (elems, 0..) |want, n| {
+        try value_mod.expectValueEqual(want, (try as_struct.at(alloc, n)).?);
+    }
+
+    // Anything that is not a composite is refused rather than misread.
+    try testing.expectError(
+        error.CorruptData,
+        CompositeRef.init(try encodeBinaryValue(alloc, .{ .int = 1 })),
+    );
+    try testing.expectError(error.CorruptData, CompositeRef.init(""));
+    // A truncated element is caught by the walk, not returned as junk.
+    var w = try CompositeRef.init(arr[0 .. arr.len - 2]);
+    try testing.expectError(error.CorruptData, w.at(alloc, elems.len - 1));
 }
 
 test "ArrayWalker yields element slices that decode to the originals" {
@@ -537,29 +727,44 @@ test "binary codec scalar round trips" {
     }
 }
 
-test "binary codec time-kind byte layout matches Go" {
+test "binary codec time-kind byte layout is tag + fixed64" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    // Timestamp: tag 0x0c + fixed64 LE UnixMicro.
-    const ts = try encodeBinaryValue(alloc, Value{ .timestamp = 1136239445_000000 });
-    var expected_ts: [9]u8 = undefined;
-    expected_ts[0] = bin_tag_timestamp;
-    std.mem.writeInt(u64, expected_ts[1..9], @as(u64, 1136239445_000000), .little);
-    try testing.expectEqualSlices(u8, &expected_ts, ts);
+    // All four time kinds are the tag and the i64 the Value holds, so each
+    // encodes to exactly nine bytes whatever the value is. Go rendered the
+    // first three as text (a DATETIME ran 21 bytes, and a variable 21) and
+    // parsed them back on the way in.
+    const cases = [_]struct { v: Value, tag: u8, n: i64 }{
+        .{
+            .v = Value{ .timestamp = 1136239445_000000 },
+            .tag = bin_tag_timestamp,
+            .n = 1136239445_000000,
+        },
+        .{
+            .v = Value{ .datetime = try value_mod.parseDatetimeMicros("2024-01-15 10:30:00") },
+            .tag = bin_tag_datetime,
+            .n = try value_mod.parseDatetimeMicros("2024-01-15 10:30:00"),
+        },
+        .{
+            .v = Value{ .time = try value_mod.parseTimeMicros("10:30:15") },
+            .tag = bin_tag_time,
+            .n = try value_mod.parseTimeMicros("10:30:15"),
+        },
+        // Pre-epoch, i.e. the case a sign-blind encoding would get wrong.
+        .{ .v = Value{ .date = -719162 }, .tag = bin_tag_date, .n = -719162 },
+    };
+    for (cases) |tc| {
+        var want: [9]u8 = undefined;
+        want[0] = tc.tag;
+        std.mem.writeInt(i64, want[1..9], tc.n, .little);
+        try testing.expectEqualSlices(u8, &want, try encodeBinaryValue(alloc, tc.v));
+    }
 
-    // Datetime: tag 0x0a + uvarint length + ToString ("space" form).
-    const dt = try encodeBinaryValue(alloc, Value{
-        .datetime = try value_mod.parseDatetimeMicros("2024-01-15 10:30:00"),
-    });
-    try testing.expectEqualSlices(u8, "\x0a\x132024-01-15 10:30:00", dt);
-
-    // Time: tag 0x0b + uvarint length + ToString.
-    const tv = try encodeBinaryValue(alloc, Value{ .time = try value_mod.parseTimeMicros("10:30:15") });
-    try testing.expectEqualSlices(u8, "\x0b\x0810:30:15", tv);
-
-    // Interval: tag 0x0d + uvarint length + canonical ToString.
+    // INTERVAL is still its canonical string: tag 0x0d + uvarint length + text.
+    // Seven components rather than one integer, so it is a format of its own
+    // rather than the same one-line change, and it was left alone.
     const iv = try encodeBinaryValue(
         alloc,
         Value{ .interval = try value_mod.parseIntervalValue("1-2 3 4:5:6") },
@@ -567,7 +772,7 @@ test "binary codec time-kind byte layout matches Go" {
     try testing.expectEqualSlices(u8, "\x0d\x0b1-2 3 4:5:6", iv);
 }
 
-test "binary codec tag bytes match the Go format" {
+test "binary codec tag bytes" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -591,9 +796,10 @@ test "binary codec tag bytes match the Go format" {
         enc,
     );
 
-    // Date payload is the uvarint-length-prefixed "YYYY-MM-DD" string.
+    // Date payload is the civil day count, same fixed64 shape. It was the
+    // uvarint-length-prefixed "1970-01-01" through storage format 3.
     const denc = try encodeBinaryValue(alloc, Value{ .date = 0 });
-    try testing.expectEqualSlices(u8, "\x09\x0a1970-01-01", denc);
+    try testing.expectEqualSlices(u8, &.{ 0x09, 0, 0, 0, 0, 0, 0, 0, 0 }, denc);
 }
 
 test "binary codec array and struct round trips" {
@@ -700,21 +906,54 @@ test "binary codec numeric round trips and byte layout" {
         );
     }
 
-    // Byte layout: tag + uvarint length + the scaled integer in decimal. The
-    // tag carries the scale, so 1.5 is 1500000000 as a NUMERIC and 38 digits
-    // as a BIGNUMERIC. goccy wrote Rat.MarshalText ("3/2") here.
-    const n15 = try value_mod.numericFromString(alloc, "1.5", false);
-    try testing.expectEqualSlices(u8, "\x06\x0a1500000000", try encodeBinaryValue(alloc, n15));
-    const b15 = try value_mod.numericFromString(alloc, "1.5", true);
-    try testing.expectEqualSlices(
-        u8,
-        "\x07\x27150000000000000000000000000000000000000",
-        try encodeBinaryValue(alloc, b15),
-    );
-    const n42 = try value_mod.numericFromString(alloc, "42", false);
-    try testing.expectEqualSlices(u8, "\x06\x0b42000000000", try encodeBinaryValue(alloc, n42));
-    const neg = try value_mod.numericFromString(alloc, "-42", false);
-    try testing.expectEqualSlices(u8, "\x06\x0c-42000000000", try encodeBinaryValue(alloc, neg));
+    // Byte layout: tag + the scaled integer, two's complement little-endian, at
+    // the width the tag names. The tag carries the scale too, so 1.5 is
+    // 1500000000 as a NUMERIC and 1.5e38 as a BIGNUMERIC. Storage format 3
+    // wrote the same integer in decimal text ("\x06\x0a1500000000"), and goccy
+    // wrote Rat.MarshalText ("3/2") before that.
+    const layout = [_]struct { lit: []const u8, big: bool, want: []const u8 }{
+        .{
+            .lit = "1.5",
+            .big = false,
+            .want = &(.{bin_tag_numeric} ++ leBytes(i128, 1_500_000_000)),
+        },
+        .{
+            .lit = "42",
+            .big = false,
+            .want = &(.{bin_tag_numeric} ++ leBytes(i128, 42_000_000_000)),
+        },
+        // Negative: sign-extended, so every high byte is 0xff.
+        .{
+            .lit = "-42",
+            .big = false,
+            .want = &(.{bin_tag_numeric} ++ leBytes(i128, -42_000_000_000)),
+        },
+        .{
+            .lit = "1.5",
+            .big = true,
+            .want = &(.{bin_tag_bignumeric} ++
+                leBytes(i256, 150000000000000000000000000000000000000)),
+        },
+    };
+    for (layout) |tc| {
+        const v = try value_mod.numericFromString(alloc, tc.lit, tc.big);
+        const enc = try encodeBinaryValue(alloc, v);
+        try testing.expectEqualSlices(u8, tc.want, enc);
+        // Width comes from the tag alone, which is what lets skipValue step
+        // over one of these without reading a length.
+        try testing.expectEqual(
+            1 + if (tc.big) bignumeric_bytes else numeric_bytes,
+            enc.len,
+        );
+    }
+}
+
+/// `v` as comptime little-endian bytes, for spelling an expected payload
+/// without restating the encoder's own logic.
+fn leBytes(comptime T: type, comptime v: T) [@divExact(@typeInfo(T).int.bits, 8)]u8 {
+    var out: [@divExact(@typeInfo(T).int.bits, 8)]u8 = undefined;
+    std.mem.writeInt(T, &out, v, .little);
+    return out;
 }
 
 test "binary codec json round trip" {

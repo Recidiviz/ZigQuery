@@ -321,23 +321,31 @@ pub const Db = struct {
     /// The storage format this build reads and writes, kept in the database's
     /// `user_version`.
     ///
-    /// 3 — the current format, and the only one this build reads or writes:
-    ///     every non-scalar value is a BLOB carrying one of the two payload
+    /// 4 — the current format, and the only one this build reads or writes: as
+    ///     3, but the self-delimiting codec stores DATE, DATETIME, TIME and
+    ///     NUMERIC/BIGNUMERIC as fixed-width little-endian integers rather than
+    ///     as their rendered text (codec_binary.zig).
+    /// 3 — every non-scalar value is a BLOB carrying one of the two payload
     ///     shapes (codec_sortable.zig for the orderable kinds, codec_binary.zig
     ///     for the rest).
     /// 2 — orderable kinds as BLOB, NUMERIC/BIGNUMERIC still base64 in TEXT.
     /// 1 — every value as base64 in TEXT.
     ///
-    /// Neither 1 nor 2 is readable here and there is no migration: the code that
+    /// None of 1-3 is readable here and there is no migration: the code that
     /// decoded them is gone. They are listed because refusing a database is only
     /// useful if the reader can tell what was refused.
+    ///
+    /// 3 is the one that would fail quietly rather than loudly if it were not
+    /// refused: its tags are these tags, so a stored DATE would read its
+    /// "1970-01-01" as an 8-byte integer and come back as some far-future day
+    /// rather than as an error.
     ///
     /// Refusing is the only defence available, because a mismatch fails
     /// silently rather than loudly: TEXT and BLOB never compare equal in SQLite,
     /// so a database holding the older shape would not error — it would quietly
     /// stop deduplicating in DISTINCT and UNION, and stop matching in index
     /// lookups.
-    pub const storage_format_version: i64 = 3;
+    pub const storage_format_version: i64 = 4;
 
     /// Refuses a database this build cannot read, and stamps a new one.
     ///

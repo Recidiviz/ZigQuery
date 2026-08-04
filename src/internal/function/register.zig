@@ -112,7 +112,14 @@ fn invoke(
         return;
     }
 
-    const args = decodeArgs(alloc, ctx, comptime info.cached_args, argv, n) catch {
+    const args = decodeArgs(
+        alloc,
+        ctx,
+        comptime info.cached_args,
+        comptime info.raw_args,
+        argv,
+        n,
+    ) catch {
         sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": failed to decode value");
         return;
     };
@@ -134,11 +141,12 @@ fn invoke(
 }
 
 /// Go convertArgs: driver.Value slice -> DecodeValue'd Values. Native
-/// INTEGER/FLOAT pass through; TEXT/BLOB carry base64(binary codec).
+/// INTEGER/FLOAT pass through; every other kind arrives as an encoded BLOB.
 fn decodeArgs(
     alloc: std.mem.Allocator,
     ctx: ?*c.sqlite3_context,
     comptime cached_args: u8,
+    comptime raw_args: u8,
     argv: [*c]?*c.sqlite3_value,
     n: usize,
 ) ![]Value {
@@ -153,16 +161,23 @@ fn decodeArgs(
                 continue;
             }
         }
+        const wants_raw = raw_args != 0 and i < 8 and (raw_args >> @intCast(i)) & 1 == 1;
         args[i] = switch (sqlite.valueType(argv[i])) {
             .null => Value.null,
             .integer => Value{ .int = sqlite.valueInt64(argv[i]) },
             .float => Value{ .float = sqlite.valueDouble(argv[i]) },
             // TEXT has no engine meaning since storage format 3.
             .text => return error.CorruptData,
-            .blob => try encoder.DecodeValueBorrowing(
-                alloc,
-                .{ .blob = sqlite.valueBlob(argv[i]) },
-            ),
+            // A handler that asked for this argument raw reads one entry out of
+            // it and would throw the rest of the decode away; see
+            // `bind.FuncInfo.raw_args`.
+            .blob => if (wants_raw)
+                Value{ .bytes = sqlite.valueBlob(argv[i]) }
+            else
+                try encoder.DecodeValueBorrowing(
+                    alloc,
+                    .{ .blob = sqlite.valueBlob(argv[i]) },
+                ),
         };
     }
     return args;
@@ -212,7 +227,14 @@ fn groupByTramp(
 }
 
 fn groupByImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqlite3_value) !void {
-    const args = try decodeArgs(alloc, ctx, 0, @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})), 1);
+    const args = try decodeArgs(
+        alloc,
+        ctx,
+        0,
+        0,
+        @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})),
+        1,
+    );
     const decoded = if (args[0] == .safe) args[0].safe.* else args[0];
     switch (decoded) {
         .null => sqlite.resultNull(ctx),
@@ -614,6 +636,34 @@ test "array and struct functions" {
     try env.expectErrorMsg(
         "struct field index 7 out of range (struct has 2 fields)",
         try env.fmt("SELECT zetasqlite_get_struct_field({s}, 7)", .{mk_struct}),
+    );
+    // A nested composite field is walked over, not decoded, on the way to a
+    // later one — the case where a wrong skip width would desynchronise the
+    // walk rather than error.
+    const nested = try env.fmt(
+        "zetasqlite_make_struct({s}, zetasqlite_make_array(1, 2), {s}, 9)",
+        .{ try env.encStr("a"), try env.encStr("b") },
+    );
+    try env.expectInt(9, try env.fmt("SELECT zetasqlite_get_struct_field({s}, 1)", .{nested}));
+
+    // These three take their composite argument encoded (bind.FuncInfo
+    // raw_args), so an argument that is not one has to fall back to a full
+    // decode to report what it is — in the words toStruct/toArray always used.
+    // Note the message is the string-specific one: the fallback reproduces what
+    // toStruct says about the value it actually got, not a generic complaint.
+    try env.expectErrorMsg(
+        "failed to convert struct from string",
+        try env.fmt("SELECT zetasqlite_get_struct_field({s}, 0)", .{try env.encStr("nope")}),
+    );
+    try env.expectErrorMsg(
+        "failed to convert array from string",
+        try env.fmt("SELECT zetasqlite_array_at_offset({s}, 0)", .{try env.encStr("nope")}),
+    );
+    // An INTEGER argument never arrives raw at all, so it takes the same path
+    // it always did.
+    try env.expectErrorMsg(
+        "failed to convert to array type",
+        "SELECT zetasqlite_array_at_ordinal(1, 1)",
     );
 }
 
