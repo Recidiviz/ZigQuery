@@ -7,12 +7,20 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/array_functions.md#array_zip",
     .cases = .{
+    // ARRAY_ZIP is a GoogleSQL function that BigQuery does not have: real
+    // BigQuery answers `Function not found: ARRAY_ZIP`, checked with the bq CLI
+    // on 2026-08-04. This engine emulates BigQuery, so accepting it would mean
+    // a query that passes locally and fails in production.
+    //
+    // It is not a gap: FEATURE_ARRAY_ZIP resolves the whole function here when
+    // enabled, with PAD/TRUNCATE/STRICT and field naming all correct. The cases
+    // are kept and restated as the refusal so they still pin something, and so
+    // the day BigQuery grows the function the fixture says so instead of going
+    // quiet. See shim/analyzer_shim.cc.
         .{
             .desc = "upstream example 1",
             .sql = "SELECT ARRAY_ZIP([1, 2], ['a', 'b']) AS results",
-            .rows = .{
-                .{"[(1, 'a'), (2, 'b')]"},
-            },
+            .expect_error = "Function not found: ARRAY_ZIP",
         },
         .{
             .desc = "upstream example 2",
@@ -23,37 +31,27 @@
             \\SELECT ARRAY_ZIP([1, 2] AS A1, alias_inferred) AS results
             \\FROM T
             ,
-            .rows = .{
-                .{"[{1 A1, 'a' alias_inferred}, {2 A1, 'b' alias_inferred}]"},
-            },
+            .expect_error = "Function not found: ARRAY_ZIP",
         },
         .{
             .desc = "upstream example 3",
             .sql = "SELECT ARRAY_ZIP([1, 2], [3, 4], transformation => (e1, e2) -> (e1 + e2))",
-            .rows = .{
-                .{"[4, 6]"},
-            },
+            .expect_error = "Function not found: ARRAY_ZIP",
         },
         .{
             .desc = "upstream example 4",
             .sql = "SELECT ARRAY_ZIP([1, 2], [3, 4], (e1, e2) -> (e1 + e2))",
-            .rows = .{
-                .{"[4, 6]"},
-            },
+            .expect_error = "Function not found: ARRAY_ZIP",
         },
         .{
             .desc = "upstream example 5",
             .sql = "SELECT ARRAY_ZIP([1, 2], ['a', 'b', 'c', 'd'], [], mode => 'PAD') AS results",
-            .rows = .{
-                .{"[{1, 'a', NULL}, {2, 'b', NULL}, {NULL, 'c', NULL}, {NULL, 'd', NULL}]"},
-            },
+            .expect_error = "Function not found: ARRAY_ZIP",
         },
         .{
             .desc = "upstream example 6",
             .sql = "SELECT ARRAY_ZIP([1, 2], ['a', 'b', 'c', 'd'], mode => 'TRUNCATE') AS results",
-            .rows = .{
-                .{"[(1, 'a'), (2, 'b')]"},
-            },
+            .expect_error = "Function not found: ARRAY_ZIP",
         },
     },
 }

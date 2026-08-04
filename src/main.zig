@@ -265,7 +265,10 @@ fn printCell(out: *std.Io.Writer, cell: driver.Cell) std.Io.Writer.Error!void {
             try out.writeAll("{");
             for (fields, 0..) |field, i| {
                 if (i > 0) try out.writeAll(", ");
-                try out.print("{s}: ", .{field.name});
+                // A field can be anonymous — every field of an ARRAY_ZIP result
+                // is, unless the call named it — and a bare "name: " prefix for
+                // one renders as `{: 1, : a}`.
+                if (field.name.len > 0) try out.print("{s}: ", .{field.name});
                 try printCell(out, field.value);
             }
             try out.writeAll("}");

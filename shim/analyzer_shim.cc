@@ -160,10 +160,6 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // and FEATURE_PIPE_FINISH. Each of those is a clean "Pipe X not supported"
     // from the analyzer while its feature is off, not a surprise further down.
     googlesql::FEATURE_PIPES,
-    // `|> IF cond THEN (...) ELSE (...)`. Separate from the base feature, but
-    // free the same way: the resolver picks the branch and emits its scans, so
-    // nothing new reaches the extractor.
-    googlesql::FEATURE_PIPE_IF,
     // TYPEOF(expr) -> the type's name. No `zetasqlite_typeof` answers it and
     // none is needed: the type is a static property of the expression, so the
     // analyzer's rewriter has already resolved it by the time the extractor
@@ -179,6 +175,27 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // TYPEOF(arr) -> "ARRAY<INT64>" and TYPEOF(s) -> "STRUCT<f INT64>".
     googlesql::FEATURE_TYPEOF_FUNCTION,
 };
+
+// Deliberately absent, because BigQuery does not have them. Each was enabled,
+// measured, and reverted; the engine emulates BigQuery, and accepting a query
+// production would refuse is the one failure direction an emulator must not
+// have — you would get a green local run and a broken deploy.
+//
+// Checked against real BigQuery (bq CLI, 2026-08-04), which answers:
+//
+//   FEATURE_ARRAY_ZIP               "Function not found: ARRAY_ZIP"
+//   FEATURE_INLINE_LAMBDA_ARGUMENT  "Function not found: ARRAY_TRANSFORM"
+//                                   "Function not found: ARRAY_FILTER"
+//   FEATURE_PIPE_IF                 "Pipe IF not supported"
+//
+// All three work here when enabled — ARRAY_ZIP resolves through the rewriter
+// with correct PAD/TRUNCATE/STRICT modes and field naming, and lambdas inline
+// — so this is a scope decision, not a gap. The spec corpus keeps the cases and
+// asserts the refusal (`.expect_error`), so the day BigQuery grows any of them
+// the fixture says so rather than going quiet.
+//
+// FEATURE_PIPES and FEATURE_TYPEOF_FUNCTION above were checked the same way and
+// *are* in BigQuery, which is why they stayed.
 
 // Ported verbatim from internal/analyzer.go `supportedStatementKinds`.
 const std::set<googlesql::ResolvedNodeKind> kSupportedStatementKinds = {

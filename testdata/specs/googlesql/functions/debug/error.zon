@@ -7,6 +7,13 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/debugging_functions.md#error",
     .cases = .{
+    // The five `|> IF` cases below assert the refusal rather than a result.
+    // Pipe IF is GoogleSQL syntax BigQuery does not have: real BigQuery answers
+    // `Pipe IF not supported` (bq CLI, 2026-08-04) — the same message this
+    // engine gives, since FEATURE_PIPE_IF is off for that reason. Enabling it
+    // resolves them correctly here, so this is scope, not a gap; see
+    // shim/analyzer_shim.cc. The other cases in this file are ordinary ERROR()
+    // coverage and are unaffected.
         .{
             .desc = "assertion_succeeded_with_multiple_payloads",
             .setup = .{
@@ -46,10 +53,7 @@
             \\   ELSEIF false THEN ( |> SELECT error("4") )
             \\   ELSE ( |> SELECT key, "selected" )
             ,
-            .rows = .{
-                .{ 1, "selected" },
-                .{ 2, "selected" },
-            },
+            .expect_error = "Pipe IF not supported",
         },
         .{
             .desc = "run_elseif",
@@ -64,10 +68,7 @@
             \\   ELSEIF false THEN ( |> SELECT error("4") )
             \\   ELSE ( |> SELECT error("5") )
             ,
-            .rows = .{
-                .{ 1, 1, 1 },
-                .{ 2, 2, 2 },
-            },
+            .expect_error = "Pipe IF not supported",
         },
         .{
             .desc = "run_if_with_elses",
@@ -81,10 +82,7 @@
             \\   ELSEIF false THEN ( |> SELECT bad )
             \\   ELSE ( |> SELECT error('abc') )
             ,
-            .rows = .{
-                .{11},
-                .{12},
-            },
+            .expect_error = "Pipe IF not supported",
         },
         .{
             .desc = "run_no_case",
@@ -98,10 +96,7 @@
             \\   ELSEIF false THEN ( |> SELECT key, key, key, error("3") )
             \\   ELSEIF false THEN ( |> SELECT error("4") )
             ,
-            .rows = .{
-                .{ 1, "value1" },
-                .{ 2, "value2" },
-            },
+            .expect_error = "Pipe IF not supported",
         },
         .{
             .desc = "typeof_error_function",
@@ -120,10 +115,7 @@
             \\|> IF false THEN ( |> EXTEND ERROR("oops") )
             \\   ELSEIF false THEN ( |> EXTEND bad_column )
             ,
-            .rows = .{
-                .{ 1, "value1" },
-                .{ 2, "value2" },
-            },
+            .expect_error = "Pipe IF not supported",
         },
     },
 }

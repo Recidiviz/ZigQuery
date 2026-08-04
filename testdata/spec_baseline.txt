@@ -76,6 +76,7 @@ googlesql/functions/aggregate/sum	sum integers
 googlesql/functions/aggregate/sum	empty unnest sum is null
 googlesql/functions/array/array	ARRAY() constructs a single-element array
 googlesql/functions/array/array_concat	concat two int arrays
+googlesql/functions/array/array_filter	ARRAY_FILTER keeps elements matching the lambda
 googlesql/functions/array/array_first	array_first basic input
 googlesql/functions/array/array_includes	array_includes basic input
 googlesql/functions/array/array_includes_all	array_includes_all basic input
@@ -88,6 +89,13 @@ googlesql/functions/array/array_min	array_min basic input
 googlesql/functions/array/array_reverse	reverse three-element array
 googlesql/functions/array/array_slice	slice middle of array
 googlesql/functions/array/array_to_string	join with comma
+googlesql/functions/array/array_transform	ARRAY_TRANSFORM doubles each element via lambda
+googlesql/functions/array/array_zip	upstream example 1
+googlesql/functions/array/array_zip	upstream example 2
+googlesql/functions/array/array_zip	upstream example 3
+googlesql/functions/array/array_zip	upstream example 4
+googlesql/functions/array/array_zip	upstream example 5
+googlesql/functions/array/array_zip	upstream example 6
 googlesql/functions/array/generate_array	1 to 5 step 1
 googlesql/functions/array/generate_array	1 to 10 step 3
 googlesql/functions/array/generate_date_array	array length matches inclusive day range
