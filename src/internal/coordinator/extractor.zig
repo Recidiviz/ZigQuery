@@ -1303,6 +1303,25 @@ pub const NodeExtractor = struct {
             }
         }
 
+        // GROUPING(x) calls. The analyzer keeps them out of `aggregate_list`
+        // and in their own list, each naming the group-by column it asks about
+        // and the column that receives the 0/1. Nothing evaluates them at row
+        // time: the answer is fixed by which grouping set produced the row, so
+        // the transformer inlines a literal per UNION branch
+        // (transformer/scan_aggregate.zig buildGroupingSetsQuery).
+        var grouping_calls: std.ArrayList(*types_data.GroupingCallData) = .empty;
+        for (base.grouping_call_list) |call| {
+            const out_col = call.output_column orelse return error.InvalidAST;
+            const ref = call.group_by_column orelse return error.InvalidAST;
+            const gb_col = ref.column orelse return error.InvalidAST;
+            const gc = try alloc.create(types_data.GroupingCallData);
+            gc.* = .{
+                .output_column = try extractColumnData(alloc, out_col),
+                .group_by_column = try extractColumnData(alloc, gb_col),
+            };
+            try grouping_calls.append(alloc, gc);
+        }
+
         const parent = base.parent orelse return error.InvalidAST;
         const aggregate = try alloc.create(types_data.AggregateScanData);
         aggregate.* = .{
@@ -1310,6 +1329,7 @@ pub const NodeExtractor = struct {
             .group_by_list = try group_by_list.toOwnedSlice(alloc),
             .aggregate_list = try aggregate_list.toOwnedSlice(alloc),
             .grouping_sets = try grouping_sets.toOwnedSlice(alloc),
+            .grouping_calls = try grouping_calls.toOwnedSlice(alloc),
         };
         return .{
             .type = .aggregate,

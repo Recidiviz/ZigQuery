@@ -292,6 +292,18 @@ pub const AggregateScanData = struct {
     group_by_list: []const *ComputedColumnData = &.{},
     aggregate_list: []const *ComputedColumnData = &.{},
     grouping_sets: []const *GroupingSetData = &.{},
+    grouping_calls: []const *GroupingCallData = &.{},
+};
+
+/// One GROUPING(x) call: the column that receives the 0/1, and the group-by
+/// column it asks about.
+///
+/// Apart from `aggregate_list` because the analyzer keeps it apart — GROUPING
+/// is not an aggregate over rows, it is a question about which grouping set
+/// produced the row, and the answer is therefore constant within one set.
+pub const GroupingCallData = struct {
+    output_column: ?*ColumnData = null,
+    group_by_column: ?*ColumnData = null,
 };
 
 /// OrderByScanData represents ORDER BY operation data.

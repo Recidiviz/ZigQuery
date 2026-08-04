@@ -471,6 +471,17 @@ pub const COUNTIF = struct {
     }
 };
 
+// GROUPING() is deliberately not here. It looks like an aggregate and the
+// analyzer even reports it as one, but a step function cannot answer it: it
+// sees values, and a NULL value is ambiguous between "this grouping set rolled
+// the column up" and "the column was NULL in the data" — which is the one
+// distinction GROUPING exists to make. BigQuery returns 0 for a grouped column
+// whose value is NULL, and 1 for a rolled-up one.
+//
+// The answer is a property of the grouping set, so it is a constant per UNION
+// branch and the transformer inlines it: see the grouping-call arm in
+// transformer/scan_aggregate.zig buildGroupingSetsQuery.
+
 // ----------------------------------------------------------------------
 // LOGICAL_AND / LOGICAL_OR (Go returns the running bool even for empty /
 // all-NULL groups: true for AND, false for OR).

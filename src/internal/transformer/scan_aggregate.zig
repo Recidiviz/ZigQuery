@@ -72,14 +72,31 @@ pub fn transform(
         try group_by_map.put(col.id, sql_expr);
     }
 
+    // GROUPING(x) output column -> the group-by column it asks about. Never
+    // an expression to evaluate: which grouping set produced a row decides the
+    // answer, so it is a literal, chosen per set below.
+    var grouping_call_map = std.AutoHashMap(i64, i64).init(alloc);
+    for (agg_data.grouping_calls) |call| {
+        const out_col = call.output_column orelse return error.InvalidAST;
+        const gb_col = call.group_by_column orelse return error.InvalidAST;
+        try grouping_call_map.put(out_col.id, gb_col.id);
+    }
+
     // Build the SELECT list from the output columns.
     var select_list: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;
     try select_list.ensureTotalCapacity(alloc, data.column_list.len);
     for (data.column_list) |col| {
         const expr = aggregate_map.get(col.id) orelse
             group_by_map.get(col.id) orelse
-            // Go: "column %s not found in aggregate or GROUP BY expressions"
-            return error.ColumnNotFound;
+            // A GROUPING(x) column with no grouping sets in play: every
+            // group-by column is grouped in the only set there is, so the
+            // answer is 0 on every row. With grouping sets this is a
+            // placeholder that buildGroupingSetsQuery replaces per set.
+            (if (grouping_call_map.contains(col.id))
+                try sqlbuilder.newLiteralExpression(alloc, "0")
+            else
+                // Go: "column %s not found in aggregate or GROUP BY expressions"
+                return error.ColumnNotFound);
 
         const item = try alloc.create(sqlbuilder.SelectListItem);
         item.* = .{
@@ -98,6 +115,7 @@ pub fn transform(
             data.column_list,
             select_list.items,
             &group_by_map,
+            &grouping_call_map,
         );
     }
 
@@ -131,6 +149,8 @@ fn buildGroupingSetsQuery(
     column_data: []const *types_data.ColumnData,
     output_columns: []const *sqlbuilder.SelectListItem,
     group_by_map: *std.AutoHashMap(i64, *SQLExpression),
+    /// GROUPING(x) output column id -> the group-by column id it asks about.
+    grouping_calls: *std.AutoHashMap(i64, i64),
 ) Error!*sqlbuilder.SelectStatement {
     var statements: std.ArrayList(*sqlbuilder.SelectStatement) = .empty;
     try statements.ensureTotalCapacity(alloc, agg_data.grouping_sets.len);
@@ -160,7 +180,24 @@ fn buildGroupingSetsQuery(
 
         const select_list = try alloc.alloc(*sqlbuilder.SelectListItem, output_columns.len);
         for (output_columns, 0..) |original_col, i| {
-            if (null_column_ids.contains(column_data[i].id)) {
+            // GROUPING(x): 1 when this set rolled x up, 0 when it grouped by
+            // it. Constant within the set, so it is written as a literal rather
+            // than computed — and it is the only way to tell a rolled-up NULL
+            // from a NULL that was in the data, which is what the function is
+            // for. Keeps the ID-based alias rather than the NULL branch's bare
+            // name, since a grouping column is present in every branch and the
+            // re-projection below reads its aliases from the first one.
+            if (grouping_calls.get(column_data[i].id)) |group_by_id| {
+                const item = try alloc.create(sqlbuilder.SelectListItem);
+                item.* = .{
+                    .expression = try sqlbuilder.newLiteralExpression(
+                        alloc,
+                        if (set_column_ids.contains(group_by_id)) "0" else "1",
+                    ),
+                    .alias = original_col.alias,
+                };
+                select_list[i] = item;
+            } else if (null_column_ids.contains(column_data[i].id)) {
                 const item = try alloc.create(sqlbuilder.SelectListItem);
                 item.* = .{
                     .expression = try sqlbuilder.newLiteralExpression(alloc, "NULL"),
@@ -171,6 +208,25 @@ fn buildGroupingSetsQuery(
             } else {
                 select_list[i] = original_col;
             }
+        }
+
+        // The grand-total set groups by nothing, and a SELECT with neither a
+        // GROUP BY nor an aggregate in its list is not an aggregate query at
+        // all — SQLite returns one row per input row instead of one row. It
+        // only looked right while every such query happened to carry an
+        // aggregate (SUM, COUNT) to collapse it; `SELECT a, b FROM t GROUP BY
+        // ROLLUP(a, b)` returned the whole table where BigQuery returns one
+        // grand-total row.
+        //
+        // Grouping by a constant is the fix: one group, whatever the select
+        // list holds. It must not be an integer literal — SQLite reads those
+        // as ordinals into the select list — so it is NULL, which groups every
+        // row together because SQLite's GROUP BY treats NULLs as equal.
+        if (group_by_set_columns.items.len == 0) {
+            try group_by_set_columns.append(
+                alloc,
+                try sqlbuilder.newLiteralExpression(alloc, "NULL"),
+            );
         }
 
         const stmt = try alloc.create(sqlbuilder.SelectStatement);
@@ -492,6 +548,125 @@ fn expectGrouping(
         );
     }
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "the grand-total grouping set is one row" {
+    // Regression: the grand-total set groups by nothing, and a SELECT with
+    // neither a GROUP BY nor an aggregate in its list is not an aggregate
+    // query — SQLite answered it with one row per input row, so this returned
+    // the whole table plus the rolled-up rows. It stayed hidden while every
+    // grouping test carried a SUM or COUNT that collapsed the branch anyway.
+    //
+    // BigQuery returns these six rows.
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const sql = try std.fmt.allocPrint(
+        testing.allocator,
+        "SELECT a, b {s} GROUP BY ROLLUP(a, b) ORDER BY a NULLS LAST, b NULLS LAST",
+        .{grouping_rows},
+    );
+    defer testing.allocator.free(sql);
+
+    var rows = try db.query(sql, &.{}, .{});
+    defer rows.deinit();
+
+    const want = [_][2][]const u8{
+        .{ "x", "p" },
+        .{ "x", "q" },
+        .{ "x", "" },
+        .{ "y", "p" },
+        .{ "y", "" },
+        .{ "", "" },
+    };
+    for (want) |w| {
+        const row = (try rows.next()) orelse return error.TooFewRows;
+        for (w, 0..) |cell, i| {
+            if (cell.len == 0) {
+                try testing.expect(row[i] == .null);
+            } else {
+                try testing.expectEqualStrings(cell, row[i].string);
+            }
+        }
+    }
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+/// As `expectGrouping`, but for GROUPING(a)/GROUPING(b) beside the keys:
+/// (a, b, GROUPING(a), GROUPING(b)). An empty string is a NULL key.
+fn expectGroupingFlags(
+    select_and_group: []const u8,
+    want: []const [4][]const u8,
+) !void {
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const sql = try std.fmt.allocPrint(
+        testing.allocator,
+        // SUM(v) rides along unasserted so the shape matches the BigQuery runs
+        // these expectations came from — and because an aggregate-free grouping
+        // query hits an unrelated bug in the empty grouping set, see
+        // `test "the grand-total grouping set is one row"`.
+        "SELECT a, b, GROUPING(a) AS ga, GROUPING(b) AS gb, SUM(v) AS s {s} {s} " ++
+            "ORDER BY a NULLS LAST, b NULLS LAST",
+        .{ grouping_rows, select_and_group },
+    );
+    defer testing.allocator.free(sql);
+
+    var rows = try db.query(sql, &.{}, .{});
+    defer rows.deinit();
+
+    for (want) |w| {
+        const row = (try rows.next()) orelse return error.TooFewRows;
+        for (w[0..2], 0..) |cell, i| {
+            if (cell.len == 0) {
+                try testing.expect(row[i] == .null);
+            } else {
+                try testing.expectEqualStrings(cell, row[i].string);
+            }
+        }
+        for (w[2..4], 2..) |flag, i| {
+            try testing.expectEqual(
+                Cell{ .int = try std.fmt.parseInt(i64, flag, 10) },
+                row[i],
+            );
+        }
+    }
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "GROUPING reports which key each grouping set rolled up" {
+    // The distinction the function exists for: a NULL key that was *grouped*
+    // reads 0, one the set rolled up reads 1. Nothing about the value says
+    // which, so it cannot be answered from the rows — only from the set.
+    try expectGroupingFlags("GROUP BY GROUPING SETS(a, b)", &.{
+        .{ "x", "", "0", "1" },
+        .{ "y", "", "0", "1" },
+        .{ "", "p", "1", "0" },
+        .{ "", "q", "1", "0" },
+    });
+}
+
+test "GROUPING under ROLLUP changes per set, not per row" {
+    // One column appears grouped in some sets and rolled up in others, so this
+    // is the case a single answer per query would get wrong.
+    try expectGroupingFlags("GROUP BY ROLLUP(a, b)", &.{
+        .{ "x", "p", "0", "0" },
+        .{ "x", "q", "0", "0" },
+        .{ "x", "", "0", "1" },
+        .{ "y", "p", "0", "0" },
+        .{ "y", "", "0", "1" },
+        .{ "", "", "1", "1" },
+    });
+}
+
+test "GROUPING is 0 for every key when there are no grouping sets" {
+    // Plain GROUP BY has one set and it groups by everything.
+    try expectGroupingFlags("GROUP BY a, b", &.{
+        .{ "x", "p", "0", "0" },
+        .{ "x", "q", "0", "0" },
+        .{ "y", "p", "0", "0" },
+    });
 }
 
 test "GROUP BY ROLLUP walks the prefixes of its grouping list" {

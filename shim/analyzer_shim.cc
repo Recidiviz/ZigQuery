@@ -174,6 +174,16 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // and expressions, not only literals: TYPEOF(a + 1), TYPEOF(SUM(a)),
     // TYPEOF(arr) -> "ARRAY<INT64>" and TYPEOF(s) -> "STRUCT<f INT64>".
     googlesql::FEATURE_TYPEOF_FUNCTION,
+    // GROUPING(expr) -> 1 when the row's grouping set rolled `expr` up, 0 when
+    // it grouped by it. Verified in real BigQuery (bq CLI, 2026-08-04), which
+    // has it and answers 0 for a grouped column that is NULL in the data — the
+    // distinction the function exists for.
+    //
+    // The analyzer keeps these calls out of `aggregate_list` and in
+    // ResolvedAggregateScanBase.grouping_call_list, so nothing runs at row
+    // time: the answer is fixed per grouping set, and the transformer inlines
+    // it per UNION branch (transformer/scan_aggregate.zig).
+    googlesql::FEATURE_GROUPING_BUILTIN,
 };
 
 // Deliberately absent, because BigQuery does not have them. Each was enabled,

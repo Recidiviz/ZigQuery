@@ -51,6 +51,8 @@ googlesql/functions/aggregate/count	count of empty input is zero
 googlesql/functions/aggregate/count	count star of empty input is zero
 googlesql/functions/aggregate/countif	count truthy values
 googlesql/functions/aggregate/countif	countif of empty input is zero
+googlesql/functions/aggregate/grouping	upstream example 1
+googlesql/functions/aggregate/grouping	upstream example 2
 googlesql/functions/aggregate/logical_and	all true
 googlesql/functions/aggregate/logical_and	one false
 googlesql/functions/aggregate/logical_and	empty input returns NULL
