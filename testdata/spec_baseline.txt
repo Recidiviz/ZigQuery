@@ -650,6 +650,16 @@ googlesql/types/struct	struct in literal list
 googlesql/types/struct	struct access named field
 googlesql/types/struct	struct alias as value
 googlesql/types/struct	struct from table reference cast
+googlesql/types/struct	struct positional accessor offset 0 double
+googlesql/types/struct	struct positional accessor offset 1 bool
+googlesql/types/struct	struct positional accessor ordinal 1 double
+googlesql/types/struct	struct positional accessor ordinal 2 bool
+googlesql/types/struct	struct positional accessor on null struct
+googlesql/types/struct	struct positional accessor double via WITH
+googlesql/types/struct	struct field plus positional accessor mixed
+googlesql/types/struct	struct multiple fields named and positional
+googlesql/types/struct	struct multiple anonymous fields positional
+googlesql/types/struct	struct same name fields positional access
 googlesql/types/time	cast string to TIME
 googlesql/types/time	TIME literal
 googlesql/types/timestamp	FORMAT_TIMESTAMP UTC

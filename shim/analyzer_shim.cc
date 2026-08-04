@@ -190,6 +190,22 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // -infinity before it, which width parts each type takes, and the wording
     // of each refusal. See date_ops.bucket.
     googlesql::FEATURE_TIME_BUCKET_FUNCTIONS,
+    // Struct fields by position: `s[OFFSET(0)]`, `s[ORDINAL(1)]`. In real
+    // BigQuery (bq CLI, 2026-08-04), and the only way to reach a field whose
+    // name is duplicated.
+    //
+    // Costs nothing downstream: the resolver normalizes OFFSET/ORDINAL to a
+    // 0-based index and emits an ordinary ResolvedGetStructField
+    // (resolver_expr.cc ResolveStructSubscriptElementAccess), the same node
+    // `s.a` produces, so the extractor cannot tell the two spellings apart. It
+    // also bounds-checks the index itself, which is why nothing at run time
+    // has to.
+    //
+    // FEATURE_ANALYSIS_CONSTANT_STRUCT_POSITIONAL_ACCESSOR stays off, and that
+    // is what makes `s[OFFSET(1+1)]` answer "Field element access is only
+    // supported for literal integer positions" — BigQuery's own reply, because
+    // BigQuery has that feature off too.
+    googlesql::FEATURE_STRUCT_POSITIONAL_ACCESSOR,
 };
 
 // Deliberately absent, because BigQuery does not have them. Each was enabled,
