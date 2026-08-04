@@ -25,19 +25,26 @@ const null_v = Value.null;
 /// ten parts need no field of their own: a quarter is three months, a week is
 /// seven days, and milliseconds and microseconds are what the sub-day fields are
 /// made of.
+///
+/// **NANOSECOND is refused on purpose.** It is googlesql behaviour, not BigQuery
+/// behaviour: the analyzer resolves `INTERVAL 3 NANOSECOND` here and this used
+/// to answer `0-0 0 0:0:0.000000003`, while real BigQuery refuses it with
+/// "Invalid interval datetime field NANOSECOND" (bq CLI, 2026-08-04). This
+/// engine emulates BigQuery, so accepting it meant a query that passes locally
+/// and fails in production — the one failure direction an emulator must not
+/// have. Same call as the GoogleSQL-only functions in shim/analyzer_shim.cc,
+/// for the same reason. It falls through to the refusal below, which gives
+/// BigQuery's own message.
+///
+/// What is refused is the *part*, not the precision, so only the constructor
+/// goes and `Interval.sub_second_nanos` stays: BigQuery reads a nanosecond
+/// literal quite happily, and `INTERVAL '0-0 0 0:0:1.123456789' YEAR TO SECOND`
+/// round-trips identically on both sides.
 pub fn interval(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
     if (bind.existsNull(args)) return null_v;
     const n = try args[0].toInt64();
     const part = try fd.partStr(args[1]);
-
-    if (std.mem.eql(u8, part, "NANOSECOND")) {
-        // The one unit microseconds cannot carry, so it keeps its own path.
-        // googlesql has no nanosecond bound of its own; the field is an i32.
-        const nanos = std.math.cast(i32, n) orelse
-            return outOfRange("nanoseconds", n, std.math.maxInt(i32));
-        return Value{ .interval = .{ .sub_second_nanos = nanos } };
-    }
 
     var months: i64 = 0;
     var days: i64 = 0;
@@ -251,7 +258,13 @@ test "INTERVAL takes the ten parts BigQuery takes, and no others" {
     }
     // Everything else is an EXTRACT part rather than an interval one, and
     // BigQuery says so: "Invalid interval datetime field ISOYEAR".
-    for ([_][]const u8{ "ISOYEAR", "ISOWEEK", "DAYOFWEEK", "DAYOFYEAR", "PICOSECOND" }) |part| {
+    //
+    // NANOSECOND is in this list for a different reason: the analyzer resolves
+    // it and this engine used to answer it, but BigQuery refuses it, so it is
+    // refused here too. See the note on `interval`.
+    for ([_][]const u8{
+        "NANOSECOND", "ISOYEAR", "ISOWEEK", "DAYOFWEEK", "DAYOFYEAR", "PICOSECOND",
+    }) |part| {
         try testing.expectError(error.UnsupportedOperation, canonical(&buf, 1, part));
     }
 }
