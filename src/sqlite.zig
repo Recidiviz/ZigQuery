@@ -606,6 +606,32 @@ pub fn resultError(ctx: ?*c.sqlite3_context, msg: []const u8) void {
     c.sqlite3_result_error(ctx, msg.ptr, @intCast(msg.len));
 }
 
+/// The UDF result as an `encoder.encodeTo` sink, so a value goes straight from
+/// the codec to SQLite without an intermediate `SqliteRepr` for the call site
+/// to switch on a second time.
+///
+/// It satisfies that function's contract — the bytes are consumed before
+/// `putBlob` returns — because `resultBlob` passes SQLITE_TRANSIENT and SQLite
+/// copies. It has to: a result can sit in a VDBE register across later UDF
+/// calls, which is also why SQLITE_STATIC over the engine's buffers would be
+/// unsound.
+pub const ResultSink = struct {
+    ctx: ?*c.sqlite3_context,
+
+    pub fn putNull(s: ResultSink) void {
+        resultNull(s.ctx);
+    }
+    pub fn putInt(s: ResultSink, v: i64) void {
+        resultInt64(s.ctx, v);
+    }
+    pub fn putFloat(s: ResultSink, v: f64) void {
+        resultDouble(s.ctx, v);
+    }
+    pub fn putBlob(s: ResultSink, v: []const u8) void {
+        resultBlob(s.ctx, v);
+    }
+};
+
 pub fn userData(ctx: ?*c.sqlite3_context) ?*anyopaque {
     return c.sqlite3_user_data(ctx);
 }

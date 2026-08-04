@@ -122,7 +122,10 @@ fn appendBinaryFixed(
     try buf.appendSlice(alloc, &le);
 }
 
-fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value) ValueError!void {
+/// Appends `v` to `buf`. The primitive the owning `encodeBinaryValue` above and
+/// the scratch-buffer encode path in `encoder.zig` share, so neither owns a
+/// second copy of the format.
+pub fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: Value) ValueError!void {
     switch (v) {
         .null => try buf.append(alloc, bin_tag_null),
         .safe => |p| try appendBinaryValue(buf, alloc, p.*),

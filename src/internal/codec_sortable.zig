@@ -92,20 +92,33 @@ fn unorderable(u: u64) i64 {
     return @bitCast(u ^ (@as(u64, 1) << 63));
 }
 
-/// Encodes `v`, or returns null for a kind with no order to preserve, which
-/// keeps the self-delimiting codec in codec_binary.zig instead.
-pub fn encode(alloc: std.mem.Allocator, v: Value) ValueError!?[]u8 {
+/// Appends `v`'s memcomparable form to `buf`, or returns false for a kind with
+/// no order to preserve, which keeps the self-delimiting codec in
+/// codec_binary.zig instead.
+///
+/// Appending is the primitive rather than allocating, because the per-row
+/// encode path writes into a scratch buffer it reuses across every value
+/// (`encoder.Scratch`) instead of allocating one buffer per value. `encode`
+/// below is the owning wrapper for callers that need to keep the bytes.
+///
+/// A failure mid-append leaves `buf` holding a partial value. Every caller
+/// either discards the buffer or clears it before the next value, and the only
+/// error reachable after the first byte is written is OutOfMemory.
+pub fn encodeAppend(
+    buf: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    v: Value,
+) ValueError!bool {
     switch (v) {
-        .safe => |p| return encode(alloc, p.*),
+        .safe => |p| return encodeAppend(buf, alloc, p.*),
         .string, .bytes => |s| {
             // The payload is the raw bytes: compareOp compares strings and
             // bytes with std.mem.order (value.zig:658,668), and memcmp over
             // equal tags is exactly that, including the shorter-is-less rule
             // for a common prefix.
-            const out = try alloc.alloc(u8, 1 + s.len);
+            const out = try buf.addManyAsSlice(alloc, 1 + s.len);
             out[0] = if (v == .string) tag_string else tag_bytes;
             @memcpy(out[1..], s);
-            return out;
         },
         .date, .time, .datetime, .timestamp => {
             const tag: u8, const n: i64 = switch (v) {
@@ -115,10 +128,9 @@ pub fn encode(alloc: std.mem.Allocator, v: Value) ValueError!?[]u8 {
                 .timestamp => |t| .{ tag_timestamp, t },
                 else => unreachable,
             };
-            const out = try alloc.alloc(u8, 9);
+            const out = try buf.addManyAsArray(alloc, 9);
             out[0] = tag;
             std.mem.writeInt(u64, out[1..9], orderable(n), .big);
-            return out;
         },
         // NUMERIC is decimal(38,9) and BIGNUMERIC decimal(76,38), so each value
         // is an integer at its scale — value.zig's numericValue guarantees it.
@@ -135,37 +147,51 @@ pub fn encode(alloc: std.mem.Allocator, v: Value) ValueError!?[]u8 {
             // multiply out by 10^scale to recover it.
             const unscaled = n.unscaled;
             if (n.is_bignumeric) {
-                const out = try alloc.alloc(u8, 1 + bignumeric_bytes);
+                const out = try buf.addManyAsArray(alloc, 1 + bignumeric_bytes);
                 out[0] = tag_bignumeric;
                 std.mem.writeInt(u256, out[1..][0..bignumeric_bytes], bias(u256, unscaled), .big);
-                return out;
+                return true;
             }
             // Narrowing is safe by the construction-time bound, but checked
             // rather than asserted: an unchecked cast would truncate silently
             // in release and land the value wherever the wrapped bits sort.
+            // Checked before anything is appended, so a rejected value cannot
+            // leave a half-written tag in the buffer.
             const narrow = std.math.cast(i128, unscaled) orelse
                 return error.NumericOutOfRange;
-            const out = try alloc.alloc(u8, 1 + numeric_bytes);
+            const out = try buf.addManyAsArray(alloc, 1 + numeric_bytes);
             out[0] = tag_numeric;
             std.mem.writeInt(u128, out[1..][0..numeric_bytes], bias(u128, narrow), .big);
-            return out;
         },
         // The scalar slot under an absent bound is zero-filled rather than
         // left to chance: `rangeValue` already guarantees the struct field is
         // 0, but writing zeros explicitly means a hand-built Range cannot make
         // two equal ranges encode differently and break DISTINCT.
         .range => |r| {
-            const out = try alloc.alloc(u8, 1 + range_bytes);
+            const out = try buf.addManyAsArray(alloc, 1 + range_bytes);
             out[0] = tag_range;
             out[1] = @intFromEnum(r.elem);
             out[2] = if (r.has_start) range_start_bounded else range_start_unbounded;
             std.mem.writeInt(u64, out[3..11], if (r.has_start) orderable(r.start) else 0, .big);
             out[11] = if (r.has_end) range_end_bounded else range_end_unbounded;
             std.mem.writeInt(u64, out[12..20], if (r.has_end) orderable(r.end) else 0, .big);
-            return out;
         },
-        else => return null,
+        else => return false,
     }
+    return true;
+}
+
+/// `encodeAppend` into a buffer of its own, for callers that need to own the
+/// bytes rather than consume them before the next value. Null carries the same
+/// "not my kind" signal as `false` there.
+pub fn encode(alloc: std.mem.Allocator, v: Value) ValueError!?[]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(alloc);
+    if (!try encodeAppend(&buf, alloc, v)) {
+        buf.deinit(alloc);
+        return null;
+    }
+    return try buf.toOwnedSlice(alloc);
 }
 
 /// Maps a signed integer onto unsigned space order-preservingly, by flipping

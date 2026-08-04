@@ -56,6 +56,10 @@ const Cursor = extern struct {
 const State = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
+    /// Buffer each element is re-encoded in, reused for every row of the scan.
+    /// The arena beside it is reset per `xFilter`, i.e. per scan, so encoding
+    /// there retained one copy of every element until the scan ended.
+    scratch: encoder.Scratch,
     /// Element slices, aliasing the decoded buffer in `arena`.
     elems: []const []const u8 = &.{},
     row: usize = 0,
@@ -152,8 +156,13 @@ fn xOpen(vtab_ptr: [*c]c.sqlite3_vtab, cur_out: [*c][*c]c.sqlite3_vtab_cursor) c
     const v: *Vtab = @ptrCast(@alignCast(vtab_ptr));
     const gpa = v.ctx.gpa;
     const state = gpa.create(State) catch return c.SQLITE_NOMEM;
-    state.* = .{ .gpa = gpa, .arena = std.heap.ArenaAllocator.init(gpa) };
+    state.* = .{
+        .gpa = gpa,
+        .arena = std.heap.ArenaAllocator.init(gpa),
+        .scratch = encoder.Scratch.init(gpa),
+    };
     const cur = gpa.create(Cursor) catch {
+        state.scratch.deinit();
         state.arena.deinit();
         gpa.destroy(state);
         return c.SQLITE_NOMEM;
@@ -166,6 +175,7 @@ fn xOpen(vtab_ptr: [*c]c.sqlite3_vtab, cur_out: [*c][*c]c.sqlite3_vtab_cursor) c
 fn xClose(cur_ptr: [*c]c.sqlite3_vtab_cursor) callconv(.c) c_int {
     const cur: *Cursor = @ptrCast(@alignCast(cur_ptr));
     const gpa = cur.state.gpa;
+    cur.state.scratch.deinit();
     cur.state.arena.deinit();
     gpa.destroy(cur.state);
     gpa.destroy(cur);
@@ -228,10 +238,14 @@ fn xRowid(cur_ptr: [*c]c.sqlite3_vtab_cursor, rowid: [*c]c.sqlite3_int64) callco
     return c.SQLITE_OK;
 }
 
-/// `value` is re-encoded through EncodeValue rather than handed back raw, so an
-/// element keeps the same SQLite storage class it had under json_each — INTEGER
-/// for an int, REAL for a float, base64 TEXT for the rest. Downstream generated
-/// SQL is typed against that.
+/// `value` is re-encoded rather than handed back raw, so an element keeps the
+/// same SQLite storage class it had under json_each — INTEGER for an int, REAL
+/// for a float, an encoded BLOB for the rest. Downstream generated SQL is typed
+/// against that.
+///
+/// It is a transcode, not a copy: an element arrives in the self-delimiting
+/// codec (it was nested in an ARRAY) and leaves in whichever codec its kind
+/// uses at the top level.
 fn xColumn(
     cur_ptr: [*c]c.sqlite3_vtab_cursor,
     ctx: ?*c.sqlite3_context,
@@ -246,12 +260,8 @@ fn xColumn(
             const alloc = st.arena.allocator();
             const v = codec.decodeBinaryValueBorrowing(alloc, st.elems[st.row]) catch
                 return c.SQLITE_ERROR;
-            switch (encoder.EncodeValue(alloc, v) catch return c.SQLITE_ERROR) {
-                .null => sqlite.resultNull(ctx),
-                .int => |i| sqlite.resultInt64(ctx, i),
-                .float => |f| sqlite.resultDouble(ctx, f),
-                .blob => |b| sqlite.resultBlob(ctx, b),
-            }
+            encoder.encodeTo(sqlite.ResultSink{ .ctx = ctx }, &st.scratch, v) catch
+                return c.SQLITE_ERROR;
         },
         // The hidden argument column is never selected.
         else => sqlite.resultNull(ctx),

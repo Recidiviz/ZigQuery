@@ -33,33 +33,110 @@ pub const SqliteRepr = union(enum) {
     blob: []const u8,
 };
 
+/// A reusable encode buffer, one per connection.
+///
+/// The engine encodes a value per result per row, and every sink it encodes
+/// into copies the bytes before returning — `sqlite3_result_blob` is
+/// SQLITE_TRANSIENT. So a single buffer, cleared before each value and freed
+/// only with the connection, serves every value that connection will encode:
+/// past the largest value yet seen, the encode path stops allocating.
+///
+/// What that replaced was an allocation from whichever arena the call site
+/// happened to hold, and on three paths that arena is not reset per row —
+/// `window.xValue` (per row, released only at the end of the partition) and the
+/// `UNNEST` and INFORMATION_SCHEMA vtabs (per row, released at the end of the
+/// scan). Each retained every row's encoded bytes for the whole scan. The CPU
+/// was never the point: the encode path measures ~3 ns per value once the
+/// timer's own ~18 ns is subtracted (`docs/CODEC_PERF.md` §0).
+pub const Scratch = struct {
+    gpa: std.mem.Allocator,
+    buf: std.ArrayList(u8) = .empty,
+
+    pub fn init(gpa: std.mem.Allocator) Scratch {
+        return .{ .gpa = gpa };
+    }
+
+    pub fn deinit(s: *Scratch) void {
+        s.buf.deinit(s.gpa);
+    }
+};
+
 /// Go EncodeValue: scalar kinds pass through natively; see the file header for
-/// how the rest divide between the two BLOB payload shapes and TEXT.
-pub fn EncodeValue(alloc: std.mem.Allocator, v: Value) ValueError!SqliteRepr {
+/// how the rest divide between the two BLOB payload shapes.
+///
+/// `sink` is comptime-dispatched and implements `putNull`, `putInt`, `putFloat`
+/// and `putBlob`. Encoding straight into the sink is what keeps the kind switch
+/// to one: the old shape returned a `SqliteRepr` that every call site then
+/// switched on again to pick its `sqlite3_result_*` call, five times over.
+///
+/// **`putBlob` must consume the bytes before it returns.** They belong to
+/// `scratch` and the next value encoded through it overwrites them. Every sink
+/// in the engine satisfies that because SQLite copies; a sink that needs to
+/// keep the bytes wants `EncodeValue` below instead.
+pub fn encodeTo(sink: anytype, scratch: *Scratch, v: Value) ValueError!void {
     var t = phase.CodecTimer.begin(.codec_encode);
     defer t.end();
     switch (v) {
-        .null => return .null,
-        .int => |i| return .{ .int = i },
-        .float => |f| return .{ .float = f },
+        .null => sink.putNull(),
+        .int => |i| sink.putInt(i),
+        .float => |f| sink.putFloat(f),
         // Go returns ToBool() (a Go bool); the sqlite driver stores it as
         // INTEGER 0/1, so encode it as an int directly.
-        .bool => |b| return .{ .int = @intFromBool(b) },
-        .safe => |p| return EncodeValue(alloc, p.*),
+        .bool => |b| sink.putInt(@intFromBool(b)),
+        .safe => |p| return encodeTo(sink, scratch, p.*),
         else => {
+            // Cleared rather than trusted to be empty: an encode that failed
+            // partway through leaves its half-written value behind, and the
+            // next one must not inherit it.
+            scratch.buf.clearRetainingCapacity();
+
             // Memcomparable kinds: a BLOB whose bytes order correctly, which is
             // what makes a BLOB safe here at all — SQLite never applies a
             // collation to one. See codec_sortable.zig.
-            if (try sortable.encode(alloc, v)) |b| return .{ .blob = b };
-
-            // Kinds with no ordering to preserve keep the self-delimiting
-            // codec, still as a BLOB. Its uvarint length prefixes sort by
-            // length before content, which is only a problem for a kind that
-            // can be ordered, and ARRAY/STRUCT/JSON/INTERVAL cannot be (the
-            // analyzer rejects ORDER BY on all four).
-            return .{ .blob = try codec.encodeBinaryValue(alloc, v) };
+            if (!try sortable.encodeAppend(&scratch.buf, scratch.gpa, v)) {
+                // Kinds with no ordering to preserve keep the self-delimiting
+                // codec, still as a BLOB. Its uvarint length prefixes sort by
+                // length before content, which is only a problem for a kind that
+                // can be ordered, and ARRAY/STRUCT/JSON/INTERVAL cannot be (the
+                // analyzer rejects ORDER BY on all four).
+                try codec.appendBinaryValue(&scratch.buf, scratch.gpa, v);
+            }
+            sink.putBlob(scratch.buf.items);
         },
     }
+}
+
+/// Captures an encoded value as a `SqliteRepr` instead of handing it to SQLite.
+const ReprSink = struct {
+    out: *SqliteRepr,
+
+    fn putNull(s: ReprSink) void {
+        s.out.* = .null;
+    }
+    fn putInt(s: ReprSink, i: i64) void {
+        s.out.* = .{ .int = i };
+    }
+    fn putFloat(s: ReprSink, f: f64) void {
+        s.out.* = .{ .float = f };
+    }
+    fn putBlob(s: ReprSink, b: []const u8) void {
+        s.out.* = .{ .blob = b };
+    }
+};
+
+/// `encodeTo` for callers that need to own the bytes rather than consume them
+/// before the next value: the client bind path, where `bindBlobStatic` keeps
+/// the pointer until the statement is done, and `LiteralFromValue` below. Both
+/// run per statement rather than per row, which is why they can afford the
+/// allocation the sink path exists to avoid.
+pub fn EncodeValue(alloc: std.mem.Allocator, v: Value) ValueError!SqliteRepr {
+    var out: SqliteRepr = .null;
+    var scratch = Scratch.init(alloc);
+    try encodeTo(ReprSink{ .out = &out }, &scratch, v);
+    // Sized exactly to the value before it is handed over, because callers free
+    // it and the buffer's capacity may exceed its length.
+    if (out == .blob) out = .{ .blob = try scratch.buf.toOwnedSlice(alloc) };
+    return out;
 }
 
 /// Go LiteralFromValue: renders a Value as a SQL literal for embedded query
@@ -580,6 +657,67 @@ test "EncodeValue splits non-scalar kinds by storage format" {
     try testing.expect(num_repr == .blob);
     try testing.expectEqual(@as(u8, 0x70), num_repr.blob[0]);
     try testing.expectEqual(@as(usize, 17), num_repr.blob.len);
+}
+
+test "encodeTo reuses its scratch buffer instead of allocating per value" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // One value of each shape the blob path takes — the memcomparable codec
+    // (string, numeric) and the self-delimiting one (array, struct) — plus a
+    // native scalar, which never touches the buffer at all.
+    const values = [_]Value{
+        Value{ .string = "hello" },
+        try value_mod.numericFromString(alloc, "1.5", false),
+        try value_mod.arrayValue(alloc, &.{ Value{ .int = 1 }, Value{ .string = "x" } }),
+        try value_mod.structValue(alloc, &.{"k"}, &.{Value{ .bytes = "vv" }}),
+        Value{ .int = 7 },
+    };
+
+    var counting = std.testing.FailingAllocator.init(testing.allocator, .{});
+    var scratch = Scratch.init(counting.allocator());
+    defer scratch.deinit();
+    var out: SqliteRepr = .null;
+
+    // Warming it to the largest value in the set is the only time it allocates.
+    for (values) |v| try encodeTo(ReprSink{ .out = &out }, &scratch, v);
+    const warm = counting.allocations;
+    try testing.expect(warm > 0);
+
+    // This is the property the scratch exists for. What it replaced was an
+    // allocation from the call site's arena, and on the window and vtab paths
+    // that arena is not reset per row — so every row's encoded bytes were
+    // retained until the partition or scan ended.
+    for (0..100) |_| {
+        for (values) |v| try encodeTo(ReprSink{ .out = &out }, &scratch, v);
+    }
+    try testing.expectEqual(warm, counting.allocations);
+
+    // A value longer than any seen so far still grows it...
+    const long = try alloc.alloc(u8, 8192);
+    @memset(long, 'x');
+    try encodeTo(ReprSink{ .out = &out }, &scratch, Value{ .string = long });
+    try testing.expect(counting.allocations > warm);
+    try testing.expectEqual(@as(usize, 1 + long.len), out.blob.len);
+
+    // ...and keeps the capacity, so the small values are free again after it.
+    const grown = counting.allocations;
+    for (values) |v| try encodeTo(ReprSink{ .out = &out }, &scratch, v);
+    try testing.expectEqual(grown, counting.allocations);
+}
+
+test "EncodeValue hands back a blob sized exactly to the value" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // It builds in a growable buffer whose capacity outruns its length, and
+    // LiteralFromValue frees what it gets back — so the slice has to be shrunk
+    // to the value before it is handed over, not merely point at it.
+    const arr = try value_mod.arrayValue(alloc, &.{Value{ .string = "abc" }});
+    const repr = try EncodeValue(alloc, arr);
+    try testing.expectEqualSlices(u8, try codec.encodeBinaryValue(alloc, arr), repr.blob);
 }
 
 test "DecodeValue(EncodeValue(v)) round trips foundation kinds" {

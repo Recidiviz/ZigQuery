@@ -137,7 +137,7 @@ fn invokeOption(
         sqlite.resultError(ctx, errorText(info.name, err, &buf));
         return;
     };
-    setResult(ctx, alloc, ret) catch {
+    setResult(ctx, state, ret) catch {
         sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": failed to encode value");
     };
 }
@@ -166,14 +166,9 @@ fn decodeArgs(
     return args;
 }
 
-fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void {
-    switch (try encoder.EncodeValue(alloc, v)) {
-        .null => sqlite.resultNull(ctx),
-        .int => |i| sqlite.resultInt64(ctx, i),
-        .float => |f| sqlite.resultDouble(ctx, f),
-        .blob => |b| sqlite.resultBlob(ctx, b),
-    }
-}
+/// register.zig's, which this file's State is (`const State = register.State`),
+/// so the connection's one encode scratch buffer serves both.
+const setResult = register.setResult;
 
 fn errorText(comptime name: []const u8, err: anyerror, buf: []u8) []const u8 {
     if (bind.message) |m| return m;
@@ -286,23 +281,28 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                     sqlite.resultNull(ctx);
                     return;
                 }
-                finish(ctx, g.arena.allocator(), &g.impl);
+                finish(ctx, state, g.arena.allocator(), &g.impl);
             } else {
                 var arena = std.heap.ArenaAllocator.init(state.gpa);
                 defer arena.deinit();
                 var impl: Impl = .{};
-                finish(ctx, arena.allocator(), &impl);
+                finish(ctx, state, arena.allocator(), &impl);
             }
         }
 
-        fn finish(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, impl: *Impl) void {
+        fn finish(
+            ctx: ?*c.sqlite3_context,
+            state: *State,
+            alloc: std.mem.Allocator,
+            impl: *Impl,
+        ) void {
             bind.clearDiagnostics();
             const ret = impl.done(alloc) catch |err| {
                 var buf: [96]u8 = undefined;
                 sqlite.resultError(ctx, errorText(name, err, &buf));
                 return;
             };
-            setResult(ctx, alloc, ret) catch {
+            setResult(ctx, state, ret) catch {
                 sqlite.resultError(ctx, "zetasqlite_" ++ name ++ ": failed to encode value");
             };
         }

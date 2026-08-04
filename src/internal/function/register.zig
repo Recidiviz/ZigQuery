@@ -24,6 +24,12 @@ const Value = bind.Value;
 pub const State = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
+    /// Buffer every encoded result is built in, reused for the life of the
+    /// connection. Shared by the scalar, aggregate and window trampolines —
+    /// they alias this State — which is safe because a connection is
+    /// single-threaded and each of them hands the bytes to SQLite (which
+    /// copies) before the next value is encoded. See `encoder.Scratch`.
+    scratch: encoder.Scratch,
     /// Catalog snapshot for the INFORMATION_SCHEMA vtabs, published by the
     /// driver before each statement. Kept here rather than read from the
     /// catalog inside the vtab because those callbacks run inside
@@ -33,6 +39,7 @@ pub const State = struct {
 
     pub fn deinit(state: *State) void {
         const gpa = state.gpa;
+        state.scratch.deinit();
         state.arena.deinit();
         gpa.destroy(state);
     }
@@ -44,7 +51,11 @@ pub const State = struct {
 pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
     const state = try gpa.create(State);
     errdefer gpa.destroy(state);
-    state.* = .{ .gpa = gpa, .arena = std.heap.ArenaAllocator.init(gpa) };
+    state.* = .{
+        .gpa = gpa,
+        .arena = std.heap.ArenaAllocator.init(gpa),
+        .scratch = encoder.Scratch.init(gpa),
+    };
 
     inline for (bind.func_table) |info| {
         const Tramp = struct {
@@ -135,7 +146,7 @@ fn invoke(
         sqlite.resultError(ctx, errorText(info.name, err, &buf));
         return;
     };
-    setResult(ctx, alloc, ret) catch {
+    setResult(ctx, state, ret) catch {
         sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": failed to encode value");
     };
 }
@@ -183,13 +194,11 @@ fn decodeArgs(
     return args;
 }
 
-fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void {
-    switch (try encoder.EncodeValue(alloc, v)) {
-        .null => sqlite.resultNull(ctx),
-        .int => |i| sqlite.resultInt64(ctx, i),
-        .float => |f| sqlite.resultDouble(ctx, f),
-        .blob => |b| sqlite.resultBlob(ctx, b),
-    }
+/// The one encode-and-return path, shared with aggregate.zig and window.zig
+/// (both alias this State). Encodes into the connection's scratch buffer rather
+/// than an arena: SQLite copies the bytes here, so nothing needs to own them.
+pub fn setResult(ctx: ?*c.sqlite3_context, state: *State, v: Value) !void {
+    try encoder.encodeTo(sqlite.ResultSink{ .ctx = ctx }, &state.scratch, v);
 }
 
 /// Error text priority: the handler's formatted message, then value.zig's

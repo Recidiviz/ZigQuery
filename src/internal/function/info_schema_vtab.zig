@@ -353,6 +353,10 @@ const Cursor = extern struct {
 const CursorState = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
+    /// Buffer each column value is encoded in, reused for every row of the
+    /// scan. The arena beside it lives for the whole cursor, so encoding there
+    /// retained one copy of every cell until the scan ended.
+    scratch: encoder.Scratch,
     ctx: *ModuleCtx,
     rows: []const Row = &.{},
     row: usize = 0,
@@ -515,8 +519,14 @@ fn xOpen(vtab_ptr: [*c]c.sqlite3_vtab, cur_out: [*c][*c]c.sqlite3_vtab_cursor) c
     const v: *Vtab = @ptrCast(@alignCast(vtab_ptr));
     const gpa = v.ctx.gpa;
     const state = gpa.create(CursorState) catch return c.SQLITE_NOMEM;
-    state.* = .{ .gpa = gpa, .arena = std.heap.ArenaAllocator.init(gpa), .ctx = v.ctx };
+    state.* = .{
+        .gpa = gpa,
+        .arena = std.heap.ArenaAllocator.init(gpa),
+        .scratch = encoder.Scratch.init(gpa),
+        .ctx = v.ctx,
+    };
     const cur = gpa.create(Cursor) catch {
+        state.scratch.deinit();
         state.arena.deinit();
         gpa.destroy(state);
         return c.SQLITE_NOMEM;
@@ -529,6 +539,7 @@ fn xOpen(vtab_ptr: [*c]c.sqlite3_vtab, cur_out: [*c][*c]c.sqlite3_vtab_cursor) c
 fn xClose(cur_ptr: [*c]c.sqlite3_vtab_cursor) callconv(.c) c_int {
     const cur: *Cursor = @ptrCast(@alignCast(cur_ptr));
     const gpa = cur.state.gpa;
+    cur.state.scratch.deinit();
     cur.state.arena.deinit();
     gpa.destroy(cur.state);
     gpa.destroy(cur);
@@ -644,13 +655,8 @@ fn xColumn(
         .string => |s| Value{ .string = s },
         .int => |i| Value{ .int = i },
     };
-    const alloc = st.arena.allocator();
-    switch (encoder.EncodeValue(alloc, v) catch return c.SQLITE_ERROR) {
-        .null => sqlite.resultNull(ctx),
-        .int => |i| sqlite.resultInt64(ctx, i),
-        .float => |f| sqlite.resultDouble(ctx, f),
-        .blob => |b| sqlite.resultBlob(ctx, b),
-    }
+    encoder.encodeTo(sqlite.ResultSink{ .ctx = ctx }, &st.scratch, v) catch
+        return c.SQLITE_ERROR;
     return c.SQLITE_OK;
 }
 

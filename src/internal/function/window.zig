@@ -123,14 +123,11 @@ fn decodeArgs(alloc: std.mem.Allocator, argv: [*c]?*c.sqlite3_value, n: usize) !
     return args;
 }
 
-fn setResult(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, v: Value) !void {
-    switch (try encoder.EncodeValue(alloc, v)) {
-        .null => sqlite.resultNull(ctx),
-        .int => |i| sqlite.resultInt64(ctx, i),
-        .float => |f| sqlite.resultDouble(ctx, f),
-        .blob => |b| sqlite.resultBlob(ctx, b),
-    }
-}
+/// register.zig's, which this file's State is (`const State = register.State`),
+/// so the connection's one encode scratch buffer serves both. It matters most
+/// here: `xValue` produces a result **per row**, and the arena this used to
+/// encode into is released only at the end of the partition.
+const setResult = register.setResult;
 
 fn errorText(comptime name: []const u8, err: anyerror, buf: []u8) []const u8 {
     if (bind.message) |m| return m;
@@ -310,22 +307,28 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 var arena = std.heap.ArenaAllocator.init(state.gpa);
                 defer arena.deinit();
                 var fresh = Group{ .arena = undefined };
-                produceImpl(ctx, arena.allocator(), &fresh);
+                produceImpl(ctx, state, arena.allocator(), &fresh);
             }
         }
 
         fn produce(ctx: ?*c.sqlite3_context, group: *Group) void {
-            produceImpl(ctx, group.arena.allocator(), group);
+            const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
+            produceImpl(ctx, state, group.arena.allocator(), group);
         }
 
-        fn produceImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, group: *Group) void {
+        fn produceImpl(
+            ctx: ?*c.sqlite3_context,
+            state: *State,
+            alloc: std.mem.Allocator,
+            group: *Group,
+        ) void {
             bind.clearDiagnostics();
             const ret = group.impl.done(alloc, &group.agg) catch |err| {
                 var buf: [96]u8 = undefined;
                 sqlite.resultError(ctx, errorText(name, err, &buf));
                 return;
             };
-            setResult(ctx, alloc, ret) catch {
+            setResult(ctx, state, ret) catch {
                 sqlite.resultError(ctx, "zetasqlite_window_" ++ name ++ ": failed to encode value");
             };
         }
