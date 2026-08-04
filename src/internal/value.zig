@@ -1974,6 +1974,38 @@ pub fn intervalFromDuration(nanos_in: i64) Interval {
     return iv;
 }
 
+/// googlesql's bounds on an interval's canonical fields. They constrain the
+/// *result*, not the count written down: `INTERVAL 3000000000 SECOND` is legal
+/// and canonicalizes to 833333:20:0, while `INTERVAL 10001 YEAR` is not, because
+/// 120012 months is past the month bound. Verified against BigQuery, which
+/// reports each by name — "Interval field days '3660001' is out of range
+/// -3660000 to 3660000".
+pub const interval_max_months: i64 = 120_000;
+pub const interval_max_days: i64 = 3_660_000;
+pub const interval_max_micros: i64 = 316_224_000_000_000_000;
+
+/// As `intervalFromDuration`, but from a *microsecond* total.
+///
+/// Deliberately not a wrapper over it: the legal microsecond range above times
+/// 1000 is ~3.2e20, well past i64, so a nanosecond total cannot carry every
+/// interval a microsecond one can. Microseconds reach the whole range with room
+/// to spare — the widest legal value is ~87.8M hours, comfortably an i32.
+///
+/// `micros` must already be within `interval_max_micros`; the caller checks it,
+/// because it is the caller that knows how to report the failure.
+pub fn intervalFromMicros(micros_in: i64) Interval {
+    var micros = micros_in;
+    var iv = Interval{};
+    iv.hours = @intCast(@divTrunc(micros, 3600 * 1_000_000));
+    micros -= @as(i64, iv.hours) * 3600 * 1_000_000;
+    iv.minutes = @intCast(@divTrunc(micros, 60 * 1_000_000));
+    micros -= @as(i64, iv.minutes) * 60 * 1_000_000;
+    iv.seconds = @intCast(@divTrunc(micros, 1_000_000));
+    micros -= @as(i64, iv.seconds) * 1_000_000;
+    iv.sub_second_nanos = @intCast(micros * 1000);
+    return iv;
+}
+
 const Norm = struct { hi: i64, lo: i64 };
 
 /// Go time.norm: carry lo into hi so lo lands in [0, base).
