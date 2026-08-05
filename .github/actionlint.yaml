@@ -3,12 +3,13 @@
 #
 # The key is `self-hosted-runner` regardless — that is actionlint's mechanism
 # for "labels I cannot know about", not a claim that the runner is self-hosted.
-# zigquery-emulator-mac-build is a GitHub-hosted larger runner and is matched
-# by its name alone; pairing it with the `self-hosted` label would mean it
-# never matches, since that label exists only on genuinely self-hosted runners.
+# Both entries below are GitHub-hosted larger runners, matched by name alone;
+# pairing either with the `self-hosted` label would mean it never matches,
+# since that label exists only on genuinely self-hosted runners.
 #
 # The RunsOn labels (runs-on=.../runner=...) need no entry: they carry a
 # ${{ }} expression, which actionlint does not try to validate.
 self-hosted-runner:
   labels:
     - zigquery-emulator-mac-build
+    - zigquery-emulator-mac-build-x64

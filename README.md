@@ -119,9 +119,10 @@ non-fatal — they are the known-missing surface, catalogued in
 | `release.yml` | `v*.*.*` tag | four platform tarballs, a multi-arch GHCR image, and a GitHub release |
 
 Runners are [RunsOn](https://runs-on.com) on EC2 (see `.github/runs-on.yml`).
-Release builds for darwin run elsewhere: arm64 on the
-`zigquery-emulator-mac-build` larger runner, x64 on `macos-15-intel` so it
-stays a native build rather than a cross-compile.
+Release builds for darwin run on GitHub-hosted larger runners:
+`zigquery-emulator-mac-build` for arm64 and `zigquery-emulator-mac-build-x64`
+for x64, so each tarball is built and smoke-tested natively rather than
+cross-compiled.
 
 The shim is the expensive part of all of this and the least frequently changed,
 so `.github/actions/shim` caches it against a hash of its real inputs — the
