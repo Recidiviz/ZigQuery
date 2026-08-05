@@ -22,343 +22,252 @@ edited. That is what keeps this a live ledger instead of a document that rots �
 also means **the numbers below are a snapshot** of the tree at the commit this was
 written against. Re-run the two commands above to refresh them.
 
+One thing the ledger cannot see is in the next section but one: a case that **passes on
+a wrong answer** is invisible here by construction, because the corpus asserts what
+GoogleSQL documents and this engine emulates BigQuery. Those have to be found by
+measurement, not by running the suite.
+
 ## Summary
 
-`zig build spec` on the current tree: **581 PASS / 0 FAIL / 400 UNSUPPORTED / 31 SKIP** (of 1012).
+`zig build spec` on the current tree: **730 PASS / 0 FAIL / 251 UNSUPPORTED / 31 SKIP** (of 1012).
 
 | Detection signal | Cases | Specs | Meaning |
 |---|---:|---:|---|
-| `no such function in the transformer` | 149 | 111 | Analyzer resolves it; no implementation on our side |
-| `analyzer: function not found` | 137 | 80 | Rejected upstream — never reaches our code |
-| `analyzer: syntax/feature disabled` | 64 | 40 | Grammar switched off in `shim/analyzer_shim.cc` |
-| `analyzer: feature not supported` | 35 | 19 | Analyzer refuses the construct outright |
+| `no such function in the transformer` | 122 | 92 | Analyzer resolves it; no implementation on our side |
+| `analyzer: function not found` | 60 | 39 | Rejected upstream — never reaches our code |
+| `analyzer: syntax/feature disabled` | 30 | 23 | Grammar switched off in `shim/analyzer_shim.cc` |
+| `analyzer: feature not supported` | 24 | 17 | Analyzer refuses the construct outright |
 | `analyzer: type not found (proto)` | 8 | 5 | Proto descriptor plumbing |
 | `no such AST node in the extractor` | 5 | 1 | Resolved node kind the extractor has no case for |
 | `Unimplemented` | 2 | 2 | `error.Unimplemented` raised explicitly |
-| **total** | **400** | **254** | |
+| **total** | **251** | **177** | |
 
 | Area | Unsupported cases |
 |---|---:|
 | `googlesql/functions/geography` | 82 |
-| `googlesql/functions/json` | 47 |
-| `googlesql/syntax/pipe` | 27 |
-| `bigquery/functions/time_series` | 22 |
 | `googlesql/functions/string` | 20 |
 | `googlesql/functions/aggregate/differential_privacy` | 19 |
 | `bigquery/functions/aead` | 16 |
 | `googlesql/syntax/script` | 16 |
-| `googlesql/functions/array` | 15 |
-| `googlesql/types` | 15 |
-| `googlesql/functions/net` | 12 |
 | `bigquery/functions/kll` | 11 |
 | `bigquery/functions/search` | 10 |
 | `bigquery/functions/text_analysis` | 10 |
 | `googlesql/functions/proto` | 10 |
-| `bigquery/functions/json` | 7 |
-| `googlesql/functions/debug` | 7 |
+| `googlesql/functions/array` | 7 |
 | `bigquery/functions/geography` | 5 |
-| `googlesql/functions/bit` | 5 |
+| `bigquery/functions/time_series` | 5 |
 | `googlesql/syntax/dml` | 5 |
+| `googlesql/types` | 5 |
 | `bigquery/functions/objectref` | 4 |
-| `bigquery/functions/utility` | 4 |
-| `googlesql/functions/conversion` | 4 |
 | `googlesql/syntax/ddl` | 4 |
 | `bigquery/functions/dlp` | 3 |
 | `googlesql/functions/hash` | 3 |
 | `googlesql/functions/range` | 3 |
 | `googlesql/functions/timestamp` | 3 |
 | `googlesql/syntax/dcl` | 3 |
-| `googlesql/functions/aggregate` | 2 |
 | `googlesql/functions/window` | 2 |
 | `googlesql/syntax/io` | 2 |
 | `bigquery/functions/aggregate` | 1 |
 | `bigquery/functions/vector` | 1 |
+| `googlesql/functions/debug` | 1 |
 
-**254 specs carry at least one unsupported case; 248 of them have zero passing
-cases.** This is not a tail of edge cases — it is whole functions that do not exist. The
-6 partially-supported specs are the only places where the surface exists and the corpus
+**177 specs carry at least one unsupported case; 173 of them have zero passing cases.**
+This is not a tail of edge cases — it is whole functions that do not exist. The 4
+partially-supported specs are the only places where the surface exists and the corpus
 finds a hole in it:
 
 | Spec | unsupported | passing | Signal |
 |---|---:|---:|---|
-| `googlesql/types/struct` | 10 | 22 | analyzer: feature not supported |
-| `googlesql/functions/debug/error` | 7 | 2 | analyzer: function not found; analyzer: syntax/feature disabled |
 | `googlesql/syntax/dml/merge` | 5 | 9 | no such AST node in the extractor |
 | `googlesql/functions/range/range_sessionize` | 3 | 1 | analyzer: feature not supported |
-| `googlesql/functions/net/net_parse_ip` | 1 | 1 | no such function in the transformer |
+| `googlesql/functions/debug/error` | 1 | 8 | analyzer: feature not supported |
 | `googlesql/functions/string/collate` | 1 | 1 | analyzer: function not found |
+
+`googlesql/types/struct` and `googlesql/functions/net/net_parse_ip` were on this list at
+the last snapshot and have left it; see the changelog.
+
+---
+
+## Wrong answer, not a missing one
+
+Three divergences that the suite cannot detect, all found by measuring against real
+BigQuery (bq CLI, 2026-08-04) rather than by running the corpus. They are listed here
+because they are the class that matters most for an emulator and they have no other home
+in this document: every one of them is currently **green**.
+
+**1. `TYPEOF` reports internal type names.** `SELECT TYPEOF(1.0)` answers `DOUBLE` here
+and `FLOAT64` in BigQuery. The bigquery-dialect case
+`bigquery/functions/utility/typeof :: floating-point literal reports DOUBLE` asserts
+`DOUBLE`, so the suite is green on an answer BigQuery does not give.
+
+**2. `PRODUCT_INTERNAL` leaks GoogleSQL-only aliases.** `DOUBLE` and `LAX_DOUBLE` are
+PRODUCT_INTERNAL aliases of `FLOAT64` / `LAX_FLOAT64`
+(`builtin_function_internal_3.cc:1659,1702`). BigQuery rejects both spellings; this
+engine accepts them. The alias resolves to the same `Function`, so the extractor cannot
+tell the two apart and no per-function fix exists.
+
+The obvious remedy was measured rather than assumed: flipping `analyzer_shim.cc:256` to
+`PRODUCT_EXTERNAL` and rebuilding takes the suite **730 → 650**. It does fix TYPEOF and
+does drop `DOUBLE`/`LAX_DOUBLE` — and it also removes the entire `NET.*` namespace,
+including `NET.IP_IN_NET`, which BigQuery has, plus `BIT_CAST_TO_INT64/UINT64`. Trading
+over-acceptance for under-acceptance is the worse deal, so PRODUCT_INTERNAL stays and
+the leak is recorded here instead.
+
+**3. `PARSE_JSON` and `TO_JSON` preserve insertion order; BigQuery sorts object keys.**
+`TO_JSON_STRING(PARSE_JSON('{"b":1,"a":2}'))` is `{"b":1,"a":2}` here and
+`{"a":2,"b":1}` there. JSON *literals* already agree, because the analyzer normalizes
+them before the engine sees them — which is why nothing caught this. Everything the JSON
+family now *constructs* (the constructors, the mutators, `JSON_KEYS`) sorts its own
+output, so those agree with BigQuery; the two entry points that copy a document through
+do not. Fixing it means editing 6 goccy-derived corpus expectations (`to_json` /
+`to_json_string`, `{"id":1,"coordinates":[10,20]}`), which is a policy change: the
+corpus has never been edited away from goccy.
+
+---
 
 ### The flag experiment
 
 The two large buckets — "the analyzer won't resolve it" and "we never built it" — are
 separable by experiment. Candidate `LanguageFeature` flags were added to
-`kEnabledFeatures` in `shim/analyzer_shim.cc`, the shim rebuilt, the suite rerun, and
-the change reverted:
+`kEnabledFeatures` in `shim/analyzer_shim.cc`, the shim rebuilt, the suite rerun, and the
+change reverted:
 
 ```
-before   581 PASS /  0 FAIL / 400 UNSUPPORTED / 31 SKIP
-after    618 PASS / 18 FAIL / 345 UNSUPPORTED / 31 SKIP   (0 regressions)
+before   730 PASS /  0 FAIL / 251 UNSUPPORTED / 31 SKIP
+after    732 PASS / 12 FAIL / 237 UNSUPPORTED / 31 SKIP   (0 regressions)
 ```
 
-Flags tried: `PIPES`, `PIPE_IF`, `UUID_TYPE`, `TYPEOF_FUNCTION`,
-`TIME_BUCKET_FUNCTIONS`, `ARRAY_ZIP`, `GROUPING_BUILTIN`, `JSON_MUTATOR_FUNCTIONS`,
-`JSON_CONTAINS_FUNCTION`, `JSON_KEYS_FUNCTION`, `JSON_FLATTEN_FUNCTION`,
-`DIFFERENTIAL_PRIVACY`, `TOKENIZED_SEARCH`, `ENUM_VALUE_DESCRIPTOR_PROTO`, `KLL_WEIGHTS`.
+Flags tried: `DIFFERENTIAL_PRIVACY`, `TOKENIZED_SEARCH`, `KLL_WEIGHTS`, `UUID_TYPE`,
+`ENUM_VALUE_DESCRIPTOR_PROTO`, `PROTO_DEFAULT_IF_NULL`, `ARRAY_AGGREGATION_FUNCTIONS`,
+`ARRAY_FIND_FUNCTIONS`, `ANNOTATION_FRAMEWORK`, `COLLATION_SUPPORT`.
 
-Three flags from earlier rounds of this experiment — `CBRT_FUNCTIONS`, `PI_FUNCTIONS`
-and `RANGE_TYPE` — are no longer listed because they have since been enabled for real;
-see the changelog at the end.
+**What moved nothing is as informative as what did.** `TOKENIZED_SEARCH` (SEARCH,
+TEXT_ANALYZE, BAG_OF_WORDS, TF_IDF — 21 cases), `KLL_WEIGHTS` (the 5 FLOAT64 KLL cases)
+and `ENUM_VALUE_DESCRIPTOR_PROTO` left every case exactly where it was: those names are
+absent from this googlesql revision's catalog, not merely gated, so no flag reaches them.
 
-The tiers below partition all 400 cases by what that experiment revealed, ordered by
-cost to fix. Each case is listed under exactly one tier.
+Flags enabled for real since the last snapshot — `PIPES`, `TYPEOF_FUNCTION`,
+`GROUPING_BUILTIN`, `TIME_BUCKET_FUNCTIONS`, `STRUCT_POSITIONAL_ACCESSOR`,
+`JSON_MUTATOR_FUNCTIONS`, `JSON_KEYS_FUNCTION`, `JSON_FLATTEN_FUNCTION` — are no longer
+in the candidate list; see the changelog. `ARRAY_ZIP`, `INLINE_LAMBDA_ARGUMENT`,
+`PIPE_IF` and `JSON_CONTAINS_FUNCTION` are also gone from it, for the opposite reason:
+they were tried, they worked, and they were reverted because BigQuery does not have what
+they enable.
+
+The tiers below partition all 251 cases by what that experiment revealed, ordered by cost
+to fix. Each case is listed under exactly one tier.
 
 | Tier | Cases | What it takes |
 |---|---:|---|
-| [1](#tier-1) | 37 | Flag flip only — passes with no implementation |
-| [2](#tier-2) | 18 | Flag admits it, then it breaks somewhere real |
-| [3](#tier-3) | 52 | Flag unblocks the analyzer, implementation still owed |
-| [4](#tier-4) | 149 | Implementation backlog — analyzer already resolves them |
-| [5](#tier-5) | 83 | Still analyzer-blocked after the experiment |
-| [6](#tier-6) | 35 | Analyzer refuses the construct |
+| [1](#tier-1) | 6 | Nothing — GoogleSQL-only; restate as a refusal |
+| [2](#tier-2) | 12 | Flag admits it, then the corpus itself is stale |
+| [3](#tier-3) | 10 | Flag unblocks the analyzer, implementation still owed |
+| [4](#tier-4) | 122 | Implementation backlog — analyzer already resolves them |
+| [5](#tier-5) | 51 | Still analyzer-blocked after the experiment |
+| [6](#tier-6) | 24 | Analyzer refuses the construct |
 | [7](#tier-7) | 11 | Scripting grammar — needs the script parser, not a flag |
 | [8](#tier-8) | 15 | Proto descriptors, extractor nodes, explicit stubs |
-| **total** | **400** | |
+| **total** | **251** | |
 
 ---
 
 <a id="tier-1"></a>
 
-## Tier 1 — passes with a flag flip, no implementation (37 cases)
+## Tier 1 — GoogleSQL-only; the work is to refuse them (6 cases)
 
-These moved straight to PASS under the experiment with no other change. Pipe operators
-resolve into the ordinary `ResolvedScan` tree the extractor already walks, which is why
-the entire `syntax/pipe` directory comes free.
+These would pass, or nearly, on a flag flip. `ARRAY_AGGREGATION_FUNCTIONS` moves
+`ARRAY_SUM` and `ARRAY_AVG` straight to PASS; `ARRAY_FIND_FUNCTIONS` reaches `FLATTEN`;
+`UUID_TYPE` reaches `NEW_UUID`. Checked against real BigQuery, all four names are absent:
 
-Flags responsible: `FEATURE_PIPES`, `FEATURE_PIPE_IF`, `FEATURE_TYPEOF_FUNCTION`.
+```
+Function not found: ARRAY_SUM
+Function not found: ARRAY_AVG; Did you mean array_agg?
+Function not found: FLATTEN
+Type not found: UUID                      -- and NEW_UUID with it; BigQuery's
+                                             GENERATE_UUID() returns a STRING
+```
 
-**`bigquery/functions/utility/typeof`**
-- NULL collapses to INT64 supertype
-- floating-point literal reports DOUBLE
-- integer literal reports INT64
-- string literal reports STRING
+So the work here is not implementation, it is the `.expect_error` restatement that
+`array_zip`, `array_transform` and the json families already got — the cheapest six cases
+in this document, and the ones that stop the ledger from reading them as backlog.
 
-**`googlesql/functions/debug/error`**
-- run_else
-- run_elseif
-- run_if_with_elses
-- run_no_case
-- typeof_error_function
-- unselected_cases_dont_run
+**`googlesql/functions/array/array_avg`**
+- array_avg basic input
 
-**`googlesql/syntax/pipe/aggregate`**
-- aggregate with GROUP BY
-- count rows with no GROUP BY
+**`googlesql/functions/array/array_sum`**
+- array_sum basic input
 
-**`googlesql/syntax/pipe/as`**
-- AS names the table; columns are qualifiable
+**`googlesql/functions/array/flatten`**
+- upstream example 1
+- upstream example 2
+- upstream example 3
 
-**`googlesql/syntax/pipe/distinct`**
-- distinct collapses duplicate rows
-
-**`googlesql/syntax/pipe/drop`**
-- drop multiple columns
-- drop one column
-
-**`googlesql/syntax/pipe/except`**
-- except distinct
-
-**`googlesql/syntax/pipe/extend`**
-- extend with a doubled column
-- extend with multiple expressions
-
-**`googlesql/syntax/pipe/intersect`**
-- intersect distinct
-
-**`googlesql/syntax/pipe/join`**
-- inner join on equality
-- left outer join keeps left-side row when no match
-
-**`googlesql/syntax/pipe/limit`**
-- limit caps the row count
-- limit with offset skips initial rows
-
-**`googlesql/syntax/pipe/order_by`**
-- order ASC by default
-- order DESC
-
-**`googlesql/syntax/pipe/rename`**
-- rename multiple columns
-- rename single column
-
-**`googlesql/syntax/pipe/select`**
-- arithmetic expression in pipe SELECT
-- project two columns in declared order
-- rename single column via pipe SELECT
-
-**`googlesql/syntax/pipe/set`**
-- set two columns in one operator
-- set updates an existing column
-
-**`googlesql/syntax/pipe/union`**
-- union all retains duplicates
-- union distinct deduplicates
-
-**`googlesql/syntax/pipe/where`**
-- chained WHERE acts as AND
-- filter integers above threshold
+**`googlesql/types/uuid`**
+- upstream example 1
 
 ---
 
 <a id="tier-2"></a>
 
-## Tier 2 — flag admits them, then they break somewhere real (18 cases)
+## Tier 2 — flag admits it, then the corpus itself is stale (12 cases)
 
-These stopped being `unsupported` and became `fail`: the analyzer accepted the SQL and
-something downstream gave a wrong or missing answer. Each is a contained, diagnosable
-bug rather than an absent feature. The failure detail is quoted under each case.
+These stopped being `unsupported` and became `fail` under the experiment, all with the
+same message:
+
+```
+AnalyzeFailed: Invalid identifier after SELECT WITH;
+               expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]
+```
+
+The corpus writes `SELECT WITH ANONYMIZATION`; this googlesql revision requires
+`SELECT WITH DIFFERENTIAL_PRIVACY`, and `FEATURE_ANONYMIZATION` is marked
+`in_development` upstream. These assert a dead spelling — corpus staleness, not an engine
+gap, the same class as commit `5c72f80` ("Restate two spec cases that asserted things
+BigQuery does not do"). The genuine gap behind the directory is one tier down.
 
 **`googlesql/functions/aggregate/differential_privacy/anon_avg`**
 - upstream example 1 — ANON_AVG with noise (eps=10)
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 - upstream example 2 — ANON_AVG without noise
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 
 **`googlesql/functions/aggregate/differential_privacy/anon_count`**
 - upstream example 1 — ANON_COUNT(*) with noise (eps=10)
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 - upstream example 2 — ANON_COUNT(*) without noise
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 - upstream example 3 — ANON_COUNT(item CLAMPED) with noise (eps=10)
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 - upstream example 4 — ANON_COUNT(item CLAMPED) without noise
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 
 **`googlesql/functions/aggregate/differential_privacy/anon_percentile_cont`**
 - upstream example 1 — ANON_PERCENTILE_CONT with noise (eps=10)
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 
 **`googlesql/functions/aggregate/differential_privacy/anon_quantiles`**
 - upstream example 1 — ANON_QUANTILES with noise (eps=10)
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 
 **`googlesql/functions/aggregate/differential_privacy/anon_stddev_pop`**
 - upstream example 1 — ANON_STDDEV_POP with noise (eps=10)
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 
 **`googlesql/functions/aggregate/differential_privacy/anon_sum`**
 - upstream example 1 — ANON_SUM with noise (eps=10)
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 - upstream example 2 — ANON_SUM without noise
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
 
 **`googlesql/functions/aggregate/differential_privacy/anon_var_pop`**
 - upstream example 1 — ANON_VAR_POP with noise (eps=10)
-  - `AnalyzeFailed: Invalid identifier after SELECT WITH; expected DIFFERENTIAL_PRIVACY but got: ANONYMIZATION [at 2:8]`
-
-**`googlesql/functions/aggregate/grouping`**
-- upstream example 1
-  - `TransformFailed: ColumnNotFound`
-- upstream example 2
-  - `TransformFailed: ColumnNotFound`
-
-**`googlesql/functions/array/array_zip`**
-- upstream example 1
-  - `row 0: got ([{1, a}, {2, b}])`
-- upstream example 2
-  - `row 0: got ([{1 A1, a alias_inferred}, {2 A1, b alias_inferred}])`
-- upstream example 5
-  - `row 0: got ([{1, a, NULL}, {2, b, NULL}, {NULL, c, NULL}, {NULL, d, NULL}])`
-- upstream example 6
-  - `row 0: got ([{1, a}, {2, b}])`
-
-### Reading of this tier
-
-- **`differential_privacy` (12 cases)** — the corpus writes `SELECT WITH ANONYMIZATION`;
-  this googlesql revision requires `SELECT WITH DIFFERENTIAL_PRIVACY`, and
-  `FEATURE_ANONYMIZATION` is marked `in_development` upstream. These assert a dead
-  spelling — corpus staleness, not an engine gap, the same class as commit `5c72f80`
-  ("Restate two spec cases that asserted things BigQuery does not do"). The other 7
-  cases in that directory land one tier down on `no such AST node in the extractor`,
-  which is the genuine gap behind them.
-- **`array_zip` (4 cases)** — runs end to end; output differs only in struct field
-  naming and `STRICT`/`PAD` mode length handling. The closest thing to a finished
-  function anywhere in the unsupported set.
-- **`range_sessionize` (4 cases)** — fails in *our* type deserializer with
-  `Invalid TypeProto provided for deserialization: type_kind: TYPE_RANGE`. RANGE needs
-  catalog-level type support before any RANGE function is worth writing.
-- **`grouping` (2 cases)** — `TransformFailed: ColumnNotFound`, a contained extractor gap.
 
 ---
 
 <a id="tier-3"></a>
 
-## Tier 3 — flag unblocks the analyzer, implementation still owed (52 cases)
+## Tier 3 — flag unblocks the analyzer, implementation still owed (10 cases)
 
-Cases whose detection signal *moved* under the experiment. Enabling the flag does not
-fix them; it converts an upstream refusal into an honest to-do the suite will then
-track. The dominant shift is `analyzer: function not found` →
-`no such function in the transformer`; seven differential-privacy cases go from
-`syntax/feature disabled` to `no such AST node in the extractor`.
+Cases whose detection signal *moved* under the experiment. Enabling the flag does not fix
+them; it converts an upstream refusal into an honest to-do the suite will then track.
 
-### `bigquery/functions/time_series` (17 cases)
-
-**`bigquery/functions/time_series/date_bucket`**
-- NULL input propagates
-- custom origin, 7-day buckets — at origin
-- custom origin, 7-day buckets — before origin
-- default origin 1950-01-01, 2-day buckets — aligned just below
-- default origin 1950-01-01, 2-day buckets — at origin
-- default origin 1950-01-01, 2-day buckets — before origin
-- default origin 1950-01-01, 2-day buckets — third bucket
-
-**`bigquery/functions/time_series/datetime_bucket`**
-- NULL input propagates
-- custom origin, 7-day bucket — at origin
-- custom origin, 7-day bucket — before origin
-- default origin 1950-01-01 00:00:00, 12-hour bucket — afternoon half
-- default origin 1950-01-01 00:00:00, 12-hour bucket — at origin
-- default origin 1950-01-01 00:00:00, 12-hour bucket — earlier half
-
-**`bigquery/functions/time_series/timestamp_bucket`**
-- NULL input propagates
-- default origin 1950-01-01 00:00:00 UTC, 12-hour bucket — afternoon
-- default origin 1950-01-01 00:00:00 UTC, 12-hour bucket — at origin
-- default origin 1950-01-01 00:00:00 UTC, 12-hour bucket — before origin
-
-### `googlesql/functions/json` (17 cases)
-
-**`googlesql/functions/json/json_array_append`**
-- append to top-level array
-
-**`googlesql/functions/json/json_array_insert`**
-- upstream example 1
-- upstream example 2
-- upstream example 3
-- upstream example 4
-- upstream example 5
-- upstream example 6
-- upstream example 7
-- upstream example 8
-- upstream example 9
-
-**`googlesql/functions/json/json_contains`**
-- missing key returns false
-- object contains itself
-- partial match returns true
-
-**`googlesql/functions/json/json_flatten`**
-- flatten one level of nesting
-
-**`googlesql/functions/json/json_remove`**
-- json_remove basic behaviour
-
-**`googlesql/functions/json/json_set`**
-- json_set basic behaviour
-
-**`googlesql/functions/json/json_strip_nulls`**
-- json_strip_nulls basic behaviour
-
-### `googlesql/functions/aggregate/differential_privacy` (7 cases)
+- **`differential_privacy`, 7 cases** — `syntax/feature disabled` becomes
+  `no such AST node in the extractor`. `SELECT WITH DIFFERENTIAL_PRIVACY` resolves to a
+  `ResolvedDifferentialPrivacyAggregateScan` the extractor has no arm for. This is the
+  real gap the 12 stale ANON_* cases above sit on top of.
+- **`proto_default_if_null`, 2 cases** — `function not found` becomes
+  `type not found (proto)`, joining the descriptor-plumbing pile in tier 8.
+- **`collate`, 1 case** — `function not found` becomes `registered name, no UDF`: the
+  annotation framework resolves `COLLATE`, and then nothing answers it.
 
 **`googlesql/functions/aggregate/differential_privacy/avg`**
 - DP AVG over clamped values is the clamp value (with small noise)
@@ -377,53 +286,23 @@ track. The dominant shift is `analyzer: function not found` →
 - upstream example 1 — DP VAR_POP (privacy_unit_column=id) with noise
 - upstream example 2 — DP VAR_POP (view-level privacy unit) with noise
 
-### `bigquery/functions/json` (4 cases)
+**`googlesql/functions/proto/proto_default_if_null`**
+- PROTO_DEFAULT_IF_NULL returns the set field value
+- PROTO_DEFAULT_IF_NULL with explicit field access for each component
 
-**`bigquery/functions/json/json_keys`**
-- max_depth caps recursion
-- nested keys flattened via dot notation
-- strict mode skips array-nested keys
-- top-level object keys
-
-### `googlesql/functions/array` (2 cases)
-
-**`googlesql/functions/array/array_zip`**
-- upstream example 3
-- upstream example 4
-
-### `googlesql/functions/window` (2 cases)
-
-**`googlesql/functions/window/is_first`**
-- IS_FIRST returns BOOL via numbering rewrite
-
-**`googlesql/functions/window/is_last`**
-- IS_LAST returns BOOL via numbering rewrite
-
-### `googlesql/functions/debug` (1 case)
-
-**`googlesql/functions/debug/error`**
-- assertion_succeeded_with_multiple_payloads
-
-### `googlesql/functions/string` (1 case)
-
-**`googlesql/functions/string/regexp_extract_groups`**
-- upstream example 10
-
-### `googlesql/types` (1 case)
-
-**`googlesql/types/uuid`**
+**`googlesql/functions/string/collate`**
 - upstream example 1
 
 ---
 
 <a id="tier-4"></a>
 
-## Tier 4 — implementation backlog, analyzer already resolves them (149 cases)
+## Tier 4 — implementation backlog, analyzer already resolves them (122 cases)
 
 `no such function in the transformer` on the current tree, no flag needed. The analyzer
 hands us a resolved call and the dispatch map has no entry. This is the pure
 "write the function" pile, and it is where the mass sits — geography alone is more than
-half of it.
+two thirds of it.
 
 ### `googlesql/functions/geography` (82 cases)
 
@@ -653,13 +532,14 @@ half of it.
 **`googlesql/functions/geography/st_y`**
 - ST_Y returns the latitude component of a POINT
 
-### `googlesql/functions/string` (18 cases)
+### `googlesql/functions/string` (19 cases)
 
 **`googlesql/functions/string/edit_distance`**
 - edit_distance basic behaviour
 
 **`googlesql/functions/string/regexp_extract_groups`**
 - upstream example 1
+- upstream example 10
 - upstream example 11
 - upstream example 12
 - upstream example 2
@@ -681,32 +561,6 @@ half of it.
 - take last part with negative index
 - take second part
 
-### `googlesql/functions/net` (12 cases)
-
-**`googlesql/functions/net/net_format_ip`**
-- format 0 as 0.0.0.0
-- format 16909060 as 1.2.3.4
-
-**`googlesql/functions/net/net_format_packed_ip`**
-- ipv4 high-bit address
-- round-trip via IP_FROM_STRING
-
-**`googlesql/functions/net/net_ip_in_net`**
-- IP inside the network
-- IP outside the network
-
-**`googlesql/functions/net/net_make_net`**
-- basic IPv4 prefix
-- host-level IPv4
-- zero-prefix anywhere-net
-
-**`googlesql/functions/net/net_parse_ip`**
-- null propagates through PARSE_IP
-
-**`googlesql/functions/net/net_parse_packed_ip`**
-- round-trip via IP_TO_STRING
-- zero address round-trip
-
 ### `bigquery/functions/kll` (6 cases)
 
 **`bigquery/functions/kll/kll_quantiles_extract_int64`**
@@ -727,26 +581,6 @@ half of it.
 **`bigquery/functions/kll/kll_quantiles_merge_point_int64`**
 - kll_quantiles_merge_point_int64 runs end-to-end
 
-### `googlesql/functions/json` (6 cases)
-
-**`googlesql/functions/json/json_array`**
-- build a heterogeneous JSON array
-
-**`googlesql/functions/json/json_object`**
-- build a single-key JSON object
-
-**`googlesql/functions/json/lax_bool`**
-- lax_bool basic behaviour
-
-**`googlesql/functions/json/lax_double`**
-- lax_double basic behaviour
-
-**`googlesql/functions/json/lax_int64`**
-- lax_int64 basic behaviour
-
-**`googlesql/functions/json/lax_string`**
-- lax_string basic behaviour
-
 ### `bigquery/functions/geography` (5 cases)
 
 **`bigquery/functions/geography/st_centroid_agg`**
@@ -755,42 +589,6 @@ half of it.
 - centroid of two points
 - linestring centroid is the length-weighted midpoint
 - square polygon centroid is the area-weighted centre
-
-### `googlesql/functions/bit` (5 cases)
-
-**`googlesql/functions/bit/bit_cast_to_int32`**
-- positive round-trip
-
-**`googlesql/functions/bit/bit_cast_to_int64`**
-- nested round-trip with UINT64
-- positive round-trip
-
-**`googlesql/functions/bit/bit_cast_to_uint32`**
-- positive round-trip
-
-**`googlesql/functions/bit/bit_cast_to_uint64`**
-- positive value passes through
-
-### `googlesql/functions/conversion` (4 cases)
-
-**`googlesql/functions/conversion/bit_cast_to_int32`**
-- bit-cast preserves int width 32 cycle
-
-**`googlesql/functions/conversion/bit_cast_to_int64`**
-- bit-cast a positive int64 is identity
-
-**`googlesql/functions/conversion/bit_cast_to_uint32`**
-- bit-cast unsigned 32 round-trip
-
-**`googlesql/functions/conversion/bit_cast_to_uint64`**
-- bit-cast unsigned 64 round-trip
-
-### `bigquery/functions/json` (3 cases)
-
-**`bigquery/functions/json/lax_float64`**
-- integer string coerces to FLOAT64
-- non-numeric input returns NULL (lax)
-- numeric value passes through
 
 ### `googlesql/functions/timestamp` (3 cases)
 
@@ -817,6 +615,14 @@ half of it.
 **`googlesql/functions/proto/to_proto`**
 - upstream example 1
 
+### `googlesql/functions/window` (2 cases)
+
+**`googlesql/functions/window/is_first`**
+- IS_FIRST returns BOOL via numbering rewrite
+
+**`googlesql/functions/window/is_last`**
+- IS_LAST returns BOOL via numbering rewrite
+
 ### `googlesql/types` (1 case)
 
 **`googlesql/types/geography`**
@@ -826,85 +632,13 @@ half of it.
 
 <a id="tier-5"></a>
 
-## Tier 5 — still analyzer-blocked after the experiment (83 cases)
+## Tier 5 — still analyzer-blocked after the experiment (51 cases)
 
 `analyzer: function not found` persisted with the candidate flags on. Each needs a
 different flag, a catalog registration, or is absent from this googlesql revision
-entirely — establish which before estimating implementation cost.
-
-### `googlesql/functions/json` (24 cases)
-
-**`googlesql/functions/json/bool_array`**
-- bool_array extracts a typed array
-
-**`googlesql/functions/json/double_array`**
-- double_array extracts a typed array
-
-**`googlesql/functions/json/float`**
-- float basic conversion
-
-**`googlesql/functions/json/float_array`**
-- float_array extracts a typed array
-
-**`googlesql/functions/json/int32`**
-- int32 basic conversion
-
-**`googlesql/functions/json/int32_array`**
-- int32_array extracts a typed array
-
-**`googlesql/functions/json/int64_array`**
-- int64_array extracts a typed array
-
-**`googlesql/functions/json/lax_bool_array`**
-- lax_bool_array extracts a typed array with NULLs on bad elements
-
-**`googlesql/functions/json/lax_double_array`**
-- lax_double_array extracts a typed array with NULLs on bad elements
-
-**`googlesql/functions/json/lax_float`**
-- lax_float basic conversion
-
-**`googlesql/functions/json/lax_float_array`**
-- lax_float_array extracts a typed array with NULLs on bad elements
-
-**`googlesql/functions/json/lax_int32`**
-- lax_int32 basic conversion
-
-**`googlesql/functions/json/lax_int32_array`**
-- lax_int32_array extracts a typed array with NULLs on bad elements
-
-**`googlesql/functions/json/lax_int64_array`**
-- lax_int64_array extracts a typed array with NULLs on bad elements
-
-**`googlesql/functions/json/lax_string_array`**
-- lax_string_array extracts a typed array with NULLs on bad elements
-
-**`googlesql/functions/json/lax_uint32`**
-- lax_uint32 basic conversion
-
-**`googlesql/functions/json/lax_uint32_array`**
-- lax_uint32_array extracts a typed array with NULLs on bad elements
-
-**`googlesql/functions/json/lax_uint64`**
-- lax_uint64 basic conversion
-
-**`googlesql/functions/json/lax_uint64_array`**
-- lax_uint64_array extracts a typed array with NULLs on bad elements
-
-**`googlesql/functions/json/string_array`**
-- string_array extracts a typed array
-
-**`googlesql/functions/json/uint32`**
-- uint32 basic conversion
-
-**`googlesql/functions/json/uint32_array`**
-- uint32_array extracts a typed array
-
-**`googlesql/functions/json/uint64`**
-- uint64 basic conversion
-
-**`googlesql/functions/json/uint64_array`**
-- uint64_array extracts a typed array
+entirely — establish which before estimating implementation cost. For `search`,
+`text_analysis` and the FLOAT64 half of `kll`, the experiment already answers it: the
+names are not in the catalog at all, so there is no flag to find.
 
 ### `bigquery/functions/aead` (16 cases)
 
@@ -1005,19 +739,6 @@ entirely — establish which before estimating implementation cost.
 **`bigquery/functions/kll/kll_quantiles_merge_point_float64`**
 - kll_quantiles_merge_point_float64 runs end-to-end
 
-### `googlesql/functions/array` (5 cases)
-
-**`googlesql/functions/array/array_avg`**
-- array_avg basic input
-
-**`googlesql/functions/array/array_sum`**
-- array_sum basic input
-
-**`googlesql/functions/array/flatten`**
-- upstream example 1
-- upstream example 2
-- upstream example 3
-
 ### `bigquery/functions/objectref` (4 cases)
 
 **`bigquery/functions/objectref/obj_fetch_metadata`**
@@ -1050,44 +771,15 @@ entirely — establish which before estimating implementation cost.
 - distinct outputs for distinct inputs
 - returns 16-byte BYTES
 
-### `googlesql/functions/proto` (2 cases)
-
-**`googlesql/functions/proto/proto_default_if_null`**
-- PROTO_DEFAULT_IF_NULL returns the set field value
-- PROTO_DEFAULT_IF_NULL with explicit field access for each component
-
-### `googlesql/functions/string` (1 case)
-
-**`googlesql/functions/string/collate`**
-- upstream example 1
-
 ---
 
 <a id="tier-6"></a>
 
-## Tier 6 — analyzer refuses the construct (35 cases)
+## Tier 6 — analyzer refuses the construct (24 cases)
 
-`analyzer: feature not supported`. The message is the analyzer's own — "RANGE type is
-not supported", "Table-valued functions are not supported", "Statement not supported:
-GrantStatement". These are language constructs rather than functions, so each is its
-own project.
-
-### `googlesql/types` (11 cases)
-
-**`googlesql/types/graph_element`**
-- upstream example 1
-
-**`googlesql/types/struct`**
-- struct field plus positional accessor mixed
-- struct multiple anonymous fields positional
-- struct multiple fields named and positional
-- struct positional accessor double via WITH
-- struct positional accessor offset 0 double
-- struct positional accessor offset 1 bool
-- struct positional accessor on null struct
-- struct positional accessor ordinal 1 double
-- struct positional accessor ordinal 2 bool
-- struct same name fields positional access
+`analyzer: feature not supported`. The message is the analyzer's own — "Table-valued
+functions are not supported", "Statement not supported: GrantStatement". These are
+language constructs rather than functions, so each is its own project.
 
 ### `bigquery/functions/time_series` (5 cases)
 
@@ -1139,14 +831,6 @@ own project.
 - CREATE SCHEMA executes without error
 - CREATE SCHEMA with OPTIONS executes without error
 
-### `googlesql/functions/array` (2 cases)
-
-**`googlesql/functions/array/array_filter`**
-- ARRAY_FILTER keeps elements matching the lambda
-
-**`googlesql/functions/array/array_transform`**
-- ARRAY_TRANSFORM doubles each element via lambda
-
 ### `googlesql/syntax/io` (2 cases)
 
 **`googlesql/syntax/io/export_data`**
@@ -1164,6 +848,16 @@ own project.
 
 **`bigquery/functions/vector/vector_index_statistics`**
 - VECTOR_INDEX.STATISTICS lowers to an empty subquery
+
+### `googlesql/functions/debug` (1 case)
+
+**`googlesql/functions/debug/error`**
+- assertion_succeeded_with_multiple_payloads
+
+### `googlesql/types` (1 case)
+
+**`googlesql/types/graph_element`**
+- upstream example 1
 
 ---
 
@@ -1216,10 +910,7 @@ single-statement analyzer the shim calls. That is an architectural change to
 
 ## Tier 8 — proto descriptors, extractor nodes, explicit stubs (15 cases)
 
-
 ### `analyzer: type not found (proto)` (8 cases)
-
-The driver has no `RegisterProto`; see also the 11 skipped `register_protos` cases in the appendix.
 
 **`googlesql/functions/proto/enum_value_descriptor_proto`**
 - upstream example 1
@@ -1240,8 +931,6 @@ The driver has no `RegisterProto`; see also the 11 skipped `register_protos` cas
 - upstream example 2
 
 ### `no such AST node in the extractor` (5 cases)
-
-MERGE otherwise works — 9 cases in this spec pass. These five hit a sub-node the extractor has no arm for.
 
 **`googlesql/syntax/dml/merge`**
 - MERGE ON FALSE — REPLACE idiom (constant-false-predicate)
@@ -1318,6 +1007,85 @@ describe this engine's surface, so they are not backlog.
 
 Newest first. Each entry is a block that left this ledger.
 
+### The JSON family, 54 cases
+
+`googlesql/functions/json` is 75/75 and `bigquery/functions/json` is 10/10. The whole
+directory went green, and it went green two ways — which is the point of the entry.
+
+**27 cases were built.** `LAX_BOOL` / `LAX_INT64` / `LAX_FLOAT64` / `LAX_STRING`,
+`JSON_ARRAY`, `JSON_OBJECT`, the five mutators (`JSON_SET`, `JSON_REMOVE`,
+`JSON_STRIP_NULLS`, `JSON_ARRAY_APPEND`, `JSON_ARRAY_INSERT`), `JSON_KEYS` and
+`JSON_FLATTEN`. Every expected value in those twelve files was re-run against real
+BigQuery before a line was written, including the nine doc-derived `JSON_ARRAY_INSERT`
+examples; all 27 matched, so this was implementation only, with no restating.
+
+**27 cases were refused.** `JSON_CONTAINS`, the typed-array accessors, and the
+32-bit/unsigned accessors are all absent from BigQuery — the last group necessarily so,
+since BigQuery has no INT32, UINT32, UINT64 or FLOAT type for an accessor to return.
+Their fixtures now assert the analyzer's refusal.
+
+Three things worth carrying forward:
+
+- **A lax conversion is not a cast.** It answers NULL where a cast would raise, so it
+  cannot ride the result-cell coercion the way `BOOL`/`INT64`/`FLOAT64` do. It also does
+  not distribute evenly: `LAX_INT64(JSON 'true')` is 1 but `LAX_FLOAT64(JSON 'true')` is
+  NULL, and `LAX_INT64(JSON '" 42 "')` trims where `LAX_BOOL(JSON '" true "')` does not.
+- **Writing needs a slot, not a value.** The extract family's `navigate()` returns a
+  value; every mutator needs a pointer into the tree plus BigQuery's vivification rules,
+  and those rules differ per function — `JSON_SET` creates a missing key, `JSON_ARRAY_INSERT`
+  never does, yet both turn an existing JSON null into an array.
+- **The refusal is the cheapest thing in the corpus and the most exact.** These pins name
+  the function, because the analyzer refuses at name resolution out of the same catalog
+  BigQuery uses and reproduces its message word for word, hint included. The net pins one
+  entry down could only say `UnsupportedFunction`.
+
+### The net family, 12 cases
+
+`googlesql/functions/net` is 23/23. `NET.IP_IN_NET` was implemented — BigQuery has it —
+and the other five names were pinned: `NET.MAKE_NET` exists in neither dialect, and
+`FORMAT_IP` / `PARSE_IP` / `FORMAT_PACKED_IP` / `PARSE_PACKED_IP` are BigQuery **legacy
+SQL**, which is why they feel familiar (`bq query --use_legacy_sql=true "SELECT
+FORMAT_IP(16909060)"` answers `1.2.3.4`) and why GoogleSQL's own docs mark all four
+deprecated.
+
+Two asymmetries in `IP_IN_NET` that reasoning would have got wrong: a *malformed* net
+raises, but a net of a different address family is a plain `false`; and a net with no
+prefix is a host net, while host bits inside a prefixed net are masked away rather than
+rejected.
+
+### Struct positional accessors, 10 cases
+
+One flag, no engine code. `resolver_expr.cc` normalizes `s[OFFSET(n)]` / `s[ORDINAL(n)]`
+to a 0-based index and emits the same `ResolvedGetStructField` that `s.a` produces, so
+the extractor cannot tell the spellings apart and the `CompositeRef` walk already
+answered it. `FEATURE_ANALYSIS_CONSTANT_STRUCT_POSITIONAL_ACCESSOR` stays off *because
+BigQuery has it off*, which is what makes `s[OFFSET(1+1)]` answer "Field element access
+is only supported for literal integer positions" — BigQuery's own words, for free.
+
+### Time buckets and the INTERVAL part list, 20 cases
+
+`DATE_BUCKET` / `DATETIME_BUCKET` / `TIMESTAMP_BUCKET`, plus the INTERVAL parts that had
+to exist first: `WEEK`, `MICROSECOND`, `QUARTER`, `MILLISECOND`. `NANOSECOND` was
+implemented and then reverted — the *part* is GoogleSQL-only even though BigQuery reads
+nanosecond precision in an interval literal fine, so it is refused the way ARRAY_TRANSFORM
+is. Finding that took a bq round-trip, not a doc.
+
+### Pipe syntax, TYPEOF and GROUPING, 33 cases
+
+`googlesql/syntax/pipe` is 27/27 on `FEATURE_PIPES` alone: pipe operators resolve into the
+ordinary `ResolvedScan` tree the extractor already walks. `FEATURE_PIPE_IF` was enabled in
+the same commit and then reverted — BigQuery answers "Pipe IF not supported", and shipping
+it would have meant a green local run and a broken deploy.
+
+`TYPEOF` needs no UDF: the analyzer's rewriter resolves it to a constant-true `CASE` whose
+taken branch is the type name as a literal.
+
+`GROUPING` could not be an aggregate UDF, because a NULL is ambiguous between "rolled up"
+and "NULL in the data". The answer is constant per grouping set, so the transformer inlines
+0 or 1 per UNION branch. Writing the test exposed a real pre-existing bug: an empty grouping
+set emitted no GROUP BY at all and so returned one row per input row.
+
+
 ### The RANGE type, 26 cases
 
 `googlesql/types/range` is 2/2 and `googlesql/functions/range` is 24/27; the three that
@@ -1381,4 +1149,3 @@ Two lessons that generalise:
 - **NaN does not survive a function boundary here.** `sqlite3_result_double()` turns a NaN
   into SQL NULL, so any spec case whose expected value is NaN reads as NULL, and any
   handler branch testing a scalar argument for NaN is unreachable. Inf round-trips.
-
