@@ -3,15 +3,60 @@
 #
 # Bazel owns all C++ compilation and code generation (protos, parser
 # templates) for the vendored analyzer; Zig links the resulting
-# self-contained dylib. googlesql itself is the pristine submodule at
+# self-contained shared library. googlesql itself is the pristine submodule at
 # //third_party/googlesql, wired in as a Bazel module (see MODULE.bazel), so
 # every dependency below is an @googlesql// label.
+#
+# There are two targets rather than one with `select()`ed linkopts because a
+# cc_binary's output file is named after the target, and the two platforms
+# need different extensions (.dylib vs .so). Everything except the link line
+# is shared; `target_compatible_with` keeps a wildcard build from trying to
+# link the wrong one.
 
 package(default_visibility = ["//visibility:private"])
 
+SHIM_SRCS = ["analyzer_shim.cc"]
+
+SHIM_DEPS = [
+    "@googlesql//googlesql/proto:simple_catalog_cc_proto",
+    "@googlesql//googlesql/public:analyzer",
+    "@googlesql//googlesql/public:analyzer_options",
+    "@googlesql//googlesql/public:analyzer_output",
+    "@googlesql//googlesql/public:builtin_function",
+    "@googlesql//googlesql/public:language_options",
+    "@googlesql//googlesql/public:parse_resume_location",
+    "@googlesql//googlesql/public:simple_catalog",
+    "@googlesql//googlesql/public:type",
+    "@googlesql//googlesql/resolved_ast:resolved_ast_cc_proto",
+    "@com_google_absl//absl/status",
+    "@com_google_absl//absl/status:statusor",
+    "@com_google_absl//absl/strings",
+    "@com_google_protobuf//:protobuf",
+    "@com_googlesource_code_re2//:re2",
+    "@icu//:common",
+    "@icu//:headers",
+]
+
+# The exported surface, kept in one place so the two link lines cannot drift.
+# Mach-O wants each name individually and prefixed with `_`; ELF reads the
+# same set out of shim.lds as a `GoogleSQL_*` glob.
+SHIM_EXPORTS = [
+    "GoogleSQL_AnalyzeNextStatement",
+    "GoogleSQL_AnalyzeNextStatementWithCatalog",
+    "GoogleSQL_CatalogCreate",
+    "GoogleSQL_CatalogAddTables",
+    "GoogleSQL_CatalogRemoveTable",
+    "GoogleSQL_CatalogDestroy",
+    "GoogleSQL_Free",
+    "GoogleSQL_RegexpFind",
+    "GoogleSQL_RegexpReplace",
+    "GoogleSQL_Normalize",
+    "GoogleSQL_CaseMap",
+]
+
 cc_binary(
     name = "libgooglesql_shim.dylib",
-    srcs = ["analyzer_shim.cc"],
+    srcs = SHIM_SRCS,
     linkshared = True,
     # Default install name is a bazel-out-relative path, which dyld resolves
     # against the CWD; @rpath lets the Zig binary find it via its own rpath.
@@ -20,37 +65,39 @@ cc_binary(
     # ~428MB to a fraction of that (most of it was symbol/string tables).
     linkopts = [
         "-Wl,-install_name,@rpath/libgooglesql_shim.dylib",
-        "-Wl,-exported_symbol,_GoogleSQL_AnalyzeNextStatement",
-        "-Wl,-exported_symbol,_GoogleSQL_AnalyzeNextStatementWithCatalog",
-        "-Wl,-exported_symbol,_GoogleSQL_CatalogCreate",
-        "-Wl,-exported_symbol,_GoogleSQL_CatalogAddTables",
-        "-Wl,-exported_symbol,_GoogleSQL_CatalogRemoveTable",
-        "-Wl,-exported_symbol,_GoogleSQL_CatalogDestroy",
-        "-Wl,-exported_symbol,_GoogleSQL_Free",
-        "-Wl,-exported_symbol,_GoogleSQL_RegexpFind",
-        "-Wl,-exported_symbol,_GoogleSQL_RegexpReplace",
-        "-Wl,-exported_symbol,_GoogleSQL_Normalize",
-        "-Wl,-exported_symbol,_GoogleSQL_CaseMap",
+    ] + ["-Wl,-exported_symbol,_" + sym for sym in SHIM_EXPORTS] + [
         "-Wl,-dead_strip",
         "-Wl,-x",
     ],
-    deps = [
-        "@googlesql//googlesql/proto:simple_catalog_cc_proto",
-        "@googlesql//googlesql/public:analyzer",
-        "@googlesql//googlesql/public:analyzer_options",
-        "@googlesql//googlesql/public:analyzer_output",
-        "@googlesql//googlesql/public:builtin_function",
-        "@googlesql//googlesql/public:language_options",
-        "@googlesql//googlesql/public:parse_resume_location",
-        "@googlesql//googlesql/public:simple_catalog",
-        "@googlesql//googlesql/public:type",
-        "@googlesql//googlesql/resolved_ast:resolved_ast_cc_proto",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_protobuf//:protobuf",
-        "@com_googlesource_code_re2//:re2",
-        "@icu//:common",
-        "@icu//:headers",
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = SHIM_DEPS,
+)
+
+cc_binary(
+    name = "libgooglesql_shim.so",
+    srcs = SHIM_SRCS,
+    # ELF equivalents of the Mach-O link line above:
+    #   -install_name @rpath/... -> -soname (the consumer's rpath still does
+    #                               the resolving; $ORIGIN plays @loader_path)
+    #   -exported_symbol         -> --version-script (see shim.lds)
+    #   -dead_strip              -> --gc-sections, which needs the
+    #                               -ffunction-sections/-fdata-sections copts
+    #                               set for the whole tree in .bazelrc
+    #   -x                       -> --strip-all (keeps .dynsym, drops .symtab)
+    #
+    # -static-libstdc++/-static-libgcc are deliberate and not just size
+    # trimming: they make the library self-contained w.r.t. the C++ runtime so
+    # the release image needs nothing beyond glibc.
+    additional_linker_inputs = ["shim.lds"],
+    linkopts = [
+        "-Wl,-soname,libgooglesql_shim.so",
+        "-Wl,--version-script=$(location shim.lds)",
+        "-Wl,--gc-sections",
+        "-Wl,--strip-all",
+        "-static-libstdc++",
+        "-static-libgcc",
     ],
+    linkshared = True,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = SHIM_DEPS,
 )

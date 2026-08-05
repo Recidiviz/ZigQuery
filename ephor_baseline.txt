@@ -1,0 +1,13 @@
+# Ceiling for `zig build ephor` findings. CI fails when the reported TOTAL
+# exceeds this number.
+#
+# Ephor's own `"strict": true` / `"fail_on": "warning"` gating is deliberately
+# left off in ephor.json: the tree currently reports 388 findings (mostly
+# ZA305/ZA306 complexity in the transformer and driver), so flipping it on
+# would fail every build from day one. A ceiling enforces the invariant that
+# actually matters — no new findings — and matches how testdata/baseline.txt
+# and testdata/spec_baseline.txt already gate the corpora.
+#
+# Lower it whenever you fix something. Raising it should be justified in the PR.
+# Refresh: zig build ephor -- --summary 2>&1 | grep TOTAL
+388

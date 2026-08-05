@@ -10,7 +10,10 @@
 //! Deviation: driver error.Unimplemented always counts as FAIL, so stubbed
 //! pipeline stages can't masquerade as expected-error passes.
 //!
-//! Exit status: nonzero when any baseline case regressed.
+//! Usage: zig build corpus -- [--strict]
+//!
+//! Exit status: nonzero when any baseline case regressed, or — under
+//! `--strict` — when any case fails outright or mismatches its error message.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -68,6 +71,21 @@ pub fn main(init: std.process.Init) !void {
     var stdout_buf: [8192]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);
     const out = &stdout_writer.interface;
+
+    var strict = false;
+    {
+        var it = std.process.Args.Iterator.init(init.minimal.args);
+        _ = it.next();
+        while (it.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--strict")) {
+                strict = true;
+            } else {
+                try out.print("usage: zig build corpus -- [--strict]\n", .{});
+                try out.flush();
+                std.process.exit(2);
+            }
+        }
+    }
 
     const corpus_bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, corpus_path, arena, .limited(1 << 26));
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, corpus_bytes, .{});
@@ -286,8 +304,25 @@ pub fn main(init: std.process.Init) !void {
         try out.print("  {d:>9.3}  {s}\n", .{ r.ms, r.name });
     }
 
+    // Two gates. The baseline one is always on: whatever passed must still
+    // pass. `--strict` adds the other half — a wrong answer or a mismatched
+    // error message fails the run even when the case was never in the
+    // baseline, which a pure regression check cannot see. `skip` stays
+    // non-fatal (4 of the 748 cases are skipped by design).
+    const strict_failures = if (strict)
+        counts.get(.fail) + counts.get(.errmsg_mismatch)
+    else
+        0;
+    if (strict_failures > 0) {
+        try out.print(
+            "\n{d} failing cases (--strict): {d} FAIL, {d} ERRMSG-MISMATCH\n",
+            .{ strict_failures, counts.get(.fail), counts.get(.errmsg_mismatch) },
+        );
+        try out.print("set DUMP_FAILS=1 for the failing queries\n", .{});
+    }
+
     try out.flush();
-    if (regressions > 0) std.process.exit(1);
+    if (regressions > 0 or strict_failures > 0) std.process.exit(1);
 }
 
 fn loadBaseline(arena: std.mem.Allocator, io: std.Io) !std.StringHashMap(void) {

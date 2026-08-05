@@ -1,0 +1,7 @@
+# The image is assembled from prebuilt binaries: the only thing the build
+# context needs is dist/. Without this the daemon would receive the googlesql
+# submodule (~82 MB) and .git (~68 MB) on every image build, for a Dockerfile
+# whose entire body is two COPY lines.
+*
+!dist/
+!dist/**

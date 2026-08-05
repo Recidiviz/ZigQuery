@@ -1,0 +1,50 @@
+# RunsOn runner definitions (https://runs-on.com/docs/runners/labels/).
+#
+# Jobs reference these by name:
+#   runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+#
+# `extras=s3-cache` routes actions/cache at the in-VPC S3 bucket instead of
+# GitHub's. Note RunsOn's own warning that the bucket is shared across
+# repositories in the stack: it is fine here because this repo is private, and
+# it must not be enabled for a runner a public repo can reach.
+
+runners:
+  # Everyday Zig work: compile, unit tests, spec, corpus. The shim arrives
+  # prebuilt from the cache, so these never run bazel.
+  zig-x64:
+    cpu: 8
+    family: ["c7a", "c7i", "m7a"]
+    image: ubuntu24-full-x64
+    volume: 120gb:gp3:500mbs:4000iops
+
+  zig-arm64:
+    cpu: 8
+    family: ["c7g", "m7g"]
+    image: ubuntu24-full-arm64
+    volume: 120gb:gp3:500mbs:4000iops
+
+  # Shim builds only, and only on a cache miss. Sized for a from-scratch
+  # protobuf + absl + ICU + RE2 + googlesql compile: the disk is not padding,
+  # the bazel output base for this tree runs to tens of GB and the unstripped
+  # library alone was ~428 MB.
+  shim-x64:
+    cpu: 32
+    family: ["c7a", "c7i"]
+    image: ubuntu24-full-x64
+    volume: 200gb:gp3:750mbs:4000iops
+
+  shim-arm64:
+    cpu: 32
+    family: ["c7g", "m7g"]
+    image: ubuntu24-full-arm64
+    volume: 200gb:gp3:750mbs:4000iops
+
+  # Benchmarks. Pinned to one instance family and spot: false — a run that
+  # lands on a different CPU, or gets interrupted and retried elsewhere, is
+  # not comparable with the history it is being charted against.
+  bench-x64:
+    cpu: 8
+    family: ["c7a"]
+    image: ubuntu24-full-x64
+    volume: 120gb:gp3:500mbs:4000iops
+    spot: false

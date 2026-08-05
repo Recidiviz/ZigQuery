@@ -49,19 +49,42 @@ Two parts deliberately diverge:
 - Zig 0.16
 - Bazel 7.6 + the [googlesql](https://github.com/google/googlesql) submodule
 - `googlesql` analyzer shim built
-  - `bazel build -c opt //shim:libgooglesql_shim.dylib`
-  - or `zig build -Dbuild-shim=true`
+  - macOS: `bazel build -c opt //shim:libgooglesql_shim.dylib`
+  - Linux: `CC=clang CXX=clang++ bazel build -c opt //shim:libgooglesql_shim.so`
+  - or `zig build -Dbuild-shim=true`, which picks the right target for the host
 - `brew install kcov`, for `zig build coverage` only
+
+`//shim` has one `cc_binary` per platform because Mach-O and ELF need different
+link lines (`@rpath` install names and `-exported_symbol` versus a soname and
+`shim/shim.lds`), and a `cc_binary`'s output file is named after its target.
+`zig build` follows the same split: `-Dshim-dylib` defaults to
+`bazel-bin/shim/libgooglesql_shim.{dylib,so}` for the resolved `-Dtarget`.
+
+On Linux, `.bazelrc` applies `--config=clang` unconditionally, so `CC`/`CXX`
+have to point at clang or Bazel's default toolchain picks gcc and silently
+ignores those flags.
 
 ## Build & test
 
 ```sh
-zig build test      # unit tests
+zig build test      # unit tests (engine)
+zig build test-server  # unit tests (emulator)
 zig build corpus    # replay testdata/corpus.json (the go-zetasqlite query_test.go suite)
+zig build spec      # replay testdata/specs/**.zon (the goccy/googlesqlite specs)
 zig build coverage  # line coverage -> zig-out/coverage/report/index.html
+zig build ephor     # static analysis
+
+zig build server -- --project=my-project   # run the emulator (--flag=value only)
+zig build dist -Drelease=true              # release tree: zig-out/{bin,lib}
 
 zig build gsql-bench -Drelease=true  # goccy/googlesqlite's bench corpus -> docs/BENCH_GSQL.md
 ```
+
+`dist` is what a release ships: only `bigquery-emulator` and `zetasqlite-zig`,
+plus the shim in `lib/`. The binaries carry a second rpath
+(`@loader_path/../lib`, `$ORIGIN/../lib` on ELF) so the tree keeps working
+wherever it is unpacked — plain `install` writes eight harness and benchmark
+binaries as well and only resolves the shim through its absolute build path.
 
 `coverage` runs the engine and server unit tests under kcov and merges the two
 runs. It builds at `-ODebug` whatever `-Doptimize` says, because optimized line
@@ -77,7 +100,37 @@ CORPUS_OUT=$PWD/testdata/corpus.json \
 ```
 
 `testdata/baseline.txt` lists the case names that must pass; `zig build corpus`
-exits nonzero on any regression.
+exits nonzero on any regression. `testdata/spec_baseline.txt` does the same for
+`zig build spec`.
+
+Both runners take `--strict`, which CI passes. Without it they gate only on
+regression against the baseline, so a case that has never passed can start
+returning wrong answers and still exit 0; `--strict` additionally fails on any
+`FAIL` (and, for the corpus, `ERRMSG-MISMATCH`). `UNSUPPORTED` and `SKIP` stay
+non-fatal — they are the known-missing surface, catalogued in
+[docs/SPEC_UNSUPPORTED.md](docs/SPEC_UNSUPPORTED.md), not wrong answers.
+
+## CI & releases
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | PR, push | ephor + `zig fmt`, unit tests, corpus and spec under `--strict`, the concurrency harnesses, and a `gen-proto` drift check |
+| `bench.yml` | push, `bench` label, manual | `gsql-bench --json` charted by github-action-benchmark on the `benchmarks` branch |
+| `release.yml` | `v*.*.*` tag | four platform tarballs, a multi-arch GHCR image, and a GitHub release |
+
+Runners are [RunsOn](https://runs-on.com) on EC2 (see `.github/runs-on.yml`).
+Release builds for darwin run elsewhere: arm64 on the self-hosted
+`zigquery-emulator-mac-build` machine, x64 on GitHub-hosted `macos-15-intel`
+so it stays a native build rather than a cross-compile.
+
+The shim is the expensive part of all of this and the least frequently changed,
+so `.github/actions/shim` caches it against a hash of its real inputs — the
+submodule pointer, `analyzer_shim.cc`, `shim.lds`, `shim/BUILD.bazel`,
+`MODULE.bazel{,.lock}`, `.bazelrc` and `.bazelversion`. Ordinary PRs restore a
+prebuilt library in seconds and never run bazel at all.
+
+Ephor is gated by a ceiling in `ephor_baseline.txt` rather than by its own
+`fail_on`, for the reason recorded in that file.
 
 
 # Sponsorship

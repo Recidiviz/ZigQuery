@@ -25,6 +25,7 @@
 //!
 //! Usage: zig build spec -- [--filter SUBSTR] [--dialect googlesql|bigquery]
 //!                          [--verbose] [--markdown] [--update-baseline]
+//!                          [--strict]
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -64,6 +65,7 @@ const Options = struct {
     verbose: bool = false,
     markdown: bool = false,
     update_baseline: bool = false,
+    strict: bool = false,
 };
 
 const Result = struct {
@@ -154,10 +156,12 @@ fn parseArgs(argv: anytype, out: *std.Io.Writer) !Options {
             opts.markdown = true;
         } else if (std.mem.eql(u8, arg, "--update-baseline")) {
             opts.update_baseline = true;
+        } else if (std.mem.eql(u8, arg, "--strict")) {
+            opts.strict = true;
         } else {
             try out.print(
                 "usage: zig build spec -- [--filter SUBSTR] [--dialect D] " ++
-                    "[--verbose] [--markdown] [--update-baseline]\n",
+                    "[--verbose] [--markdown] [--update-baseline] [--strict]\n",
                 .{},
             );
             try out.flush();
@@ -673,8 +677,26 @@ fn report(
         if (newly.items.len > 15) try out.print("  ... and {d} more\n", .{newly.items.len - 15});
     }
 
-    if (regressions > 0) {
-        try out.print("\n{d} regressions\n", .{regressions});
+    // Two gates. The baseline one is always on: whatever passed must still
+    // pass. `--strict` adds the other half — a wrong answer fails the run even
+    // when the case was never in the baseline. Without it a case that flips
+    // `unsupported` -> `fail` is silently green, because it never passed to
+    // begin with and so cannot regress. `unsupported` and `skip` stay
+    // non-fatal; they are the known-missing surface, not wrong answers.
+    const strict_failures = if (opts.strict) counts.get(.fail) else 0;
+    if (strict_failures > 0 and !opts.verbose) {
+        try out.print("\nfailing cases:\n", .{});
+        for (results) |r| {
+            if (r.outcome != .fail) continue;
+            try out.print("  FAIL {s} :: {s} :: {s}\n", .{ r.spec, r.desc, r.detail });
+        }
+    }
+
+    if (regressions > 0 or strict_failures > 0) {
+        if (regressions > 0) try out.print("\n{d} regressions\n", .{regressions});
+        if (strict_failures > 0) {
+            try out.print("{d} failing cases (--strict)\n", .{strict_failures});
+        }
         try out.flush();
         std.process.exit(1);
     }

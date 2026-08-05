@@ -1,0 +1,74 @@
+name: Benchmarks
+
+# Deliberately not on every PR. EC2 timings carry real variance, so charting
+# every push to a shared branch keeps the trend meaningful while a `bench`
+# label opts an individual PR in when a change is expected to move numbers.
+on:
+  push:
+    # See the note in ci.yml about server-port.
+    branches: [master, main, server-port]
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gsql-bench:
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'bench')
+    name: gsql-bench
+    # bench-x64 is spot:false and pinned to one instance family on purpose —
+    # a run that lands on different silicon, or gets reclaimed and retried
+    # elsewhere, is not comparable with the history it is charted against.
+    runs-on: runs-on=${{ github.run_id }}/runner=bench-x64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - id: shim
+        uses: ./.github/actions/shim
+        with:
+          platform: linux-x64
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+
+      # --json must be the only thing on stdout; the harness prints its
+      # human table on the other branch of the same switch.
+      - name: run corpus
+        run: |
+          set -euo pipefail
+          zig build gsql-bench -Drelease=true \
+            -Dshim-dylib=${{ steps.shim.outputs.path }} -- --json > bench.json
+          python3 -c "import json;d=json.load(open('bench.json'));print(len(d),'metrics')"
+
+      - name: readable table for the run summary
+        run: |
+          { echo '## gsql-bench'; echo; } >> "$GITHUB_STEP_SUMMARY"
+          zig build gsql-bench -Drelease=true \
+            -Dshim-dylib=${{ steps.shim.outputs.path }} -- --markdown \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      # fail-on-alert stays false: on shared cloud hardware a hard gate here
+      # would fire on noise, not regressions. The alert comment is the signal;
+      # a real regression is confirmed by re-running or bisecting locally.
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: gsql-bench (goccy/googlesqlite corpus)
+          tool: customSmallerIsBetter
+          output-file-path: bench.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          gh-pages-branch: benchmarks
+          benchmark-data-dir-path: dev/bench
+          auto-push: ${{ github.event_name != 'pull_request' }}
+          alert-threshold: "150%"
+          comment-on-alert: true
+          fail-on-alert: false
+          summary-always: true

@@ -32,7 +32,7 @@
 //! previous run of THIS harness, not against RESULTS.md.
 //!
 //! Usage: zig build gsql-bench -- [--time MS] [--iters N] [--filter SUBSTR]
-//!                                [--phases] [--markdown] [--corpus DIR]
+//!                                [--phases] [--markdown] [--json] [--corpus DIR]
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -85,6 +85,7 @@ const Options = struct {
     filter: ?[]const u8 = null,
     phases: bool = false,
     markdown: bool = false,
+    json: bool = false,
     corpus_root: []const u8 = default_corpus_root,
 };
 
@@ -215,7 +216,9 @@ pub fn main(init: std.process.Init) !void {
         try results.append(gpa, try runCase(gpa, arena, init.io, rel, opts));
     }
 
-    if (opts.markdown) {
+    if (opts.json) {
+        try renderJson(out, results.items, init_ns);
+    } else if (opts.markdown) {
         try renderMarkdown(out, results.items, init_ns, opts);
     } else {
         try renderTable(out, results.items, init_ns, opts);
@@ -240,6 +243,8 @@ fn parseArgs(argv: anytype, out: *std.Io.Writer) !Options {
             opts.phases = true;
         } else if (std.mem.eql(u8, arg, "--markdown")) {
             opts.markdown = true;
+        } else if (std.mem.eql(u8, arg, "--json")) {
+            opts.json = true;
         } else {
             try out.print("error: unknown argument {s}\n", .{arg});
             return usage(out);
@@ -251,7 +256,7 @@ fn parseArgs(argv: anytype, out: *std.Io.Writer) !Options {
 fn usage(out: *std.Io.Writer) error{Usage} {
     out.print(
         "usage: zig build gsql-bench -- [--time MS] [--iters N] [--filter SUBSTR]\n" ++
-            "                              [--phases] [--markdown] [--corpus DIR]\n",
+            "                              [--phases] [--markdown] [--json] [--corpus DIR]\n",
         .{},
     ) catch {};
     return error.Usage;
@@ -470,6 +475,61 @@ fn printPhases(out: *std.Io.Writer, r: Result) !void {
 }
 
 /// Upstream's RESULTS.md shape, so the two files can be read side by side.
+/// github-action-benchmark's `customSmallerIsBetter` shape: a flat array of
+/// `{name, unit, value}`. That tool treats every entry as lower-is-better and
+/// alerts when one grows past its threshold, so `rows` is deliberately absent
+/// — it describes the workload, not its cost, and a change in it is a corpus
+/// edit rather than a regression.
+///
+/// Both timing modes are emitted because they bracket the truth from opposite
+/// sides (see the header): a `full` regression with `prep` flat points at
+/// analyze/transform, the reverse points at sqlite or the decoder.
+///
+/// Nothing else may go to stdout in this mode — the workflow pipes it straight
+/// into a file that the action parses.
+fn renderJson(out: *std.Io.Writer, results: []const Result, init_ns: u64) !void {
+    var first = true;
+    try out.writeAll("[\n");
+
+    try emitJson(out, &first, "", "", "analyzer init", "ms", @as(f64, @floatFromInt(init_ns)) / 1e6);
+
+    for (results) |r| {
+        // A query that would not run has no numbers to compare; emitting a
+        // zero would read as an enormous improvement.
+        if (r.failure != null) continue;
+
+        try emitJson(out, &first, r.category, r.name, " full", "ns/op", r.fullNsPerOp());
+        if (r.prep_failure == null) {
+            try emitJson(out, &first, r.category, r.name, " prep", "ns/op", r.prepNsPerOp());
+        }
+        try emitJson(out, &first, r.category, r.name, " B/op", "B", @floatFromInt(r.bytes));
+        try emitJson(out, &first, r.category, r.name, " allocs/op", "allocs", @floatFromInt(r.allocs));
+    }
+
+    try out.writeAll("\n]\n");
+}
+
+fn emitJson(
+    out: *std.Io.Writer,
+    first: *bool,
+    category: []const u8,
+    name: []const u8,
+    suffix: []const u8,
+    unit: []const u8,
+    value: f64,
+) !void {
+    if (!first.*) try out.writeAll(",\n");
+    first.* = false;
+    // Names come from the hardcoded `corpus` list above, so they are known
+    // ASCII path fragments with nothing to escape. The lone entry with neither
+    // category nor name (analyzer init) renders without the separator.
+    const sep: []const u8 = if (category.len > 0) "/" else "";
+    try out.print(
+        "  {{\"name\": \"{s}{s}{s}{s}\", \"unit\": \"{s}\", \"value\": {d:.3}}}",
+        .{ category, sep, name, suffix, unit, value },
+    );
+}
+
 fn renderMarkdown(out: *std.Io.Writer, results: []const Result, init_ns: u64, opts: Options) !void {
     try out.print(
         \\# Benchmark — zetasqlite-zig on the googlesqlite corpus

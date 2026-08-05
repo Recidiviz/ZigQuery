@@ -2,6 +2,11 @@
 /zig-out/
 /zig-pkg/
 
+# Release staging: where .github/actions/shim caches the built shim and where
+# `zig build dist --prefix` output is assembled for packaging.
+/dist/
+/stage/
+
 # Bazel output symlinks (the shim build roots here now)
 /bazel-*
 

@@ -1,0 +1,102 @@
+name: googlesql shim
+description: >
+  Restore libgooglesql_shim for the current platform from cache, building it
+  with bazel only on a miss. Outputs a repo-root-relative path for -Dshim-dylib.
+
+inputs:
+  platform:
+    description: linux-x64 | linux-arm64 | darwin-arm64 | darwin-x64
+    required: true
+
+outputs:
+  path:
+    description: Repo-root-relative path to the shim, for -Dshim-dylib
+    value: ${{ steps.vars.outputs.path }}
+  key:
+    description: The content-addressed cache key that was used
+    value: ${{ steps.vars.outputs.key }}
+  cache-hit:
+    description: "true when the shim came from cache"
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # The shim is the single most expensive thing in this repo to build and
+    # among the least frequently changed, so it is keyed on its actual inputs
+    # rather than on the commit. Note `git rev-parse HEAD:<submodule>` reads
+    # the gitlink out of the tree — it does not need the submodule checked
+    # out, which is what lets the cache-hit path skip that 82 MB fetch.
+    - id: vars
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${{ inputs.platform }}" in
+          darwin-*) lib=libgooglesql_shim.dylib ;;
+          *)        lib=libgooglesql_shim.so ;;
+        esac
+        if command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum "$@"; }
+        else sha() { shasum -a 256 "$@"; }; fi
+
+        key=$( { git rev-parse "HEAD:third_party/googlesql"
+                 sha shim/analyzer_shim.cc shim/shim.lds shim/BUILD.bazel \
+                     MODULE.bazel MODULE.bazel.lock .bazelrc .bazelversion
+                 echo "${{ inputs.platform }}"
+               } | sha | cut -c1-32 )
+
+        echo "lib=$lib"                                   >> "$GITHUB_OUTPUT"
+        echo "path=dist/shim/$lib"                        >> "$GITHUB_OUTPUT"
+        echo "key=shim-${{ inputs.platform }}-$key"       >> "$GITHUB_OUTPUT"
+
+    - id: restore
+      uses: actions/cache@v4
+      with:
+        path: dist/shim
+        key: ${{ steps.vars.outputs.key }}
+
+    # Everything below is the miss path only.
+    # googlesql has no submodules of its own, so this stays non-recursive.
+    # The shallow fetch needs the server to serve an arbitrary SHA (GitHub
+    # does); the fallback covers the case where it will not, rather than
+    # failing an hour-long job on a clone flag.
+    - if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        git submodule update --init --depth 1 third_party/googlesql \
+          || git submodule update --init third_party/googlesql
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: bazel-contrib/setup-bazel@0.15.0
+      with:
+        bazelisk-cache: true
+        repository-cache: true
+        disk-cache: ${{ steps.vars.outputs.key }}
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        jobs=$( (nproc 2>/dev/null || sysctl -n hw.ncpu) )
+        # .bazelrc pins --jobs=4/--local_resources=cpu=4 for one developer's
+        # laptop and says so; the command line beats both rc files, which is
+        # the documented way to override it.
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          # .bazelrc applies --config=clang unconditionally; Bazel's default
+          # Linux toolchain would otherwise pick gcc and ignore those flags.
+          export CC=clang CXX=clang++
+        fi
+        bazel build -c opt \
+          --jobs="$jobs" --local_resources=cpu="$jobs" \
+          "//shim:${{ steps.vars.outputs.lib }}"
+
+        mkdir -p dist/shim
+        cp -f "bazel-bin/shim/${{ steps.vars.outputs.lib }}" dist/shim/
+        # bazel-bin outputs are read-only; the cache save needs to be able to
+        # re-read and later overwrite this.
+        chmod u+w "dist/shim/${{ steps.vars.outputs.lib }}"
+
+    - shell: bash
+      run: |
+        set -euo pipefail
+        ls -l "${{ steps.vars.outputs.path }}"
+        echo "shim: ${{ steps.vars.outputs.path }} (cache-hit=${{ steps.restore.outputs.cache-hit }})" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,212 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    # server-port is transitional: it carries all current work and master is
+    # ~73 commits behind it. Drop it from this list once it has been merged
+    # and the default branch is settled.
+    branches: [master, main, server-port]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  # Populates the shim cache once per run so the jobs below can never race
+  # into N simultaneous cold bazel builds. On a hit this is ~20s; the big
+  # runner only earns its keep on the miss path.
+  shim:
+    name: shim (linux-x64)
+    runs-on: runs-on=${{ github.run_id }}/runner=shim-x64/extras=s3-cache
+    outputs:
+      path: ${{ steps.shim.outputs.path }}
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - id: shim
+        uses: ./.github/actions/shim
+        with:
+          platform: linux-x64
+
+  # No shim: the ephor artifact is a standalone executable that never links
+  # the engine module, and build.zig only treats the shim path as a string at
+  # configure time.
+  analysis:
+    name: ephor + fmt
+    runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # ephor's ZA601 already runs `zig fmt --check` over src/; these are the
+      # trees its path_dir does not reach.
+      - name: zig fmt
+        run: zig fmt --check build.zig harness tools
+
+      - name: ephor
+        run: |
+          set -euo pipefail
+          # ephor reports on stderr and, with fail_on unset, always exits 0 —
+          # the ceiling below is what makes this a gate. See ephor_baseline.txt.
+          zig build ephor -- --summary 2>&1 | tee ephor.log
+          total=$(awk '/TOTAL:/ {print $2}' ephor.log | head -1)
+          ceiling=$(grep -vE '^\s*#' ephor_baseline.txt | tr -dc '0-9')
+          {
+            echo "## Ephor"
+            echo ""
+            echo "Findings: **$total** (ceiling $ceiling)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$total" -gt "$ceiling" ]; then
+            echo "::error::ephor findings rose to $total (ceiling $ceiling)"
+            exit 1
+          fi
+          if [ "$total" -lt "$ceiling" ]; then
+            echo "::notice::ephor findings fell to $total — lower ephor_baseline.txt"
+          fi
+
+  test:
+    name: unit tests
+    needs: shim
+    runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - id: shim
+        uses: ./.github/actions/shim
+        with:
+          platform: linux-x64
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig build test -Dshim-dylib=${{ steps.shim.outputs.path }}
+      - run: zig build test-server -Dshim-dylib=${{ steps.shim.outputs.path }}
+
+  corpus:
+    name: corpus (go-zetasqlite)
+    needs: shim
+    runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - id: shim
+        uses: ./.github/actions/shim
+        with:
+          platform: linux-x64
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # --strict is what makes this a real gate: without it the runner exits
+      # nonzero only on a baseline regression, so a case that has never passed
+      # can start returning wrong answers and still go green.
+      - name: zig build corpus --strict
+        run: |
+          set -euo pipefail
+          zig build corpus -Drelease=true \
+            -Dshim-dylib=${{ steps.shim.outputs.path }} -- --strict | tee corpus.log
+        env:
+          DUMP_FAILS: "1"
+
+      - name: summary
+        if: always()
+        run: |
+          { echo '## Corpus'; echo; echo '```'; head -8 corpus.log; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  spec:
+    name: spec (googlesqlite)
+    needs: shim
+    runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - id: shim
+        uses: ./.github/actions/shim
+        with:
+          platform: linux-x64
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: zig build spec --strict
+        run: |
+          set -euo pipefail
+          zig build spec -Drelease=true \
+            -Dshim-dylib=${{ steps.shim.outputs.path }} -- --strict | tee spec.log
+
+      # Reuses the run above rather than invoking --markdown, which would
+      # replay all 1012 cases a second time for a per-category table.
+      - name: summary
+        if: always()
+        run: |
+          { echo '## Spec'; echo; echo '```'; head -20 spec.log; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  # Not benchmarks: both harnesses carry a positive control (GENERATE_UUID
+  # uniqueness; per-connection catalogs that MUST fail) and exit nonzero when
+  # the control does not behave, so a broken build cannot quietly pass them.
+  concurrency-harness:
+    name: concurrency harnesses
+    needs: shim
+    runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - id: shim
+        uses: ./.github/actions/shim
+        with:
+          platform: linux-x64
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig build analyzer-threads -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
+      - run: zig build shared-catalog-threads -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
+
+  # src/proto/resolved_ast.zig is generated from the committed
+  # proto/googlesql.fdset and is easy to forget when the submodule moves.
+  # gen-proto is a host tool that does not link the engine, so no shim.
+  gen-proto-drift:
+    name: gen-proto drift
+    runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig build gen-proto
+      - name: check for drift
+        run: |
+          if ! git diff --exit-code -- src/proto/resolved_ast.zig; then
+            echo "::error::src/proto/resolved_ast.zig is stale — run 'zig build gen-proto'"
+            exit 1
+          fi
+
+  # Cross-arch breakage is cheap to catch here and expensive to discover at
+  # tag time. Push-only: it needs its own arm64 shim, which is a second cold
+  # bazel build the first time the submodule moves.
+  build-arm64:
+    name: build (linux-arm64)
+    if: github.event_name == 'push'
+    runs-on: runs-on=${{ github.run_id }}/runner=shim-arm64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - id: shim
+        uses: ./.github/actions/shim
+        with:
+          platform: linux-arm64
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig build dist -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}

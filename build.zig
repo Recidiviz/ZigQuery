@@ -34,23 +34,42 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(opts);
 
     // The shim (//shim) and the googlesql submodule (//third_party/googlesql)
-    // both live in this repo now, so Bazel roots here and the dylib lands in
+    // both live in this repo now, so Bazel roots here and the library lands in
     // our own bazel-bin. The option stays for out-of-tree output bases (CI,
-    // a remote cache, a hand-built dylib).
+    // a remote cache, a hand-built library).
+    //
+    // Mach-O and ELF need different link lines, so //shim carries one
+    // cc_binary per platform and the file name follows the target OS. A
+    // cc_binary's output is named after the target, which is why this is two
+    // targets rather than one with `select()`ed linkopts.
+    const shim_name = switch (target.result.os.tag) {
+        .macos => "libgooglesql_shim.dylib",
+        else => "libgooglesql_shim.so",
+    };
     const shim_rel = b.option(
         []const u8,
         "shim-dylib",
-        "Path to libgooglesql_shim.dylib, relative to the repo root",
-    ) orelse "bazel-bin/shim/libgooglesql_shim.dylib";
+        "Path to the googlesql shim shared library, relative to the repo root",
+    ) orelse b.pathJoin(&.{ "bazel-bin", "shim", shim_name });
     const build_shim = b.option(
         bool,
         "build-shim",
-        "Run `bazel build -c opt //shim:libgooglesql_shim.dylib` first",
+        "Run `bazel build -c opt //shim:<platform shim>` first",
     ) orelse false;
 
     const repo_root = b.build_root.path orelse ".";
     const shim_dylib = b.pathJoin(&.{ repo_root, shim_rel });
     const shim_dir = std.fs.path.dirname(shim_dylib) orelse repo_root;
+
+    // A second rpath entry so a binary keeps working once it is copied out of
+    // the build tree: the release tarball is bin/ + lib/, and the absolute
+    // bazel-bin entry above is dev-only. `docs/M0_FINDINGS.md` describes the
+    // install_name_tool dance this replaces. The dylib's install name is
+    // already @rpath-relative, so no post-processing is needed either way.
+    const shim_portable_rpath = switch (target.result.os.tag) {
+        .macos => "@loader_path/../lib",
+        else => "$ORIGIN/../lib",
+    };
 
     // The codec phase timers are off by default because they are not free at
     // codec call volumes: a span costs ~18 ns, and a real workload makes
@@ -94,6 +113,7 @@ pub fn build(b: *std.Build) void {
         .build_options = build_opts.createModule(),
         .shim_dylib = shim_dylib,
         .shim_dir = shim_dir,
+        .shim_portable_rpath = shim_portable_rpath,
         .sqlite = sqlite,
         .sqlite_headers = sqlite_headers,
     };
@@ -101,12 +121,12 @@ pub fn build(b: *std.Build) void {
 
     const maybe_bazel: ?*std.Build.Step.Run = if (build_shim) blk: {
         const bazel = b.addSystemCommand(&.{
-            "bazel",                          "build",
-            "-c",                             "opt",
+            "bazel",                           "build",
+            "-c",                              "opt",
             // Explicit on the command line because ~/.bazelrc is read after
             // the workspace .bazelrc and would otherwise win.
-            "--jobs=4",                       "--local_resources=cpu=4",
-            "//shim:libgooglesql_shim.dylib",
+            "--jobs=4",                        "--local_resources=cpu=4",
+            b.fmt("//shim:{s}", .{shim_name}),
         });
         bazel.setCwd(.{ .cwd_relative = repo_root });
         break :blk bazel;
@@ -388,6 +408,23 @@ pub fn build(b: *std.Build) void {
     b.step("insert-bench", "Profile a tabledata.insertAll request body")
         .dependOn(&run_insertbench.step);
 
+    // ---- dist ----
+    //
+    // `install` writes all ten artifacts to zig-out/bin, eight of which are
+    // harnesses and benchmarks. A release is only the two products, plus the
+    // shim at the ../lib the portable rpath above looks for — so a tarball of
+    // zig-out is exactly the shipped tree, and `bin/bigquery-emulator` runs
+    // from wherever it is unpacked.
+    const dist_step = b.step("dist", "Install just the release artifacts (bin/ + lib/)");
+    dist_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
+    dist_step.dependOn(&b.addInstallArtifact(server_exe, .{}).step);
+    const install_shim = b.addInstallFile(
+        .{ .cwd_relative = shim_dylib },
+        b.pathJoin(&.{ "lib", shim_name }),
+    );
+    if (maybe_bazel) |bz| install_shim.step.dependOn(&bz.step);
+    dist_step.dependOn(&install_shim.step);
+
     // ---- coverage ----
     //
     // kcov (`brew install kcov`) drives a test binary under a debugger and
@@ -440,7 +477,10 @@ pub fn build(b: *std.Build) void {
         .dependOn(&kcov_merge.step);
 
     // Ephor static analysis
-    const ephor_dep = b.dependency("ephor", .{ .target = target, .optimize = .ReleaseSafe });
+    // A build tool: it runs here, so it follows the host and not `-Dtarget`.
+    // Built for `target` it would be a foreign binary that addRunArtifact then
+    // tries to execute.
+    const ephor_dep = b.dependency("ephor", .{ .target = b.graph.host, .optimize = .ReleaseSafe });
     const ephor_artifact = ephor_dep.artifact("ephor");
     const ephor_cmd = b.addRunArtifact(ephor_artifact);
     if (b.args) |args| {
@@ -462,6 +502,9 @@ const EngineDeps = struct {
     build_options: *std.Build.Module,
     shim_dylib: []const u8,
     shim_dir: []const u8,
+    /// `@loader_path`/`$ORIGIN`-relative rpath, so an installed binary finds
+    /// the shim at ../lib once it leaves the build tree.
+    shim_portable_rpath: []const u8,
     /// Static libsqlite3, shared by every module (see the note at its
     /// construction: always ReleaseFast, even under -ODebug).
     sqlite: *std.Build.Step.Compile,
@@ -484,7 +527,13 @@ fn engineModule(
     mod.addIncludePath(deps.sqlite_headers);
     mod.linkLibrary(deps.sqlite);
     mod.addObjectFile(.{ .cwd_relative = deps.shim_dylib });
+    // Two entries, tried in order: where bazel left it (dev), then next to
+    // the installed binary (release tarball, container image).
     mod.addRPath(.{ .cwd_relative = deps.shim_dir });
+    // addRPathSpecial, not addRPath: a LazyPath is normalized, which collapses
+    // `@loader_path/..` to nothing and leaves a CWD-relative `lib` that only
+    // resolves when the process happens to start in the right directory.
+    mod.addRPathSpecial(deps.shim_portable_rpath);
     return mod;
 }
 
