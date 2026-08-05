@@ -118,9 +118,20 @@ jobs:
       # `dist` installs only the two products plus the shim into lib/, which
       # is exactly the shipped tree — `install` would drag in eight harness
       # and benchmark binaries.
+      #
+      # -Dcpu=baseline is what makes the artifact redistributable. Zig's
+      # default target is `native`, which bakes in the *builder's*
+      # microarchitecture: the arm64 runner is Graviton (Neoverse, has SVE),
+      # so the released binary carried SVE and died with SIGILL on any CPU
+      # without it — Apple Silicon among them. Baseline keeps the native
+      # OS/arch/ABI, and so the glibc linkage, while restricting the
+      # instruction set to what every CPU of that architecture implements.
+      #
+      # The C++ shim needs no equivalent: bazel's -c opt already compiles for
+      # the generic baseline rather than the host.
       - name: zig build dist
         run: |
-          zig build dist -Drelease=true \
+          zig build dist -Drelease=true -Dcpu=baseline \
             -Dshim-dylib=${{ steps.shim.outputs.path }} \
             --prefix "$PWD/stage"
 
