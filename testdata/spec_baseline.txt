@@ -210,8 +210,15 @@ googlesql/functions/interval/justify_hours	JUSTIFY_HOURS executes without error
 googlesql/functions/interval/justify_interval	JUSTIFY_INTERVAL executes without error
 googlesql/functions/interval/make_interval	MAKE_INTERVAL executes without error
 googlesql/functions/json/bool	bool basic behaviour
+googlesql/functions/json/bool_array	bool_array extracts a typed array
 googlesql/functions/json/double	double basic behaviour
+googlesql/functions/json/double_array	double_array extracts a typed array
+googlesql/functions/json/float	float basic conversion
+googlesql/functions/json/float_array	float_array extracts a typed array
+googlesql/functions/json/int32	int32 basic conversion
+googlesql/functions/json/int32_array	int32_array extracts a typed array
 googlesql/functions/json/int64	int from json
+googlesql/functions/json/int64_array	int64_array extracts a typed array
 googlesql/functions/json/json_array	build a heterogeneous JSON array
 googlesql/functions/json/json_array_append	append to top-level array
 googlesql/functions/json/json_array_insert	upstream example 1
@@ -223,6 +230,9 @@ googlesql/functions/json/json_array_insert	upstream example 6
 googlesql/functions/json/json_array_insert	upstream example 7
 googlesql/functions/json/json_array_insert	upstream example 8
 googlesql/functions/json/json_array_insert	upstream example 9
+googlesql/functions/json/json_contains	object contains itself
+googlesql/functions/json/json_contains	partial match returns true
+googlesql/functions/json/json_contains	missing key returns false
 googlesql/functions/json/json_extract	extract object subtree
 googlesql/functions/json/json_extract_array	extract integer array via path expression
 googlesql/functions/json/json_extract_scalar	extract string field
@@ -241,14 +251,27 @@ googlesql/functions/json/json_type	number type
 googlesql/functions/json/json_value	extract string by JSONPath
 googlesql/functions/json/json_value_array	json_value_array basic behaviour
 googlesql/functions/json/lax_bool	lax_bool basic behaviour
+googlesql/functions/json/lax_bool_array	lax_bool_array extracts a typed array with NULLs on bad elements
 googlesql/functions/json/lax_double	lax_double basic behaviour
+googlesql/functions/json/lax_double_array	lax_double_array extracts a typed array with NULLs on bad elements
+googlesql/functions/json/lax_float	lax_float basic conversion
+googlesql/functions/json/lax_float_array	lax_float_array extracts a typed array with NULLs on bad elements
+googlesql/functions/json/lax_int32	lax_int32 basic conversion
+googlesql/functions/json/lax_int32_array	lax_int32_array extracts a typed array with NULLs on bad elements
 googlesql/functions/json/lax_int64	lax_int64 basic behaviour
+googlesql/functions/json/lax_int64_array	lax_int64_array extracts a typed array with NULLs on bad elements
 googlesql/functions/json/lax_string	lax_string basic behaviour
+googlesql/functions/json/lax_string_array	lax_string_array extracts a typed array with NULLs on bad elements
+googlesql/functions/json/lax_uint32	lax_uint32 basic conversion
+googlesql/functions/json/lax_uint32_array	lax_uint32_array extracts a typed array with NULLs on bad elements
+googlesql/functions/json/lax_uint64	lax_uint64 basic conversion
+googlesql/functions/json/lax_uint64_array	lax_uint64_array extracts a typed array with NULLs on bad elements
 googlesql/functions/json/parse_json	parse_json basic behaviour
 googlesql/functions/json/safe_to_json	string passes through
 googlesql/functions/json/safe_to_json	int passes through
 googlesql/functions/json/safe_to_json	null input returns SQL NULL
 googlesql/functions/json/string	string basic behaviour
+googlesql/functions/json/string_array	string_array extracts a typed array
 googlesql/functions/json/to_json	TO_JSON of an integer
 googlesql/functions/json/to_json_string	basic STRUCT of two fields
 googlesql/functions/json/to_json_string	NULL STRUCT field renders as JSON null
@@ -257,6 +280,10 @@ googlesql/functions/json/to_json_string	top-level NULL input renders as the JSON
 googlesql/functions/json/to_json_string	nested STRUCT<ARRAY<STRUCT>> with inner NULL
 googlesql/functions/json/to_json_string	ARRAY of STRUCT
 googlesql/functions/json/to_json_string	empty ARRAY
+googlesql/functions/json/uint32	uint32 basic conversion
+googlesql/functions/json/uint32_array	uint32_array extracts a typed array
+googlesql/functions/json/uint64	uint64 basic conversion
+googlesql/functions/json/uint64_array	uint64_array extracts a typed array
 googlesql/functions/math/abs	negative integer
 googlesql/functions/math/abs	positive integer is unchanged
 googlesql/functions/math/abs	zero
