@@ -213,6 +213,14 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // `{"a":[null,null,10]}`), the each-element defaults, and the wording of
     // each refusal. See fn_json.zig.
     googlesql::FEATURE_JSON_MUTATOR_FUNCTIONS,
+    // JSON_KEYS(json [, max_depth] [, mode]) and JSON_FLATTEN(json). Both are
+    // in real BigQuery (bq CLI, 2026-08-04). The walk is a port of
+    // public/functions/json.cc JsonKeysTreeWalker, whose rules BigQuery
+    // confirms: only object descents spend depth, `mode` is one of "strict" /
+    // "lax" / "lax recursive" (a space, not an underscore), and a key holding a
+    // '.' comes back double-quoted so the dotted path stays unambiguous.
+    googlesql::FEATURE_JSON_KEYS_FUNCTION,
+    googlesql::FEATURE_JSON_FLATTEN_FUNCTION,
 };
 
 // Deliberately absent, because BigQuery does not have them. Each was enabled,

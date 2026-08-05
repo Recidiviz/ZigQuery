@@ -451,6 +451,8 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "json_strip_nulls", .min_args = 4, .handler = fjson.jsonStripNulls },
     .{ .name = "json_array_append", .min_args = 4, .handler = fjson.jsonArrayAppend },
     .{ .name = "json_array_insert", .min_args = 4, .handler = fjson.jsonArrayInsert },
+    .{ .name = "json_keys", .min_args = 3, .handler = fjson.jsonKeys },
+    .{ .name = "json_flatten", .min_args = 1, .handler = fjson.jsonFlatten },
 
     // interval family (Go function_interval.go)
     .{ .name = "interval", .min_args = 2, .handler = fintv.interval },

@@ -12,6 +12,10 @@ bigquery/functions/aggregate/min_by	MIN_BY with a WHERE filter (precondition for
 bigquery/functions/json/float64	integer JSON value
 bigquery/functions/json/float64	floating-point JSON value
 bigquery/functions/json/float64	NULL JSON returns NULL
+bigquery/functions/json/json_keys	top-level object keys
+bigquery/functions/json/json_keys	nested keys flattened via dot notation
+bigquery/functions/json/json_keys	max_depth caps recursion
+bigquery/functions/json/json_keys	strict mode skips array-nested keys
 bigquery/functions/json/lax_float64	integer string coerces to FLOAT64
 bigquery/functions/json/lax_float64	numeric value passes through
 bigquery/functions/json/lax_float64	non-numeric input returns NULL (lax)
@@ -224,6 +228,7 @@ googlesql/functions/json/json_extract_array	extract integer array via path expre
 googlesql/functions/json/json_extract_scalar	extract string field
 googlesql/functions/json/json_extract_scalar	extract nested integer
 googlesql/functions/json/json_extract_string_array	json_extract_string_array basic behaviour
+googlesql/functions/json/json_flatten	flatten one level of nesting
 googlesql/functions/json/json_object	build a single-key JSON object
 googlesql/functions/json/json_query	extract scalar value
 googlesql/functions/json/json_query_array	extract array of objects

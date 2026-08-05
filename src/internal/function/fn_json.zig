@@ -1019,6 +1019,122 @@ pub fn jsonArrayInsert(alloc: std.mem.Allocator, args: []const Value) Error!Valu
 }
 
 // ----------------------------------------------------------------------
+// JSON_KEYS / JSON_FLATTEN
+// ----------------------------------------------------------------------
+
+/// `strict` never descends into arrays; `lax` unwraps one level; `lax
+/// recursive` unwraps until a non-array. Spelled with a space, not an
+/// underscore — 'lax_recursive' is "Invalid JSON mode specified" in BigQuery.
+const KeysMode = enum { strict, lax, lax_recursive };
+
+/// A key joins the dotted path bare unless it would need JSON escaping, or
+/// holds a '.' that the path itself uses as a separator: JSON_KEYS(JSON
+/// '{"a.b":1}') answers ["\"a.b\""]. Predicate from common/json_util.cc:101
+/// plus the '.' rule from public/functions/json.cc EscapeKey.
+fn keyNeedsQuoting(k: []const u8) bool {
+    for (k) |c| {
+        if (c < 0x20 or c == '"' or c == '\\' or c == '.') return true;
+    }
+    return std.mem.indexOf(u8, k, "\u{2028}") != null or
+        std.mem.indexOf(u8, k, "\u{2029}") != null;
+}
+
+const KeyWalk = struct {
+    alloc: std.mem.Allocator,
+    mode: KeysMode,
+    /// A sorted set, which is where JSON_KEYS' dedup and ordering come from
+    /// (the C++ walker collects into an absl::btree_set).
+    keys: *std.StringArrayHashMapUnmanaged(void),
+
+    fn walk(self: KeyWalk, v: std.json.Value, depth: i64, prefix: []const u8) Error!void {
+        switch (v) {
+            .object => |o| {
+                var it = o.iterator();
+                while (it.next()) |e| {
+                    const k = e.key_ptr.*;
+                    const esc = if (keyNeedsQuoting(k))
+                        try stringifyCompact(self.alloc, .{ .string = k })
+                    else
+                        k;
+                    const full = if (prefix.len == 0)
+                        esc
+                    else
+                        try std.fmt.allocPrint(self.alloc, "{s}.{s}", .{ prefix, esc });
+                    try self.keys.put(self.alloc, full, {});
+                    // Only object descents spend depth, which is why
+                    // JSON_KEYS(JSON '{"a":[{"b":1}]}', 2, mode=>'lax') still
+                    // reaches "a.b".
+                    if (depth - 1 > 0) try self.walk(e.value_ptr.*, depth - 1, full);
+                }
+            },
+            .array => |arr| {
+                if (self.mode == .strict) return;
+                for (arr.items) |elem| {
+                    const descend = elem == .object or
+                        (elem == .array and self.mode == .lax_recursive);
+                    if (descend) try self.walk(elem, depth, prefix);
+                }
+            },
+            else => {},
+        }
+    }
+};
+
+pub fn jsonKeys(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len != 3)
+        return bind.fail("JSON_KEYS: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (bind.existsNull(args)) return null_v;
+    const max_depth = try args[1].toInt64();
+    if (max_depth <= 0)
+        return bind.fail("max_depth must be positive. provided value: {d}", .{max_depth}, error.UnsupportedOperation);
+    const mode_s = try args[2].toString(alloc);
+    const mode: KeysMode = if (std.ascii.eqlIgnoreCase(mode_s, "strict"))
+        .strict
+    else if (std.ascii.eqlIgnoreCase(mode_s, "lax"))
+        .lax
+    else if (std.ascii.eqlIgnoreCase(mode_s, "lax recursive"))
+        .lax_recursive
+    else
+        return bind.fail("Invalid JSON mode specified: {s}", .{mode_s}, error.UnsupportedOperation);
+
+    const root = try jsonDoc(alloc, args[0], "JSON_KEYS") orelse return null_v;
+    var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
+    try (KeyWalk{ .alloc = alloc, .mode = mode, .keys = &keys }).walk(root, max_depth, "");
+
+    const sorted = try alloc.dupe([]const u8, keys.keys());
+    std.mem.sort([]const u8, sorted, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lt);
+    const out = try alloc.alloc(Value, sorted.len);
+    for (sorted, out) |k, *dst| dst.* = Value{ .string = k };
+    return value_mod.arrayValue(alloc, out);
+}
+
+fn flattenInto(alloc: std.mem.Allocator, v: std.json.Value, out: *std.ArrayList(Value)) Error!void {
+    if (v == .array) {
+        for (v.array.items) |elem| try flattenInto(alloc, elem, out);
+        return;
+    }
+    // A JSON null becomes a NULL element, the same way the extract family
+    // renders one; everything else keeps its own JSON text.
+    try out.append(alloc, if (v == .null) null_v else Value{ .json = try stringifyCompact(alloc, v) });
+}
+
+/// Recursion stops at the first non-array, so `[[{"a":[1]}],2]` flattens to
+/// `[{"a":[1]},2]` — the object is an element, not another level. A non-array
+/// document is a one-element array, and an empty array contributes nothing.
+pub fn jsonFlatten(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len != 1)
+        return bind.fail("JSON_FLATTEN: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    const root = try jsonDoc(alloc, args[0], "JSON_FLATTEN") orelse return null_v;
+    var out: std.ArrayList(Value) = .empty;
+    try flattenInto(alloc, root, &out);
+    return value_mod.arrayValue(alloc, out.items);
+}
+
+// ----------------------------------------------------------------------
 // Tests
 // ----------------------------------------------------------------------
 
@@ -1450,4 +1566,56 @@ test "jsonArrayAppend and jsonArrayInsert: vivify nulls, never create keys" {
         "1",
         (try jsonArrayInsert(a, &.{ jsonArg("1"), strArg("$[0]"), strArg("r1"), boolArg(true) })).json,
     );
+}
+
+fn keysOf(alloc: std.mem.Allocator, doc: []const u8, depth: i64, mode: []const u8) ![]const u8 {
+    const v = try jsonKeys(alloc, &.{ jsonArg(doc), Value{ .int = depth }, strArg(mode) });
+    return (try v.toJson(alloc));
+}
+
+test "jsonKeys: dotted paths, sorted and deduplicated" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const deep = std.math.maxInt(i64);
+    try testing.expectEqualStrings("[\"a\",\"a.b\",\"a.b.c\"]", try keysOf(a, "{\"a\":{\"b\":{\"c\":1}}}", deep, "strict"));
+    // Sorted on the whole path, not per level.
+    try testing.expectEqualStrings("[\"a\",\"a.c\",\"a.d\",\"b\"]", try keysOf(a, "{\"b\":1,\"a\":{\"d\":1,\"c\":2}}", deep, "strict"));
+    try testing.expectEqualStrings("[]", try keysOf(a, "[1,2]", deep, "strict"));
+    // A key holding the separator comes back quoted.
+    try testing.expectEqualStrings("[\"\\\"a.b\\\"\"]", try keysOf(a, "{\"a.b\":1}", deep, "strict"));
+
+    // strict stops at arrays; lax unwraps one level; lax recursive keeps going.
+    try testing.expectEqualStrings("[\"a\"]", try keysOf(a, "{\"a\":[{\"b\":1}]}", deep, "strict"));
+    try testing.expectEqualStrings("[\"a\",\"a.b\",\"a.c\"]", try keysOf(a, "{\"a\":[{\"b\":1},{\"c\":2}]}", deep, "lax"));
+    try testing.expectEqualStrings("[\"a\"]", try keysOf(a, "{\"a\":[[{\"b\":1}]]}", deep, "lax"));
+    try testing.expectEqualStrings("[\"a\",\"a.b\"]", try keysOf(a, "{\"a\":[[{\"b\":1}]]}", deep, "lax recursive"));
+
+    // Only object descents spend depth, so an array hop is free.
+    try testing.expectEqualStrings("[\"a\",\"a.b\"]", try keysOf(a, "{\"a\":{\"b\":{\"c\":1}}}", 2, "strict"));
+    try testing.expectEqualStrings("[\"a\",\"a.b\"]", try keysOf(a, "{\"a\":[{\"b\":1}]}", 2, "lax"));
+
+    try testing.expectError(error.UnsupportedOperation, keysOf(a, "{\"a\":1}", 0, "strict"));
+    // A space, not an underscore.
+    try testing.expectError(error.UnsupportedOperation, keysOf(a, "{\"a\":1}", deep, "lax_recursive"));
+}
+
+test "jsonFlatten stops at the first non-array" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const T = struct {
+        fn flat(al: std.mem.Allocator, doc: []const u8) ![]const u8 {
+            return (try jsonFlatten(al, &.{jsonArg(doc)})).toJson(al);
+        }
+    };
+    try testing.expectEqualStrings("[1,2,3]", try T.flat(a, "[[1],[2,3]]"));
+    try testing.expectEqualStrings("[1,2,3,4]", try T.flat(a, "[[[1,2],3],4]"));
+    // An object is an element, not another level.
+    try testing.expectEqualStrings("[{\"a\":[1]},2]", try T.flat(a, "[[{\"a\":[1]}],2]"));
+    try testing.expectEqualStrings("[{\"a\":[1,2]}]", try T.flat(a, "{\"a\":[1,2]}"));
+    try testing.expectEqualStrings("[1]", try T.flat(a, "1"));
+    // An empty array contributes nothing; a JSON null is a NULL element.
+    try testing.expectEqualStrings("[1]", try T.flat(a, "[[],1]"));
+    try testing.expectEqualStrings("[null]", try T.flat(a, "null"));
 }
