@@ -7,40 +7,45 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/string_functions.md#regexp_extract_groups",
     .cases = .{
+    // REGEXP_EXTRACT_GROUPS is a GoogleSQL function BigQuery does not have: real
+    // BigQuery answers `Function not found: REGEXP_EXTRACT_GROUPS` (bq CLI,
+    // 2026-08-04). This engine emulates BigQuery, so implementing it would add
+    // surface production does not have -- a query that passes locally and fails
+    // on deploy.
+    //
+    // It is ungated upstream (builtin_function_internal_3.cc:641): no
+    // LanguageFeature is involved, the googlesql catalog simply carries a name
+    // BigQuery's does not.
+    //
+    // Restated as the refusal so the case still pins the decision. The assertion
+    // is the loose one, as with the net pins: the analyzer resolves the name, so
+    // the refusal comes from our transformer and reports UnsupportedFunction
+    // without saying which function. It still fails loudly if someone implements
+    // this without restating, which is the point.
         .{
             .desc = "upstream example 1",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('abc123xyz', r'([a-z]+)([0-9]+)([a-z]+)') AS result",
-            .rows = .{
-                .{"{abc, 123, xyz}"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 2",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('2025-09-10', r'(?<year>\\d{4})-(?<month>\\d{2})-(?<day>\\d{2})') AS result",
-            .rows = .{
-                .{"{2025, 09, 10}"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 3",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('PROD-WIDGET-1234', r'(?<env>\\w+)-(?<product>\\w+)-(?<id>\\d+)').*",
-            .rows = .{
-                .{ "PROD", "WIDGET", "1234" },
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 4",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('id:123', r'(?<key>[a-z]+):([0-9]+)') AS result",
-            .rows = .{
-                .{"{id, 123}"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 5",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('abc', r'(\\d+)') AS result",
-            .rows = .{
-                .{null},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 6",
@@ -55,18 +60,12 @@
             \\  REGEXP_EXTRACT_GROUPS(t, r'(?<key>\w+):(?<val>\w+)(?::(?<opt>\w*))?') AS result
             \\FROM inputs
             ,
-            .rows = .{
-                .{ "id:123:extra", "{id, 123, extra}" },
-                .{ "id:123:", "{id, 123, }" },
-                .{ "id:123", "{id, 123, NULL}" },
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 7",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('a=b=c', r'(\\w+)=((\\w+)=\\w+)') AS result",
-            .rows = .{
-                .{"{a, b=c, b}"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 8",
@@ -80,17 +79,12 @@
             \\  REGEXP_EXTRACT_GROUPS(t, r'config_id=(?<id>\d+)|option_name=(?<name>\w+)') AS result
             \\FROM inputs
             ,
-            .rows = .{
-                .{ "config_id=123", "{123, NULL}" },
-                .{ "option_name=ABC", "{NULL, ABC}" },
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 9",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('val=0x1a', r'val=(?<val__INT64>0x[0-9a-fA-F]+)') AS result",
-            .rows = .{
-                .{"{26}"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 10",
@@ -99,24 +93,17 @@
             \\|> EXTEND REGEXP_EXTRACT_GROUPS(time_str, r'(?<h__INT64>\d{2}):(?<m__INT64>\d{2}):(?<s__INT64>\d{2})').*
             \\|> SELECT time_str, h * 3600 + m * 60 + s AS total_seconds
             ,
-            .rows = .{
-                .{ "02:30:10", 9010 },
-                .{ "01:02:03", 3723 },
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 11",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('2025-09-10', r'(?<year__INT64>\\d{4})-(?<month__INT64>\\d{2})-(?<day__INT64>\\d{2})').*",
-            .rows = .{
-                .{ 2025, 9, 10 },
-            },
+            .expect_error = "UnsupportedFunction",
         },
         .{
             .desc = "upstream example 12",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('ID: ', r'ID: (?<item_id__INT64>\\d+)?') AS result",
-            .rows = .{
-                .{"{NULL}"},
-            },
+            .expect_error = "UnsupportedFunction",
         },
     },
 }

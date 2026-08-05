@@ -455,7 +455,22 @@ googlesql/functions/string/regexp_contains	simple pattern match
 googlesql/functions/string/regexp_contains	pattern not found
 googlesql/functions/string/regexp_extract	extract first digit run
 googlesql/functions/string/regexp_extract_all	capture-group extraction returns digits
+googlesql/functions/string/regexp_extract_groups	upstream example 1
+googlesql/functions/string/regexp_extract_groups	upstream example 2
+googlesql/functions/string/regexp_extract_groups	upstream example 3
+googlesql/functions/string/regexp_extract_groups	upstream example 4
+googlesql/functions/string/regexp_extract_groups	upstream example 5
+googlesql/functions/string/regexp_extract_groups	upstream example 6
+googlesql/functions/string/regexp_extract_groups	upstream example 7
+googlesql/functions/string/regexp_extract_groups	upstream example 8
+googlesql/functions/string/regexp_extract_groups	upstream example 9
+googlesql/functions/string/regexp_extract_groups	upstream example 10
+googlesql/functions/string/regexp_extract_groups	upstream example 11
+googlesql/functions/string/regexp_extract_groups	upstream example 12
 googlesql/functions/string/regexp_instr	regexp_instr basic behaviour
+googlesql/functions/string/regexp_match	simple match
+googlesql/functions/string/regexp_match	no match
+googlesql/functions/string/regexp_match	null propagation
 googlesql/functions/string/regexp_replace	replace digits
 googlesql/functions/string/regexp_substr	extract the first match of a digit run
 googlesql/functions/string/repeat	repeat thrice
@@ -471,6 +486,9 @@ googlesql/functions/string/safe_convert_bytes_to_string	valid UTF-8 bytes decode
 googlesql/functions/string/soundex	classic SOUNDEX of "Robert"
 googlesql/functions/string/split	split on comma
 googlesql/functions/string/split	split on space
+googlesql/functions/string/split_substr	take first part
+googlesql/functions/string/split_substr	take second part
+googlesql/functions/string/split_substr	take last part with negative index
 googlesql/functions/string/starts_with	matches prefix
 googlesql/functions/string/starts_with	does not match
 googlesql/functions/string/strpos	1-indexed position
