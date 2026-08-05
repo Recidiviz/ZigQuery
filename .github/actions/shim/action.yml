@@ -82,10 +82,18 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        jobs=$( (nproc 2>/dev/null || sysctl -n hw.ncpu) )
-        # .bazelrc pins --jobs=4/--local_resources=cpu=4 for one developer's
-        # laptop and says so; the command line beats both rc files, which is
-        # the documented way to override it.
+        # 70% of cores, not all of them. googlesql's generated sources
+        # (resolved_ast/*, the analyzer rewriters) are multi-GB compiles, and
+        # at full parallelism the box runs out of memory and the runner drops
+        # off mid-build — the same failure this tree already documents on a
+        # developer laptop, which is why .bazelrc pins --jobs=4 there.
+        #
+        # .bazelrc's pin is for that laptop and says so; the command line
+        # beats both rc files, which is the documented way to override it.
+        cores=$( (nproc 2>/dev/null || sysctl -n hw.ncpu) )
+        jobs=$(( cores * 7 / 10 ))
+        [ "$jobs" -lt 1 ] && jobs=1
+        echo "using $jobs of $cores cores"
         if [ "${{ runner.os }}" = "Linux" ]; then
           # .bazelrc applies --config=clang unconditionally; Bazel's default
           # Linux toolchain would otherwise pick gcc and ignore those flags.
