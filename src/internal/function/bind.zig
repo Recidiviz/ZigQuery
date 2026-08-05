@@ -260,6 +260,7 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "translate", .min_args = 3, .handler = str.translate },
     .{ .name = "unicode", .min_args = 1, .handler = str.unicode },
     .{ .name = "soundex", .min_args = 1, .handler = str.soundex },
+    .{ .name = "edit_distance", .min_args = 3, .handler = str.editDistance },
     .{ .name = "safe_convert_bytes_to_string", .min_args = 1, .handler = str.safeConvertBytesToString },
     .{ .name = "normalize", .min_args = 1, .handler = str.normalize },
     .{ .name = "normalize_and_casefold", .min_args = 1, .handler = str.normalizeAndCasefold },

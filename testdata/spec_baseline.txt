@@ -427,6 +427,7 @@ googlesql/functions/string/concat	two strings
 googlesql/functions/string/concat	three strings
 googlesql/functions/string/concat	with empty string
 googlesql/functions/string/concat	single argument
+googlesql/functions/string/edit_distance	edit_distance basic behaviour
 googlesql/functions/string/ends_with	matches suffix
 googlesql/functions/string/ends_with	does not match
 googlesql/functions/string/format	format basic behaviour

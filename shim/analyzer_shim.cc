@@ -221,6 +221,12 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // '.' comes back double-quoted so the dotted path stays unambiguous.
     googlesql::FEATURE_JSON_KEYS_FUNCTION,
     googlesql::FEATURE_JSON_FLATTEN_FUNCTION,
+    // The EDIT_DISTANCE(BYTES, BYTES, max_distance => INT64) signature. The
+    // STRING one is ungated (builtin_function_internal_3.cc:459) and already
+    // resolved; BigQuery has both, and refuses to mix them —
+    // EDIT_DISTANCE('abc', b'abc') is "Unable to coerce type BYTES to expected
+    // type STRING". Checked with the bq CLI, 2026-08-04.
+    googlesql::FEATURE_ENABLE_EDIT_DISTANCE_BYTES,
 };
 
 // Deliberately absent, because BigQuery does not have them. Each was enabled,

@@ -1050,6 +1050,53 @@ pub fn soundex(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return Value{ .string = try alloc.dupe(u8, &out) };
 }
 
+// EDIT_DISTANCE --------------------------------------------------------
+
+/// Levenshtein over two rows of the DP matrix. Generic in the element so the
+/// STRING and BYTES signatures share it: for STRING an element is a code
+/// point, which is what makes EDIT_DISTANCE('é','e') answer 1 rather than the
+/// 2 a byte-wise walk would give.
+fn levenshtein(alloc: std.mem.Allocator, comptime T: type, a: []const T, b: []const T) Error![]const usize {
+    var prev = try alloc.alloc(usize, b.len + 1);
+    var cur = try alloc.alloc(usize, b.len + 1);
+    for (prev, 0..) |*p, j| p.* = j;
+    for (a, 0..) |ca, i| {
+        cur[0] = i + 1;
+        for (b, 0..) |cb, j| {
+            const sub = prev[j] + @as(usize, if (ca == cb) 0 else 1);
+            cur[j + 1] = @min(@min(cur[j] + 1, prev[j + 1] + 1), sub);
+        }
+        std.mem.swap([]usize, &prev, &cur);
+    }
+    return prev;
+}
+
+/// EDIT_DISTANCE(value1, value2, max_distance). `max_distance` is named-only
+/// with a default of INT64 max, so the analyzer always fills it and this
+/// always sees three arguments. The result is capped, not rejected:
+/// EDIT_DISTANCE('kitten','sitting', max_distance => 2) is 2, not NULL.
+pub fn editDistance(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len != 3)
+        return bind.fail("EDIT_DISTANCE: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    // NULL wins over the range check: EDIT_DISTANCE(NULL, 'a',
+    // max_distance => -1) is NULL in BigQuery, not an error.
+    if (bind.existsNull(args)) return null_v;
+    const max_distance = try args[2].toInt64();
+    if (max_distance < 0)
+        return bind.fail("max_distance must be non-negative", .{}, error.UnsupportedOperation);
+    // The two signatures do not mix, so one BYTES argument settles it.
+    const dist = if (args[0] == .bytes or args[1] == .bytes) blk: {
+        const a = try args[0].toBytes(alloc);
+        const b = try args[1].toBytes(alloc);
+        break :blk (try levenshtein(alloc, u8, a, b))[b.len];
+    } else blk: {
+        const a = try decodeRunes(alloc, try args[0].toString(alloc));
+        const b = try decodeRunes(alloc, try args[1].toString(alloc));
+        break :blk (try levenshtein(alloc, u21, a, b))[b.len];
+    };
+    return Value{ .int = @min(@as(i64, @intCast(dist)), max_distance) };
+}
+
 // SAFE_CONVERT_BYTES_TO_STRING -----------------------------------------
 
 pub fn safeConvertBytesToString(alloc: std.mem.Allocator, args: []const Value) Error!Value {

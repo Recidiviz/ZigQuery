@@ -938,6 +938,88 @@ test "encoded values order by memcmp, with no collation involved" {
     try value_mod.expectValueEqual(Value{ .date = try value_mod.parseDateDays("1930-01-01") }, first);
 }
 
+test "EDIT_DISTANCE counts characters, and max_distance caps rather than rejects" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+
+    // Every expectation is BigQuery's (bq CLI, 2026-08-04). max_distance is
+    // named-only with a default of INT64 max, so the analyzer always supplies
+    // it and the UDF always sees three arguments.
+    const big = "9223372036854775807";
+    try env.expectInt(3, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        .{ try env.encStr("kitten"), try env.encStr("sitting") },
+    ));
+    try env.expectInt(3, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        .{ try env.encStr(""), try env.encStr("abc") },
+    ));
+    try env.expectInt(0, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        .{ try env.encStr(""), try env.encStr("") },
+    ));
+    // Case-sensitive: no letter of "ABC" matches a letter of "abc".
+    try env.expectInt(3, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        .{ try env.encStr("ABC"), try env.encStr("abc") },
+    ));
+    // Characters, not bytes. A byte-wise walk answers 2 here, because the
+    // accented letter is two bytes in UTF-8 — the row a plausible
+    // implementation gets wrong.
+    try env.expectInt(1, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        .{ try env.encStr("\u{e9}"), try env.encStr("e") },
+    ));
+    try env.expectInt(1, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        .{ try env.encStr("\u{65e5}\u{672c}"), try env.encStr("\u{65e5}x") },
+    ));
+    // The BYTES signature walks bytes instead.
+    try env.expectInt(1, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        .{
+            try env.enc(Value{ .bytes = "abc" }),
+            try env.enc(Value{ .bytes = "abd" }),
+        },
+    ));
+
+    // max_distance caps the answer; it does not turn it into NULL.
+    try env.expectInt(2, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, 2)",
+        .{ try env.encStr("kitten"), try env.encStr("sitting") },
+    ));
+    try env.expectInt(1, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, 1)",
+        .{ try env.encStr("abc"), try env.encStr("xyz") },
+    ));
+    try env.expectInt(3, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, 5)",
+        .{ try env.encStr("abc"), try env.encStr("xyz") },
+    ));
+    try env.expectInt(0, try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, 0)",
+        .{ try env.encStr("abc"), try env.encStr("abc") },
+    ));
+
+    // Any NULL argument wins, including over a negative max_distance.
+    try env.expectNullResult(try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        .{ try env.enc(Value.null), try env.encStr("a") },
+    ));
+    try env.expectNullResult(try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, {s})",
+        .{ try env.encStr("a"), try env.encStr("b"), try env.enc(Value.null) },
+    ));
+    try env.expectNullResult(try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, -1)",
+        .{ try env.enc(Value.null), try env.encStr("a") },
+    ));
+    try env.expectErrorMsg("max_distance must be non-negative", try env.fmt(
+        "SELECT zetasqlite_edit_distance({s}, {s}, -1)",
+        .{ try env.encStr("abc"), try env.encStr("xyz") },
+    ));
+}
+
 test "min_args guard rejects too few arguments instead of UB" {
     var env = try TestEnv.init();
     defer env.deinit();
