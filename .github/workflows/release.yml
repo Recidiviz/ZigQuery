@@ -60,13 +60,14 @@ jobs:
             runner: runs-on=${{ github.run_id }}/runner=shim-arm64/extras=s3-cache
             runs_on_agent: true
           # RunsOn is Linux/Windows on EC2, so darwin is built elsewhere:
-          # arm64 on the self-hosted zigquery-emulator-mac-build box, and x64
-          # on GitHub-hosted macos-15-intel so it stays a native build rather
-          # than a cross-compile. macos-15-intel is the last Intel image (x64
-          # macOS support ends Fall 2027); macos-14 is already mid-deprecation
-          # and is deliberately not used.
+          # arm64 on zigquery-emulator-mac-build (a GitHub-hosted *larger
+          # runner*, matched by its name alone — the `self-hosted` label would
+          # never match one), and x64 on macos-15-intel so it stays a native
+          # build rather than a cross-compile. macos-15-intel is the last Intel
+          # image (x64 macOS support ends Fall 2027); macos-14 is already
+          # mid-deprecation and is deliberately not used.
           - platform: darwin-arm64
-            runner: [self-hosted, zigquery-emulator-mac-build]
+            runner: zigquery-emulator-mac-build
             runs_on_agent: false
           - platform: darwin-x64
             runner: macos-15-intel
@@ -94,7 +95,7 @@ jobs:
             runner: runs-on=${{ github.run_id }}/runner=zig-arm64/extras=s3-cache
             runs_on_agent: true
           - platform: darwin-arm64
-            runner: [self-hosted, zigquery-emulator-mac-build]
+            runner: zigquery-emulator-mac-build
             runs_on_agent: false
           - platform: darwin-x64
             runner: macos-15-intel
