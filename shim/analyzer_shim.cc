@@ -206,6 +206,13 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // supported for literal integer positions" — BigQuery's own reply, because
     // BigQuery has that feature off too.
     googlesql::FEATURE_STRUCT_POSITIONAL_ACCESSOR,
+    // JSON_SET / JSON_REMOVE / JSON_STRIP_NULLS / JSON_ARRAY_APPEND /
+    // JSON_ARRAY_INSERT. All five are in real BigQuery (bq CLI, 2026-08-04),
+    // which supplied every rule the handlers enforce — the auto-vivification
+    // (`JSON_ARRAY_INSERT(JSON '{"a": null}', '$.a[2]', 10)` builds
+    // `{"a":[null,null,10]}`), the each-element defaults, and the wording of
+    // each refusal. See fn_json.zig.
+    googlesql::FEATURE_JSON_MUTATOR_FUNCTIONS,
 };
 
 // Deliberately absent, because BigQuery does not have them. Each was enabled,

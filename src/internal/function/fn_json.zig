@@ -608,15 +608,9 @@ fn laxParseNumeric(s: []const u8) LaxScalar {
     return laxNumber(t);
 }
 
-/// Unwraps the JSON argument. `null` means SQL NULL in, SQL NULL out.
-fn laxInput(
-    alloc: std.mem.Allocator,
-    args: []const Value,
-    comptime name: []const u8,
-) Error!?std.json.Value {
-    if (args.len != 1)
-        return bind.fail(name ++ ": invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    const inner = if (args[0] == .safe) args[0].safe.* else args[0];
+/// Unwraps a JSON-typed argument. `null` means SQL NULL in, SQL NULL out.
+fn jsonDoc(alloc: std.mem.Allocator, v: Value, comptime name: []const u8) Error!?std.json.Value {
+    const inner = if (v == .safe) v.safe.* else v;
     if (inner == .null) return null;
     const raw = switch (inner) {
         .json => |s| s,
@@ -624,6 +618,16 @@ fn laxInput(
     };
     return parseJson(alloc, raw) orelse
         bind.fail(name ++ ": invalid json {s}", .{raw}, error.FailedConversion);
+}
+
+fn laxInput(
+    alloc: std.mem.Allocator,
+    args: []const Value,
+    comptime name: []const u8,
+) Error!?std.json.Value {
+    if (args.len != 1)
+        return bind.fail(name ++ ": invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    return jsonDoc(alloc, args[0], name);
 }
 
 pub fn laxBool(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -771,6 +775,247 @@ fn buildObject(alloc: std.mem.Allocator, keys: []const []const u8, vals: []const
     }
     try out.append(alloc, '}');
     return canonicalJson(alloc, out.items);
+}
+
+// ----------------------------------------------------------------------
+// JSON_SET / JSON_REMOVE / JSON_STRIP_NULLS / JSON_ARRAY_APPEND /
+// JSON_ARRAY_INSERT
+//
+// The extract family above only reads, so `navigate` hands back a value. These
+// write, so they need a *slot*: a pointer into the tree that a new value can be
+// stored through, plus the auto-vivification BigQuery does on the way down.
+// Every rule below was measured against BigQuery, and the recurring one is that
+// a path that does not resolve is a **no-op, not an error** — JSON_ARRAY_APPEND
+// on a missing key, on a non-array, or JSON_REMOVE of an absent member all hand
+// the document back untouched.
+//
+// The analyzer fills each function's trailing named-only argument with its
+// default, so the handlers always see it (checked with --sql):
+//   JSON_SET(doc, path, value [, path, value]..., create_if_missing)
+//   JSON_REMOVE(doc, path [, path]...)
+//   JSON_STRIP_NULLS(doc, path, include_arrays, remove_empty)
+//   JSON_ARRAY_APPEND(doc, path, value [, path, value]..., append_each_element)
+//   JSON_ARRAY_INSERT(doc, path, value [, path, value]..., insert_each_element)
+// ----------------------------------------------------------------------
+
+/// The mutators take standard-syntax paths, so a legacy single-quote selector
+/// is refused — BigQuery answers "Invalid token in JSONPath at: ['a']", and it
+/// says the same for the negative subscript our parser would otherwise accept.
+fn mutatorPath(alloc: std.mem.Allocator, s: []const u8) Error!Path {
+    const p = parsePath(alloc, s) catch
+        return bind.fail("Invalid token in JSONPath at: {s}", .{s}, error.FailedConversion);
+    if (p.single_quote)
+        return bind.fail("Invalid token in JSONPath at: {s}", .{s}, error.FailedConversion);
+    for (p.nodes) |n| {
+        if (n == .index and n.index < 0)
+            return bind.fail("Invalid token in JSONPath at: {s}", .{s}, error.FailedConversion);
+    }
+    return p;
+}
+
+/// A SQL value as a JSON tree. SQL NULL becomes the JSON null, which is why
+/// JSON_SET(JSON '{"a":1}', '$.a', NULL) is `{"a":null}` and not a NULL result.
+fn jsonValueOf(alloc: std.mem.Allocator, v: Value) Error!std.json.Value {
+    const text = try v.toJson(alloc);
+    return parseJson(alloc, text) orelse
+        bind.fail("failed to convert to JSON value: {s}", .{text}, error.FailedConversion);
+}
+
+/// Walks `cur` down `nodes` and returns a pointer to the slot the last step
+/// names, or null when the path does not resolve.
+///
+/// With `create`, a missing member is added and an array is padded with nulls
+/// to reach the index — JSON_SET(JSON '{}', '$.a[2]', 9) builds
+/// `{"a":[null,null,9]}`. Without it, a miss is simply a miss:
+/// JSON_SET(JSON '{"a":[1]}', '$.a[3]', 9, create_if_missing=>FALSE) changes
+/// nothing. Descending *through* a scalar never resolves either way, which is
+/// why JSON_SET(JSON '{"a":1}', '$.a.b', 2) leaves the document alone.
+fn slotFor(
+    alloc: std.mem.Allocator,
+    cur: *std.json.Value,
+    nodes: []const PathNode,
+    create: bool,
+) Error!?*std.json.Value {
+    if (nodes.len == 0) return cur;
+    switch (nodes[0]) {
+        .selector => |name| {
+            if (cur.* == .null and create) cur.* = .{ .object = std.json.ObjectMap.empty };
+            if (cur.* != .object) return null;
+            if (cur.object.getPtr(name) == null) {
+                if (!create) return null;
+                try cur.object.put(alloc, name, .null);
+            }
+            return slotFor(alloc, cur.object.getPtr(name).?, nodes[1..], create);
+        },
+        .index => |idx| {
+            if (cur.* == .null and create) cur.* = .{ .array = std.json.Array.init(alloc) };
+            if (cur.* != .array) return null;
+            const u: usize = @intCast(idx);
+            if (u >= cur.array.items.len) {
+                if (!create) return null;
+                while (cur.array.items.len <= u) try cur.array.append(.null);
+            }
+            return slotFor(alloc, &cur.array.items[u], nodes[1..], create);
+        },
+    }
+}
+
+/// `append_each_element` / `insert_each_element` spread a **SQL ARRAY** value
+/// and nothing else: JSON_ARRAY_APPEND(JSON '[1]', '$', [2,3]) is `[1,2,3]`,
+/// but the same call with JSON '[2,3]' is `[1,[2,3]]`.
+fn eachElements(alloc: std.mem.Allocator, v: Value, each: bool) Error![]std.json.Value {
+    if (each and v == .array) {
+        const out = try alloc.alloc(std.json.Value, v.array.values.len);
+        for (v.array.values, out) |elem, *dst| dst.* = try jsonValueOf(alloc, elem);
+        return out;
+    }
+    const one = try alloc.alloc(std.json.Value, 1);
+    one[0] = try jsonValueOf(alloc, v);
+    return one;
+}
+
+/// Shared preamble: the document plus the (path, value) pair count, for the
+/// three functions built as `doc, pairs..., flag`.
+fn pairedArgs(args: []const Value, comptime name: []const u8) Error!void {
+    if (args.len < 4 or args.len % 2 != 0)
+        return bind.fail(name ++ ": invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+}
+
+pub fn jsonSet(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    try pairedArgs(args, "JSON_SET");
+    var root = try jsonDoc(alloc, args[0], "JSON_SET") orelse return null_v;
+    const create = try args[args.len - 1].toBool();
+    var i: usize = 1;
+    while (i + 1 < args.len - 1) : (i += 2) {
+        const path = try mutatorPath(alloc, try args[i].toString(alloc));
+        if (try slotFor(alloc, &root, path.nodes, create)) |slot|
+            slot.* = try jsonValueOf(alloc, args[i + 1]);
+    }
+    return Value{ .json = try stringifySorted(alloc, root) };
+}
+
+pub fn jsonRemove(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len < 2)
+        return bind.fail("JSON_REMOVE: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    var root = try jsonDoc(alloc, args[0], "JSON_REMOVE") orelse return null_v;
+    for (args[1..]) |p| {
+        const path = try mutatorPath(alloc, try p.toString(alloc));
+        // The one path JSON_REMOVE refuses, unlike JSON_SET, which happily
+        // replaces the whole document through it.
+        if (path.nodes.len == 0)
+            return bind.fail("The JSONPath cannot be '$'", .{}, error.UnsupportedOperation);
+        const last = path.nodes[path.nodes.len - 1];
+        const parent = try slotFor(alloc, &root, path.nodes[0 .. path.nodes.len - 1], false) orelse continue;
+        switch (last) {
+            .selector => |name| if (parent.* == .object) {
+                _ = parent.object.orderedRemove(name);
+            },
+            .index => |idx| if (parent.* == .array) {
+                const u: usize = @intCast(idx);
+                if (u < parent.array.items.len) _ = parent.array.orderedRemove(u);
+            },
+        }
+    }
+    return Value{ .json = try stringifySorted(alloc, root) };
+}
+
+const StripOpts = struct { include_arrays: bool, remove_empty: bool };
+
+/// Rebuilds `v` without its JSON nulls. Returns false when the value itself
+/// should go: it was a null, or `remove_empty` emptied it. That is how the
+/// removal cascades — JSON_STRIP_NULLS(JSON '{"a":{"b":null}}',
+/// remove_empty=>TRUE) collapses all the way to a bare `null`.
+fn stripNulls(alloc: std.mem.Allocator, v: *std.json.Value, o: StripOpts) Error!bool {
+    switch (v.*) {
+        .null => return false,
+        .object => {
+            var kept = std.json.ObjectMap.empty;
+            var it = v.object.iterator();
+            while (it.next()) |e| {
+                var child = e.value_ptr.*;
+                if (try stripNulls(alloc, &child, o)) try kept.put(alloc, e.key_ptr.*, child);
+            }
+            v.* = .{ .object = kept };
+            return !(o.remove_empty and kept.count() == 0);
+        },
+        .array => {
+            var kept = std.json.Array.init(alloc);
+            for (v.array.items) |item| {
+                var child = item;
+                const keep = try stripNulls(alloc, &child, o);
+                // include_arrays governs only whether a null *element* is
+                // dropped. The walk descends either way, so an object nested in
+                // an array is still stripped with include_arrays => FALSE:
+                // {"a":[{"b":null}]} becomes {"a":[{}]}.
+                if (keep or !o.include_arrays) try kept.append(child);
+            }
+            v.* = .{ .array = kept };
+            return !(o.remove_empty and kept.items.len == 0);
+        },
+        else => return true,
+    }
+}
+
+pub fn jsonStripNulls(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (args.len != 4)
+        return bind.fail("JSON_STRIP_NULLS: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    var root = try jsonDoc(alloc, args[0], "JSON_STRIP_NULLS") orelse return null_v;
+    const path = try mutatorPath(alloc, try args[1].toString(alloc));
+    const opts = StripOpts{
+        .include_arrays = try args[2].toBool(),
+        .remove_empty = try args[3].toBool(),
+    };
+    if (try slotFor(alloc, &root, path.nodes, false)) |slot| {
+        // A subtree that strips away entirely becomes the JSON null rather than
+        // vanishing from its parent, which is what makes the whole-document
+        // case answer `null` instead of SQL NULL.
+        if (!try stripNulls(alloc, slot, opts)) slot.* = .null;
+    }
+    return Value{ .json = try stringifySorted(alloc, root) };
+}
+
+pub fn jsonArrayAppend(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    try pairedArgs(args, "JSON_ARRAY_APPEND");
+    var root = try jsonDoc(alloc, args[0], "JSON_ARRAY_APPEND") orelse return null_v;
+    const each = try args[args.len - 1].toBool();
+    var i: usize = 1;
+    while (i + 1 < args.len - 1) : (i += 2) {
+        const path = try mutatorPath(alloc, try args[i].toString(alloc));
+        // No creation: appending at a missing key leaves `{}` as it was. An
+        // existing JSON null does become an array, though.
+        const slot = try slotFor(alloc, &root, path.nodes, false) orelse continue;
+        if (slot.* == .null) slot.* = .{ .array = std.json.Array.init(alloc) };
+        if (slot.* != .array) continue;
+        for (try eachElements(alloc, args[i + 1], each)) |e| try slot.array.append(e);
+    }
+    return Value{ .json = try stringifySorted(alloc, root) };
+}
+
+pub fn jsonArrayInsert(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    try pairedArgs(args, "JSON_ARRAY_INSERT");
+    var root = try jsonDoc(alloc, args[0], "JSON_ARRAY_INSERT") orelse return null_v;
+    const each = try args[args.len - 1].toBool();
+    var i: usize = 1;
+    while (i + 1 < args.len - 1) : (i += 2) {
+        const path = try mutatorPath(alloc, try args[i].toString(alloc));
+        // The last step has to name a position: '$' and a member selector are
+        // both no-ops (JSON_ARRAY_INSERT(JSON '[1,2]', '$', 3) is `[1,2]`).
+        if (path.nodes.len == 0) continue;
+        const at = switch (path.nodes[path.nodes.len - 1]) {
+            .index => |idx| @as(usize, @intCast(idx)),
+            .selector => continue,
+        };
+        const slot = try slotFor(alloc, &root, path.nodes[0 .. path.nodes.len - 1], false) orelse continue;
+        if (slot.* == .null) slot.* = .{ .array = std.json.Array.init(alloc) };
+        if (slot.* != .array) continue;
+        // Past the end pads rather than refuses: '$[7]' on a four-element array
+        // fills indices 4..6 with nulls and lands the value at 7.
+        while (slot.array.items.len < at) try slot.array.append(.null);
+        for (try eachElements(alloc, args[i + 1], each), 0..) |e, k| {
+            try slot.array.insert(at + k, e);
+        }
+    }
+    return Value{ .json = try stringifySorted(alloc, root) };
 }
 
 // ----------------------------------------------------------------------
@@ -1049,5 +1294,160 @@ test "jsonArray and jsonObject build key-sorted documents" {
     try testing.expectError(
         error.UnsupportedOperation,
         jsonObject(a, &.{ try value_mod.arrayValue(a, &.{strArg("a")}), vs }),
+    );
+}
+
+fn boolArg(b: bool) Value {
+    return Value{ .bool = b };
+}
+
+test "jsonSet creates, pads and stops at scalars" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const T = struct {
+        fn set(al: std.mem.Allocator, doc: []const u8, p: []const u8, v: Value, create: bool) ![]const u8 {
+            return (try jsonSet(al, &.{ jsonArg(doc), strArg(p), v, boolArg(create) })).json;
+        }
+    };
+    const nine = Value{ .int = 9 };
+    // Intermediate objects appear on the way down...
+    try testing.expectEqualStrings(
+        "{\"a\":1,\"b\":{\"c\":9}}",
+        try T.set(a, "{\"a\":1}", "$.b.c", nine, true),
+    );
+    // ...and a missing key whose next step is an index becomes an array.
+    try testing.expectEqualStrings("{\"a\":[null,null,9]}", try T.set(a, "{}", "$.a[2]", nine, true));
+    try testing.expectEqualStrings(
+        "{\"a\":[1,2,null,null,null,9]}",
+        try T.set(a, "{\"a\":[1,2]}", "$.a[5]", nine, true),
+    );
+    // Descending through a scalar never resolves, create or not.
+    try testing.expectEqualStrings("{\"a\":1}", try T.set(a, "{\"a\":1}", "$.a.b", nine, true));
+    // create_if_missing => FALSE stops both the key and the padding.
+    try testing.expectEqualStrings("{\"a\":1}", try T.set(a, "{\"a\":1}", "$.b", nine, false));
+    try testing.expectEqualStrings("{\"a\":[1]}", try T.set(a, "{\"a\":[1]}", "$.a[3]", nine, false));
+    try testing.expectEqualStrings("{\"a\":[9]}", try T.set(a, "{\"a\":[1]}", "$.a[0]", nine, false));
+    // '$' replaces the whole document, and a SQL NULL is the JSON null.
+    try testing.expectEqualStrings("9", try T.set(a, "{\"a\":1}", "$", nine, true));
+    try testing.expectEqualStrings("{\"a\":null}", try T.set(a, "{\"a\":1}", "$.a", null_v, true));
+    // NULL document in, NULL out.
+    try testing.expect(try jsonSet(a, &.{ null_v, strArg("$.a"), nine, boolArg(true) }) == .null);
+}
+
+test "jsonRemove shifts array elements and refuses only the root path" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings(
+        "{\"b\":2}",
+        (try jsonRemove(a, &.{ jsonArg("{\"a\":1,\"b\":2}"), strArg("$.a") })).json,
+    );
+    try testing.expectEqualStrings("[1,3]", (try jsonRemove(a, &.{ jsonArg("[1,2,3]"), strArg("$[1]") })).json);
+    // A miss is a no-op, not an error — for members and for indices alike.
+    try testing.expectEqualStrings("{\"a\":1}", (try jsonRemove(a, &.{ jsonArg("{\"a\":1}"), strArg("$.b") })).json);
+    try testing.expectEqualStrings("[1,2,3]", (try jsonRemove(a, &.{ jsonArg("[1,2,3]"), strArg("$[5]") })).json);
+    // JSON_SET happily writes through '$'; JSON_REMOVE will not.
+    try testing.expectError(
+        error.UnsupportedOperation,
+        jsonRemove(a, &.{ jsonArg("{\"a\":1}"), strArg("$") }),
+    );
+    // Standard-syntax paths only, and no negative subscript.
+    try testing.expectError(
+        error.FailedConversion,
+        jsonRemove(a, &.{ jsonArg("{\"a\":1}"), strArg("$['a']") }),
+    );
+    try testing.expectError(
+        error.FailedConversion,
+        jsonRemove(a, &.{ jsonArg("[1]"), strArg("$[-1]") }),
+    );
+}
+
+test "jsonStripNulls cascades, and include_arrays only governs elements" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const T = struct {
+        fn strip(al: std.mem.Allocator, doc: []const u8, p: []const u8, arrays: bool, empty: bool) ![]const u8 {
+            return (try jsonStripNulls(al, &.{ jsonArg(doc), strArg(p), boolArg(arrays), boolArg(empty) })).json;
+        }
+    };
+    try testing.expectEqualStrings("{\"b\":1}", try T.strip(a, "{\"a\":null,\"b\":1}", "$", true, false));
+    try testing.expectEqualStrings("{\"a\":[1],\"b\":{}}", try T.strip(a, "{\"a\":[null,1],\"b\":{}}", "$", true, false));
+    // remove_empty cascades all the way out, so the document becomes JSON null.
+    try testing.expectEqualStrings("null", try T.strip(a, "{\"a\":{\"b\":null}}", "$", true, true));
+    try testing.expectEqualStrings("null", try T.strip(a, "{\"a\":[]}", "$", true, true));
+    // include_arrays => FALSE keeps null *elements*, but still strips objects
+    // nested inside the array.
+    try testing.expectEqualStrings("{\"a\":[null,1]}", try T.strip(a, "{\"a\":[null,1]}", "$", false, false));
+    try testing.expectEqualStrings("{\"a\":[{}]}", try T.strip(a, "{\"a\":[{\"b\":null}]}", "$", false, false));
+    // A path confines the work to that subtree.
+    try testing.expectEqualStrings(
+        "{\"a\":null,\"b\":{}}",
+        try T.strip(a, "{\"a\":null,\"b\":{\"c\":null}}", "$.b", true, false),
+    );
+}
+
+test "jsonArrayAppend and jsonArrayInsert: vivify nulls, never create keys" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const two = Value{ .int = 2 };
+    const pair = try value_mod.arrayValue(a, &.{ Value{ .int = 3 }, Value{ .int = 4 } });
+
+    // append_each_element spreads a SQL ARRAY...
+    try testing.expectEqualStrings(
+        "[1,2,3,4]",
+        (try jsonArrayAppend(a, &.{ jsonArg("[1,2]"), strArg("$"), pair, boolArg(true) })).json,
+    );
+    try testing.expectEqualStrings(
+        "[1,2,[3,4]]",
+        (try jsonArrayAppend(a, &.{ jsonArg("[1,2]"), strArg("$"), pair, boolArg(false) })).json,
+    );
+    // ...but never a JSON array, which goes in whole either way.
+    try testing.expectEqualStrings(
+        "[1,[2,3]]",
+        (try jsonArrayAppend(a, &.{ jsonArg("[1]"), strArg("$"), jsonArg("[2,3]"), boolArg(true) })).json,
+    );
+    // An existing JSON null becomes an array; a missing key does not.
+    try testing.expectEqualStrings(
+        "{\"a\":[1]}",
+        (try jsonArrayAppend(a, &.{ jsonArg("{\"a\":null}"), strArg("$.a"), Value{ .int = 1 }, boolArg(true) })).json,
+    );
+    try testing.expectEqualStrings(
+        "{}",
+        (try jsonArrayAppend(a, &.{ jsonArg("{}"), strArg("$.a"), two, boolArg(true) })).json,
+    );
+    try testing.expectEqualStrings(
+        "{\"a\":1}",
+        (try jsonArrayAppend(a, &.{ jsonArg("{\"a\":1}"), strArg("$.a"), two, boolArg(true) })).json,
+    );
+
+    // Insert pads up to the index rather than refusing it.
+    try testing.expectEqualStrings(
+        "[1,2,null,null,null,null,null,9]",
+        (try jsonArrayInsert(a, &.{ jsonArg("[1,2]"), strArg("$[7]"), Value{ .int = 9 }, boolArg(true) })).json,
+    );
+    try testing.expectEqualStrings(
+        "{\"a\":[null,null,10]}",
+        (try jsonArrayInsert(a, &.{ jsonArg("{\"a\":null}"), strArg("$.a[2]"), Value{ .int = 10 }, boolArg(true) })).json,
+    );
+    // The last step has to name a position: '$' and a selector are no-ops.
+    try testing.expectEqualStrings(
+        "[1,2]",
+        (try jsonArrayInsert(a, &.{ jsonArg("[1,2]"), strArg("$"), Value{ .int = 3 }, boolArg(true) })).json,
+    );
+    try testing.expectEqualStrings(
+        "{\"a\":[1]}",
+        (try jsonArrayInsert(a, &.{ jsonArg("{\"a\":[1]}"), strArg("$.a"), Value{ .int = 3 }, boolArg(true) })).json,
+    );
+    // Nothing is created on the way down, and a scalar root is left alone.
+    try testing.expectEqualStrings(
+        "{}",
+        (try jsonArrayInsert(a, &.{ jsonArg("{}"), strArg("$.a[0]"), Value{ .int = 1 }, boolArg(true) })).json,
+    );
+    try testing.expectEqualStrings(
+        "1",
+        (try jsonArrayInsert(a, &.{ jsonArg("1"), strArg("$[0]"), strArg("r1"), boolArg(true) })).json,
     );
 }

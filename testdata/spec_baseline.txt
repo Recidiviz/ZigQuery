@@ -209,6 +209,16 @@ googlesql/functions/json/bool	bool basic behaviour
 googlesql/functions/json/double	double basic behaviour
 googlesql/functions/json/int64	int from json
 googlesql/functions/json/json_array	build a heterogeneous JSON array
+googlesql/functions/json/json_array_append	append to top-level array
+googlesql/functions/json/json_array_insert	upstream example 1
+googlesql/functions/json/json_array_insert	upstream example 2
+googlesql/functions/json/json_array_insert	upstream example 3
+googlesql/functions/json/json_array_insert	upstream example 4
+googlesql/functions/json/json_array_insert	upstream example 5
+googlesql/functions/json/json_array_insert	upstream example 6
+googlesql/functions/json/json_array_insert	upstream example 7
+googlesql/functions/json/json_array_insert	upstream example 8
+googlesql/functions/json/json_array_insert	upstream example 9
 googlesql/functions/json/json_extract	extract object subtree
 googlesql/functions/json/json_extract_array	extract integer array via path expression
 googlesql/functions/json/json_extract_scalar	extract string field
@@ -217,6 +227,9 @@ googlesql/functions/json/json_extract_string_array	json_extract_string_array bas
 googlesql/functions/json/json_object	build a single-key JSON object
 googlesql/functions/json/json_query	extract scalar value
 googlesql/functions/json/json_query_array	extract array of objects
+googlesql/functions/json/json_remove	json_remove basic behaviour
+googlesql/functions/json/json_set	json_set basic behaviour
+googlesql/functions/json/json_strip_nulls	json_strip_nulls basic behaviour
 googlesql/functions/json/json_type	object type
 googlesql/functions/json/json_type	array type
 googlesql/functions/json/json_type	number type

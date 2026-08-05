@@ -446,6 +446,11 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "lax_string", .min_args = 1, .handler = fjson.laxString },
     .{ .name = "json_array", .handler = fjson.jsonArray },
     .{ .name = "json_object", .handler = fjson.jsonObject },
+    .{ .name = "json_set", .min_args = 4, .handler = fjson.jsonSet },
+    .{ .name = "json_remove", .min_args = 2, .handler = fjson.jsonRemove },
+    .{ .name = "json_strip_nulls", .min_args = 4, .handler = fjson.jsonStripNulls },
+    .{ .name = "json_array_append", .min_args = 4, .handler = fjson.jsonArrayAppend },
+    .{ .name = "json_array_insert", .min_args = 4, .handler = fjson.jsonArrayInsert },
 
     // interval family (Go function_interval.go)
     .{ .name = "interval", .min_args = 2, .handler = fintv.interval },
