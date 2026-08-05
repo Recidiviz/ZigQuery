@@ -104,6 +104,24 @@ runs:
           fi
           export CC=clang CXX=clang++
         fi
+        if [ "${{ runner.os }}" = "macOS" ]; then
+          # BoringSSL (pulled in transitively by googlesql) ships its own
+          # openssl/*.h, and clang searches /usr/local/include by default on
+          # macOS. Homebrew's prefix is architecture-dependent — /usr/local on
+          # Intel, /opt/homebrew on Apple Silicon — so on an x64 runner the
+          # preinstalled OpenSSL 3 headers shadow BoringSSL's: crypto.h
+          # macro-defines OPENSSL_zalloc, BoringSSL declares it as a function,
+          # and the declaration stops parsing. arm64 never sees this.
+          #
+          # Moved rather than deleted, and only the headers: nothing in this
+          # build consumes system OpenSSL, and the runner is ephemeral.
+          if [ -d /usr/local/include/openssl ]; then
+            echo "shadowing system OpenSSL headers (Homebrew prefix clash)"
+            sudo rm -rf /usr/local/include/openssl.bazel-disabled
+            sudo mv /usr/local/include/openssl \
+                    /usr/local/include/openssl.bazel-disabled
+          fi
+        fi
         bazel version
         bazel build -c opt \
           --jobs="$jobs" --local_resources=cpu="$jobs" \
