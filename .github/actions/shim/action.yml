@@ -65,9 +65,15 @@ runs:
         git submodule update --init --depth 1 third_party/googlesql \
           || git submodule update --init third_party/googlesql
 
+    # bazelisk-version is required, not optional: left empty this action uses
+    # a *pre-installed* bazelisk, which GitHub's images ship but RunsOn's
+    # ubuntu24-full does not — that is a `bazel: command not found` at the
+    # build step below. Bazelisk then reads .bazelversion (7.6.1) for the
+    # actual Bazel it fetches.
     - if: steps.restore.outputs.cache-hit != 'true'
-      uses: bazel-contrib/setup-bazel@0.15.0
+      uses: bazel-contrib/setup-bazel@0.19.0
       with:
+        bazelisk-version: "1.25.0"
         bazelisk-cache: true
         repository-cache: true
         disk-cache: ${{ steps.vars.outputs.key }}
@@ -83,8 +89,14 @@ runs:
         if [ "${{ runner.os }}" = "Linux" ]; then
           # .bazelrc applies --config=clang unconditionally; Bazel's default
           # Linux toolchain would otherwise pick gcc and ignore those flags.
+          # Not assumed present: the runner image is not at parity with
+          # GitHub's, which is how the missing bazelisk above surfaced.
+          if ! command -v clang >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang
+          fi
           export CC=clang CXX=clang++
         fi
+        bazel version
         bazel build -c opt \
           --jobs="$jobs" --local_resources=cpu="$jobs" \
           "//shim:${{ steps.vars.outputs.lib }}"
