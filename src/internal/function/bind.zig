@@ -440,6 +440,12 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "int64", .min_args = 1, .handler = fjson.jsonInt64 },
     .{ .name = "float64", .min_args = 1, .handler = fjson.jsonFloat64 },
     .{ .name = "double", .min_args = 2, .handler = fjson.jsonDouble },
+    .{ .name = "lax_bool", .min_args = 1, .handler = fjson.laxBool },
+    .{ .name = "lax_int64", .min_args = 1, .handler = fjson.laxInt64 },
+    .{ .name = "lax_float64", .min_args = 1, .handler = fjson.laxFloat64 },
+    .{ .name = "lax_string", .min_args = 1, .handler = fjson.laxString },
+    .{ .name = "json_array", .handler = fjson.jsonArray },
+    .{ .name = "json_object", .handler = fjson.jsonObject },
 
     // interval family (Go function_interval.go)
     .{ .name = "interval", .min_args = 2, .handler = fintv.interval },

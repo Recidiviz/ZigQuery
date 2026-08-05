@@ -97,6 +97,8 @@ const normal_func_names = std.StaticStringMap(void).initComptime(.{
     .{"json_value_array"},             .{"parse_json"},               .{"to_json"},
     .{"to_json_string"},               .{"bool"},                     .{"int64"},
     .{"double"},                       .{"float64"},                  .{"json_type"},
+    .{"lax_bool"},                     .{"lax_int64"},                .{"lax_float64"},
+    .{"lax_string"},                   .{"json_array"},               .{"json_object"},
     .{"abs"},                          .{"sign"},                     .{"is_inf"},
     .{"is_nan"},                       .{"ieee_divide"},              .{"rand"},
     .{"sqrt"},                         .{"pow"},                      .{"power"},
