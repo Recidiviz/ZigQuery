@@ -52,7 +52,51 @@
 const std = @import("std");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
-const io_stats = zetasqlite.io_stats;
+
+/// Zig 0.16 dropped `std.posix.getenv` and this layer has no `std.Io` to reach
+/// an environment map through — the same reason phase.zig reads the clock from
+/// libc.
+fn env(name: [*:0]const u8) ?[]const u8 {
+    return std.mem.span(std.c.getenv(name) orelse return null);
+}
+
+/// `PRAGMA temp_store` for this process, from `ZQL_TEMP_STORE`
+/// (`default` | `file` | `memory`), or null to leave SQLite's default alone.
+///
+/// The pragma's MEMORY value is **2**, not 3. `SQLITE_TEMP_STORE=3` is the
+/// compile-time define that forces memory and disables the pragma; the pragma
+/// parser reads a leading digit only in the range 0..2 and maps anything else
+/// — including `3` — to 0, i.e. DEFAULT. So `PRAGMA temp_store = 3` is a
+/// silent no-op, which is exactly the failure mode this helper exists to
+/// avoid.
+fn tempStorePragma() ?[:0]const u8 {
+    const v = env("ZQL_TEMP_STORE") orelse return null;
+    if (std.ascii.eqlIgnoreCase(v, "memory") or std.mem.eql(u8, v, "2")) {
+        return "PRAGMA temp_store = MEMORY";
+    }
+    if (std.ascii.eqlIgnoreCase(v, "file") or std.mem.eql(u8, v, "1")) {
+        return "PRAGMA temp_store = FILE";
+    }
+    return null;
+}
+
+/// `PRAGMA cache_size` override, from `ZQL_CACHE_SIZE`, in SQLite's own units:
+/// negative is KiB of memory, positive is a page count. See the measurements
+/// on `pragmas` below for why this is the knob that mattered.
+fn cacheSizePragma() ?[:0]const u8 {
+    const v = env("ZQL_CACHE_SIZE") orelse return null;
+    const n = std.fmt.parseInt(i64, v, 10) catch return null;
+    return std.fmt.bufPrintSentinel(&cache_size_buf, "PRAGMA cache_size = {d}", .{n}, 0) catch null;
+}
+
+var cache_size_buf: [48]u8 = undefined;
+
+/// Whether either environment knob above is set, so startup can log the
+/// pragmas it actually applied. A comparison run's whole claim rests on the
+/// knob having been applied.
+pub fn hasEnvOverride() bool {
+    return tempStorePragma() != null or cacheSizePragma() != null;
+}
 
 pub const Kind = enum { memory, file };
 
@@ -66,20 +110,6 @@ pub const Storage = struct {
     /// arrives with the loader in M3.
     pub fn resolve(arena: std.mem.Allocator, database: ?[]const u8) !Storage {
         const db = database orelse ":memory:";
-        // ZQL_IO_STATS puts a counting VFS in front of whichever VFS the DSN
-        // would otherwise name. memdb serves only the main database from
-        // memory and hands every temp b-tree, sorter spill and statement
-        // journal to the OS VFS beneath it, so "the database is in memory" is
-        // not the same claim as "nothing reaches the disk" — see
-        // internal/io_stats.zig.
-        const vfs = if (io_stats.requested()) blk: {
-            const base: ?[:0]const u8 = if (db.len == 0 or std.mem.eql(u8, db, ":memory:"))
-                "memdb"
-            else
-                null;
-            io_stats.install(base) catch break :blk null;
-            break :blk io_stats.vfs_name;
-        } else null;
 
         if (db.len == 0 or std.mem.eql(u8, db, ":memory:")) {
             // A named memdb database is shared by every connection that opens
@@ -87,17 +117,11 @@ pub const Storage = struct {
             // concurrently running emulators from colliding.
             const dsn = try std.fmt.allocPrintSentinel(
                 arena,
-                "file:/bqemu-{d}?vfs={s}",
-                .{ std.c.getpid(), vfs orelse "memdb" },
+                "file:/bqemu-{d}?vfs=memdb",
+                .{std.c.getpid()},
                 0,
             );
             return .{ .kind = .memory, .dsn = dsn };
-        }
-        if (vfs) |name| {
-            return .{
-                .kind = .file,
-                .dsn = try std.fmt.allocPrintSentinel(arena, "file:{s}?vfs={s}", .{ db, name }, 0),
-            };
         }
         return .{
             .kind = .file,
@@ -116,8 +140,8 @@ pub const Storage = struct {
     /// cache_size is the one worth revisiting. A page-cache miss on an
     /// in-memory database still costs a full pager + VFS round trip into
     /// memdb, and the view graph builds a 350 MiB database behind a 16 MiB
-    /// cache. Measured over the Staging view-graph test with the counting VFS
-    /// of internal/io_stats.zig (7 runs, ZQL_CACHE_SIZE to vary it):
+    /// cache. Measured over the Staging view-graph test with a counting VFS
+    /// (since removed) over 7 runs, ZQL_CACHE_SIZE to vary it:
     ///
     ///     cache_size   handle    step   cache held | memdb reads
     ///     -16000        53.4 s  25.9 s     16 MiB  | 29.1 M / 110 GiB, 8.88 s
@@ -158,8 +182,8 @@ pub const Storage = struct {
         var n = base.len;
         @memcpy(overridden[0..n], base);
         for ([_]?[:0]const u8{
-            io_stats.tempStorePragma(),
-            io_stats.cacheSizePragma(),
+            tempStorePragma(),
+            cacheSizePragma(),
         }) |maybe| {
             if (maybe) |p| {
                 overridden[n] = p;

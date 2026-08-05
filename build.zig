@@ -341,24 +341,6 @@ pub fn build(b: *std.Build) void {
     const run_loadbench = b.addRunArtifact(loadbench_exe);
     b.step("load-bench", "Benchmark bulk CREATE TABLE cost").dependOn(&run_loadbench.step);
 
-    // What an "in-memory" database still writes to disk, and whether
-    // temp_store moves it.
-    const ioprobe_exe = b.addExecutable(.{
-        .name = "io-probe",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/io_probe.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
-        }),
-    });
-    if (maybe_bazel) |bz| ioprobe_exe.step.dependOn(&bz.step);
-    b.installArtifact(ioprobe_exe);
-    const run_ioprobe = b.addRunArtifact(ioprobe_exe);
-    if (b.args) |args| run_ioprobe.addArgs(args);
-    b.step("io-probe", "Measure SQLite temp-file traffic on an in-memory db")
-        .dependOn(&run_ioprobe.step);
-
     // ---- bigquery-emulator server ----
     //
     // A separate module from the engine so `test` and `corpus` — the engine's

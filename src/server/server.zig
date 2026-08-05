@@ -33,7 +33,6 @@ const tabledata_handler = @import("handler/tabledata.zig");
 const metadata = @import("internal/metadata/repository.zig");
 const contentdata = @import("internal/contentdata/repository.zig");
 const phase = zetasqlite.phase;
-const io_stats = zetasqlite.io_stats;
 const schema_mod = @import("internal/types/schema.zig");
 const stats_mod = @import("stats.zig");
 const source_mod = @import("source.zig");
@@ -114,13 +113,8 @@ pub const Server = struct {
         // A comparison run's whole claim rests on the knob having been
         // applied, and this is the only place that can say so.
         const applied = store.pragmas();
-        if (io_stats.tempStorePragma() != null or io_stats.cacheSizePragma() != null) {
+        if (storage_mod.hasEnvOverride()) {
             for (applied) |p| std.log.info("connection pragma: {s}", .{p});
-        }
-        if (io_stats.isInstalled()) {
-            std.log.info("io stats: '{s}' VFS installed, wrapping the {s} database", .{
-                io_stats.vfs_name, @tagName(store.kind),
-            });
         }
         s.repo = try metadata.Repository.init(s.db);
         try s.repo.addProjectIfNotExists(s.project);
@@ -444,50 +438,6 @@ pub const Server = struct {
             alloc.lookaside_used.current,
             alloc.lookaside_used.highwater,
         });
-        // What actually reached a filesystem. The main database is memdb, so
-        // `mainDb` bytes are memcpy; everything else is a file the OS backs,
-        // including on this in-memory server (see internal/io_stats.zig).
-        // Present only with ZQL_IO_STATS set, since the wrapper times every
-        // read and write it forwards.
-        if (io_stats.isInstalled()) {
-            try out.appendSlice(arena, ",\"sqliteIo\":{");
-            var first_kind = true;
-            for (std.enums.values(io_stats.Kind)) |k| {
-                const st = io_stats.kindStats(k);
-                if (!st.touched()) continue;
-                if (!first_kind) try out.append(arena, ',');
-                first_kind = false;
-                try out.print(arena, "\"{s}\":{{\"opens\":{d},\"writes\":{d}," ++
-                    "\"writeBytes\":{d},\"writeMs\":{d:.1},\"reads\":{d}," ++
-                    "\"readBytes\":{d},\"readMs\":{d:.1},\"syncs\":{d}," ++
-                    "\"syncMs\":{d:.1},\"maxOffsetBytes\":{d}}}", .{
-                    k.label(),   st.opens,   st.writes,     st.write_bytes,
-                    st.write_ms, st.reads,   st.read_bytes, st.read_ms,
-                    st.syncs,    st.sync_ms, st.max_offset,
-                });
-            }
-            const t = io_stats.tempTotals();
-            const p = io_stats.probeResult();
-            try out.print(arena, "{s}\"tempTotals\":{{\"opens\":{d},\"writes\":{d}," ++
-                "\"writeBytes\":{d},\"writeMs\":{d:.1},\"reads\":{d}," ++
-                "\"readBytes\":{d},\"readMs\":{d:.1},\"largestFileBytes\":{d}}}," ++
-                "\"fdProbe\":{{\"ran\":{},\"unlinkedRegularFiles\":{d}," ++
-                "\"largestBytes\":{d},\"device\":{d}}}}}", .{
-                if (first_kind) "" else ",",
-                t.opens,
-                t.writes,
-                t.write_bytes,
-                t.write_ms,
-                t.reads,
-                t.read_bytes,
-                t.read_ms,
-                t.max_offset,
-                p.ran,
-                p.unlinked_files,
-                p.largest_bytes,
-                p.device,
-            });
-        }
         try out.appendSlice(arena, ",\"routes\":[");
 
         var first = true;

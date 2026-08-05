@@ -6,7 +6,6 @@
 
 const std = @import("std");
 const phase = @import("internal/phase.zig");
-const io_stats = @import("internal/io_stats.zig");
 
 pub const c = @cImport({
     @cInclude("sqlite3.h");
@@ -51,24 +50,31 @@ pub const Error = error{SQLite};
 /// sqlite3_config answers SQLITE_MISUSE after that point.
 var configured: std.atomic.Value(bool) = .init(false);
 
+/// Reads `ZQL_MEM_STATS`. Zig 0.16 dropped `std.posix.getenv` and this layer
+/// has no `std.Io` to reach an environment map through — the same reason
+/// phase.zig reads the clock from libc.
+fn memStatsRequested() bool {
+    const v = std.mem.span(std.c.getenv("ZQL_MEM_STATS") orelse return false);
+    return v.len > 0 and !std.mem.eql(u8, v, "0");
+}
+
 /// Turns off SQLite's memory accounting unless `ZQL_MEM_STATS` asks for it.
 ///
 /// With MEMSTATUS on (the default) every sqlite3_malloc and sqlite3_free calls
 /// malloc_size() and takes the STATIC_MEM mutex to maintain byte counters that
 /// only /debug/stats reads. Sampling a bulk insert put that at 11% of the time
 /// inside sqlite3_step's caller — more than the VDBE spent executing. The
-/// three counters it feeds are opt-in rather than always paid for; see
-/// io_stats.memStatsRequested.
+/// three counters it feeds are opt-in rather than always paid for.
 fn configureOnce() void {
     if (configured.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return;
-    if (io_stats.memStatsRequested()) return;
+    if (memStatsRequested()) return;
     _ = c.sqlite3_config(c.SQLITE_CONFIG_MEMSTATUS, @as(c_int, 0));
 }
 
 /// Whether this process kept SQLite's memory accounting, so callers can say
 /// so rather than reporting a zero that looks like a measurement.
 pub fn memStatsEnabled() bool {
-    return io_stats.memStatsRequested();
+    return memStatsRequested();
 }
 
 pub const Db = struct {
