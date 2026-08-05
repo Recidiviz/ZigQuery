@@ -1,0 +1,36 @@
+name: zig
+description: >
+  Install Zig and make its global cache usable for .zip dependencies.
+
+inputs:
+  version:
+    description: Zig version to install
+    required: false
+    default: "0.16.0"
+
+runs:
+  using: composite
+  steps:
+    - uses: mlugg/setup-zig@v2
+      with:
+        version: ${{ inputs.version }}
+
+    # Zig 0.16 stages a .zip dependency through <global-cache>/tmp but does
+    # not create that directory, so on a cache that has never held one the
+    # fetch dies with "failed to create temporary zip file: FileNotFound".
+    # Only the sqlite amalgamation is affected — the .tar.gz deps stream
+    # straight out and never touch tmp/, which is why this shows up as one
+    # dependency failing rather than the whole fetch.
+    #
+    # The path comes from `zig env` rather than $ZIG_GLOBAL_CACHE_DIR, which
+    # setup-zig does not necessarily export.
+    - shell: bash
+      run: |
+        set -euo pipefail
+        cache=$(zig env | sed -n 's/^[[:space:]]*\.global_cache_dir = "\(.*\)",$/\1/p')
+        if [ -z "$cache" ]; then
+          echo "::error::could not determine zig global cache dir from 'zig env'"
+          exit 1
+        fi
+        mkdir -p "$cache/tmp"
+        echo "zig global cache: $cache"

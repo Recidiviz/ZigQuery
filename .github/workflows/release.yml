@@ -108,7 +108,7 @@ jobs:
         uses: ./.github/actions/shim
         with:
           platform: ${{ matrix.platform }}
-      - uses: mlugg/setup-zig@v2
+      - uses: ./.github/actions/zig
         with:
           version: ${{ env.ZIG_VERSION }}
 

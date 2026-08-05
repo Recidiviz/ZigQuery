@@ -36,7 +36,7 @@ jobs:
         uses: ./.github/actions/shim
         with:
           platform: linux-x64
-      - uses: mlugg/setup-zig@v2
+      - uses: ./.github/actions/zig
         with:
           version: "0.16.0"
 
