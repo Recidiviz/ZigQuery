@@ -71,7 +71,6 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     googlesql::FEATURE_HAVING_IN_AGGREGATE,
     googlesql::FEATURE_NULL_HANDLING_MODIFIER_IN_AGGREGATE,
     googlesql::FEATURE_NULL_HANDLING_MODIFIER_IN_ANALYTIC,
-    googlesql::FEATURE_ORDER_BY_COLLATE,
     googlesql::FEATURE_SELECT_STAR_EXCEPT_REPLACE,
     googlesql::FEATURE_SAFE_FUNCTION_CALL,
     googlesql::FEATURE_JSON_TYPE,
@@ -240,12 +239,24 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
 //   FEATURE_INLINE_LAMBDA_ARGUMENT  "Function not found: ARRAY_TRANSFORM"
 //                                   "Function not found: ARRAY_FILTER"
 //   FEATURE_PIPE_IF                 "Pipe IF not supported"
+//   FEATURE_ORDER_BY_COLLATE        "COLLATE is not supported"
 //
-// All three work here when enabled — ARRAY_ZIP resolves through the rewriter
-// with correct PAD/TRUNCATE/STRICT modes and field naming, and lambdas inline
-// — so this is a scope decision, not a gap. The spec corpus keeps the cases and
-// asserts the refusal (`.expect_error`), so the day BigQuery grows any of them
-// the fixture says so rather than going quiet.
+// The first three work here when enabled — ARRAY_ZIP resolves through the
+// rewriter with correct PAD/TRUNCATE/STRICT modes and field naming, and lambdas
+// inline — so those are scope decisions, not gaps. The spec corpus keeps the
+// cases and asserts the refusal (`.expect_error`), so the day BigQuery grows any
+// of them the fixture says so rather than going quiet.
+//
+// FEATURE_ORDER_BY_COLLATE is a different animal, and the reason it was removed
+// rather than never added: it was inherited from go-zetasqlite's feature list
+// and it did not merely widen what we accept, it made us answer wrongly.
+// `ORDER BY x COLLATE 'und:ci'` parsed, and then the collation was dropped on
+// the floor and the rows came back in raw memcomparable byte order —
+// ['a','Z','b'] sorted to Z,a,b where BigQuery refuses the syntax outright. No
+// spec case and no corpus case used it, which is precisely why nothing caught
+// it. COLLATE() the *function* is unaffected: BigQuery has it, this engine does
+// not answer it, and it stays in the ledger as a gap (see
+// docs/SPEC_UNSUPPORTED.md).
 //
 // FEATURE_PIPES and FEATURE_TYPEOF_FUNCTION above were checked the same way and
 // *are* in BigQuery, which is why they stayed.
