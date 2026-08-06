@@ -69,8 +69,7 @@ ignores those flags.
 ```sh
 zig build test      # unit tests (engine)
 zig build test-server  # unit tests (emulator)
-zig build corpus    # replay testdata/corpus.json (the go-zetasqlite query_test.go suite)
-zig build spec      # replay testdata/specs/**.zon (the goccy/googlesqlite specs)
+zig build spec      # replay testdata/specs/**.zon (the conformance corpus)
 zig build coverage  # line coverage -> zig-out/coverage/report/index.html
 zig build ephor     # static analysis
 
@@ -89,32 +88,44 @@ binaries as well and only resolves the shim through its absolute build path.
 `coverage` runs the engine and server unit tests under kcov and merges the two
 runs. It builds at `-ODebug` whatever `-Doptimize` says, because optimized line
 coverage measures inlining rather than tests. It covers `zig build test` and
-`test-server` only — anything reached solely through `corpus` reads as 0%.
+`test-server` only — anything reached solely through `spec` reads as 0%.
 
-The corpus (748 cases) is exported from the Go repo's `query_test.go` by
-`corpus_export_test.go` there:
+### The spec corpus
 
-```sh
-CORPUS_OUT=$PWD/testdata/corpus.json \
-  (cd ~/go/github.com/Recidiviz/go-zetasqlite && go test -run TestExportCorpus .)
-```
+`testdata/specs` holds three trees, each with its own `NOTICE`:
 
-`testdata/baseline.txt` lists the case names that must pass; `zig build corpus`
-exits nonzero on any regression. `testdata/spec_baseline.txt` does the same for
-`zig build spec`.
+| Tree | Cases | Where its expectations come from |
+|---|---:|---|
+| `googlesql/`, `bigquery/` | 1012 | goccy/googlesqlite, whose values were scraped from the result tables printed in the GoogleSQL reference docs. Imported by `tools/spec_import.py`; do not hand-edit. |
+| `zigquery/` | 748 | This engine's own regression suite, inherited from go-zetasqlite's `query_test.go`. Hand-maintained. |
 
-Both runners take `--strict`, which CI passes. Without it they gate only on
-regression against the baseline, so a case that has never passed can start
-returning wrong answers and still exit 0; `--strict` additionally fails on any
-`FAIL` (and, for the corpus, `ERRMSG-MISMATCH`). `UNSUPPORTED` and `SKIP` stay
-non-fatal — they are the known-missing surface, catalogued in
+Every `.zon` file under `testdata/specs` is a spec — the runner walks the tree,
+so a new file needs no registration. `zigquery/` files declare `.typed = true`,
+which asserts each expected value's *type* and not only its value; the imported
+trees cannot, because a doc table does not say whether `42` was an INT64 or the
+string `"42"`. See `src/internal/spec_expect.zig`.
+
+`testdata/spec_baseline.txt` lists the `spec<TAB>desc` of every case that must
+keep passing, and `zig build spec` exits nonzero on any regression. Regenerate
+it with `zig build spec -- --update-baseline`.
+
+`--strict`, which CI passes, is what makes this a real gate: without it the
+runner gates only on regression against the baseline, so a case that has never
+passed can start returning wrong answers and still exit 0. `UNSUPPORTED` and
+`SKIP` stay non-fatal — they are the known-missing surface, catalogued in
 [docs/SPEC_UNSUPPORTED.md](docs/SPEC_UNSUPPORTED.md), not wrong answers.
+
+`DUMP_SQL=<path> zig build spec` writes every statement the engine hands to
+SQLite, grouped by case, to that path. `testdata/sql_snapshot.txt` is the
+committed one: diffing it is how a change to the SQL builder is reviewed as a
+diff rather than as a delta in one aggregate byte count. `tools/sql_stats.py`
+summarises one snapshot or the difference between two.
 
 ## CI & releases
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | PR, push | ephor + `zig fmt`, unit tests, corpus and spec under `--strict`, the concurrency harnesses, and a `gen-proto` drift check |
+| `ci.yml` | PR, push | ephor + `zig fmt`, unit tests, the spec corpus under `--strict`, the concurrency harnesses, and a `gen-proto` drift check |
 | `bench.yml` | push, `bench` label, manual | `gsql-bench --json` charted by github-action-benchmark on the `benchmarks` branch |
 | `release.yml` | `v*.*.*` tag | four platform tarballs, a multi-arch GHCR image, and a GitHub release |
 

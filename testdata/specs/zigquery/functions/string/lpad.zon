@@ -1,0 +1,46 @@
+.{
+    .spec = "zigquery/functions/string/lpad",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "lpad string without pattern",
+            .sql = "SELECT LPAD(t, len) FROM UNNEST([STRUCT('abc' AS t, 5 AS len),('abc', 2),('例子', 4),(NULL, 2),('abc', NULL)])",
+            .rows = .{
+                .{"  abc"},
+                .{"ab"},
+                .{"  例子"},
+                .{null},
+                .{null},
+            },
+        },
+        .{
+            .desc = "lpad string with pattern",
+            .sql = "SELECT LPAD(t, len, pattern) FROM UNNEST([STRUCT('abc' AS t, 8 AS len, 'def' AS pattern),('abc', 5, '-'),('例子', 5, '中文'),('abc', 5, NULL)])",
+            .rows = .{
+                .{"defdeabc"},
+                .{"--abc"},
+                .{"中文中例子"},
+                .{null},
+            },
+        },
+        .{
+            .desc = "lpad bytes without pattern",
+            .sql = "SELECT LPAD(t, len) FROM UNNEST([STRUCT(b'abc' AS t, 5 AS len),(b'abc', 2),(b'\\xab\\xcd\\xef', 4)])",
+            .rows = .{
+                .{"ICBhYmM="},
+                .{"YWI="},
+                .{"IKvN7w=="},
+            },
+        },
+        .{
+            .desc = "lpad bytes with pattern",
+            .sql = "SELECT LPAD(t, len, pattern) FROM UNNEST([STRUCT(b'abc' AS t, 8 AS len, b'def' AS pattern),(b'abc', 5, b'-'),(b'\\xab\\xcd\\xef', 5, b'\\x00')])",
+            .rows = .{
+                .{"ZGVmZGVhYmM="},
+                .{"LS1hYmM="},
+                .{"AACrze8="},
+            },
+        },
+    },
+}

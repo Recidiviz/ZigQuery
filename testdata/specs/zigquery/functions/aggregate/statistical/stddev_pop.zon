@@ -1,0 +1,16 @@
+.{
+    .spec = "zigquery/functions/aggregate/statistical/stddev_pop",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "stddev_pop window",
+            .sql = "SELECT STDDEV_POP(x) OVER () FROM UNNEST([10, 14, 18]) x",
+            .rows = .{
+                .{3.265986323710904},
+                .{3.265986323710904},
+                .{3.265986323710904},
+            },
+        },
+    },
+}

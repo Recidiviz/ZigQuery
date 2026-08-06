@@ -1,0 +1,16 @@
+.{
+    .spec = "zigquery/functions/aggregate/statistical/stddev_samp",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "stddev_samp window",
+            .sql = "SELECT STDDEV_SAMP(x) OVER () FROM UNNEST([10, 14, 18]) x",
+            .rows = .{
+                .{4.0},
+                .{4.0},
+                .{4.0},
+            },
+        },
+    },
+}

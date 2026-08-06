@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/timestamp/timestamp_seconds",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "timestamp_seconds",
+            .sql = "SELECT TIMESTAMP_SECONDS(1230219000)",
+            .rows = .{
+                .{"1230219000.0"},
+            },
+        },
+    },
+}

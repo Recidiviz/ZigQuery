@@ -1,0 +1,18 @@
+.{
+    .spec = "zigquery/syntax/dml/truncate_table",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "simple truncate",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE test_dataset.target(id INT64, name STRING);
+            \\INSERT INTO test_dataset.target(id, name) VALUES (1, "test");
+            \\TRUNCATE TABLE test_dataset.target;
+            \\SELECT * FROM test_dataset.target;
+            ,
+            .rows = .{},
+        },
+    },
+}

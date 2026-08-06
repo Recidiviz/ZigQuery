@@ -1,0 +1,28 @@
+.{
+    .spec = "zigquery/functions/timestamp/timestamp_diff",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "timestamp diff with week day",
+            .sql =
+            \\SELECT
+            \\  TIMESTAMP_DIFF(DATETIME '2024-03-19', DATETIME '2024-03-24', WEEK(SUNDAY)),
+            \\  TIMESTAMP_DIFF(DATETIME '2024-03-19', DATETIME '2024-03-24', WEEK(MONDAY)),
+            \\  TIMESTAMP_DIFF(DATETIME '2024-03-25', DATETIME '2024-03-19', WEEK(SUNDAY)),
+            \\  TIMESTAMP_DIFF(DATETIME '2024-03-19', DATETIME '2024-03-25', WEEK(MONDAY)),
+            \\  TIMESTAMP_DIFF(DATETIME '2024-03-19', DATETIME '2017-10-25', WEEK(MONDAY))
+            ,
+            .rows = .{
+                .{ -1, 0, 1, -1, 334 },
+            },
+        },
+        .{
+            .desc = "timestamp_diff",
+            .sql = "SELECT TIMESTAMP_DIFF(TIMESTAMP \"2010-07-07 10:20:00+00\", TIMESTAMP \"2008-12-25 15:30:00+00\", HOUR)",
+            .rows = .{
+                .{13410},
+            },
+        },
+    },
+}

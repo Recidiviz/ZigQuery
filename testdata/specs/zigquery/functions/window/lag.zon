@@ -1,0 +1,132 @@
+.{
+    .spec = "zigquery/functions/window/lag",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "window lag",
+            .sql =
+            \\
+            \\WITH finishers AS
+            \\ (SELECT 'Sophia Liu' as name,
+            \\  TIMESTAMP '2016-10-18 2:51:45+00' as finish_time,
+            \\  'F30-34' as division
+            \\  UNION ALL SELECT 'Lisa Stelzner', TIMESTAMP '2016-10-18 2:54:11+00', 'F35-39'
+            \\  UNION ALL SELECT 'Nikki Leith', TIMESTAMP '2016-10-18 2:59:01+00', 'F30-34'
+            \\  UNION ALL SELECT 'Lauren Matthews', TIMESTAMP '2016-10-18 3:01:17+00', 'F35-39'
+            \\  UNION ALL SELECT 'Desiree Berry', TIMESTAMP '2016-10-18 3:05:42+00', 'F35-39'
+            \\  UNION ALL SELECT 'Suzy Slane', TIMESTAMP '2016-10-18 3:06:24+00', 'F35-39'
+            \\  UNION ALL SELECT 'Jen Edwards', TIMESTAMP '2016-10-18 3:06:36+00', 'F30-34'
+            \\  UNION ALL SELECT 'Meghan Lederer', TIMESTAMP '2016-10-18 3:07:41+00', 'F30-34'
+            \\  UNION ALL SELECT 'Carly Forte', TIMESTAMP '2016-10-18 3:08:58+00', 'F25-29'
+            \\  UNION ALL SELECT 'Lauren Reasoner', TIMESTAMP '2016-10-18 3:10:14+00', 'F30-34')
+            \\SELECT name,
+            \\  finish_time,
+            \\  division,
+            \\  LAG(name)
+            \\    OVER (PARTITION BY division ORDER BY finish_time ASC) AS preceding_runner
+            \\FROM finishers
+            ,
+            .rows = .{
+                .{ "Carly Forte", "1476760138.0", "F25-29", null },
+                .{ "Sophia Liu", "1476759105.0", "F30-34", null },
+                .{ "Nikki Leith", "1476759541.0", "F30-34", "Sophia Liu" },
+                .{ "Jen Edwards", "1476759996.0", "F30-34", "Nikki Leith" },
+                .{ "Meghan Lederer", "1476760061.0", "F30-34", "Jen Edwards" },
+                .{ "Lauren Reasoner", "1476760214.0", "F30-34", "Meghan Lederer" },
+                .{ "Lisa Stelzner", "1476759251.0", "F35-39", null },
+                .{ "Lauren Matthews", "1476759677.0", "F35-39", "Lisa Stelzner" },
+                .{ "Desiree Berry", "1476759942.0", "F35-39", "Lauren Matthews" },
+                .{ "Suzy Slane", "1476759984.0", "F35-39", "Desiree Berry" },
+            },
+        },
+        .{
+            .desc = "lag with option",
+            .sql =
+            \\
+            \\WITH segments AS (
+            \\  SELECT "2020-08-01" AS created_at, 10 AS rank UNION ALL
+            \\  SELECT "2020-08-01" AS created_at, 20 AS rank
+            \\) SELECT LAG(rank + 1, 1, 0) OVER(PARTITION BY created_at ORDER BY rank) FROM segments
+            ,
+            .rows = .{
+                .{0},
+                .{11},
+            },
+        },
+        .{
+            .desc = "window lag with offset",
+            .sql =
+            \\
+            \\WITH finishers AS
+            \\ (SELECT 'Sophia Liu' as name,
+            \\  TIMESTAMP '2016-10-18 2:51:45+00' as finish_time,
+            \\  'F30-34' as division
+            \\  UNION ALL SELECT 'Lisa Stelzner', TIMESTAMP '2016-10-18 2:54:11+00', 'F35-39'
+            \\  UNION ALL SELECT 'Nikki Leith', TIMESTAMP '2016-10-18 2:59:01+00', 'F30-34'
+            \\  UNION ALL SELECT 'Lauren Matthews', TIMESTAMP '2016-10-18 3:01:17+00', 'F35-39'
+            \\  UNION ALL SELECT 'Desiree Berry', TIMESTAMP '2016-10-18 3:05:42+00', 'F35-39'
+            \\  UNION ALL SELECT 'Suzy Slane', TIMESTAMP '2016-10-18 3:06:24+00', 'F35-39'
+            \\  UNION ALL SELECT 'Jen Edwards', TIMESTAMP '2016-10-18 3:06:36+00', 'F30-34'
+            \\  UNION ALL SELECT 'Meghan Lederer', TIMESTAMP '2016-10-18 3:07:41+00', 'F30-34'
+            \\  UNION ALL SELECT 'Carly Forte', TIMESTAMP '2016-10-18 3:08:58+00', 'F25-29'
+            \\  UNION ALL SELECT 'Lauren Reasoner', TIMESTAMP '2016-10-18 3:10:14+00', 'F30-34')
+            \\SELECT name,
+            \\  finish_time,
+            \\  division,
+            \\  LAG(name, 2)
+            \\    OVER (PARTITION BY division ORDER BY finish_time ASC) AS two_runners_ahead
+            \\FROM finishers
+            ,
+            .rows = .{
+                .{ "Carly Forte", "1476760138.0", "F25-29", null },
+                .{ "Sophia Liu", "1476759105.0", "F30-34", null },
+                .{ "Nikki Leith", "1476759541.0", "F30-34", null },
+                .{ "Jen Edwards", "1476759996.0", "F30-34", "Sophia Liu" },
+                .{ "Meghan Lederer", "1476760061.0", "F30-34", "Nikki Leith" },
+                .{ "Lauren Reasoner", "1476760214.0", "F30-34", "Jen Edwards" },
+                .{ "Lisa Stelzner", "1476759251.0", "F35-39", null },
+                .{ "Lauren Matthews", "1476759677.0", "F35-39", null },
+                .{ "Desiree Berry", "1476759942.0", "F35-39", "Lisa Stelzner" },
+                .{ "Suzy Slane", "1476759984.0", "F35-39", "Lauren Matthews" },
+            },
+        },
+        .{
+            .desc = "window lag with offset and default value",
+            .sql =
+            \\
+            \\WITH finishers AS
+            \\ (SELECT 'Sophia Liu' as name,
+            \\  TIMESTAMP '2016-10-18 2:51:45+00' as finish_time,
+            \\  'F30-34' as division
+            \\  UNION ALL SELECT 'Lisa Stelzner', TIMESTAMP '2016-10-18 2:54:11+00', 'F35-39'
+            \\  UNION ALL SELECT 'Nikki Leith', TIMESTAMP '2016-10-18 2:59:01+00', 'F30-34'
+            \\  UNION ALL SELECT 'Lauren Matthews', TIMESTAMP '2016-10-18 3:01:17+00', 'F35-39'
+            \\  UNION ALL SELECT 'Desiree Berry', TIMESTAMP '2016-10-18 3:05:42+00', 'F35-39'
+            \\  UNION ALL SELECT 'Suzy Slane', TIMESTAMP '2016-10-18 3:06:24+00', 'F35-39'
+            \\  UNION ALL SELECT 'Jen Edwards', TIMESTAMP '2016-10-18 3:06:36+00', 'F30-34'
+            \\  UNION ALL SELECT 'Meghan Lederer', TIMESTAMP '2016-10-18 3:07:41+00', 'F30-34'
+            \\  UNION ALL SELECT 'Carly Forte', TIMESTAMP '2016-10-18 3:08:58+00', 'F25-29'
+            \\  UNION ALL SELECT 'Lauren Reasoner', TIMESTAMP '2016-10-18 3:10:14+00', 'F30-34')
+            \\SELECT name,
+            \\  finish_time,
+            \\  division,
+            \\  LAG(name, 2, 'NoBody')
+            \\    OVER (PARTITION BY division ORDER BY finish_time ASC) AS two_runners_ahead
+            \\FROM finishers
+            ,
+            .rows = .{
+                .{ "Carly Forte", "1476760138.0", "F25-29", "NoBody" },
+                .{ "Sophia Liu", "1476759105.0", "F30-34", "NoBody" },
+                .{ "Nikki Leith", "1476759541.0", "F30-34", "NoBody" },
+                .{ "Jen Edwards", "1476759996.0", "F30-34", "Sophia Liu" },
+                .{ "Meghan Lederer", "1476760061.0", "F30-34", "Nikki Leith" },
+                .{ "Lauren Reasoner", "1476760214.0", "F30-34", "Jen Edwards" },
+                .{ "Lisa Stelzner", "1476759251.0", "F35-39", "NoBody" },
+                .{ "Lauren Matthews", "1476759677.0", "F35-39", "NoBody" },
+                .{ "Desiree Berry", "1476759942.0", "F35-39", "Lisa Stelzner" },
+                .{ "Suzy Slane", "1476759984.0", "F35-39", "Lauren Matthews" },
+            },
+        },
+    },
+}

@@ -1,0 +1,93 @@
+.{
+    .spec = "zigquery/functions/window/last_value",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "window last_value",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, LAST_VALUE(item)
+            \\  OVER (
+            \\    PARTITION BY category
+            \\    ORDER BY purchases
+            \\    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            \\  ) AS most_popular
+            \\FROM Produce
+            ,
+            .rows = .{
+                .{ "banana", 2, "fruit", "apple" },
+                .{ "apple", 8, "fruit", "apple" },
+                .{ "leek", 2, "vegetable", "kale" },
+                .{ "cabbage", 9, "vegetable", "kale" },
+                .{ "lettuce", 10, "vegetable", "kale" },
+                .{ "kale", 23, "vegetable", "kale" },
+            },
+        },
+        .{
+            .desc = "window last_value with offset",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, LAST_VALUE(item)
+            \\  OVER (
+            \\    PARTITION BY category
+            \\    ORDER BY purchases
+            \\    ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+            \\  ) AS most_popular
+            \\FROM Produce
+            ,
+            .rows = .{
+                .{ "banana", 2, "fruit", "apple" },
+                .{ "apple", 8, "fruit", "apple" },
+                .{ "leek", 2, "vegetable", "cabbage" },
+                .{ "cabbage", 9, "vegetable", "lettuce" },
+                .{ "lettuce", 10, "vegetable", "kale" },
+                .{ "kale", 23, "vegetable", "kale" },
+            },
+        },
+        .{
+            .desc = "window last_value with named window",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, LAST_VALUE(item)
+            \\  OVER (
+            \\    item_window
+            \\    ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+            \\  ) AS most_popular
+            \\FROM Produce
+            \\WINDOW item_window AS (
+            \\  PARTITION BY category
+            \\  ORDER BY purchases)
+            ,
+            .rows = .{
+                .{ "banana", 2, "fruit", "apple" },
+                .{ "apple", 8, "fruit", "apple" },
+                .{ "leek", 2, "vegetable", "cabbage" },
+                .{ "cabbage", 9, "vegetable", "lettuce" },
+                .{ "lettuce", 10, "vegetable", "kale" },
+                .{ "kale", 23, "vegetable", "kale" },
+            },
+        },
+    },
+}

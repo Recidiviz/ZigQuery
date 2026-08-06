@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/aggregate/bit_and",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "bit_and",
+            .sql = "SELECT BIT_AND(x) as bit_and FROM UNNEST([0xF001, 0x00A1]) as x",
+            .rows = .{
+                .{1},
+            },
+        },
+    },
+}

@@ -1,0 +1,21 @@
+.{
+    .spec = "zigquery/functions/string/regexp_extract_all",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "regexp_extract_all",
+            .sql = "WITH code_markdown AS (SELECT 'Try `function(x)` or `function(y)`' as code) SELECT REGEXP_EXTRACT_ALL(code, '`(.+?)`') FROM code_markdown",
+            .rows = .{
+                .{.{ "function(x)", "function(y)" }},
+            },
+        },
+        .{
+            .desc = "regexp_extract_all null",
+            .sql = "SELECT REGEXP_EXTRACT_ALL(NULL, '`(.+?)`'), REGEXP_EXTRACT_ALL('abc123', NULL)",
+            .rows = .{
+                .{ null, null },
+            },
+        },
+    },
+}

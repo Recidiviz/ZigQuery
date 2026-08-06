@@ -1,0 +1,82 @@
+.{
+    .spec = "zigquery/functions/array/generate_date_array",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "generate_date_array function",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-10-05', '2016-10-08') AS example",
+            .rows = .{
+                .{.{ "2016-10-05", "2016-10-06", "2016-10-07", "2016-10-08" }},
+            },
+        },
+        .{
+            .desc = "generate_date_array nil",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-10-05', NULL, INTERVAL 2 DAY) AS example",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "generate_date_array function with step",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-10-05', '2016-10-09', INTERVAL 2 DAY) AS example",
+            .rows = .{
+                .{.{ "2016-10-05", "2016-10-07", "2016-10-09" }},
+            },
+        },
+        .{
+            .desc = "generate_date_array function with negative step",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-10-05', '2016-10-01', INTERVAL -3 DAY) AS example",
+            .rows = .{
+                .{.{ "2016-10-05", "2016-10-02" }},
+            },
+        },
+        .{
+            .desc = "generate_date_array function with same value",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-10-05', '2016-10-05', INTERVAL 8 DAY) AS example",
+            .rows = .{
+                .{.{"2016-10-05"}},
+            },
+        },
+        .{
+            .desc = "generate_date_array function with over step",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-10-05', '2016-10-01', INTERVAL 1 DAY) AS example",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "generate_date_array function with null",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-10-05', NULL) AS example",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "generate_date_array function with month",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-01-01', '2016-12-31', INTERVAL 2 MONTH) AS example",
+            .rows = .{
+                .{.{ "2016-01-01", "2016-03-01", "2016-05-01", "2016-07-01", "2016-09-01", "2016-11-01" }},
+            },
+        },
+        .{
+            .desc = "generate_date_array function with variable",
+            .sql =
+            \\
+            \\SELECT GENERATE_DATE_ARRAY(date_start, date_end, INTERVAL 1 WEEK) AS date_range
+            \\FROM (
+            \\  SELECT DATE '2016-01-01' AS date_start, DATE '2016-01-31' AS date_end
+            \\  UNION ALL SELECT DATE "2016-04-01", DATE "2016-04-30"
+            \\  UNION ALL SELECT DATE "2016-07-01", DATE "2016-07-31"
+            \\  UNION ALL SELECT DATE "2016-10-01", DATE "2016-10-31"
+            \\) AS items
+            ,
+            .rows = .{
+                .{.{ "2016-01-01", "2016-01-08", "2016-01-15", "2016-01-22", "2016-01-29" }},
+                .{.{ "2016-04-01", "2016-04-08", "2016-04-15", "2016-04-22", "2016-04-29" }},
+                .{.{ "2016-07-01", "2016-07-08", "2016-07-15", "2016-07-22", "2016-07-29" }},
+                .{.{ "2016-10-01", "2016-10-08", "2016-10-15", "2016-10-22", "2016-10-29" }},
+            },
+        },
+    },
+}

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/syntax/query/subquery_array",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "subquery expr with array type",
+            .sql = "SELECT ARRAY(SELECT * FROM UNNEST([1, 2, 3]))",
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+    },
+}

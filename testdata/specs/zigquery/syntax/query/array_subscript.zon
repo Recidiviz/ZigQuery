@@ -1,0 +1,45 @@
+.{
+    .spec = "zigquery/syntax/query/array_subscript",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "array index access operator",
+            .sql =
+            \\
+            \\WITH Items AS (SELECT ["coffee", "tea", "milk"] AS item_array)
+            \\SELECT
+            \\  item_array,
+            \\  item_array[OFFSET(1)] AS item_offset,
+            \\  item_array[ORDINAL(1)] AS item_ordinal,
+            \\  item_array[SAFE_OFFSET(6)] AS item_safe_offset,
+            \\FROM Items
+            ,
+            .rows = .{
+                .{ .{ "coffee", "tea", "milk" }, "tea", "coffee", null },
+            },
+        },
+        .{
+            .desc = "array boundary indexing test",
+            .sql =
+            \\WITH toks AS (SELECT ['one', 'two'] AS digits)
+            \\                    SELECT digits[SAFE_ORDINAL(2)], digits[ORDINAL(2)], digits[OFFSET(1)], digits[SAFE_OFFSET(1)] FROM toks
+            ,
+            .rows = .{
+                .{ "two", "two", "two", "two" },
+            },
+        },
+        .{
+            .desc = "out of range error",
+            .sql =
+            \\
+            \\WITH Items AS (SELECT ["coffee", "tea", "milk"] AS item_array)
+            \\SELECT
+            \\  item_array[OFFSET(6)] AS item_offset
+            \\FROM Items
+            ,
+            .expect_error = "OFFSET(6) is out of range",
+            .rows = .{},
+        },
+    },
+}

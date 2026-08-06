@@ -1,0 +1,34 @@
+.{
+    .spec = "zigquery/functions/string/normalize_and_casefold",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "normalize_and_casefold",
+            .sql = "SELECT a, b, NORMALIZE(a) = NORMALIZE(b), NORMALIZE_AND_CASEFOLD(a) = NORMALIZE_AND_CASEFOLD(b) FROM (SELECT 'The red barn' AS a, 'The Red Barn' AS b)",
+            .rows = .{
+                .{ "The red barn", "The Red Barn", false, true },
+            },
+        },
+        .{
+            .desc = "normalize_and_casefold with params",
+            .sql =
+            \\
+            \\WITH Strings AS (
+            \\  SELECT '\u2168' AS a, 'IX' AS b UNION ALL
+            \\  SELECT '\u0041\u030A', '\u00C5'
+            \\)
+            \\SELECT a, b,
+            \\  NORMALIZE_AND_CASEFOLD(a, NFD)=NORMALIZE_AND_CASEFOLD(b, NFD) AS nfd,
+            \\  NORMALIZE_AND_CASEFOLD(a, NFC)=NORMALIZE_AND_CASEFOLD(b, NFC) AS nfc,
+            \\  NORMALIZE_AND_CASEFOLD(a, NFKD)=NORMALIZE_AND_CASEFOLD(b, NFKD) AS nkfd,
+            \\  NORMALIZE_AND_CASEFOLD(a, NFKC)=NORMALIZE_AND_CASEFOLD(b, NFKC) AS nkfc
+            \\FROM Strings
+            ,
+            .rows = .{
+                .{ "Ⅸ", "IX", false, false, true, true },
+                .{ "Å", "Å", true, true, true, true },
+            },
+        },
+    },
+}

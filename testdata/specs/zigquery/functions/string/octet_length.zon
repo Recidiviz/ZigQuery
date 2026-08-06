@@ -1,0 +1,25 @@
+.{
+    .spec = "zigquery/functions/string/octet_length",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "octet_length",
+            .sql =
+            \\
+            \\WITH example AS (SELECT 'абвгд' AS characters, b'абвгд' AS bytes)
+            \\SELECT characters, OCTET_LENGTH(characters), bytes, OCTET_LENGTH(bytes) FROM example
+            ,
+            .rows = .{
+                .{ "абвгд", 10, "0LDQsdCy0LPQtA==", 10 },
+            },
+        },
+        .{
+            .desc = "octet_length null",
+            .sql = "SELECT OCTET_LENGTH(NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

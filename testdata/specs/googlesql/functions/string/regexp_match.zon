@@ -4,27 +4,27 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/string_functions.md#regexp_match-deprecated",
     .cases = .{
-    // REGEXP_MATCH is BigQuery **legacy SQL**, which is why it looks familiar:
-    // `bq query --use_legacy_sql=true "SELECT REGEXP_MATCH('hello
-    // world','hello')"` answers true, while GoogleSQL has no such name and
-    // answers `Function not found: REGEXP_MATCH` (bq CLI, 2026-08-04). The
-    // spec's own upstream anchor already says #regexp_match-deprecated;
-    // REGEXP_CONTAINS is the GoogleSQL spelling and this engine has it.
-    //
-    // Upstream marks it set_allow_external_usage(false)
-    // (builtin_function_internal_3.cc:546), meaning it exists only in
-    // PRODUCT_INTERNAL. That it resolves here at all is the third instance of
-    // the alias leak docs/SPEC_UNSUPPORTED.md records as divergence 2, after
-    // DOUBLE and LAX_DOUBLE: the shim runs PRODUCT_INTERNAL because
-    // PRODUCT_EXTERNAL would take the whole NET.* namespace with it. Under
-    // PRODUCT_EXTERNAL the analyzer would answer `Function not found:
-    // REGEXP_MATCH`, word for word what BigQuery says.
-    //
-    // Restated as the refusal so the case still pins the decision. The assertion
-    // is the loose one, as with the net pins: the analyzer resolves the name, so
-    // the refusal comes from our transformer and reports UnsupportedFunction
-    // without saying which function. It still fails loudly if someone implements
-    // this without restating, which is the point.
+        // REGEXP_MATCH is BigQuery **legacy SQL**, which is why it looks familiar:
+        // `bq query --use_legacy_sql=true "SELECT REGEXP_MATCH('hello
+        // world','hello')"` answers true, while GoogleSQL has no such name and
+        // answers `Function not found: REGEXP_MATCH` (bq CLI, 2026-08-04). The
+        // spec's own upstream anchor already says #regexp_match-deprecated;
+        // REGEXP_CONTAINS is the GoogleSQL spelling and this engine has it.
+        //
+        // Upstream marks it set_allow_external_usage(false)
+        // (builtin_function_internal_3.cc:546), meaning it exists only in
+        // PRODUCT_INTERNAL. That it resolves here at all is the third instance of
+        // the alias leak docs/SPEC_UNSUPPORTED.md records as divergence 2, after
+        // DOUBLE and LAX_DOUBLE: the shim runs PRODUCT_INTERNAL because
+        // PRODUCT_EXTERNAL would take the whole NET.* namespace with it. Under
+        // PRODUCT_EXTERNAL the analyzer would answer `Function not found:
+        // REGEXP_MATCH`, word for word what BigQuery says.
+        //
+        // Restated as the refusal so the case still pins the decision. The assertion
+        // is the loose one, as with the net pins: the analyzer resolves the name, so
+        // the refusal comes from our transformer and reports UnsupportedFunction
+        // without saying which function. It still fails loudly if someone implements
+        // this without restating, which is the point.
         .{
             .desc = "simple match",
             .sql = "SELECT REGEXP_MATCH('hello world', 'hello')",

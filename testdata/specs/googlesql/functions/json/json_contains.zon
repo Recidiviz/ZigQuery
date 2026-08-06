@@ -4,19 +4,19 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/json_functions.md#json_contains",
     .cases = .{
-    // JSON_CONTAINS is a GoogleSQL function that BigQuery does not have. Real
-    // BigQuery answers, verbatim:
-    //
-    //   Function not found: JSON_CONTAINS; Did you mean st_contains? at [1:23]
-    //
-    // (bq CLI, 2026-08-04) -- and so does this engine, hint and all, because
-    // both refuse at name resolution out of the same catalog.
-    //
-    // Gated behind FEATURE_JSON_CONTAINS_FUNCTION
-    // (builtin_function_internal_3.cc:2336), which stays off in
-    // shim/analyzer_shim.cc: implementing it would let a query pass locally
-    // and fail in production, the one failure direction an emulator must not
-    // have.
+        // JSON_CONTAINS is a GoogleSQL function that BigQuery does not have. Real
+        // BigQuery answers, verbatim:
+        //
+        //   Function not found: JSON_CONTAINS; Did you mean st_contains? at [1:23]
+        //
+        // (bq CLI, 2026-08-04) -- and so does this engine, hint and all, because
+        // both refuse at name resolution out of the same catalog.
+        //
+        // Gated behind FEATURE_JSON_CONTAINS_FUNCTION
+        // (builtin_function_internal_3.cc:2336), which stays off in
+        // shim/analyzer_shim.cc: implementing it would let a query pass locally
+        // and fail in production, the one failure direction an emulator must not
+        // have.
         .{
             .desc = "object contains itself",
             .sql = "SELECT JSON_CONTAINS(JSON '{\"a\":1}', JSON '{\"a\":1}')",

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/chr",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "chr",
+            .sql = "SELECT CHR(65), CHR(255), CHR(513), CHR(1024), CHR(97), CHR(0xF9B5), CHR(0), CHR(NULL)",
+            .rows = .{
+                .{ "A", "ÿ", "ȁ", "Ѐ", "a", "例", "", null },
+            },
+        },
+    },
+}

@@ -1,0 +1,23 @@
+.{
+    .spec = "zigquery/functions/conversion/safe_cast",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "safe cast",
+            .sql = "SELECT SAFE_CAST(x AS STRING) FROM UNNEST([1, 2, 3]) AS x",
+            .rows = .{
+                .{"1"},
+                .{"2"},
+                .{"3"},
+            },
+        },
+        .{
+            .desc = "safe cast for invalid cast",
+            .sql = "SELECT SAFE_CAST(\"apple\" AS INT64) AS not_a_number",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

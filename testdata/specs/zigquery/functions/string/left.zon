@@ -1,0 +1,28 @@
+.{
+    .spec = "zigquery/functions/string/left",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "left shift operator",
+            .sql = "SELECT 1 << 2",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "left with string value",
+            .sql = "SELECT LEFT('apple', 3), LEFT('banana', 3), LEFT('абвгд', 3), LEFT(NULL, 3), LEFT('apple', NULL)",
+            .rows = .{
+                .{ "app", "ban", "абв", null, null },
+            },
+        },
+        .{
+            .desc = "left with bytes value",
+            .sql = "SELECT LEFT(b'apple', 3), LEFT(b'banana', 3), LEFT(b'\\xab\\xcd\\xef\\xaa\\xbb', 3)",
+            .rows = .{
+                .{ "YXBw", "YmFu", "q83v" },
+            },
+        },
+    },
+}

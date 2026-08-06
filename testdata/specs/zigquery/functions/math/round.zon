@@ -1,0 +1,21 @@
+.{
+    .spec = "zigquery/functions/math/round",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "rounding",
+            .sql = "SELECT ROUND(2.0), ROUND(2.3), ROUND(2.8), ROUND(2.5), ROUND(-2.3), ROUND(-2.8), ROUND(-2.5)",
+            .rows = .{
+                .{ 2.0, 2.0, 3.0, 3.0, -2.0, -3.0, -3.0 },
+            },
+        },
+        .{
+            .desc = "rounding precision",
+            .sql = "SELECT ROUND(123.7, -1), ROUND(1.235, 2)",
+            .rows = .{
+                .{ 120.0, 1.24 },
+            },
+        },
+    },
+}

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/json/string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_string",
+            .sql = "SELECT STRING(JSON '\"purple\"') AS color",
+            .rows = .{
+                .{"purple"},
+            },
+        },
+    },
+}

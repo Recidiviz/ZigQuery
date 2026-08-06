@@ -1,0 +1,64 @@
+.{
+    .spec = "zigquery/functions/aggregate/sum",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "sum",
+            .sql = "SELECT SUM(x) AS sum FROM UNNEST([1, 2, 3, 4, 5, 4, 3, 2, 1]) AS x",
+            .rows = .{
+                .{25},
+            },
+        },
+        .{
+            .desc = "sum with distinct",
+            .sql = "SELECT SUM(DISTINCT x) AS sum FROM UNNEST([1, 2, 3, 4, 5, 4, 3, 2, 1]) AS x",
+            .rows = .{
+                .{15},
+            },
+        },
+        .{
+            .desc = "sum with window",
+            .sql = "SELECT x, SUM(x) OVER (PARTITION BY MOD(x, 3)) FROM UNNEST([1, 2, 3, 4, 5, 4, 3, 2, 1]) AS x",
+            .rows = .{
+                .{ 3, 6 },
+                .{ 3, 6 },
+                .{ 1, 10 },
+                .{ 4, 10 },
+                .{ 4, 10 },
+                .{ 1, 10 },
+                .{ 2, 9 },
+                .{ 5, 9 },
+                .{ 2, 9 },
+            },
+        },
+        .{
+            .desc = "sum with window and distinct",
+            .sql = "SELECT x, SUM(DISTINCT x) OVER (PARTITION BY MOD(x, 3)) FROM UNNEST([1, 2, 3, 4, 5, 4, 3, 2, 1]) AS x",
+            .rows = .{
+                .{ 3, 3 },
+                .{ 3, 3 },
+                .{ 1, 5 },
+                .{ 4, 5 },
+                .{ 4, 5 },
+                .{ 1, 5 },
+                .{ 2, 7 },
+                .{ 5, 7 },
+                .{ 2, 7 },
+            },
+        },
+        .{
+            .desc = "sum null",
+            .sql = "SELECT SUM(x) AS sum FROM UNNEST([]) AS x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe sum",
+            .sql = "SELECT SAFE.SUM(x) AS sum FROM UNNEST([1, 2, 3, 4, 5, 4, 3, 2, 1]) AS x",
+            .expect_error = "SAFE is not supported for function SUM",
+            .rows = .{},
+        },
+    },
+}

@@ -1,0 +1,251 @@
+.{
+    .spec = "zigquery/syntax/query/window_clause",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "window total",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, SUM(purchases)
+            \\  OVER () AS total_purchases
+            \\FROM Produce
+            ,
+            .rows = .{
+                .{ "kale", 23, "vegetable", 54 },
+                .{ "banana", 2, "fruit", 54 },
+                .{ "cabbage", 9, "vegetable", 54 },
+                .{ "apple", 8, "fruit", 54 },
+                .{ "leek", 2, "vegetable", 54 },
+                .{ "lettuce", 10, "vegetable", 54 },
+            },
+        },
+        .{
+            .desc = "window subtotal",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, SUM(purchases)
+            \\  OVER (
+            \\    PARTITION BY category
+            \\    ORDER BY purchases
+            \\    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            \\  ) AS total_purchases
+            \\FROM Produce
+            ,
+            .rows = .{
+                .{ "banana", 2, "fruit", 10 },
+                .{ "apple", 8, "fruit", 10 },
+                .{ "leek", 2, "vegetable", 44 },
+                .{ "cabbage", 9, "vegetable", 44 },
+                .{ "lettuce", 10, "vegetable", 44 },
+                .{ "kale", 23, "vegetable", 44 },
+            },
+        },
+        .{
+            .desc = "window cumulative",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, SUM(purchases)
+            \\  OVER (
+            \\    PARTITION BY category
+            \\    ORDER BY purchases
+            \\    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            \\  ) AS total_purchases
+            \\FROM Produce
+            ,
+            .rows = .{
+                .{ "banana", 2, "fruit", 2 },
+                .{ "apple", 8, "fruit", 10 },
+                .{ "leek", 2, "vegetable", 2 },
+                .{ "cabbage", 9, "vegetable", 11 },
+                .{ "lettuce", 10, "vegetable", 21 },
+                .{ "kale", 23, "vegetable", 44 },
+            },
+        },
+        .{
+            .desc = "window cumulative omit current row",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, SUM(purchases)
+            \\  OVER (
+            \\    PARTITION BY category
+            \\    ORDER BY purchases
+            \\    ROWS UNBOUNDED PRECEDING
+            \\  ) AS total_purchases
+            \\FROM Produce
+            ,
+            .rows = .{
+                .{ "banana", 2, "fruit", 2 },
+                .{ "apple", 8, "fruit", 10 },
+                .{ "leek", 2, "vegetable", 2 },
+                .{ "cabbage", 9, "vegetable", 11 },
+                .{ "lettuce", 10, "vegetable", 21 },
+                .{ "kale", 23, "vegetable", 44 },
+            },
+        },
+        .{
+            .desc = "window offset",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, SUM(purchases)
+            \\  OVER (
+            \\    ORDER BY purchases
+            \\    ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING
+            \\  ) AS total_purchases
+            \\FROM Produce
+            ,
+            .rows = .{
+                .{ "banana", 2, "fruit", null },
+                .{ "leek", 2, "vegetable", null },
+                .{ "apple", 8, "fruit", 2 },
+                .{ "cabbage", 9, "vegetable", 4 },
+                .{ "lettuce", 10, "vegetable", 12 },
+                .{ "kale", 23, "vegetable", 21 },
+            },
+        },
+        .{
+            .desc = "window avg",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item, purchases, category, AVG(purchases)
+            \\  OVER (
+            \\    ORDER BY purchases
+            \\    ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+            \\  ) AS avg_purchases
+            \\FROM Produce
+            ,
+            .rows = .{
+                .{ "banana", 2, "fruit", 2.0 },
+                .{ "leek", 2, "vegetable", 4.0 },
+                .{ "apple", 8, "fruit", 6.333333333333333 },
+                .{ "cabbage", 9, "vegetable", 9.0 },
+                .{ "lettuce", 10, "vegetable", 14.0 },
+                .{ "kale", 23, "vegetable", 16.5 },
+            },
+        },
+        .{
+            .desc = "window order by",
+            .sql =
+            \\WITH toks AS (
+            \\            SELECT DATE '2024-01-01' AS dt, 'c' AS letter
+            \\            UNION ALL SELECT DATE '2024-02-01', 'b'
+            \\            UNION ALL SELECT DATE '2024-02-01', 'c'
+            \\            UNION ALL SELECT DATE '2024-03-01', 'a'
+            \\)
+            \\SELECT dt, letter, ROW_NUMBER() OVER (ORDER BY dt, letter) AS rn FROM toks
+            ,
+            .rows = .{
+                .{ "2024-01-01", "c", 1 },
+                .{ "2024-02-01", "b", 2 },
+                .{ "2024-02-01", "c", 3 },
+                .{ "2024-03-01", "a", 4 },
+            },
+        },
+        .{
+            .desc = "window order by handles nil",
+            .sql =
+            \\WITH toks AS (
+            \\            SELECT DATE '2024-01-01' AS dt, 'c' AS letter
+            \\            UNION ALL SELECT DATE '2024-02-01', null
+            \\)
+            \\SELECT dt, letter, ROW_NUMBER() OVER (ORDER BY dt, letter) AS rn FROM toks
+            ,
+            .rows = .{
+                .{ "2024-01-01", "c", 1 },
+                .{ "2024-02-01", null, 2 },
+            },
+        },
+        .{
+            .desc = "window range",
+            .sql =
+            \\
+            \\WITH Farm AS
+            \\ (SELECT 'cat' as animal, 23 as population, 'mammal' as category
+            \\  UNION ALL SELECT 'duck', 3, 'bird'
+            \\  UNION ALL SELECT 'dog', 2, 'mammal'
+            \\  UNION ALL SELECT 'goose', 1, 'bird'
+            \\  UNION ALL SELECT 'ox', 2, 'mammal'
+            \\  UNION ALL SELECT 'goat', 2, 'mammal')
+            \\SELECT animal, population, category, COUNT(*)
+            \\  OVER (
+            \\    ORDER BY population
+            \\    RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING
+            \\  ) AS similar_population
+            \\FROM Farm
+            ,
+            .rows = .{
+                .{ "goose", 1, "bird", 4 },
+                .{ "dog", 2, "mammal", 5 },
+                .{ "ox", 2, "mammal", 5 },
+                .{ "goat", 2, "mammal", 5 },
+                .{ "duck", 3, "bird", 4 },
+                .{ "cat", 23, "mammal", 1 },
+            },
+        },
+        .{
+            .desc = "window partitions are distinct from each other",
+            .sql =
+            \\
+            \\WITH inventory AS (
+            \\  SELECT 'banana' AS item, 'fruit' AS kind, 2 AS purchases
+            \\  UNION ALL SELECT 'onion', 'vegetable', 3
+            \\  UNION ALL SELECT 'orange', 'fruit', 4
+            \\  ORDER BY item ASC
+            \\)
+            \\SELECT
+            \\  item,
+            \\  purchases,
+            \\  LEAD(item) OVER (PARTITION BY kind ORDER BY item ASC) AS next_in_kind,
+            \\  LAG(item) OVER (ORDER BY purchases ASC) AS next_best_seller
+            \\FROM inventory
+            ,
+            .rows = .{
+                .{ "banana", 2, "orange", null },
+                .{ "orange", 4, null, "onion" },
+                .{ "onion", 3, null, "banana" },
+            },
+        },
+    },
+}

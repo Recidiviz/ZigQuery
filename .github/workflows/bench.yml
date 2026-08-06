@@ -42,7 +42,7 @@ jobs:
 
       # --json must be the only thing on stdout; the harness prints its
       # human table on the other branch of the same switch.
-      - name: run corpus
+      - name: run gsql-bench
         run: |
           set -euo pipefail
           zig build gsql-bench -Drelease=true \

@@ -1,0 +1,49 @@
+.{
+    .spec = "zigquery/functions/date/format_date",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "format date with %t",
+            .sql = "SELECT FORMAT('%t', date '2015-09-01')",
+            .rows = .{
+                .{"2015-09-01"},
+            },
+        },
+        .{
+            .desc = "format_date with %x",
+            .sql = "SELECT FORMAT_DATE(\"%x\", DATE \"2008-12-25\")",
+            .rows = .{
+                .{"12/25/08"},
+            },
+        },
+        .{
+            .desc = "format_date with %y",
+            .sql = "SELECT FORMAT_DATE(\"%y\", DATE \"2008-12-25\"), FORMAT_DATE(\"%y\", DATE \"2012-12-25\")",
+            .rows = .{
+                .{ "08", "12" },
+            },
+        },
+        .{
+            .desc = "format_date with %b-%d-%Y",
+            .sql = "SELECT FORMAT_DATE(\"%b-%d-%Y\", DATE \"2008-12-25\")",
+            .rows = .{
+                .{"Dec-25-2008"},
+            },
+        },
+        .{
+            .desc = "format_date with %b %Y",
+            .sql = "SELECT FORMAT_DATE(\"%b %Y\", DATE \"2008-12-25\")",
+            .rows = .{
+                .{"Dec 2008"},
+            },
+        },
+        .{
+            .desc = "format_date with %E4Y",
+            .sql = "SELECT FORMAT_DATE(\"%E4Y\", DATE \"2008-12-25\")",
+            .rows = .{
+                .{"2008"},
+            },
+        },
+    },
+}

@@ -1,0 +1,35 @@
+.{
+    .spec = "zigquery/functions/time/format_time",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "format_time with %k %l",
+            .sql = "SELECT FORMAT_TIME(\"%k\", TIME \"15:30:00\"), FORMAT_TIME(\"%l\", TIME \"15:30:00\");",
+            .rows = .{
+                .{ "15", " 3" },
+            },
+        },
+        .{
+            .desc = "format_time with %R",
+            .sql = "SELECT FORMAT_TIME(\"%R\", TIME \"15:30:00\")",
+            .rows = .{
+                .{"15:30"},
+            },
+        },
+        .{
+            .desc = "format_time with %E3S",
+            .sql = "SELECT FORMAT_TIME(\"%E3S\", TIME \"15:30:12.345678\")",
+            .rows = .{
+                .{"12.345"},
+            },
+        },
+        .{
+            .desc = "format_time with %E*S",
+            .sql = "SELECT FORMAT_TIME(\"%E*S\", TIME \"15:30:12.345678\")",
+            .rows = .{
+                .{"12.345678"},
+            },
+        },
+    },
+}

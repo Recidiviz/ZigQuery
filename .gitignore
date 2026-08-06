@@ -12,3 +12,6 @@
 
 .idea/
 .DS_Store
+
+# tools/spec_import.py imports tools/zon.py as a sibling module.
+__pycache__/

@@ -1,18 +1,20 @@
 //! Replays the ZON spec corpus under `testdata/specs/`.
 //!
-//! The specs come from goccy/googlesqlite, whose expected values were extracted
-//! from the **Examples** sections of the GoogleSQL reference docs — so the
-//! numbers on the right-hand side are Google's own published output. See
-//! `tools/spec_import.py` for the conversion and `docs/BENCH_GSQL.md`'s sibling
-//! `docs/SPEC_COVERAGE.md` for the report this emits.
+//! Three trees live there, and they answer to different authorities:
 //!
-//! ## Why this exists next to `zig build corpus`
+//!   - `googlesql/`, `bigquery/` — imported by `tools/spec_import.py` from
+//!     goccy/googlesqlite, whose expected values were extracted from the
+//!     **Examples** sections of the GoogleSQL reference docs. The numbers on the
+//!     right-hand side are Google's own published output, scraped out of ASCII
+//!     tables, so they arrive untyped and are compared leniently.
+//!   - `zigquery/` — this engine's own regression suite, migrated out of
+//!     `testdata/corpus.json` (go-zetasqlite's `query_test.go`). Every expected
+//!     value there was machine-exported *with its type*, so those files declare
+//!     `.typed = true` and get the exact, kind-checked comparison the retired
+//!     `corpus_runner.zig` performed. See `src/internal/spec_expect.zig`.
 //!
-//! `corpus` is deep but narrow: 748 cases inherited from go-zetasqlite's
-//! `query_test.go`, all sharing one `:memory:` database in slice order, so DDL
-//! from one case is visible to the next. This suite is broad and isolated: one
-//! spec per function, cases that declare their own `setup`, and a fresh
-//! connection wherever state exists.
+//! Spec files are discovered by walking the tree, sorted by path. There is no
+//! index to keep in step: a `.zon` file under `testdata/specs` is a spec.
 //!
 //! ## Two axes, one display bucket
 //!
@@ -41,9 +43,18 @@
 //! the other caller of `spec_run.run`, so both share one source of truth for
 //! what a case's outcome means rather than drifting apart.
 //!
-//! Usage: zig build spec -- [--filter SUBSTR] [--dialect googlesql|bigquery]
+//! Usage: zig build spec -- [--filter SUBSTR] [--case SUBSTR]
+//!                          [--dialect googlesql|bigquery|zigquery]
 //!                          [--verbose] [--markdown] [--update-baseline]
 //!                          [--strict]
+//!
+//! `--filter` selects spec files by path, `--case` selects cases within them
+//! by description. Together they narrow the run to a single query, which is
+//! what makes `zig-out/bin/spec-runner` usable as a debug target: point a
+//! breakpoint at the transformer and step through one case instead of 1760.
+//! See `.run/Debug spec case.run.xml`.
+//!
+//! `DUMP_SQL=<path>` additionally writes the SQL snapshot (see below).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -56,9 +67,13 @@ const Outcome = spec_run.Outcome;
 const Record = spec_run.Record;
 
 const baseline_path = "testdata/spec_baseline.txt";
+const specs_root = "testdata/specs";
 
 const Options = struct {
+    /// Substring of a spec file's path.
     filter: ?[]const u8 = null,
+    /// Substring of a case's `desc`, applied within the files `filter` kept.
+    case: ?[]const u8 = null,
     dialect: ?Dialect = null,
     verbose: bool = false,
     markdown: bool = false,
@@ -109,6 +124,8 @@ fn parseArgs(argv: anytype, out: *std.Io.Writer) !Options {
     while (it.next()) |arg| {
         if (std.mem.eql(u8, arg, "--filter")) {
             opts.filter = it.next();
+        } else if (std.mem.eql(u8, arg, "--case")) {
+            opts.case = it.next();
         } else if (std.mem.eql(u8, arg, "--dialect")) {
             const d = it.next() orelse "";
             opts.dialect = std.meta.stringToEnum(Dialect, d) orelse {
@@ -126,8 +143,9 @@ fn parseArgs(argv: anytype, out: *std.Io.Writer) !Options {
             opts.strict = true;
         } else {
             try out.print(
-                "usage: zig build spec -- [--filter SUBSTR] [--dialect D] " ++
-                    "[--verbose] [--markdown] [--update-baseline] [--strict]\n",
+                "usage: zig build spec -- [--filter SUBSTR] [--case SUBSTR] " ++
+                    "[--dialect D] [--verbose] [--markdown] [--update-baseline] " ++
+                    "[--strict]\n",
                 .{},
             );
             try out.flush();
@@ -148,9 +166,14 @@ fn loadBaseline(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !B
     };
     var it = std.mem.splitScalar(u8, bytes, '\n');
     while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \r\t");
+        // Only `\r` comes off: a `desc` may legitimately end in a space
+        // ("parse timestamp with extra whitespace "), and trimming the key
+        // would leave that case permanently unable to match its own baseline
+        // entry — reported as newly passing on every run.
+        const entry = std.mem.trimEnd(u8, line, "\r");
+        const trimmed = std.mem.trim(u8, entry, " \t");
         if (trimmed.len == 0 or trimmed[0] == '#') continue;
-        try map.put(gpa, trimmed, {});
+        try map.put(gpa, entry, {});
     }
     return map;
 }
@@ -180,14 +203,14 @@ fn report(
     }
 
     if (opts.markdown) {
-        try markdownReport(out, arena, results, manifest);
+        try markdownReport(out, arena, results);
         return;
     }
 
     if (builtin.mode == .Debug) {
         try out.print("WARNING: Debug build.\n\n", .{});
     }
-    try out.print("spec corpus ({s})\n", .{manifest.generated_from});
+    try out.print("spec corpus ({d} files)\n", .{manifest.files.len});
     if (stale_count > 0) {
         try out.print(
             "{d} PASS / {d} FAIL / {d} NOT_IMPLEMENTED / {d} UNSUPPORTED ({d} stale) / {d} SKIP  (of {d})\n\n",
@@ -313,13 +336,31 @@ fn report(
     }
 }
 
+/// One captured pipeline stage under the case that produced it. Indented as a
+/// block and labelled on its first line only, so a multi-line AST still reads
+/// as one thing and the case header above it stays findable by eye.
+fn writeStage(out: *std.Io.Writer, name: []const u8, body: []const u8) !void {
+    const text = std.mem.trim(u8, body, " \t\r\n");
+    if (text.len == 0) return;
+
+    var first = true;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |line| {
+        if (first) {
+            try out.print("    {s} | {s}\n", .{ name, line });
+            first = false;
+        } else {
+            try out.print("            | {s}\n", .{line});
+        }
+    }
+}
+
 /// Per-category coverage, which is the number worth tracking: a single
 /// "N% of cases pass" is dominated by the categories we have not built at all.
 fn markdownReport(
     out: *std.Io.Writer,
     arena: std.mem.Allocator,
     results: []const Record,
-    manifest: Manifest,
 ) !void {
     const Row = struct {
         name: []const u8,
@@ -358,9 +399,12 @@ fn markdownReport(
     try out.print(
         \\# Spec coverage
         \\
-        \\Generated by `zig build spec -- --markdown`. Corpus imported from
-        \\{s} by `tools/spec_import.py`; expected values are the GoogleSQL
-        \\reference docs' own published output.
+        \\Generated by `zig build spec -- --markdown` from `testdata/specs`.
+        \\`googlesql/` and `bigquery/` are imported by `tools/spec_import.py`
+        \\from goccy/googlesqlite, and their expected values are the GoogleSQL
+        \\reference docs' own published output; `zigquery/` is this engine's own
+        \\regression suite, inherited from go-zetasqlite's `query_test.go`. See
+        \\the `NOTICE` beside each.
         \\
         \\`not_implemented` is detected at run time — `error.Unimplemented`, the
         \\analyzer's "Function not found", or a registered name with no UDF —
@@ -372,7 +416,7 @@ fn markdownReport(
         \\| Category | pass | fail | not_implemented | unsupported | skip |
         \\|---|---:|---:|---:|---:|---:|
         \\
-    , .{manifest.generated_from});
+    , .{});
 
     var tp: usize = 0;
     var tf: usize = 0;

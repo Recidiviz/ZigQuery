@@ -1,0 +1,17 @@
+.{
+    .spec = "zigquery/functions/string/repeat",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "repeat",
+            .sql = "SELECT t, n, REPEAT(t, n) FROM UNNEST([STRUCT('abc' AS t, 3 AS n),('例子', 2),('abc', null),(null, 3)])",
+            .rows = .{
+                .{ "abc", 3, "abcabcabc" },
+                .{ "例子", 2, "例子例子" },
+                .{ "abc", null, null },
+                .{ null, 3, null },
+            },
+        },
+    },
+}

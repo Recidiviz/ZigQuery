@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/types/bytes",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "bytes_formatting",
+            .sql = "SELECT b\"abc\", CAST(b\"abc\" AS STRING)",
+            .rows = .{
+                .{ "YWJj", "abc" },
+            },
+        },
+    },
+}

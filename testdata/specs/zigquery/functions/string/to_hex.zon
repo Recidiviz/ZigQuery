@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/to_hex",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "to_hex",
+            .sql = "SELECT TO_HEX(b'\\x00\\x01\\x02\\x03\\xAA\\xEE\\xEF\\xFF'), TO_HEX(b'foobar'), TO_HEX(NULL)",
+            .rows = .{
+                .{ "00010203aaeeefff", "666f6f626172", null },
+            },
+        },
+    },
+}

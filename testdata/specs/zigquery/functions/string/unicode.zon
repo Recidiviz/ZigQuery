@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/unicode",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "unicode",
+            .sql = "SELECT UNICODE('âbcd'), UNICODE('â'), UNICODE(''), UNICODE(NULL)",
+            .rows = .{
+                .{ 226, 226, 0, null },
+            },
+        },
+    },
+}

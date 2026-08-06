@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/json/float64",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_float64",
+            .sql = "SELECT FLOAT64(JSON '9.8') AS velocity",
+            .rows = .{
+                .{9.8},
+            },
+        },
+    },
+}

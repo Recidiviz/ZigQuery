@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/time/time_diff",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "time_diff",
+            .sql = "SELECT TIME_DIFF(TIME \"15:30:00\", TIME \"14:35:00\", MINUTE)",
+            .rows = .{
+                .{55},
+            },
+        },
+    },
+}

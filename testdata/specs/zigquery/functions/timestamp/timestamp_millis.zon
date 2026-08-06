@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/timestamp/timestamp_millis",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "timestamp_millis",
+            .sql = "SELECT TIMESTAMP_MILLIS(1230219000000)",
+            .rows = .{
+                .{"1230219000.0"},
+            },
+        },
+    },
+}

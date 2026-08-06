@@ -1,0 +1,19 @@
+.{
+    .spec = "zigquery/syntax/script/begin_end",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "begin-end",
+            .sql =
+            \\
+            \\BEGIN
+            \\  SELECT 1;
+            \\END;
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+    },
+}

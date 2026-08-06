@@ -1,0 +1,29 @@
+.{
+    .spec = "zigquery/functions/net/net_ipv4_from_int64",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "net_ipv4_from_int64",
+            .sql =
+            \\
+            \\SELECT
+            \\  FORMAT("%T", NET.IPV4_FROM_INT64(v))
+            \\FROM (
+            \\  SELECT 0 AS v UNION ALL
+            \\  SELECT 11259375 UNION ALL
+            \\  SELECT 4294967295 UNION ALL
+            \\  SELECT -1 UNION ALL
+            \\  SELECT -2
+            \\)
+            ,
+            .rows = .{
+                .{"b\"\\x00\\x00\\x00\\x00\""},
+                .{"b\"\\x00\\xab\\xcd\\xef\""},
+                .{"b\"\\xff\\xff\\xff\\xff\""},
+                .{"b\"\\xff\\xff\\xff\\xff\""},
+                .{"b\"\\xff\\xff\\xff\\xfe\""},
+            },
+        },
+    },
+}

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/conversion/parse_numeric",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "parse_numeric",
+            .sql = "SELECT PARSE_NUMERIC(\"123.45\"), PARSE_NUMERIC(\"12.34E27\"), PARSE_NUMERIC(\"1.0123456789\")",
+            .rows = .{
+                .{ "123.45", "12340000000000000000000000000", "1.012345679" },
+            },
+        },
+    },
+}

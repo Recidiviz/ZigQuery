@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/timestamp/current_timestamp",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "current_timestamp",
+            .sql = "SELECT CURRENT_TIMESTAMP()",
+            .rows = .{
+                .{"1136239445.0"},
+            },
+        },
+    },
+}

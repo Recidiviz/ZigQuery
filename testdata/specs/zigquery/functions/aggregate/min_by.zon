@@ -1,0 +1,32 @@
+.{
+    .spec = "zigquery/functions/aggregate/min_by",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "min_by basic",
+            .sql =
+            \\
+            \\                WITH Store AS (
+            \\                    SELECT 20 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 40 AS sold, "pears" AS fruit
+            \\                    UNION ALL SELECT 50 AS sold, "oranges" AS fruit
+            \\                    UNION ALL SELECT 30 AS sold, "bananas" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "bananas" AS fruit
+            \\                )
+            \\                SELECT
+            \\                    fruit,
+            \\                    MIN_BY(sold, sold) AS min_sales
+            \\                FROM Store
+            \\                GROUP BY fruit
+            \\                ORDER BY fruit
+            ,
+            .rows = .{
+                .{ "apples", 20 },
+                .{ "bananas", 10 },
+                .{ "oranges", 50 },
+                .{ "pears", 40 },
+            },
+        },
+    },
+}

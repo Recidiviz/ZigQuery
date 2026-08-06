@@ -1,0 +1,53 @@
+.{
+    .spec = "zigquery/functions/string/rtrim",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "rtrim",
+            .sql =
+            \\
+            \\WITH items AS (
+            \\  SELECT '***apple***' as item UNION ALL
+            \\  SELECT '***banana***' as item UNION ALL
+            \\  SELECT '***orange***' as item UNION ALL
+            \\  SELECT NULL as item
+            \\) SELECT RTRIM(item, '*') FROM items
+            ,
+            .rows = .{
+                .{"***apple"},
+                .{"***banana"},
+                .{"***orange"},
+                .{null},
+            },
+        },
+        .{
+            .desc = "rtrim2",
+            .sql =
+            \\
+            \\WITH items AS (
+            \\  SELECT 'applexxx' as item UNION ALL
+            \\  SELECT 'bananayyy' as item UNION ALL
+            \\  SELECT 'orangezzz' as item UNION ALL
+            \\  SELECT 'pearxyz' as item
+            \\) SELECT RTRIM(item, 'xyz') FROM items
+            ,
+            .rows = .{
+                .{"apple"},
+                .{"banana"},
+                .{"orange"},
+                .{"pear"},
+            },
+        },
+        .{
+            .desc = "rtrim3",
+            .sql = "\nWITH items AS (\n  SELECT 'apple   ' as item UNION ALL\n  SELECT 'banana\t\t' as item UNION ALL\n  SELECT '\t\torange\t\t' as item UNION ALL\n  SELECT 'pear' as item\n) SELECT RTRIM(item) FROM items",
+            .rows = .{
+                .{"apple"},
+                .{"banana"},
+                .{"\t\torange"},
+                .{"pear"},
+            },
+        },
+    },
+}

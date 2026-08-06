@@ -1,0 +1,338 @@
+.{
+    .spec = "zigquery/syntax/cte/with_recursive",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "recursive cte",
+            .sql =
+            \\WITH RECURSIVE
+            \\  CTE_1 AS (
+            \\    (SELECT 1 AS iteration UNION ALL SELECT 1 AS iteration)
+            \\    UNION ALL
+            \\    SELECT iteration + 1 AS iteration FROM CTE_1 WHERE iteration < 3
+            \\  )
+            \\SELECT iteration FROM CTE_1
+            \\ORDER BY 1 ASC;
+            ,
+            .rows = .{
+                .{1},
+                .{1},
+                .{2},
+                .{2},
+                .{3},
+                .{3},
+            },
+        },
+        .{
+            .desc = "recursive cte 2",
+            .sql =
+            \\
+            \\            WITH RECURSIVE
+            \\              GraphData AS (
+            \\                --    1          5
+            \\                --   / \        / \
+            \\                --  2 - 3      6   7
+            \\                --      |       \ /
+            \\                --      4        8
+            \\                SELECT 1 AS from_node, 2 AS to_node UNION ALL
+            \\                SELECT 1, 3 UNION ALL
+            \\                SELECT 2, 3 UNION ALL
+            \\                SELECT 3, 4 UNION ALL
+            \\                SELECT 5, 6 UNION ALL
+            \\                SELECT 5, 7 UNION ALL
+            \\                SELECT 6, 8 UNION ALL
+            \\                SELECT 7, 8
+            \\              ),
+            \\              R AS (
+            \\                (SELECT 5 AS node)
+            \\                UNION ALL
+            \\                (
+            \\                  SELECT GraphData.to_node AS node
+            \\                  FROM R
+            \\                  INNER JOIN GraphData
+            \\                    ON (R.node = GraphData.from_node)
+            \\                )
+            \\              )
+            \\            SELECT DISTINCT node FROM R ORDER BY node;
+            ,
+            .rows = .{
+                .{5},
+                .{6},
+                .{7},
+                .{8},
+            },
+        },
+        .{
+            .desc = "recursive cte 3",
+            .sql =
+            \\WITH RECURSIVE
+            \\  T0 AS (SELECT 1 AS n),
+            \\  T1 AS ((SELECT * FROM T0) UNION ALL (SELECT n + 1 FROM T1 WHERE n < 4)),
+            \\  T2 AS ((SELECT 1 AS n) UNION ALL (SELECT n + 1 FROM T2 WHERE n < 4)),
+            \\  T3 AS (SELECT * FROM T1 INNER JOIN T2 USING (n))
+            \\SELECT * FROM T3 ORDER BY n
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+                .{4},
+            },
+        },
+        .{
+            .desc = "recursive cte 4",
+            .sql =
+            \\WITH RECURSIVE
+            \\      T1 AS (
+            \\        (SELECT 1 AS n) UNION ALL
+            \\        (SELECT n + 2 FROM T1 WHERE n < 4))
+            \\    SELECT * FROM T1 ORDER BY n
+            ,
+            .rows = .{
+                .{1},
+                .{3},
+                .{5},
+            },
+        },
+        .{
+            .desc = "recursive cte 5",
+            .sql =
+            \\WITH RECURSIVE
+            \\  T0 AS (SELECT * FROM UNNEST ([60, 20, 30])),
+            \\  T1 AS ((SELECT 1 AS n) UNION ALL (SELECT n + (SELECT COUNT(*) FROM T0) FROM T1 WHERE n < 4))
+            \\SELECT * FROM T1 ORDER BY n
+            ,
+            .rows = .{
+                .{1},
+                .{4},
+            },
+        },
+        .{
+            .desc = "recursive cte 6",
+            .sql =
+            \\WITH RECURSIVE
+            \\  T0 AS (SELECT 1 AS n),
+            \\  T1 AS ((SELECT 1 AS n) UNION ALL (SELECT n + 1 FROM T1 INNER JOIN T0 USING (n)))
+            \\SELECT * FROM T1 ORDER BY n
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "recursive cte 7",
+            .sql =
+            \\WITH RECURSIVE
+            \\  T0 AS (SELECT 2 AS p),
+            \\  T1 AS ((SELECT 1 AS n) UNION ALL (SELECT T1.n + T0.p FROM T1 CROSS JOIN T0 WHERE T1.n < 4))
+            \\SELECT * FROM T1 CROSS JOIN T0 ORDER BY n
+            ,
+            .rows = .{
+                .{ 1, 2 },
+                .{ 3, 2 },
+                .{ 5, 2 },
+            },
+        },
+        .{
+            .desc = "recursive cte integration",
+            .sql =
+            \\CREATE TEMP TABLE grid_interior_resources (
+            \\  id STRING,
+            \\  type STRING,
+            \\  length_m FLOAT64,
+            \\  upline_parent STRING,
+            \\  upline_feeder STRING,
+            \\);
+            \\
+            \\CREATE TEMP TABLE ancestry (
+            \\  id STRING,
+            \\  type STRING,
+            \\  upline_resource_id STRING,
+            \\  upline_resource_type STRING,
+            \\  upline_resource_hops INT64,
+            \\  upline_resource_distance FLOAT64
+            \\);
+            \\
+            \\INSERT INTO grid_interior_resources
+            \\  (id, type, length_m, upline_parent, upline_feeder) 
+            \\VALUES
+            \\  ("m1", "m", 1, "t1", "f1"),
+            \\  ("t1", "t", 1, "f1", "f1"),
+            \\  ("f1", "f", 1, NULL, "f1")
+            \\;
+            \\
+            \\INSERT INTO ancestry (id, type, upline_resource_id, upline_resource_hops, upline_resource_distance, upline_resource_type)
+            \\
+            \\WITH RECURSIVE
+            \\
+            \\CTE_1 AS (
+            \\  SELECT id, type, upline_parent, 1 pos, 1 iteration, coalesce(length_m, 0.0) as distance_meters
+            \\    FROM grid_interior_resources
+            \\  UNION ALL
+            \\  SELECT a.id, a.type, b.upline_parent, pos + 1, iteration + 1, distance_meters + coalesce(length_m, 0.0)
+            \\    FROM grid_interior_resources a INNER JOIN CTE_1 b
+            \\    ON b.id = a.upline_parent
+            \\    WHERE iteration < 500
+            \\),
+            \\
+            \\CTE_2 AS (
+            \\  SELECT * FROM CTE_1 WHERE iteration = 500 * 1
+            \\  UNION ALL
+            \\  SELECT a.id, a.type, b.upline_parent, pos + 1, iteration + 1, distance_meters + coalesce(length_m, 0.0)
+            \\    FROM grid_interior_resources a INNER JOIN CTE_2 b
+            \\    ON b.id = a.upline_parent
+            \\    WHERE iteration < 500 * 2
+            \\),
+            \\
+            \\CTE_3 AS (
+            \\  SELECT * FROM CTE_2 WHERE iteration = 500 * 2
+            \\  UNION ALL
+            \\  SELECT a.id, a.type, b.upline_parent, pos + 1, iteration + 1, distance_meters + coalesce(length_m, 0.0)
+            \\    FROM grid_interior_resources a INNER JOIN CTE_3 b
+            \\    ON b.id = a.upline_parent
+            \\    WHERE iteration < 500 * 3
+            \\)
+            \\
+            \\SELECT
+            \\    r.id as id,
+            \\    r.type as type,
+            \\    r.upline_parent as upline_resource_id,
+            \\    r.pos as upline_resource_hops,
+            \\    r.distance_meters as upline_resource_distance,
+            \\    b.type as upline_resource_type
+            \\FROM (
+            \\    SELECT * FROM CTE_1
+            \\    UNION ALL SELECT * FROM CTE_2 WHERE iteration > 500 * 1
+            \\    UNION ALL SELECT * FROM CTE_3 WHERE iteration > 500 * 2
+            \\) as r
+            \\LEFT JOIN grid_interior_resources as b
+            \\    ON r.upline_parent = b.id
+            \\;
+            \\
+            \\SELECT
+            \\  *
+            \\FROM
+            \\  ancestry
+            \\ORDER BY
+            \\  id,
+            \\  upline_resource_hops
+            \\;
+            ,
+            .rows = .{
+                .{ "f1", "f", null, null, 1, 1.0 },
+                .{ "m1", "m", "t1", "t", 1, 1.0 },
+                .{ "m1", "m", "f1", "f", 2, 2.0 },
+                .{ "m1", "m", null, null, 3, 3.0 },
+                .{ "t1", "t", "f1", "f", 1, 1.0 },
+                .{ "t1", "t", null, null, 2, 2.0 },
+            },
+        },
+        .{
+            .desc = "recursive cte integration 2",
+            .sql =
+            \\CREATE TEMP TABLE numbers (num INT64);
+            \\-- Insert rows 1-5
+            \\INSERT INTO numbers (num)
+            \\WITH RECURSIVE seq AS (
+            \\  -- Base case
+            \\  SELECT 1 AS num
+            \\
+            \\  UNION ALL
+            \\
+            \\  -- Recursive case
+            \\  SELECT num + 1
+            \\  FROM seq
+            \\  WHERE num < 5
+            \\)
+            \\SELECT num FROM seq;
+            \\
+            \\-- Select remaining numbers
+            \\SELECT * FROM numbers;
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+                .{4},
+                .{5},
+            },
+        },
+        .{
+            .desc = "recursive cte with star expression",
+            .sql =
+            \\WITH RECURSIVE
+            \\  T0 AS (SELECT 1 AS n, 'a' AS letter),
+            \\  T1 AS (
+            \\    (SELECT * FROM T0)
+            \\    UNION ALL
+            \\    (SELECT n + 1, letter FROM T1 WHERE n < 3)
+            \\  )
+            \\SELECT * FROM T1 ORDER BY n
+            ,
+            .rows = .{
+                .{ 1, "a" },
+                .{ 2, "a" },
+                .{ 3, "a" },
+            },
+        },
+        .{
+            .desc = "recursive cte with list expression in WHERE",
+            .sql =
+            \\WITH RECURSIVE
+            \\  T1 AS (
+            \\    (SELECT 1 AS n, 'start' AS status)
+            \\    UNION ALL
+            \\    (SELECT n + 1, 'progress' FROM T1 WHERE n < 5 AND status IN ('start', 'progress', 'active'))
+            \\  )
+            \\SELECT n, status FROM T1 ORDER BY n
+            ,
+            .rows = .{
+                .{ 1, "start" },
+                .{ 2, "progress" },
+                .{ 3, "progress" },
+                .{ 4, "progress" },
+                .{ 5, "progress" },
+            },
+        },
+        .{
+            .desc = "recursive cte with unary expression",
+            .sql =
+            \\WITH RECURSIVE
+            \\  T1 AS (
+            \\    (SELECT 1 AS n, TRUE AS active)
+            \\    UNION ALL
+            \\    (SELECT n + 1, NOT active FROM T1 WHERE n < 4)
+            \\  )
+            \\SELECT n, active FROM T1 ORDER BY n
+            ,
+            .rows = .{
+                .{ 1, true },
+                .{ 2, false },
+                .{ 3, true },
+                .{ 4, false },
+            },
+        },
+        .{
+            .desc = "recursive cte with complex list and star in join",
+            .sql =
+            \\WITH RECURSIVE
+            \\  T0 AS (SELECT 1 AS id, 'root' AS name),
+            \\  T1 AS (
+            \\    (SELECT * FROM T0)
+            \\    UNION ALL
+            \\    (SELECT T1.id + 1, CONCAT(T1.name, '_child')
+            \\     FROM T1
+            \\     INNER JOIN (SELECT * FROM T0) AS base ON T1.id = base.id
+            \\     WHERE T1.id IN (1, 2, 3))
+            \\  )
+            \\SELECT id, name FROM T1 ORDER BY id
+            ,
+            .rows = .{
+                .{ 1, "root" },
+                .{ 2, "root_child" },
+            },
+        },
+    },
+}

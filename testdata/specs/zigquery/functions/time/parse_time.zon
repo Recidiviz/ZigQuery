@@ -1,0 +1,52 @@
+.{
+    .spec = "zigquery/functions/time/parse_time",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "parse_time with %R",
+            .sql = "SELECT PARSE_TIME(\"%R\", \"14:30\")",
+            .rows = .{
+                .{"14:30:00"},
+            },
+        },
+        .{
+            .desc = "parse_time with %R without minute element",
+            .sql = "SELECT PARSE_TIME(\"%R\", \"14\")",
+            .expect_error = "error parsing [14] with format [%R]: could not parse hour:minute format: [:] not found after [14]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse_time with %R without separator",
+            .sql = "SELECT PARSE_TIME(\"%R\", \"14\")",
+            .expect_error = "error parsing [14] with format [%R]: could not parse hour:minute format: [:] not found after [14]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse time with %I:%M:%S",
+            .sql = "SELECT PARSE_TIME(\"%I:%M:%S\", \"07:30:00\")",
+            .rows = .{
+                .{"07:30:00"},
+            },
+        },
+        .{
+            .desc = "parse time with %T",
+            .sql = "SELECT PARSE_TIME(\"%T\", \"07:30:00\")",
+            .rows = .{
+                .{"07:30:00"},
+            },
+        },
+        .{
+            .desc = "parse time ( the seconds element is in different locations )",
+            .sql = "SELECT PARSE_TIME(\"%S:%I:%M\", \"07:30:00\")",
+            .expect_error = "error parsing [07:30:00] with format [%S:%I:%M]: could not parse hour number: part [30] is greater than maximum value [12]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse time ( one of the seconds elements is missing )",
+            .sql = "SELECT PARSE_TIME(\"%I:%M\", \"07:30:00\")",
+            .expect_error = "error parsing [07:30:00] with format [%I:%M]: found unparsed text [:00]",
+            .rows = .{},
+        },
+    },
+}

@@ -1,0 +1,39 @@
+.{
+    .spec = "zigquery/functions/window/cume_dist",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "cume_dist",
+            .sql =
+            \\
+            \\WITH finishers AS
+            \\ (SELECT 'Sophia Liu' as name,
+            \\  TIMESTAMP '2016-10-18 2:51:45+00' as finish_time,
+            \\  'F30-34' as division
+            \\  UNION ALL SELECT 'Lisa Stelzner', TIMESTAMP '2016-10-18 2:54:11+00', 'F35-39'
+            \\  UNION ALL SELECT 'Nikki Leith', TIMESTAMP '2016-10-18 2:59:01+00', 'F30-34'
+            \\  UNION ALL SELECT 'Lauren Matthews', TIMESTAMP '2016-10-18 3:01:17+00', 'F35-39'
+            \\  UNION ALL SELECT 'Desiree Berry', TIMESTAMP '2016-10-18 3:05:42+00', 'F35-39'
+            \\  UNION ALL SELECT 'Suzy Slane', TIMESTAMP '2016-10-18 3:06:24+00', 'F35-39'
+            \\  UNION ALL SELECT 'Jen Edwards', TIMESTAMP '2016-10-18 3:06:36+00', 'F30-34'
+            \\  UNION ALL SELECT 'Meghan Lederer', TIMESTAMP '2016-10-18 2:59:01+00', 'F30-34')
+            \\SELECT name,
+            \\  FORMAT_TIMESTAMP('%X', finish_time) AS finish_time,
+            \\  division,
+            \\  CUME_DIST() OVER (PARTITION BY division ORDER BY finish_time ASC) AS finish_rank
+            \\FROM finishers
+            ,
+            .rows = .{
+                .{ "Sophia Liu", "02:51:45", "F30-34", 0.25 },
+                .{ "Nikki Leith", "02:59:01", "F30-34", 0.75 },
+                .{ "Meghan Lederer", "02:59:01", "F30-34", 0.75 },
+                .{ "Jen Edwards", "03:06:36", "F30-34", 1.0 },
+                .{ "Lisa Stelzner", "02:54:11", "F35-39", 0.25 },
+                .{ "Lauren Matthews", "03:01:17", "F35-39", 0.5 },
+                .{ "Desiree Berry", "03:05:42", "F35-39", 0.75 },
+                .{ "Suzy Slane", "03:06:24", "F35-39", 1.0 },
+            },
+        },
+    },
+}

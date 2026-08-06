@@ -3,7 +3,7 @@
 //! Recidiviz/bigquery-emulator.
 //!
 //! Kept as a separate module from the engine (src/root.zig) so that
-//! `zig build test` and `zig build corpus` — the engine's regression gates —
+//! `zig build test` and `zig build spec` — the engine's regression gates —
 //! stay untouched by server work. Server tests run under `zig build test-server`.
 
 pub const http_server = @import("http/server.zig");

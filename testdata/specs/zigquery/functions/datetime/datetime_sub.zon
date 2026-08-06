@@ -1,0 +1,21 @@
+.{
+    .spec = "zigquery/functions/datetime/datetime_sub",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "datetime_sub (case 514)",
+            .sql = "SELECT DATETIME \"2008-12-25 15:30:00\", DATETIME_SUB(DATETIME \"2008-12-25 15:30:00\", INTERVAL 10 MINUTE)",
+            .rows = .{
+                .{ "2008-12-25T15:30:00", "2008-12-25T15:20:00" },
+            },
+        },
+        .{
+            .desc = "datetime_sub (case 515)",
+            .sql = "SELECT DATETIME_SUB(DATETIME '2023-03-31 00:00:00', INTERVAL 1 MONTH)",
+            .rows = .{
+                .{"2023-02-28T00:00:00"},
+            },
+        },
+    },
+}

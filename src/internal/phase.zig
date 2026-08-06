@@ -194,7 +194,7 @@ pub fn codecCount() u64 {
 var prepared_bytes: std.atomic.Value(u64) = .init(0);
 
 /// Optional capture of the SQL text itself, for the snapshot harness
-/// (`DUMP_SQL=` in harness/corpus_runner.zig). Rewriting the SQL builder is
+/// (`DUMP_SQL=` in harness/spec_runner.zig). Rewriting the SQL builder is
 /// not reviewable from aggregate byte counts alone — you have to read the
 /// diff — and this is the one place every engine statement passes through.
 ///

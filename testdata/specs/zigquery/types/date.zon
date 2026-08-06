@@ -1,0 +1,36 @@
+.{
+    .spec = "zigquery/types/date",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "date type",
+            .sql =
+            \\
+            \\WITH Employees AS
+            \\ (SELECT 'Isabella' as name, 2 as department, DATE(1997, 09, 28) as start_date
+            \\  UNION ALL SELECT 'Anthony', 1, DATE(1995, 11, 29)
+            \\  UNION ALL SELECT 'Daniel', 2, DATE(2004, 06, 24)
+            \\  UNION ALL SELECT 'Andrew', 1, DATE(1999, 01, 23)
+            \\  UNION ALL SELECT 'Jacob', 1, DATE(1990, 07, 11)
+            \\  UNION ALL SELECT 'Jose', 2, DATE(2013, 03, 17))
+            \\SELECT * FROM Employees
+            ,
+            .rows = .{
+                .{ "Isabella", 2, "1997-09-28" },
+                .{ "Anthony", 1, "1995-11-29" },
+                .{ "Daniel", 2, "2004-06-24" },
+                .{ "Andrew", 1, "1999-01-23" },
+                .{ "Jacob", 1, "1990-07-11" },
+                .{ "Jose", 2, "2013-03-17" },
+            },
+        },
+        .{
+            .desc = "minimum / maximum date value",
+            .sql = "SELECT DATE '0001-01-01', DATE '9999-12-31'",
+            .rows = .{
+                .{ "0001-01-01", "9999-12-31" },
+            },
+        },
+    },
+}

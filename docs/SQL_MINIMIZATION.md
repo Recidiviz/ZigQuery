@@ -356,6 +356,12 @@ zig build corpus -Drelease=true          # PASS counts + prepared-SQL bytes
 ./zig-out/bin/zetasqlite-zig --sql "…"   # emitted SQLite for one query
 ```
 
+> `zig build corpus` has since been retired. Its 748 cases are
+> `testdata/specs/zigquery/**`, so the equivalent today is
+> `zig build spec -Drelease=true -- --filter zigquery/`. The PASS counts quoted
+> above are the old runner's and do not reproduce verbatim; the prepared-SQL
+> byte figures do.
+
 Level counting and pass-through classification were done by tokenising the
 `--sql` output with paren-depth tracking and testing each `SELECT` block for
 own-level clauses; scan-kind counts come from the `AS \`<kind>_scan_<n>\`` aliases

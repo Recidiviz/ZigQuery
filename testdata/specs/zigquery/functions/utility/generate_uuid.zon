@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/utility/generate_uuid",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "generate_uuid",
+            .sql = "SELECT LENGTH(GENERATE_UUID())",
+            .rows = .{
+                .{36},
+            },
+        },
+    },
+}

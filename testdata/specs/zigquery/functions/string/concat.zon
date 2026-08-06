@@ -1,0 +1,28 @@
+.{
+    .spec = "zigquery/functions/string/concat",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "concat string operator",
+            .sql = "SELECT \"a\" || \"b\"",
+            .rows = .{
+                .{"ab"},
+            },
+        },
+        .{
+            .desc = "concat array operator",
+            .sql = "SELECT [1, 2] || [3, 4]",
+            .rows = .{
+                .{.{ 1, 2, 3, 4 }},
+            },
+        },
+        .{
+            .desc = "concat",
+            .sql = "SELECT CONCAT('T.P.', ' ', 'Bar'), CONCAT('Summer', ' ', 1923), CONCAT(\"abc\"), CONCAT(1), CONCAT('A', NULL, 'C'), CONCAT(NULL)",
+            .rows = .{
+                .{ "T.P. Bar", "Summer 1923", "abc", "1", null, null },
+            },
+        },
+    },
+}

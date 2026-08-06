@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/json/parse_json",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "parse_json",
+            .sql = "SELECT PARSE_JSON('{\"coordinates\":[10,20],\"id\":1}')",
+            .rows = .{
+                .{"{\"coordinates\":[10,20],\"id\":1}"},
+            },
+        },
+    },
+}

@@ -1,0 +1,35 @@
+.{
+    .spec = "zigquery/functions/json/json_type",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_type",
+            .sql =
+            \\
+            \\SELECT json_val, JSON_TYPE(json_val) AS type
+            \\FROM
+            \\  UNNEST(
+            \\    [
+            \\      JSON '"apple"',
+            \\      JSON '10',
+            \\      JSON '3.14',
+            \\      JSON 'null',
+            \\      JSON '{"city": "New York", "State": "NY"}',
+            \\      JSON '["apple", "banana"]',
+            \\      JSON 'false'
+            \\    ]
+            \\  ) AS json_val
+            ,
+            .rows = .{
+                .{ "\"apple\"", "string" },
+                .{ "10", "number" },
+                .{ "3.14", "number" },
+                .{ "null", "null" },
+                .{ "{\"State\":\"NY\",\"city\":\"New York\"}", "object" },
+                .{ "[\"apple\",\"banana\"]", "array" },
+                .{ "false", "boolean" },
+            },
+        },
+    },
+}

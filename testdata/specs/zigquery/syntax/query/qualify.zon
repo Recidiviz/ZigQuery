@@ -1,0 +1,74 @@
+.{
+    .spec = "zigquery/syntax/query/qualify",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "qualify",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT
+            \\  item,
+            \\  RANK() OVER (PARTITION BY category ORDER BY purchases DESC) as rank
+            \\FROM Produce WHERE Produce.category = 'vegetable' QUALIFY rank <= 3
+            ,
+            .rows = .{
+                .{ "kale", 1 },
+                .{ "lettuce", 2 },
+                .{ "cabbage", 3 },
+            },
+        },
+        .{
+            .desc = "qualify without group by / where / having",
+            .sql =
+            \\WITH toks AS (SELECT 1 AS x UNION ALL SELECT 2 AS x)
+            \\            SELECT x FROM toks QUALIFY MAX(x) OVER (PARTITION BY x) > 1
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "qualify group",
+            .sql =
+            \\
+            \\                WITH produce AS (
+            \\                    SELECT 'kale' AS item, 23 AS purchases
+            \\                )
+            \\                SELECT item, sum(purchases)
+            \\                FROM produce
+            \\                GROUP BY item
+            \\                QUALIFY ROW_NUMBER() OVER (PARTITION BY item ORDER BY item) = 1
+            ,
+            .rows = .{
+                .{ "kale", 23 },
+            },
+        },
+        .{
+            .desc = "qualify direct",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\SELECT item FROM Produce WHERE Produce.category = 'vegetable' QUALIFY RANK() OVER (PARTITION BY category ORDER BY purchases DESC) <= 3
+            ,
+            .rows = .{
+                .{"kale"},
+                .{"lettuce"},
+                .{"cabbage"},
+            },
+        },
+    },
+}

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/timestamp/unix_micros",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "unix_micros",
+            .sql = "SELECT UNIX_MICROS(TIMESTAMP \"2008-12-25 15:30:00+00\")",
+            .rows = .{
+                .{1230219000000000},
+            },
+        },
+    },
+}

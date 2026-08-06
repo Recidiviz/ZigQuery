@@ -1,0 +1,44 @@
+.{
+    .spec = "zigquery/functions/aggregate/approximate/approx_top_sum",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "approx_top_sum",
+            .sql =
+            \\
+            \\SELECT APPROX_TOP_SUM(x, weight, 2) FROM UNNEST([
+            \\  STRUCT("apple" AS x, 3 AS weight),
+            \\  ("pear", 2),
+            \\  ("apple", 0),
+            \\  ("banana", 5),
+            \\  ("pear", 4)
+            \\])
+            ,
+            .rows = .{
+                .{.{ .{ .sum = 6, .value = "pear" }, .{ .sum = 5, .value = "banana" } }},
+            },
+        },
+        .{
+            .desc = "approx_top_sum with null",
+            .sql = "SELECT APPROX_TOP_SUM(x, weight, 2) FROM UNNEST([STRUCT(\"apple\" AS x, NULL AS weight), (\"pear\", 0), (\"pear\", NULL)])",
+            .rows = .{
+                .{.{ .{ .sum = 0, .value = "pear" }, .{ .sum = null, .value = "apple" } }},
+            },
+        },
+        .{
+            .desc = "approx_top_sum with null 2",
+            .sql = "SELECT APPROX_TOP_SUM(x, weight, 2) FROM UNNEST([STRUCT(\"apple\" AS x, 0 AS weight), (NULL, 2)])",
+            .rows = .{
+                .{.{ .{ .sum = 2, .value = null }, .{ .sum = 0, .value = "apple" } }},
+            },
+        },
+        .{
+            .desc = "approx_top_sum with null 3",
+            .sql = "SELECT APPROX_TOP_SUM(x, weight, 2) FROM UNNEST([STRUCT(\"apple\" AS x, 0 AS weight), (NULL, NULL)])",
+            .rows = .{
+                .{.{ .{ .sum = 0, .value = "apple" }, .{ .sum = null, .value = null } }},
+            },
+        },
+    },
+}

@@ -1,0 +1,27 @@
+.{
+    .spec = "zigquery/functions/net/net_ip_to_string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "net_ip_to_string",
+            .sql =
+            \\
+            \\SELECT
+            \\  NET.IP_TO_STRING(bin)
+            \\FROM (
+            \\  SELECT b"0123" AS bin UNION ALL
+            \\  SELECT b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01" UNION ALL
+            \\  SELECT b"0123456789@ABCDE" UNION ALL
+            \\  SELECT b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xc0\x00\x02\x80"
+            \\)
+            ,
+            .rows = .{
+                .{"48.49.50.51"},
+                .{"::1"},
+                .{"3031:3233:3435:3637:3839:4041:4243:4445"},
+                .{"::ffff:192.0.2.128"},
+            },
+        },
+    },
+}

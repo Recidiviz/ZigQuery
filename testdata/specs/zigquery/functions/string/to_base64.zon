@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/to_base64",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "to_base64",
+            .sql = "SELECT TO_BASE64(b'\\377\\340'), TO_BASE64(NULL)",
+            .rows = .{
+                .{ "/+A=", null },
+            },
+        },
+    },
+}

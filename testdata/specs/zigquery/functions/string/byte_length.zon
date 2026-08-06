@@ -1,0 +1,25 @@
+.{
+    .spec = "zigquery/functions/string/byte_length",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "byte_length",
+            .sql =
+            \\
+            \\WITH example AS (SELECT 'абвгд' AS characters, b'абвгд' AS bytes)
+            \\SELECT characters, BYTE_LENGTH(characters), bytes, BYTE_LENGTH(bytes) FROM example
+            ,
+            .rows = .{
+                .{ "абвгд", 10, "0LDQsdCy0LPQtA==", 10 },
+            },
+        },
+        .{
+            .desc = "byte_length null",
+            .sql = "SELECT BYTE_LENGTH(NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

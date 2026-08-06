@@ -1,0 +1,81 @@
+.{
+    .spec = "zigquery/functions/aggregate/array_agg",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "array_agg",
+            .sql = "SELECT ARRAY_AGG(x) AS array_agg FROM UNNEST([2, 1,-2, 3, -2, 1, 2]) AS x",
+            .rows = .{
+                .{.{ 2, 1, -2, 3, -2, 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_agg with distinct",
+            .sql = "SELECT ARRAY_AGG(DISTINCT x) AS array_agg FROM UNNEST([2, 1, -2, 3, -2, 1, 2]) AS x",
+            .rows = .{
+                .{.{ 2, 1, -2, 3 }},
+            },
+        },
+        .{
+            .desc = "array_agg with limit",
+            .sql = "SELECT ARRAY_AGG(x LIMIT 5) AS array_agg FROM UNNEST([2, 1, -2, 3, -2, 1, 2]) AS x",
+            .rows = .{
+                .{.{ 2, 1, -2, 3, -2 }},
+            },
+        },
+        .{
+            .desc = "array_agg with nulls",
+            .sql = "SELECT ARRAY_AGG(x) AS array_agg FROM UNNEST([NULL, 1, -2, 3, -2, 1, NULL]) AS x",
+            .expect_error = "ARRAY_AGG: input value must be not null",
+            .rows = .{},
+        },
+        .{
+            .desc = "array_agg with null in order by",
+            .sql = "WITH toks AS (SELECT '1' AS x, '1' as y UNION ALL SELECT '2', null) SELECT ARRAY_AGG(x ORDER BY y) FROM toks",
+            .rows = .{
+                .{.{ "2", "1" }},
+            },
+        },
+        .{
+            .desc = "array_agg with struct",
+            .sql = "SELECT b, ARRAY_AGG(a) FROM UNNEST([STRUCT(1 AS a, 2 AS b), STRUCT(NULL AS a, 2 AS b)]) GROUP BY b",
+            .expect_error = "ARRAY_AGG: input value must be not null",
+            .rows = .{},
+        },
+        .{
+            .desc = "array_agg with ignore nulls",
+            .sql = "SELECT ARRAY_AGG(x IGNORE NULLS) AS array_agg FROM UNNEST([NULL, 1, -2, 3, -2, 1, NULL]) AS x",
+            .rows = .{
+                .{.{ 1, -2, 3, -2, 1 }},
+            },
+        },
+        .{
+            .desc = "array_agg with ignore nulls and struct",
+            .sql = "SELECT b, ARRAY_AGG(a IGNORE NULLS) FROM UNNEST([STRUCT(NULL AS a, 2 AS b), STRUCT(1 AS a, 2 AS b)]) GROUP BY b",
+            .rows = .{
+                .{ 2, .{1} },
+            },
+        },
+        .{
+            .desc = "array_agg with abs",
+            .sql = "SELECT ARRAY_AGG(x ORDER BY ABS(x)) AS array_agg FROM UNNEST([2, 1, -2, 3, -2, 1, 2]) AS x",
+            .rows = .{
+                .{.{ 1, 1, 2, -2, -2, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "array_agg with window",
+            .sql = "SELECT x, ARRAY_AGG(x) OVER (ORDER BY ABS(x)) FROM UNNEST([2, 1, -2, 3, -2, 1, 2]) AS x",
+            .rows = .{
+                .{ 1, .{ 1, 1 } },
+                .{ 1, .{ 1, 1 } },
+                .{ 2, .{ 1, 1, 2, -2, -2, 2 } },
+                .{ -2, .{ 1, 1, 2, -2, -2, 2 } },
+                .{ -2, .{ 1, 1, 2, -2, -2, 2 } },
+                .{ 2, .{ 1, 1, 2, -2, -2, 2 } },
+                .{ 3, .{ 1, 1, 2, -2, -2, 2, 3 } },
+            },
+        },
+    },
+}

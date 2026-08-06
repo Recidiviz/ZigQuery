@@ -1,0 +1,65 @@
+.{
+    .spec = "zigquery/functions/array/generate_array",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "generate_array function",
+            .sql = "SELECT GENERATE_ARRAY(1, 5) AS example_array",
+            .rows = .{
+                .{.{ 1, 2, 3, 4, 5 }},
+            },
+        },
+        .{
+            .desc = "generate_array nil",
+            .sql = "SELECT GENERATE_ARRAY(NULL, 5) AS example_array",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "generate_array function with step",
+            .sql = "SELECT GENERATE_ARRAY(0, 10, 3) AS example_array",
+            .rows = .{
+                .{.{ 0, 3, 6, 9 }},
+            },
+        },
+        .{
+            .desc = "generate_array function with negative step value",
+            .sql = "SELECT GENERATE_ARRAY(10, 0, -3) AS example_array",
+            .rows = .{
+                .{.{ 10, 7, 4, 1 }},
+            },
+        },
+        .{
+            .desc = "generate_array function with large step value",
+            .sql = "SELECT GENERATE_ARRAY(4, 4, 10) AS example_array",
+            .rows = .{
+                .{.{4}},
+            },
+        },
+        .{
+            .desc = "generate_array function with over step value",
+            .sql = "SELECT GENERATE_ARRAY(10, 0, 3) AS example_array",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "generate_array function with null",
+            .sql = "SELECT GENERATE_ARRAY(5, NULL, 1) AS example_array",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "generate_array function for generate multiple array",
+            .sql = "SELECT GENERATE_ARRAY(start, 5) AS example_array FROM UNNEST([3, 4, 5]) AS start",
+            .rows = .{
+                .{.{ 3, 4, 5 }},
+                .{.{ 4, 5 }},
+                .{.{5}},
+            },
+        },
+    },
+}

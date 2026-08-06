@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/starts_with",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "starts_with",
+            .sql = "SELECT STARTS_WITH('foo', 'b'), STARTS_WITH('bar', 'b'), STARTS_WITH('baz', 'b'), STARTS_WITH(NULL, 'a'), STARTS_WITH('a', NULL)",
+            .rows = .{
+                .{ false, true, true, null, null },
+            },
+        },
+    },
+}

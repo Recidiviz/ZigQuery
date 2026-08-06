@@ -1,0 +1,164 @@
+.{
+    .spec = "zigquery/functions/aggregate/any_value",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "any_value",
+            .sql = "SELECT ANY_VALUE(fruit) FROM UNNEST([\"apple\", \"banana\", \"pear\"]) as fruit",
+            .rows = .{
+                .{"apple"},
+            },
+        },
+        .{
+            .desc = "any_value with window",
+            .sql = "SELECT fruit, ANY_VALUE(fruit) OVER (ORDER BY LENGTH(fruit) ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM UNNEST([\"apple\", \"banana\", \"pear\"]) as fruit",
+            .rows = .{
+                .{ "pear", "pear" },
+                .{ "apple", "pear" },
+                .{ "banana", "apple" },
+            },
+        },
+        .{
+            .desc = "any_value with having max",
+            .sql =
+            \\
+            \\                WITH Store AS (
+            \\                    SELECT 20 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 40 AS sold, "pears" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "oranges" AS fruit
+            \\                    UNION ALL SELECT 30 AS sold, "bananas" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "bananas" AS fruit
+            \\                )
+            \\                SELECT
+            \\                    fruit,
+            \\                    ANY_VALUE(sold HAVING MAX sold) AS max_sales
+            \\                FROM Store
+            \\                GROUP BY fruit
+            \\                ORDER BY fruit
+            ,
+            .rows = .{
+                .{ "apples", 20 },
+                .{ "bananas", 30 },
+                .{ "oranges", 10 },
+                .{ "pears", 40 },
+            },
+        },
+        .{
+            .desc = "any_value with having min",
+            .sql =
+            \\
+            \\                WITH Store AS (
+            \\                    SELECT 20 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 40 AS sold, "pears" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "oranges" AS fruit
+            \\                    UNION ALL SELECT 30 AS sold, "bananas" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "bananas" AS fruit
+            \\                )
+            \\                SELECT
+            \\                    fruit,
+            \\                    ANY_VALUE(sold HAVING MIN sold) AS min_sales
+            \\                FROM Store
+            \\                GROUP BY fruit
+            \\                ORDER BY fruit
+            ,
+            .rows = .{
+                .{ "apples", 10 },
+                .{ "bananas", 10 },
+                .{ "oranges", 10 },
+                .{ "pears", 40 },
+            },
+        },
+        .{
+            .desc = "any_value having max with struct",
+            .sql =
+            \\
+            \\                WITH Store AS (
+            \\                    SELECT 20 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 40 AS sold, "pears" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "oranges" AS fruit
+            \\                    UNION ALL SELECT 30 AS sold, "bananas" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "bananas" AS fruit
+            \\                )
+            \\                SELECT
+            \\                    ANY_VALUE(STRUCT(sold, fruit) HAVING MAX sold) AS most_sales
+            \\                FROM Store
+            ,
+            .rows = .{
+                .{.{ .fruit = "pears", .sold = 40 }},
+            },
+        },
+        .{
+            .desc = "any_value having min with struct",
+            .sql =
+            \\
+            \\                WITH Store AS (
+            \\                    SELECT 20 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 40 AS sold, "pears" AS fruit
+            \\                    UNION ALL SELECT 50 AS sold, "oranges" AS fruit
+            \\                    UNION ALL SELECT 30 AS sold, "bananas" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "bananas" AS fruit
+            \\                )
+            \\                SELECT
+            \\                    ANY_VALUE(STRUCT(sold, fruit) HAVING MIN sold) AS least_sales
+            \\                FROM Store
+            ,
+            .rows = .{
+                .{.{ .fruit = "apples", .sold = 10 }},
+            },
+        },
+        .{
+            .desc = "any_value having max and min together",
+            .sql =
+            \\
+            \\                WITH Store AS (
+            \\                    SELECT 20 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 40 AS sold, "pears" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "oranges" AS fruit
+            \\                    UNION ALL SELECT 30 AS sold, "bananas" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "bananas" AS fruit
+            \\                )
+            \\                SELECT
+            \\                    fruit,
+            \\                    ANY_VALUE(sold HAVING MIN sold) AS least_sales,
+            \\                    ANY_VALUE(sold HAVING MAX sold) AS most_sales
+            \\                FROM Store
+            \\                GROUP BY fruit
+            \\                ORDER BY fruit
+            ,
+            .rows = .{
+                .{ "apples", 10, 20 },
+                .{ "bananas", 10, 30 },
+                .{ "oranges", 10, 10 },
+                .{ "pears", 40, 40 },
+            },
+        },
+        .{
+            .desc = "any_value having max with different expression",
+            .sql =
+            \\
+            \\                WITH Produce AS (
+            \\                    SELECT "apple" AS name, 3 AS count, 0.50 AS price
+            \\                    UNION ALL SELECT "apple" AS name, 2 AS count, 0.75 AS price
+            \\                    UNION ALL SELECT "banana" AS name, 5 AS count, 0.25 AS price
+            \\                    UNION ALL SELECT "banana" AS name, 1 AS count, 0.30 AS price
+            \\                )
+            \\                SELECT
+            \\                    name,
+            \\                    ANY_VALUE(price HAVING MAX count) AS price_at_max_count
+            \\                FROM Produce
+            \\                GROUP BY name
+            \\                ORDER BY name
+            ,
+            .rows = .{
+                .{ "apple", 0.5 },
+                .{ "banana", 0.25 },
+            },
+        },
+    },
+}

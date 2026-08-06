@@ -1,0 +1,30 @@
+.{
+    .spec = "zigquery/functions/json/to_json",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "to_json",
+            .sql =
+            \\
+            \\With CoordinatesTable AS (
+            \\    (SELECT 1 AS id, [10,20] AS coordinates) UNION ALL
+            \\    (SELECT 2 AS id, [30,40] AS coordinates) UNION ALL
+            \\    (SELECT 3 AS id, [50,60] AS coordinates))
+            \\SELECT TO_JSON(t) AS json_objects FROM CoordinatesTable AS t
+            ,
+            .rows = .{
+                .{"{\"id\":1,\"coordinates\":[10,20]}"},
+                .{"{\"id\":2,\"coordinates\":[30,40]}"},
+                .{"{\"id\":3,\"coordinates\":[50,60]}"},
+            },
+        },
+        .{
+            .desc = "to_json with struct",
+            .sql = "SELECT TO_JSON(STRUCT(\"foo\" AS a, TO_JSON(STRUCT(\"bar\" AS c)) AS b))",
+            .rows = .{
+                .{"{\"a\":\"foo\",\"b\":{\"c\":\"bar\"}}"},
+            },
+        },
+    },
+}

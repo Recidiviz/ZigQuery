@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/hash/sha1",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "sha1",
+            .sql = "SELECT SHA1(\"Hello World\")",
+            .rows = .{
+                .{"Ck1VqNd45QIvq3AZd8XYQLvEhtA="},
+            },
+        },
+    },
+}

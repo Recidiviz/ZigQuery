@@ -4,21 +4,21 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/json_functions.md#float_array",
     .cases = .{
-    // FLOAT_ARRAY is a GoogleSQL-only accessor. Real BigQuery answers `Function
-    // not found: FLOAT_ARRAY` (bq CLI, 2026-08-04): it has the scalar BOOL /
-    // INT64 / FLOAT64 / STRING accessors and their LAX_ forms, and no typed-
-    // array forms at all -- JSON_VALUE_ARRAY and JSON_QUERY_ARRAY are how you
-    // get an array out of JSON there.
-    //
-    // Gated behind FEATURE_JSON_MORE_VALUE_EXTRACTION_FUNCTIONS +
-    // FEATURE_JSON_ARRAY_VALUE_EXTRACTION_FUNCTIONS
-    // (builtin_function_internal_3.cc:1885), which stays off in
-    // shim/analyzer_shim.cc.
-    //
-    // Restated as the refusal so the case still pins the decision. Unlike the
-    // net pins, this one is exact: the analyzer refuses at name resolution and
-    // its message is BigQuery's own, word for word, so the fixture names the
-    // function rather than only saying "not implemented here".
+        // FLOAT_ARRAY is a GoogleSQL-only accessor. Real BigQuery answers `Function
+        // not found: FLOAT_ARRAY` (bq CLI, 2026-08-04): it has the scalar BOOL /
+        // INT64 / FLOAT64 / STRING accessors and their LAX_ forms, and no typed-
+        // array forms at all -- JSON_VALUE_ARRAY and JSON_QUERY_ARRAY are how you
+        // get an array out of JSON there.
+        //
+        // Gated behind FEATURE_JSON_MORE_VALUE_EXTRACTION_FUNCTIONS +
+        // FEATURE_JSON_ARRAY_VALUE_EXTRACTION_FUNCTIONS
+        // (builtin_function_internal_3.cc:1885), which stays off in
+        // shim/analyzer_shim.cc.
+        //
+        // Restated as the refusal so the case still pins the decision. Unlike the
+        // net pins, this one is exact: the analyzer refuses at name resolution and
+        // its message is BigQuery's own, word for word, so the fixture names the
+        // function rather than only saying "not implemented here".
         .{
             .desc = "float_array extracts a typed array",
             .sql = "SELECT TO_JSON_STRING(FLOAT_ARRAY(JSON '[1.0,2.5]'))",

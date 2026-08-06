@@ -1,0 +1,31 @@
+.{
+    .spec = "zigquery/functions/aggregate/max",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "max from int group",
+            .sql = "SELECT MAX(x) AS max FROM UNNEST([8, 37, 4, 55]) AS x",
+            .rows = .{
+                .{55},
+            },
+        },
+        .{
+            .desc = "max from date group",
+            .sql = "SELECT MAX(x) AS max FROM UNNEST([DATE '2022-01-01', DATE '2022-02-01', DATE '2022-01-02', DATE '2021-03-01']) AS x",
+            .rows = .{
+                .{"2022-02-01"},
+            },
+        },
+        .{
+            .desc = "max window from date group",
+            .sql = "SELECT MAX(x) OVER() AS max FROM UNNEST([DATE '2022-01-01', DATE '2022-02-01', DATE '2022-01-02', DATE '2021-03-01']) AS x",
+            .rows = .{
+                .{"2022-02-01"},
+                .{"2022-02-01"},
+                .{"2022-02-01"},
+                .{"2022-02-01"},
+            },
+        },
+    },
+}

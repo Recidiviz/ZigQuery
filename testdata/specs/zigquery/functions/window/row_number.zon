@@ -1,0 +1,61 @@
+.{
+    .spec = "zigquery/functions/window/row_number",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "window row_number",
+            .sql =
+            \\
+            \\WITH Numbers AS
+            \\ (SELECT 1 as x
+            \\  UNION ALL SELECT 2
+            \\  UNION ALL SELECT 2
+            \\  UNION ALL SELECT 5
+            \\  UNION ALL SELECT 8
+            \\  UNION ALL SELECT 10
+            \\  UNION ALL SELECT 10
+            \\)
+            \\SELECT x,
+            \\  ROW_NUMBER() OVER (ORDER BY x) AS row_num
+            \\FROM Numbers
+            ,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+                .{ 2, 3 },
+                .{ 5, 4 },
+                .{ 8, 5 },
+                .{ 10, 6 },
+                .{ 10, 7 },
+            },
+        },
+        .{
+            .desc = "row_number nest",
+            .sql =
+            \\
+            \\WITH Produce AS
+            \\ (SELECT 'kale' as item, 23 as purchases, 'vegetable' as category
+            \\  UNION ALL SELECT 'banana', 2, 'fruit'
+            \\  UNION ALL SELECT 'cabbage', 9, 'vegetable'
+            \\  UNION ALL SELECT 'apple', 8, 'fruit'
+            \\  UNION ALL SELECT 'leek', 2, 'vegetable'
+            \\  UNION ALL SELECT 'lettuce', 10, 'vegetable')
+            \\, Numbers AS (
+            \\  SELECT item, purchases, category, ROW_NUMBER() OVER(PARTITION BY category) AS num
+            \\    FROM Produce
+            \\) SELECT p.item, p.category, p.purchases, n.num,
+            \\    ROW_NUMBER() OVER (PARTITION BY p.category ORDER BY p.purchases ASC) AS num2
+            \\    FROM Produce p JOIN Numbers n ON p.item = n.item AND p.category = n.category
+            ,
+            .rows = .{
+                .{ "banana", "fruit", 2, 1, 1 },
+                .{ "apple", "fruit", 8, 2, 2 },
+                .{ "leek", "vegetable", 2, 3, 1 },
+                .{ "cabbage", "vegetable", 9, 2, 2 },
+                .{ "lettuce", "vegetable", 10, 4, 3 },
+                .{ "kale", "vegetable", 23, 1, 4 },
+            },
+        },
+    },
+}

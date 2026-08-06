@@ -1,0 +1,70 @@
+.{
+    .spec = "zigquery/functions/timestamp/format_timestamp",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "format timestamp with %t",
+            .sql = "SELECT FORMAT('%t', timestamp '2015-09-01 12:34:56 America/Los_Angeles')",
+            .rows = .{
+                .{"2015-09-01 19:34:56+00"},
+            },
+        },
+        .{
+            .desc = "format_timestamp with %c",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%c\", TIMESTAMP \"2008-12-25 15:30:00+00\", \"UTC\")",
+            .rows = .{
+                .{"Thu Dec 25 15:30:00 2008"},
+            },
+        },
+        .{
+            .desc = "format_timestamp with %b-%d-%Y",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%b-%d-%Y\", TIMESTAMP \"2008-12-25 15:30:00+00\")",
+            .rows = .{
+                .{"Dec-25-2008"},
+            },
+        },
+        .{
+            .desc = "format_timestamp with %b %Y",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%b %Y\", TIMESTAMP \"2008-12-25 15:30:00+00\")",
+            .rows = .{
+                .{"Dec 2008"},
+            },
+        },
+        .{
+            .desc = "format_timestamp with %Y-%m-%d %H:%M:%S",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%Y-%m-%d %H:%M:%S\", TIMESTAMP \"2008-12-25 15:30:21+00\", \"Asia/Tokyo\")",
+            .rows = .{
+                .{"2008-12-26 00:30:21"},
+            },
+        },
+        .{
+            .desc = "format_timestamp with %E3S",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%E3S\", TIMESTAMP \"2008-12-25 15:30:12.345678+00\")",
+            .rows = .{
+                .{"12.345"},
+            },
+        },
+        .{
+            .desc = "format_timestamp with %E*S",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%E*S\", TIMESTAMP \"2008-12-25 15:30:12.345678+00\")",
+            .rows = .{
+                .{"12.345678"},
+            },
+        },
+        .{
+            .desc = "format_timestamp with %E4Y",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%E4Y\", TIMESTAMP \"2008-12-25 15:30:12.345678+00\")",
+            .rows = .{
+                .{"2008"},
+            },
+        },
+        .{
+            .desc = "format_timestamp with %Ez",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%Ez\", TIMESTAMP \"2008-12-25 15:30:12.345678+00\")",
+            .rows = .{
+                .{"+00:00"},
+            },
+        },
+    },
+}

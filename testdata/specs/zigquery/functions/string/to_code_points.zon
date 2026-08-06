@@ -1,0 +1,34 @@
+.{
+    .spec = "zigquery/functions/string/to_code_points",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "to_code_points with string value",
+            .sql = "SELECT word, TO_CODE_POINTS(word) FROM UNNEST(['foo', 'bar', 'baz', 'giraffe', 'llama', NULL]) AS word",
+            .rows = .{
+                .{ "foo", .{ 102, 111, 111 } },
+                .{ "bar", .{ 98, 97, 114 } },
+                .{ "baz", .{ 98, 97, 122 } },
+                .{ "giraffe", .{ 103, 105, 114, 97, 102, 102, 101 } },
+                .{ "llama", .{ 108, 108, 97, 109, 97 } },
+                .{ null, .{} },
+            },
+        },
+        .{
+            .desc = "to_code_points with bytes value",
+            .sql = "SELECT word, TO_CODE_POINTS(word) FROM UNNEST([b'\\x00\\x01\\x10\\xff', b'\\x66\\x6f\\x6f']) AS word",
+            .rows = .{
+                .{ "AAEQ/w==", .{ 0, 1, 16, 255 } },
+                .{ "Zm9v", .{ 102, 111, 111 } },
+            },
+        },
+        .{
+            .desc = "to_code_points compare string and bytes",
+            .sql = "SELECT TO_CODE_POINTS(b'Ā'), TO_CODE_POINTS('Ā')",
+            .rows = .{
+                .{ .{ 196, 128 }, .{256} },
+            },
+        },
+    },
+}

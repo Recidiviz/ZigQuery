@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/safe_convert_bytes_to_string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "safe_convert_bytes_to_string",
+            .sql = "SELECT SAFE_CONVERT_BYTES_TO_STRING(b'\\xc2'), SAFE_CONVERT_BYTES_TO_STRING(NULL)",
+            .rows = .{
+                .{ "�", null },
+            },
+        },
+    },
+}

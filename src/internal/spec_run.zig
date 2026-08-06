@@ -22,47 +22,68 @@ const spec_expect = @import("spec_expect.zig");
 const Zoir = std.zig.Zoir;
 
 pub const specs_root = "testdata/specs";
-pub const manifest_path = "testdata/specs/manifest.zon";
 
 /// The clock every case sees, so CURRENT_* is reproducible. Same instant the
 /// JSON corpus pins (2006-01-02 15:04:05 UTC, Go's reference time).
 const fixed_now_unix_micros: i64 = 1136239445000000;
 
-pub const Dialect = enum { googlesql, bigquery };
+/// Spec's Dialect denotes how we interpret their expected got/want comparators
+pub const Dialect = enum { googlesql, bigquery, zigquery };
 
-/// `manifest.zon` — the one fixed-shape file here, so it gets the typed parser.
+/// One entry per spec file under `specs_root`, built from `findSpecs()`.
 pub const Manifest = struct {
-    generated_from: []const u8,
     files: []const Entry,
 
     pub const Entry = struct {
         path: []const u8,
         dialect: Dialect,
-        cases: u32,
     };
 };
 
+/// Every `.zon` under `specs_root`, relative to it, sorted. Sorted because the
+/// run order decides what a file's shared connection sees and what the report
+/// and the snapshot look like — none of which may depend on readdir order.
+fn findSpecs(arena: std.mem.Allocator, io: std.Io) ![]const []const u8 {
+    var dir = try std.Io.Dir.cwd().openDir(io, specs_root, .{ .iterate = true });
+    defer dir.close(io);
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    var walker = try dir.walk(arena);
+    defer walker.deinit();
+    while (try walker.next(io)) |e| {
+        if (e.kind != .file) continue;
+        if (!std.mem.endsWith(u8, e.path, ".zon")) continue;
+        try paths.append(arena, try arena.dupe(u8, e.path));
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lt);
+    return paths.items;
+}
+
+/// A path's own first component names its dialect (`googlesql/...`,
+/// `bigquery/...`, `zigquery/...`), so the manifest needs nothing beyond the
+/// paths `findSpecs` already found.
+fn dialectFromPath(path: []const u8) ?Dialect {
+    const top = if (std.mem.indexOfScalar(u8, path, '/')) |i| path[0..i] else path;
+    return std.meta.stringToEnum(Dialect, top);
+}
+
 pub fn loadManifest(arena: std.mem.Allocator, io: std.Io, out: *std.Io.Writer) !Manifest {
-    const man_src = try std.Io.Dir.cwd().readFileAllocOptions(
-        io,
-        manifest_path,
-        arena,
-        .limited(1 << 22),
-        .of(u8),
-        0,
-    );
-    var man_diag: std.zon.parse.Diagnostics = .{};
-    return std.zon.parse.fromSliceAlloc(
-        Manifest,
-        arena,
-        man_src,
-        &man_diag,
-        .{},
-    ) catch {
-        try out.print("{s}: {f}\n", .{ manifest_path, &man_diag });
-        try out.flush();
-        std.process.exit(1);
-    };
+    const paths = try findSpecs(arena, io);
+    var files: std.ArrayList(Manifest.Entry) = .empty;
+    try files.ensureTotalCapacity(arena, paths.len);
+    for (paths) |path| {
+        const dialect = dialectFromPath(path) orelse {
+            try out.print("{s}: no googlesql/bigquery/zigquery prefix\n", .{path});
+            try out.flush();
+            std.process.exit(1);
+        };
+        files.appendAssumeCapacity(.{ .path = path, .dialect = dialect });
+    }
+    return .{ .files = files.items };
 }
 
 /// What actually happened when this engine ran the case. Says nothing about
@@ -207,12 +228,13 @@ fn runSpecFile(
     capture_detail: bool,
     results: *std.ArrayList(Record),
 ) !void {
-    // Comparison rules diverge for testdata/specs/googlesql/compliance/**;
-    // see spec_expect.zig's module doc comment.
-    const corpus: spec_expect.Corpus = if (std.mem.startsWith(u8, entry.path, "googlesql/compliance/"))
+    // Comparison rules diverge by corpus
+    const corpus: spec_expect.Corpus = if (std.mem.startsWith(u8, entry.path, "googlesql/zigquery/"))
+        .zigquery
+    else if (std.mem.startsWith(u8, entry.path, "googlesql/compliance/"))
         .compliance
     else
-        .doc;
+        .bigquery_docs;
 
     const path = try std.fs.path.join(arena, &.{ specs_root, entry.path });
     const src = std.Io.Dir.cwd().readFileAllocOptions(
@@ -618,11 +640,14 @@ fn rowMatches(
     got_row: []const driver.Cell,
     corpus: spec_expect.Corpus,
 ) !bool {
+    var opts = if (corpus == .zigquery) spec_expect.typed_options else spec_expect.Options{};
+    opts.corpus = corpus;
+
     const cells = elements(zoir, want_row);
     if (cells.len != got_row.len) return false;
     var i: u32 = 0;
     while (i < cells.len) : (i += 1) {
-        if (!try spec_expect.matches(gpa, zoir, cells.at(i), got_row[i], .{ .corpus = corpus })) return false;
+        if (!try spec_expect.matches(gpa, zoir, cells.at(i), got_row[i], opts)) return false;
     }
     return true;
 }

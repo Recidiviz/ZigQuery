@@ -1,0 +1,40 @@
+.{
+    .spec = "zigquery/functions/datetime/parse_datetime",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "parse datetime",
+            .sql = "SELECT PARSE_DATETIME(\"%a %b %e %I:%M:%S %Y\", \"Thu Dec 25 07:30:00 2008\")",
+            .rows = .{
+                .{"2008-12-25T07:30:00"},
+            },
+        },
+        .{
+            .desc = "parse datetime with %c",
+            .sql = "SELECT PARSE_DATETIME(\"%c\", \"Thu Dec 25 07:30:00 2008\")",
+            .rows = .{
+                .{"2008-12-25T07:30:00"},
+            },
+        },
+        .{
+            .desc = "parse datetime ( the year element is in different locations )",
+            .sql = "SELECT PARSE_DATETIME(\"%a %b %e %Y %I:%M:%S\", \"Thu Dec 25 07:30:00 2008\")",
+            .expect_error = "error parsing [Thu Dec 25 07:30:00 2008] with format [%a %b %e %Y %I:%M:%S]: could not parse hour number: leading character is not a digit",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse datetime ( one of the year elements is missing )",
+            .sql = "SELECT PARSE_DATETIME(\"%a %b %e %I:%M:%S\", \"Thu Dec 25 07:30:00 2008\")",
+            .expect_error = "error parsing [Thu Dec 25 07:30:00 2008] with format [%a %b %e %I:%M:%S]: found unparsed text [ 2008]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse datetime %F respectfully consuming digits",
+            .sql = "SELECT PARSE_DATETIME(\"%F\", \"03-1-1\"), PARSE_DATETIME(\"%F\", \"003-01-1\"), PARSE_DATETIME(\"%F\", \"0003-1-11\")",
+            .rows = .{
+                .{ "0003-01-01T00:00:00", "0003-01-01T00:00:00", "0003-01-11T00:00:00" },
+            },
+        },
+    },
+}

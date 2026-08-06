@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/types/boolean",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "null",
+            .sql = "SELECT NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

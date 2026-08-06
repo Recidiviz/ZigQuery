@@ -1,0 +1,48 @@
+.{
+    .spec = "zigquery/functions/string/translate",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "translate",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT 'This is a cookie' AS expression, 'sco' AS source_characters, 'zku' AS target_characters UNION ALL
+            \\  SELECT 'A coaster' AS expression, 'co' AS source_characters, 'k' as target_characters UNION ALL
+            \\  SELECT NULL, 'co', 'k' UNION ALL
+            \\  SELECT 'A coaster', NULL, 'k' UNION ALL
+            \\  SELECT 'A coaster', 'co', NULL
+            \\) SELECT expression, source_characters, target_characters, TRANSLATE(expression, source_characters, target_characters) FROM example
+            ,
+            .rows = .{
+                .{ "This is a cookie", "sco", "zku", "Thiz iz a kuukie" },
+                .{ "A coaster", "co", "k", "A kaster" },
+                .{ null, "co", "k", null },
+                .{ "A coaster", null, "k", null },
+                .{ "A coaster", "co", null, null },
+            },
+        },
+        .{
+            .desc = "translate unicode source and target",
+            .sql =
+            \\
+            \\SELECT
+            \\  TRANSLATE(
+            \\    'ØøÐðĐđŁłıŊŋ',
+            \\    CHR(216)||CHR(248)||CHR(208)||CHR(240)||CHR(272)||CHR(273)||CHR(321)||CHR(322)||CHR(305)||CHR(330)||CHR(331),
+            \\    'OoDdDdLliNn'
+            \\  ) AS got,
+            \\  'OoDdDdLliNn' AS expected,
+            \\  TRANSLATE(
+            \\    'ØøÐðĐđŁłıŊŋ',
+            \\    CHR(216)||CHR(248)||CHR(208)||CHR(240)||CHR(272)||CHR(273)||CHR(321)||CHR(322)||CHR(305)||CHR(330)||CHR(331),
+            \\    'OoDdDdLliNn'
+            \\  ) = 'OoDdDdLliNn' AS pass
+            ,
+            .rows = .{
+                .{ "OoDdDdLliNn", "OoDdDdLliNn", true },
+            },
+        },
+    },
+}

@@ -1,0 +1,20 @@
+.{
+    .spec = "zigquery/functions/array/array_first",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "array_first function",
+            .sql = "SELECT ARRAY_FIRST([1, 2, 3, 4]), ARRAY_FIRST(null)",
+            .rows = .{
+                .{ 1, null },
+            },
+        },
+        .{
+            .desc = "array_first function empty",
+            .sql = "SELECT ARRAY_FIRST(ARRAY<STRING>[])",
+            .expect_error = "ARRAY_FIRST: cannot get the first element of an empty array",
+            .rows = .{},
+        },
+    },
+}

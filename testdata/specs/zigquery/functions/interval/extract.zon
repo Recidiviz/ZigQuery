@@ -1,0 +1,20 @@
+.{
+    .spec = "zigquery/functions/interval/extract",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "extract from interval",
+            .sql =
+            \\SELECT
+            \\  EXTRACT(YEAR FROM i), EXTRACT(MONTH FROM i), EXTRACT(DAY FROM i),
+            \\  EXTRACT(HOUR FROM i),  EXTRACT(MINUTE FROM i),  EXTRACT(SECOND FROM i),  EXTRACT(MILLISECOND FROM i),  EXTRACT(MICROSECOND FROM i)
+            \\  FROM UNNEST([INTERVAL '1-2 3 4:5:6.789999' YEAR TO SECOND, INTERVAL '0-13 370 48:61:61' YEAR TO SECOND]) AS i
+            ,
+            .rows = .{
+                .{ 1, 2, 3, 4, 5, 6, 789, 789999 },
+                .{ 1, 1, 370, 49, 2, 1, 0, 0 },
+            },
+        },
+    },
+}

@@ -1,0 +1,154 @@
+.{
+    .spec = "zigquery/syntax/query/operators_logical",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "not operator",
+            .sql = "SELECT NOT 1 = 2",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "and operator",
+            .sql = "SELECT 1 = 1 AND 2 = 2",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "and operator with true and true",
+            .sql = "SELECT TRUE AND TRUE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "and operator with true and false",
+            .sql = "SELECT TRUE AND FALSE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "and operator with true and null",
+            .sql = "SELECT TRUE AND NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "and operator with false and true",
+            .sql = "SELECT FALSE AND TRUE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "and operator with false and false",
+            .sql = "SELECT FALSE AND FALSE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "and operator with false and null",
+            .sql = "SELECT FALSE AND NULL",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "and operator with null and true",
+            .sql = "SELECT NULL AND TRUE",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "and operator with null and false",
+            .sql = "SELECT NULL AND FALSE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "and operator with null and null",
+            .sql = "SELECT NULL AND NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "or operator",
+            .sql = "SELECT 1 = 2 OR 1 = 1",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "or operator with true and true",
+            .sql = "SELECT TRUE OR TRUE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "or operator with true and false",
+            .sql = "SELECT TRUE OR FALSE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "or operator with true and null",
+            .sql = "SELECT TRUE OR NULL",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "or operator with false and true",
+            .sql = "SELECT FALSE OR TRUE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "or operator with false and false",
+            .sql = "SELECT FALSE OR FALSE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "or operator with false and null",
+            .sql = "SELECT FALSE OR NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "or operator with null and true",
+            .sql = "SELECT NULL OR TRUE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "or operator with null and false",
+            .sql = "SELECT NULL OR FALSE",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "or operator with null and null",
+            .sql = "SELECT NULL OR NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

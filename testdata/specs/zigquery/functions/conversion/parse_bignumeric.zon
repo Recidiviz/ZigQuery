@@ -1,0 +1,25 @@
+.{
+    .spec = "zigquery/functions/conversion/parse_bignumeric",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        // The middle argument, 123.456E37, is 1.23456e39 -- 2.13x
+        // BIGNUMERIC's maximum, and 1.23e77 unscaled against 2^255 ~=
+        // 5.79e76. It fits no fixed-width encoding. BigQuery rejects the
+        // whole statement: 'Invalid input to PARSE_BIGNUMERIC:
+        // "123.456E37"' (checked against recidiviz-bigquery-sandbox); the
+        // value expectation exported here is go-zetasqlite's, which had no
+        // bounds check. Restated as the error, in this engine's wording --
+        // the other 35 expected_err cases in this corpus likewise carry
+        // Go's message rather than BigQuery's. The two in-range arguments,
+        // including the 39th-fractional-digit rounding, moved to
+        // testdata/specs/googlesql/functions/conversion/parse_bignumeric.zon
+        // so folding this case into an error assertion does not lose them.
+        .{
+            .desc = "parse_bignumeric",
+            .sql = "SELECT PARSE_BIGNUMERIC(\"123.45\"), PARSE_BIGNUMERIC(\"123.456E37\"), PARSE_BIGNUMERIC(\"1.123456789012345678901234567890123456789\")",
+            .expect_error = "BIGNUMERIC value out of range: 123.456E37",
+            .rows = .{},
+        },
+    },
+}

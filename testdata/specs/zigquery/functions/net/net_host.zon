@@ -1,0 +1,37 @@
+.{
+    .spec = "zigquery/functions/net/net_host",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "net_host",
+            .sql =
+            \\
+            \\SELECT
+            \\  NET.HOST(url),
+            \\  NET.PUBLIC_SUFFIX(url),
+            \\  NET.REG_DOMAIN(url)
+            \\FROM (
+            \\  SELECT "" AS url UNION ALL
+            \\  SELECT "http://abc.xyz" UNION ALL
+            \\  SELECT "http://abc..xyz" UNION ALL
+            \\  SELECT "//user:password@a.b:80/path?query" UNION ALL
+            \\  SELECT "https://[::1]:80" UNION ALL
+            \\  SELECT "http://例子.卷筒纸.中国" UNION ALL
+            \\  SELECT "    www.Example.Co.UK    " UNION ALL
+            \\  SELECT "amazon.co.uk"
+            \\)
+            ,
+            .rows = .{
+                .{ null, null, null },
+                .{ "abc.xyz", "xyz", "abc.xyz" },
+                .{ "abc..xyz", null, null },
+                .{ "a.b", null, null },
+                .{ "[::1]", null, null },
+                .{ "例子.卷筒纸.中国", "中国", "卷筒纸.中国" },
+                .{ "www.Example.Co.UK", "Co.UK", "Example.Co.UK" },
+                .{ "amazon.co.uk", "co.uk", "amazon.co.uk" },
+            },
+        },
+    },
+}

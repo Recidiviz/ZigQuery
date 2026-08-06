@@ -1,0 +1,20 @@
+.{
+    .spec = "zigquery/syntax/query/operators_field_access",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "field access operator",
+            .sql =
+            \\
+            \\WITH orders AS (
+            \\  SELECT STRUCT(STRUCT('Yonge Street' AS street, 'Canada' AS country) AS address) AS customer
+            \\)
+            \\SELECT t.customer.address.country FROM orders AS t
+            ,
+            .rows = .{
+                .{"Canada"},
+            },
+        },
+    },
+}

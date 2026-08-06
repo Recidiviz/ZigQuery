@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/timestamp/timestamp_add",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "timestamp_add",
+            .sql = "SELECT TIMESTAMP_ADD(TIMESTAMP \"2008-12-25 15:30:00+00\", INTERVAL 10 MINUTE)",
+            .rows = .{
+                .{"1230219600.0"},
+            },
+        },
+    },
+}

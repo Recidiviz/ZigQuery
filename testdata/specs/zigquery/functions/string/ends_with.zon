@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/ends_with",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "ends_with",
+            .sql = "SELECT ENDS_WITH('apple', 'e'), ENDS_WITH('banana', 'e'), ENDS_WITH('orange', 'e'), ENDS_WITH('foo', NULL), ENDS_WITH(NULL, 'foo')",
+            .rows = .{
+                .{ true, false, true, null, null },
+            },
+        },
+    },
+}

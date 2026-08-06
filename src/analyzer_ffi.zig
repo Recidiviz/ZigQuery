@@ -59,6 +59,27 @@ pub const Analyzed = struct {
 /// Diagnostic message from the last failed analyze call, arena-allocated.
 pub threadlocal var last_error: []const u8 = "";
 
+/// Optional capture of each analyzed statement, for the harnesses' verbose
+/// output (`--verbose` in harness/spec_runner.zig). The sibling of
+/// `phase.setPreparedSqlSink`: that one sees what the transformer produced,
+/// this one sees what it was given, and a case is only diagnosable with both.
+///
+/// The node and everything it points at belong to the caller's query arena, so
+/// a sink must consume — not retain — what it is handed. Process-global and
+/// unsynchronized; do not install one from a threaded driver.
+pub const AstSink = *const fn (node: *const pb.AnyResolvedNodeProto) void;
+var ast_sink: ?AstSink = null;
+
+pub fn setAstSink(sink: ?AstSink) void {
+    ast_sink = sink;
+}
+
+/// One statement decoded off the shim. Both analyze paths funnel through here
+/// so installing a sink cannot miss the catalog-handle one.
+fn noteAnalyzed(node: *const pb.AnyResolvedNodeProto) void {
+    if (ast_sink) |sink| sink(node);
+}
+
 /// Analyzes the next statement of `sql` starting at `resume_offset`.
 /// All returned memory (including the decoded tree and `last_error`) is
 /// allocated from `arena`, which must be an arena covering the query.
@@ -117,6 +138,7 @@ pub fn analyzeNextStatementOpts(
     // this buffer, so it must share the tree's lifetime.
     const bytes = try arena.dupe(u8, out_proto.?[0..out_len]);
     const node = try pb.AnyResolvedNodeProto.decode(arena, bytes);
+    noteAnalyzed(node);
     return .{
         .node = node,
         .at_end = out_is_end != 0,
@@ -294,6 +316,7 @@ pub fn analyzeNextStatementWithCatalog(
     // Copy before decoding: the decoded tree borrows slices from this buffer.
     const owned = try arena.dupe(u8, raw[0..out_len]);
     const node = try pb.AnyResolvedNodeProto.decode(arena, owned);
+    noteAnalyzed(node);
 
     return .{ .node = node, .at_end = out_is_end != 0, .resume_offset = offset };
 }

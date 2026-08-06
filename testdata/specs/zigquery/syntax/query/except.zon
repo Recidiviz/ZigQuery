@@ -1,0 +1,22 @@
+.{
+    .spec = "zigquery/syntax/query/except",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "except (case 627)",
+            .sql = "WITH orders AS (SELECT 5 as order_id, \"sprocket\" as item_name, 200 as quantity) SELECT * EXCEPT (order_id) FROM orders",
+            .rows = .{
+                .{ "sprocket", 200 },
+            },
+        },
+        .{
+            .desc = "except (case 628)",
+            .sql = "SELECT * FROM UNNEST(ARRAY<int64>[1, 2, 3]) AS number EXCEPT DISTINCT SELECT 1",
+            .rows = .{
+                .{2},
+                .{3},
+            },
+        },
+    },
+}

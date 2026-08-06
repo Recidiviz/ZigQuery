@@ -1,0 +1,32 @@
+.{
+    .spec = "zigquery/functions/string/split",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "split",
+            .sql =
+            \\
+            \\WITH letters AS (
+            \\  SELECT '' as letter_group UNION ALL
+            \\  SELECT 'a' as letter_group UNION ALL
+            \\  SELECT 'b c d' as letter_group UNION ALL
+            \\  SELECT NULL as letter_group
+            \\) SELECT SPLIT(letter_group, ' ') FROM letters
+            ,
+            .rows = .{
+                .{.{""}},
+                .{.{"a"}},
+                .{.{ "b", "c", "d" }},
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "split null delimiter",
+            .sql = "SELECT SPLIT('abc', NULL), SPLIT(b'\\xab\\xcd\\xef\\xaa\\xbb', NULL)",
+            .rows = .{
+                .{ .{}, .{} },
+            },
+        },
+    },
+}

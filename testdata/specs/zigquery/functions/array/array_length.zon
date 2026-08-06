@@ -1,0 +1,47 @@
+.{
+    .spec = "zigquery/functions/array/array_length",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "array_length function",
+            .sql = "SELECT ARRAY_LENGTH([1, 2, 3, 4]) as length",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "array_length null",
+            .sql = "SELECT ARRAY_LENGTH(NULL), ARRAY_LENGTH(NULL) IS NULL",
+            .rows = .{
+                .{ null, true },
+            },
+        },
+        .{
+            .desc = "array length comparison",
+            .sql =
+            \\
+            \\SELECT t1.*
+            \\FROM (
+            \\    SELECT 1 as idx, 1 as col1, [1, 2, 3] as arr_col
+            \\    UNION ALL
+            \\    SELECT 2 as idx, 2 as col1, [1, 2, 3] as arr_col
+            \\    UNION ALL
+            \\    SELECT 3 as idx, 3 as col1, [1, 2, 3, 4] as arr_col
+            \\) as t1
+            \\LEFT JOIN (
+            \\    SELECT 1 as idx, 1 as col1, [1, 2, 3] as arr_col
+            \\    UNION ALL
+            \\    SELECT 3 as idx, 3 as col1, [1, 2, 3] as arr_col
+            \\    UNION ALL
+            \\    SELECT 4 as idx, 4 as col1, [1, 2, 3] as arr_col
+            \\) as t2
+            \\ON t1.idx = t2.idx
+            \\WHERE ARRAY_LENGTH(t1.arr_col) <> ARRAY_LENGTH(t2.arr_col)
+            ,
+            .rows = .{
+                .{ 3, 3, .{ 1, 2, 3, 4 } },
+            },
+        },
+    },
+}

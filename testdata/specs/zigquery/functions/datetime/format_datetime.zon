@@ -1,0 +1,49 @@
+.{
+    .spec = "zigquery/functions/datetime/format_datetime",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "format_datetime with %c",
+            .sql = "SELECT FORMAT_DATETIME(\"%c\", DATETIME \"2008-12-25 15:30:00\")",
+            .rows = .{
+                .{"Thu Dec 25 15:30:00 2008"},
+            },
+        },
+        .{
+            .desc = "format_datetime with %b-%d-%Y",
+            .sql = "SELECT FORMAT_DATETIME(\"%b-%d-%Y\", DATETIME \"2008-12-25 15:30:00\")",
+            .rows = .{
+                .{"Dec-25-2008"},
+            },
+        },
+        .{
+            .desc = "format_datetime with %b %Y",
+            .sql = "SELECT FORMAT_DATETIME(\"%b %Y\", DATETIME \"2008-12-25 15:30:00\")",
+            .rows = .{
+                .{"Dec 2008"},
+            },
+        },
+        .{
+            .desc = "format_datetime with %E3S",
+            .sql = "SELECT FORMAT_DATETIME(\"%E3S\", DATETIME \"2008-12-25 15:30:12.345678\")",
+            .rows = .{
+                .{"12.345"},
+            },
+        },
+        .{
+            .desc = "format_datetime with %E*S",
+            .sql = "SELECT FORMAT_DATETIME(\"%E*S\", DATETIME \"2008-12-25 15:30:12.345678\")",
+            .rows = .{
+                .{"12.345678"},
+            },
+        },
+        .{
+            .desc = "format_datetime with %E4Y",
+            .sql = "SELECT FORMAT_DATETIME(\"%E4Y\", DATETIME \"2008-12-25 15:30:12.345678\")",
+            .rows = .{
+                .{"2008"},
+            },
+        },
+    },
+}

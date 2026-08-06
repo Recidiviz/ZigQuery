@@ -1,0 +1,21 @@
+.{
+    .spec = "zigquery/functions/time/time",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "time",
+            .sql = "SELECT TIME(15, 30, 00), TIME(TIMESTAMP \"2008-12-25 15:30:00+08\", \"America/Los_Angeles\")",
+            .rows = .{
+                .{ "15:30:00", "23:30:00" },
+            },
+        },
+        .{
+            .desc = "time from datetime",
+            .sql = "SELECT TIME(DATETIME \"2008-12-25 15:30:00.000000\")",
+            .rows = .{
+                .{"15:30:00"},
+            },
+        },
+    },
+}

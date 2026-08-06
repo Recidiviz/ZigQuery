@@ -1,0 +1,42 @@
+.{
+    .spec = "zigquery/functions/date/date_trunc",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "date_trunc with quarter",
+            .sql = "SELECT DATE_TRUNC(DATE \"2017-01-05\", QUARTER), DATE_TRUNC(DATE \"2017-02-05\", QUARTER), DATE_TRUNC(DATE \"2017-08-05\", QUARTER), DATE_TRUNC(DATE \"2017-11-05\", QUARTER), DATE_TRUNC(DATE \"2017-12-31\", QUARTER)",
+            .rows = .{
+                .{ "2017-01-01", "2017-01-01", "2017-07-01", "2017-10-01", "2017-10-01" },
+            },
+        },
+        .{
+            .desc = "date_trunc with day",
+            .sql = "SELECT DATE_TRUNC(DATE \"2008-12-25\", DAY)",
+            .rows = .{
+                .{"2008-12-25"},
+            },
+        },
+        .{
+            .desc = "date_trunc with week",
+            .sql = "SELECT DATE_TRUNC(DATE \"2017-11-07\", WEEK)",
+            .rows = .{
+                .{"2017-11-05"},
+            },
+        },
+        .{
+            .desc = "date_trunc with month",
+            .sql = "SELECT DATE_TRUNC(DATE \"2017-11-05\", MONTH)",
+            .rows = .{
+                .{"2017-11-01"},
+            },
+        },
+        .{
+            .desc = "date_trunc with year",
+            .sql = "SELECT DATE_TRUNC(DATE \"2017-11-05\", YEAR)",
+            .rows = .{
+                .{"2017-01-01"},
+            },
+        },
+    },
+}

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/time/time_sub",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "time_sub",
+            .sql = "SELECT TIME_SUB(TIME \"15:30:00\", INTERVAL 10 MINUTE)",
+            .rows = .{
+                .{"15:20:00"},
+            },
+        },
+    },
+}

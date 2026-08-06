@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/hash/sha256",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "sha256",
+            .sql = "SELECT SHA256(\"Hello World\")",
+            .rows = .{
+                .{"pZGm1Av0IEBKARczz7exkNYsZb8LzaMrV7J32a2fFG4="},
+            },
+        },
+    },
+}

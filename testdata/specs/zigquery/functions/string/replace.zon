@@ -1,0 +1,44 @@
+.{
+    .spec = "zigquery/functions/string/replace",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "replace (case 411)",
+            .sql =
+            \\
+            \\WITH desserts AS (
+            \\  SELECT 'apple pie' as dessert UNION ALL
+            \\  SELECT 'blackberry pie' as dessert UNION ALL
+            \\  SELECT 'cherry pie' as dessert
+            \\) SELECT REPLACE (dessert, 'pie', 'cobbler') FROM desserts
+            ,
+            .rows = .{
+                .{"apple cobbler"},
+                .{"blackberry cobbler"},
+                .{"cherry cobbler"},
+            },
+        },
+        .{
+            .desc = "replace null",
+            .sql = "SELECT REPLACE(NULL, 'foo', ''), REPLACE('abc', NULL, ''), REPLACE('abc', 'foo', NULL)",
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "replace (case 629)",
+            .sql = "WITH orders AS (SELECT 5 as order_id, \"sprocket\" as item_name, 200 as quantity) SELECT * REPLACE (\"widget\" AS item_name) FROM orders",
+            .rows = .{
+                .{ 5, "widget", 200 },
+            },
+        },
+        .{
+            .desc = "replace (case 630)",
+            .sql = "WITH orders AS (SELECT 5 as order_id, \"sprocket\" as item_name, 200 as quantity) SELECT * REPLACE (quantity/2 AS quantity) FROM orders",
+            .rows = .{
+                .{ 5, "sprocket", 100.0 },
+            },
+        },
+    },
+}

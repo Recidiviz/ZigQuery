@@ -1,0 +1,35 @@
+.{
+    .spec = "zigquery/functions/string/regexp_replace",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "regexp_replace",
+            .sql =
+            \\
+            \\WITH markdown AS (
+            \\  SELECT '# Heading' as heading UNION ALL
+            \\  SELECT '# Another heading' as heading
+            \\) SELECT REGEXP_REPLACE(heading, r'^# ([a-zA-Z0-9\s]+$)', '<h1>\\1</h1>') FROM markdown
+            ,
+            .rows = .{
+                .{"<h1>Heading</h1>"},
+                .{"<h1>Another heading</h1>"},
+            },
+        },
+        .{
+            .desc = "regexp_replace quoted",
+            .sql = "SELECT REGEXP_REPLACE('\"quote123\"', r'[\"\\d]', '')",
+            .rows = .{
+                .{"quote"},
+            },
+        },
+        .{
+            .desc = "regexp_replace null",
+            .sql = "SELECT REGEXP_REPLACE(NULL, r'\\:\\d\\d\\d', ''), REGEXP_REPLACE('abc', NULL, ''), REGEXP_REPLACE('abc', r'\\:\\d\\d\\d', NULL)",
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+    },
+}

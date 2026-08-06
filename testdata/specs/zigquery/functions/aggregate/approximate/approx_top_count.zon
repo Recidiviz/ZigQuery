@@ -1,0 +1,21 @@
+.{
+    .spec = "zigquery/functions/aggregate/approximate/approx_top_count",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "approx_top_count",
+            .sql = "SELECT APPROX_TOP_COUNT(x, 2) FROM UNNEST([\"apple\", \"apple\", \"pear\", \"pear\", \"pear\", \"banana\"]) as x",
+            .rows = .{
+                .{.{ .{ .count = 3, .value = "pear" }, .{ .count = 2, .value = "apple" } }},
+            },
+        },
+        .{
+            .desc = "approx_top_count with null",
+            .sql = "SELECT APPROX_TOP_COUNT(x, 2) FROM UNNEST([NULL, \"pear\", \"pear\", \"pear\", \"apple\", NULL]) as x",
+            .rows = .{
+                .{.{ .{ .count = 3, .value = "pear" }, .{ .count = 2, .value = null } }},
+            },
+        },
+    },
+}

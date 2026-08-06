@@ -1,0 +1,56 @@
+.{
+    .spec = "zigquery/syntax/query/operators_compare",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "eq operator",
+            .sql = "SELECT 100 = 100",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "lt operator",
+            .sql = "SELECT 10 < 100",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "gt operator",
+            .sql = "SELECT 100 > 10",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "lte operator",
+            .sql = "SELECT 10 <= 10",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "gte operator",
+            .sql = "SELECT 10 >= 10",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "ne operator",
+            .sql = "SELECT 100 != 10",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "ne operator2",
+            .sql = "SELECT 100 <> 10",
+            .rows = .{
+                .{true},
+            },
+        },
+    },
+}

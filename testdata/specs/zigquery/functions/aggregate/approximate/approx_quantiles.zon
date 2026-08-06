@@ -1,0 +1,42 @@
+.{
+    .spec = "zigquery/functions/aggregate/approximate/approx_quantiles",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "approx_quantiles",
+            .sql = "SELECT APPROX_QUANTILES(x, 2) FROM UNNEST([1, 1, 1, 4, 5, 6, 7, 8, 9, 10]) AS x",
+            .rows = .{
+                .{.{ 1, 5, 10 }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles 2",
+            .sql = "SELECT APPROX_QUANTILES(x, 100)[OFFSET(90)] FROM UNNEST([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) AS x",
+            .rows = .{
+                .{9},
+            },
+        },
+        .{
+            .desc = "approx_quantiles with distinct",
+            .sql = "SELECT APPROX_QUANTILES(DISTINCT x, 2) FROM UNNEST([1, 1, 1, 4, 5, 6, 7, 8, 9, 10]) AS x",
+            .rows = .{
+                .{.{ 1, 6, 10 }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles with null",
+            .sql = "SELECT APPROX_QUANTILES(x, 2 RESPECT NULLS) FROM UNNEST([NULL, NULL, 1, 1, 1, 4, 5, 6, 7, 8, 9, 10]) AS x",
+            .rows = .{
+                .{.{ null, 4, 10 }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles with respect nulls",
+            .sql = "SELECT APPROX_QUANTILES(DISTINCT x, 2 RESPECT NULLS) FROM UNNEST([NULL, NULL, 1, 1, 1, 4, 5, 6, 7, 8, 9, 10]) AS x",
+            .rows = .{
+                .{.{ null, 6, 10 }},
+            },
+        },
+    },
+}

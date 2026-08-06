@@ -1,0 +1,63 @@
+.{
+    .spec = "zigquery/functions/json/json_extract_array",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_extract_array",
+            .sql = "SELECT JSON_EXTRACT_ARRAY(JSON '{\"fruits\":[\"apples\",\"oranges\",\"grapes\"]}','$.fruits')",
+            .rows = .{
+                .{.{ "\"apples\"", "\"oranges\"", "\"grapes\"" }},
+            },
+        },
+        .{
+            .desc = "json_extract_array with integer",
+            .sql = "SELECT JSON_EXTRACT_ARRAY('[1,2,3]')",
+            .rows = .{
+                .{.{ "1", "2", "3" }},
+            },
+        },
+        .{
+            .desc = "json_extract_array with integer cast",
+            .sql = "SELECT ARRAY(SELECT CAST(integer_element AS INT64) FROM UNNEST(JSON_EXTRACT_ARRAY('[1,2,3]','$')) AS integer_element)",
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "json_extract_array format",
+            .sql = "SELECT JSON_EXTRACT_ARRAY('[\"apples\",\"oranges\",\"grapes\"]', '$')",
+            .rows = .{
+                .{.{ "\"apples\"", "\"oranges\"", "\"grapes\"" }},
+            },
+        },
+        .{
+            .desc = "json_extract_array filter",
+            .sql = "SELECT JSON_EXTRACT_ARRAY('{\"fruit\":[{\"apples\":5,\"oranges\":10},{\"apples\":2,\"oranges\":4}],\"vegetables\":[{\"lettuce\":7,\"kale\": 8}]}', '$.fruit')",
+            .rows = .{
+                .{.{ "{\"apples\":5,\"oranges\":10}", "{\"apples\":2,\"oranges\":4}" }},
+            },
+        },
+        .{
+            .desc = "json_extract_array with escape",
+            .sql = "SELECT JSON_EXTRACT_ARRAY('{\"a.b\": {\"c\": [\"world\"]}}', \"$['a.b'].c\")",
+            .rows = .{
+                .{.{"\"world\""}},
+            },
+        },
+        .{
+            .desc = "json_extract_array with null",
+            .sql = "SELECT JSON_EXTRACT_ARRAY('{\"a\":\"foo\"}','$.a'), JSON_EXTRACT_ARRAY('{\"a\":\"foo\"}','$.b'), JSON_EXTRACT_ARRAY(JSON 'null', '$')",
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "json_extract_array with empty array",
+            .sql = "SELECT JSON_EXTRACT_ARRAY('{\"a\":\"foo\",\"b\":[]}','$.b')",
+            .rows = .{
+                .{.{}},
+            },
+        },
+    },
+}

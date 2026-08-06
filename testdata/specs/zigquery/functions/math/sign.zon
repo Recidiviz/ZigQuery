@@ -1,0 +1,16 @@
+.{
+    .spec = "zigquery/functions/math/sign",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "sign",
+            .sql = "SELECT SIGN(25) UNION ALL SELECT SIGN(0) UNION ALL SELECT SIGN(-25)",
+            .rows = .{
+                .{1},
+                .{0},
+                .{-1},
+            },
+        },
+    },
+}

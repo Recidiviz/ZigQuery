@@ -1,0 +1,59 @@
+.{
+    .spec = "zigquery/functions/window/percentile_cont",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "percentile_cont",
+            .sql =
+            \\
+            \\SELECT
+            \\  PERCENTILE_CONT(x, 0) OVER() AS min,
+            \\  PERCENTILE_CONT(x, 0.01) OVER() AS percentile1,
+            \\  PERCENTILE_CONT(x, 0.5) OVER() AS median,
+            \\  PERCENTILE_CONT(x, 0.9) OVER() AS percentile90,
+            \\  PERCENTILE_CONT(x, 1) OVER() AS max
+            \\FROM UNNEST([0, 3, NULL, 1, 2]) AS x LIMIT 1
+            ,
+            .rows = .{
+                .{ 0.0, 0.03, 1.5, 2.7, 3.0 },
+            },
+        },
+        .{
+            .desc = "percentile_cont_non_zero_min_sorted",
+            .sql =
+            \\
+            \\WITH cte AS
+            \\    (SELECT 20 as x UNION ALL SELECT 30 as x UNION ALL SELECT 40 as x)
+            \\SELECT
+            \\  PERCENTILE_CONT(x, 0) OVER() AS min,
+            \\  PERCENTILE_CONT(x, 0.01) OVER() AS percentile1,
+            \\  PERCENTILE_CONT(x, 0.5) OVER() AS median,
+            \\  PERCENTILE_CONT(x, 0.9) OVER() AS percentile90,
+            \\  PERCENTILE_CONT(x, 1) OVER() AS max
+            \\FROM cte LIMIT 1
+            ,
+            .rows = .{
+                .{ 20.0, 20.2, 30.0, 38.0, 40.0 },
+            },
+        },
+        .{
+            .desc = "percentile_cont_non_zero_min_unsorted",
+            .sql =
+            \\
+            \\WITH cte AS
+            \\    (SELECT 500 as x UNION ALL SELECT 50 as x UNION ALL SELECT 100 as x)
+            \\SELECT
+            \\  PERCENTILE_CONT(x, 0) OVER() AS min,
+            \\  PERCENTILE_CONT(x, 0.01) OVER() AS percentile1,
+            \\  PERCENTILE_CONT(x, 0.5) OVER() AS median,
+            \\  PERCENTILE_CONT(x, 0.9) OVER() AS percentile90,
+            \\  PERCENTILE_CONT(x, 1) OVER() AS max
+            \\FROM cte LIMIT 1
+            ,
+            .rows = .{
+                .{ 50.0, 51.0, 100.0, 420.0, 500.0 },
+            },
+        },
+    },
+}

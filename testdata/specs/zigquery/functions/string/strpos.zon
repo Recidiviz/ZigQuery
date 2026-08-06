@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/strpos",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "strpos",
+            .sql = "SELECT STRPOS('foo@example.com', '@'), STRPOS('foobar@example.com', '@'), STRPOS('foobarbaz@example.com', '@'), STRPOS('quxexample.com', '@'), STRPOS(NULL, 'a'), STRPOS('a', NULL)",
+            .rows = .{
+                .{ 4, 7, 10, 0, null, null },
+            },
+        },
+    },
+}
