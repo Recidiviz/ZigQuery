@@ -1,0 +1,143 @@
+.{
+    .spec = "zigquery/functions/date/parse_date",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "base date is epoch",
+            .sql = "SELECT PARSE_DATE(\"%m\", \"03\")",
+            .rows = .{
+                .{"1970-03-01"},
+            },
+        },
+        .{
+            .desc = "parse date exceeding month maximum",
+            .sql = "SELECT PARSE_DATE(\"%m\", \"14\")",
+            .expect_error = "error parsing [14] with format [%m]: could not parse month: part [14] is greater than maximum value [12]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date beneath month minimum",
+            .sql = "SELECT PARSE_DATE(\"%m\", \"0\")",
+            .expect_error = "error parsing [0] with format [%m]: could not parse month: part [0] is less than minimum value [1]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date exceeding day maximum",
+            .sql = "SELECT PARSE_DATE(\"%d\", \"32\")",
+            .expect_error = "error parsing [32] with format [%d]: could not parse day number: part [32] is greater than maximum value [31]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date beneath day minimum",
+            .sql = "SELECT PARSE_DATE(\"%d\", \"0\")",
+            .expect_error = "error parsing [0] with format [%d]: could not parse day number: part [0] is less than minimum value [1]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date exceeding day of year maximum",
+            .sql = "SELECT PARSE_DATE(\"%j\", \"367\")",
+            .expect_error = "error parsing [367] with format [%j]: could not parse day of year number: part [367] is greater than maximum value [366]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date beneath day of year minimum",
+            .sql = "SELECT PARSE_DATE(\"%j\", \"0\")",
+            .expect_error = "error parsing [0] with format [%j]: could not parse day of year number: part [0] is less than minimum value [1]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date with single-digit month %m",
+            .sql = "SELECT PARSE_DATE(\"%m\", \"03\"), PARSE_DATE(\"%m\", \"3\"), PARSE_DATE(\"%m%Y\", \"032024\")",
+            .rows = .{
+                .{ "1970-03-01", "1970-03-01", "2024-03-01" },
+            },
+        },
+        .{
+            .desc = "parse_date with %y",
+            .sql = "SELECT PARSE_DATE(\"%y\", '1'), PARSE_DATE(\"%y\", '67'), PARSE_DATE(\"%y\", '69')",
+            .rows = .{
+                .{ "2001-01-01", "2067-01-01", "1969-01-01" },
+            },
+        },
+        .{
+            .desc = "parse date with %A %b %e %Y",
+            .sql = "SELECT PARSE_DATE(\"%A %b %e %Y\", \"Thursday Dec 25 2008\")",
+            .rows = .{
+                .{"2008-12-25"},
+            },
+        },
+        .{
+            .desc = "parse date with %Y%m%d",
+            .sql = "SELECT PARSE_DATE(\"%Y%m%d\", \"20081225\") AS parsed",
+            .rows = .{
+                .{"2008-12-25"},
+            },
+        },
+        .{
+            .desc = "parse date with %e",
+            .sql = "SELECT PARSE_DATE('%e', ' 3'), PARSE_DATE('%e', '20');",
+            .rows = .{
+                .{ "1970-01-03", "1970-01-20" },
+            },
+        },
+        .{
+            .desc = "parse date with %e - leading space allows multiple digits",
+            .sql = "SELECT PARSE_DATE('%e', ' 20');",
+            .rows = .{
+                .{"1970-01-20"},
+            },
+        },
+        .{
+            .desc = "parse date with %F no day field",
+            .sql = "SELECT PARSE_DATE(\"%F\", \"2008-01\") AS parsed",
+            .expect_error = "error parsing [2008-01] with format [%F]: could not parse year-month-day format: [-] not found after [2008-01]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date with %F no month field",
+            .sql = "SELECT PARSE_DATE(\"%F\", \"2008\") AS parsed",
+            .expect_error = "error parsing [2008] with format [%F]: could not parse year-month-day format: [-] not found after [2008]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date with %F separator but no month",
+            .sql = "SELECT PARSE_DATE(\"%F\", \"2008-\") AS parsed",
+            .expect_error = "error parsing [2008-] with format [%F]: could not parse year-month-day format: could not parse month: empty text after [2008-]",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date with %F",
+            .sql = "SELECT PARSE_DATE(\"%F\", \"2008-12-25\") AS parsed",
+            .rows = .{
+                .{"2008-12-25"},
+            },
+        },
+        .{
+            .desc = "parse date with %x",
+            .sql = "SELECT PARSE_DATE(\"%x\", \"12/25/08\") AS parsed",
+            .rows = .{
+                .{"2008-12-25"},
+            },
+        },
+        .{
+            .desc = "parse date ( the year element is in different locations )",
+            .sql = "SELECT PARSE_DATE(\"%Y %A %b %e\", \"Thursday Dec 25 2008\")",
+            .expect_error = "error parsing [Thursday Dec 25 2008] with format [%Y %A %b %e]: could not parse year: leading character is not a digit",
+            .rows = .{},
+        },
+        .{
+            .desc = "safe parse date ( the year element is in different locations )",
+            .sql = "SELECT SAFE.PARSE_DATE(\"%Y %A %b %e\", \"Thursday Dec 25 2008\")",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "parse date ( one of the year elements is missing )",
+            .sql = "SELECT PARSE_DATE(\"%A %b %e\", \"Thursday Dec 25 2008\")",
+            .expect_error = "error parsing [Thursday Dec 25 2008] with format [%A %b %e]: found unparsed text [ 2008]",
+            .rows = .{},
+        },
+    },
+}

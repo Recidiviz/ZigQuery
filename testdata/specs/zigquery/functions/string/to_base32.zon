@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/to_base32",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "to_base32",
+            .sql = "SELECT TO_BASE32(b'abcde\\xFF'), TO_BASE32(NULL)",
+            .rows = .{
+                .{ "MFRGGZDF74======", null },
+            },
+        },
+    },
+}

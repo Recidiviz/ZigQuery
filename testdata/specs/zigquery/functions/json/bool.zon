@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/json/bool",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_bool",
+            .sql = "SELECT BOOL(JSON 'true') AS vacancy",
+            .rows = .{
+                .{true},
+            },
+        },
+    },
+}

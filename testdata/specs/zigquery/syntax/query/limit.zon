@@ -1,0 +1,24 @@
+.{
+    .spec = "zigquery/syntax/query/limit",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "limit offset test",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE IconNames AS 
+            \\SELECT 'Kylie' AS FirstName, 'Minogue' AS LastName
+            \\UNION ALL SELECT 'Robyn', null;
+            \\INSERT INTO IconNames (FirstName, LastName) VALUES ("Bjork", NULL);
+            \\
+            \\SELECT * FROM IconNames
+            \\ORDER BY FirstName ASC
+            \\LIMIT 1 OFFSET 1;
+            ,
+            .rows = .{
+                .{ "Kylie", "Minogue" },
+            },
+        },
+    },
+}

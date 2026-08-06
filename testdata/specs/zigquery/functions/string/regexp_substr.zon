@@ -1,0 +1,27 @@
+.{
+    .spec = "zigquery/functions/string/regexp_substr",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "regexp_substr",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT 'Hello World Helloo' AS value, 'H?ello+' AS regex, 1 AS position, 1 AS occurrence UNION ALL
+            \\  SELECT NULL, 'H?ello+', 1, 1 UNION ALL
+            \\  SELECT 'Hello World Helloo', NULL, 1, 1 UNION ALL
+            \\  SELECT 'Hello World Helloo', 'H?ello+', NULL, 1 UNION ALL
+            \\  SELECT 'Hello World Helloo', 'H?ello+', 1, NULL
+            \\) SELECT value, regex, position, occurrence, REGEXP_SUBSTR(value, regex, position, occurrence) FROM example
+            ,
+            .rows = .{
+                .{ "Hello World Helloo", "H?ello+", 1, 1, "Hello" },
+                .{ null, "H?ello+", 1, 1, null },
+                .{ "Hello World Helloo", null, 1, 1, null },
+                .{ "Hello World Helloo", "H?ello+", null, 1, null },
+                .{ "Hello World Helloo", "H?ello+", 1, null, null },
+            },
+        },
+    },
+}

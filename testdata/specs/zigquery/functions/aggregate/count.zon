@@ -1,0 +1,38 @@
+.{
+    .spec = "zigquery/functions/aggregate/count",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "count star and distinct",
+            .sql = "SELECT COUNT(*) AS count_star, COUNT(DISTINCT x) AS count_dist_x FROM UNNEST([1, 4, 4, 5]) AS x",
+            .rows = .{
+                .{ 4, 3 },
+            },
+        },
+        .{
+            .desc = "count with null",
+            .sql = "WITH toks AS (SELECT 1 AS x UNION ALL SELECT null) SELECT COUNT(x) FROM toks",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "count with if",
+            .sql = "SELECT COUNT(DISTINCT IF(x > 0, x, NULL)) AS distinct_positive FROM UNNEST([1, -2, 4, 1, -5, 4, 1, 3, -6, 1]) AS x",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "count with window",
+            .sql = "SELECT x, COUNT(*) OVER (PARTITION BY MOD(x, 3)), COUNT(DISTINCT x) OVER (PARTITION BY MOD(x, 3)) FROM UNNEST([1, 4, 4, 5]) AS x",
+            .rows = .{
+                .{ 1, 3, 2 },
+                .{ 4, 3, 2 },
+                .{ 4, 3, 2 },
+                .{ 5, 1, 1 },
+            },
+        },
+    },
+}

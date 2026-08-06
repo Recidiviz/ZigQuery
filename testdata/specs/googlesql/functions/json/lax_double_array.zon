@@ -7,21 +7,21 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/json_functions.md#lax_double_array",
     .cases = .{
-    // LAX_DOUBLE_ARRAY is a GoogleSQL-only accessor. Real BigQuery answers
-    // `Function not found: LAX_DOUBLE_ARRAY` (bq CLI, 2026-08-04): it has the
-    // scalar BOOL / INT64 / FLOAT64 / STRING accessors and their LAX_ forms, and
-    // no typed-array forms at all -- JSON_VALUE_ARRAY and JSON_QUERY_ARRAY are
-    // how you get an array out of JSON there.
-    //
-    // Gated behind FEATURE_JSON_ARRAY_VALUE_EXTRACTION_FUNCTIONS +
-    // FEATURE_JSON_LAX_VALUE_EXTRACTION_FUNCTIONS
-    // (builtin_function_internal_3.cc:1761), which stays off in
-    // shim/analyzer_shim.cc.
-    //
-    // Restated as the refusal so the case still pins the decision. Unlike the
-    // net pins, this one is exact: the analyzer refuses at name resolution and
-    // its message is BigQuery's own, word for word, so the fixture names the
-    // function rather than only saying "not implemented here".
+        // LAX_DOUBLE_ARRAY is a GoogleSQL-only accessor. Real BigQuery answers
+        // `Function not found: LAX_DOUBLE_ARRAY` (bq CLI, 2026-08-04): it has the
+        // scalar BOOL / INT64 / FLOAT64 / STRING accessors and their LAX_ forms, and
+        // no typed-array forms at all -- JSON_VALUE_ARRAY and JSON_QUERY_ARRAY are
+        // how you get an array out of JSON there.
+        //
+        // Gated behind FEATURE_JSON_ARRAY_VALUE_EXTRACTION_FUNCTIONS +
+        // FEATURE_JSON_LAX_VALUE_EXTRACTION_FUNCTIONS
+        // (builtin_function_internal_3.cc:1761), which stays off in
+        // shim/analyzer_shim.cc.
+        //
+        // Restated as the refusal so the case still pins the decision. Unlike the
+        // net pins, this one is exact: the analyzer refuses at name resolution and
+        // its message is BigQuery's own, word for word, so the fixture names the
+        // function rather than only saying "not implemented here".
         .{
             .desc = "lax_double_array extracts a typed array with NULLs on bad elements",
             .sql = "SELECT TO_JSON_STRING(LAX_DOUBLE_ARRAY(JSON '[1.0,2.5]'))",

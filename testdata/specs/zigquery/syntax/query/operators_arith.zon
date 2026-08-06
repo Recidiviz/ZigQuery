@@ -1,0 +1,56 @@
+.{
+    .spec = "zigquery/syntax/query/operators_arith",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "unary plus operator",
+            .sql = "SELECT +1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "unary minus operator",
+            .sql = "SELECT -2",
+            .rows = .{
+                .{-2},
+            },
+        },
+        .{
+            .desc = "mul operator",
+            .sql = "SELECT 2 * 3",
+            .rows = .{
+                .{6},
+            },
+        },
+        .{
+            .desc = "div operator",
+            .sql = "SELECT 10 / 2",
+            .rows = .{
+                .{5.0},
+            },
+        },
+        .{
+            .desc = "safe div operator",
+            .sql = "SELECT safe_divide(10, 2)",
+            .rows = .{
+                .{5.0},
+            },
+        },
+        .{
+            .desc = "add operator",
+            .sql = "SELECT 1 + 1",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "sub operator",
+            .sql = "SELECT 1 - 2",
+            .rows = .{
+                .{-1},
+            },
+        },
+    },
+}

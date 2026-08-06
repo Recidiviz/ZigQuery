@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/ltrim",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "ltrim",
+            .sql = "SELECT LTRIM('   apple   '), LTRIM('\t\tapple\t\t'), LTRIM('***apple***', '*'), LTRIM(NULL), LTRIM(' . ', NULL)",
+            .rows = .{
+                .{ "apple   ", "apple\t\t", "apple***", null, null },
+            },
+        },
+    },
+}

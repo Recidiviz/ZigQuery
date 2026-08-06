@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/date/unix_date",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "unix_date",
+            .sql = "SELECT UNIX_DATE(DATE \"2008-12-25\") AS days_from_epoch",
+            .rows = .{
+                .{14238},
+            },
+        },
+    },
+}

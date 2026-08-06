@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/from_hex",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "from_hex",
+            .sql = "SELECT FROM_HEX('00010203aaeeefff'), FROM_HEX('0AF'), FROM_HEX('666f6f626172'), FROM_HEX(NULL)",
+            .rows = .{
+                .{ "AAECA6ru7/8=", "AK8=", "Zm9vYmFy", null },
+            },
+        },
+    },
+}

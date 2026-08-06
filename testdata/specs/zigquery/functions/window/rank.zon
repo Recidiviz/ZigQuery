@@ -1,0 +1,58 @@
+.{
+    .spec = "zigquery/functions/window/rank",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "window rank",
+            .sql =
+            \\
+            \\WITH Employees AS
+            \\ (SELECT 'Isabella' as name, 2 as department, DATE(1997, 09, 28) as start_date
+            \\  UNION ALL SELECT 'Anthony', 1, DATE(1995, 11, 29)
+            \\  UNION ALL SELECT 'Daniel', 2, DATE(2004, 06, 24)
+            \\  UNION ALL SELECT 'Andrew', 1, DATE(1999, 01, 23)
+            \\  UNION ALL SELECT 'Jacob', 1, DATE(1990, 07, 11)
+            \\  UNION ALL SELECT 'Jose', 2, DATE(2013, 03, 17))
+            \\SELECT name, department, start_date,
+            \\  RANK() OVER (PARTITION BY department ORDER BY start_date) AS rank
+            \\FROM Employees
+            ,
+            .rows = .{
+                .{ "Jacob", 1, "1990-07-11", 1 },
+                .{ "Anthony", 1, "1995-11-29", 2 },
+                .{ "Andrew", 1, "1999-01-23", 3 },
+                .{ "Isabella", 2, "1997-09-28", 1 },
+                .{ "Daniel", 2, "2004-06-24", 2 },
+                .{ "Jose", 2, "2013-03-17", 3 },
+            },
+        },
+        .{
+            .desc = "rank with same order",
+            .sql =
+            \\
+            \\WITH Numbers AS
+            \\ (SELECT 1 as x
+            \\  UNION ALL SELECT 2
+            \\  UNION ALL SELECT 2
+            \\  UNION ALL SELECT 5
+            \\  UNION ALL SELECT 8
+            \\  UNION ALL SELECT 10
+            \\  UNION ALL SELECT 10
+            \\)
+            \\SELECT x,
+            \\  RANK() OVER (ORDER BY x ASC) AS rank
+            \\FROM Numbers
+            ,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+                .{ 2, 2 },
+                .{ 5, 4 },
+                .{ 8, 5 },
+                .{ 10, 6 },
+                .{ 10, 6 },
+            },
+        },
+    },
+}

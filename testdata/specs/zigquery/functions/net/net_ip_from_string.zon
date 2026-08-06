@@ -1,0 +1,29 @@
+.{
+    .spec = "zigquery/functions/net/net_ip_from_string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "net_ip_from_string",
+            .sql =
+            \\
+            \\SELECT
+            \\  FORMAT("%T", NET.IP_FROM_STRING(ip))
+            \\FROM (
+            \\  SELECT "48.49.50.51" AS ip UNION ALL
+            \\  SELECT "::1" UNION ALL
+            \\  SELECT "3031:3233:3435:3637:3839:4041:4243:4445" UNION ALL
+            \\  SELECT "::ffff:192.0.2.128" UNION ALL
+            \\  SELECT NULL
+            \\)
+            ,
+            .rows = .{
+                .{"b\"0123\""},
+                .{"b\"\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01\""},
+                .{"b\"0123456789@ABCDE\""},
+                .{"b\"\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\xff\\xff\\xc0\\x00\\x02\\x80\""},
+                .{null},
+            },
+        },
+    },
+}

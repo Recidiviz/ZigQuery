@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/array/array_concat",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "array_concat function",
+            .sql = "SELECT ARRAY_CONCAT([1, 2], [3, 4], [5, 6]) as count_to_six",
+            .rows = .{
+                .{.{ 1, 2, 3, 4, 5, 6 }},
+            },
+        },
+    },
+}

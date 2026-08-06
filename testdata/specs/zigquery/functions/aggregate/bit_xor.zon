@@ -1,0 +1,28 @@
+.{
+    .spec = "zigquery/functions/aggregate/bit_xor",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "bit_xor",
+            .sql = "SELECT BIT_XOR(x) AS bit_xor FROM UNNEST([5678, 1234]) AS x",
+            .rows = .{
+                .{4860},
+            },
+        },
+        .{
+            .desc = "bit_xor 2",
+            .sql = "SELECT BIT_XOR(x) AS bit_xor FROM UNNEST([1234, 5678, 1234]) AS x",
+            .rows = .{
+                .{5678},
+            },
+        },
+        .{
+            .desc = "bit_xor 3",
+            .sql = "SELECT BIT_XOR(DISTINCT x) AS bit_xor FROM UNNEST([1234, 5678, 1234]) AS x",
+            .rows = .{
+                .{4860},
+            },
+        },
+    },
+}

@@ -1,0 +1,27 @@
+.{
+    .spec = "zigquery/types/struct",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "struct with bool",
+            .sql = "SELECT STRUCT(NULL AS a, FALSE AS b).b AS b",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "struct field integration",
+            .sql =
+            \\CREATE TABLE conductors (conductor STRUCT<length FLOAT64>);
+            \\INSERT INTO conductors (conductor) VALUES (?);
+            \\SELECT conductor.length FROM conductors;
+            ,
+            .args = .{.{}},
+            .arg_types = .{"STRUCT<length FLOAT64>"},
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

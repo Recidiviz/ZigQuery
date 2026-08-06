@@ -1,0 +1,49 @@
+.{
+    .spec = "zigquery/functions/string/format",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "format %d",
+            .sql = "SELECT FORMAT('%d %i %o %x %X', 10, 11, 10, 255, 255)",
+            .rows = .{
+                .{"10 11 12 ff FF"},
+            },
+        },
+        .{
+            .desc = "format |%10d|",
+            .sql = "SELECT FORMAT('|%10d|', 11)",
+            .rows = .{
+                .{"|        11|"},
+            },
+        },
+        .{
+            .desc = "format +%010d+",
+            .sql = "SELECT FORMAT('+%010d+', 12)",
+            .rows = .{
+                .{"+0000000012+"},
+            },
+        },
+        .{
+            .desc = "format %'d",
+            .sql = "SELECT FORMAT(\"%'d\", 123456789)",
+            .rows = .{
+                .{"123,456,789"},
+            },
+        },
+        .{
+            .desc = "format %s",
+            .sql = "SELECT FORMAT('-%s-', 'abcd efg'), FORMAT('-%s-', CAST(NULL AS STRING)), FORMAT('-%s %s-', 'x', CAST(NULL AS STRING))",
+            .rows = .{
+                .{ "-abcd efg-", null, null },
+            },
+        },
+        .{
+            .desc = "format %f %E",
+            .sql = "SELECT FORMAT('%f %E', 1.1, 2.2)",
+            .rows = .{
+                .{"1.100000 2.200000E+00"},
+            },
+        },
+    },
+}

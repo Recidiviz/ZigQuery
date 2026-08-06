@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/trim",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "trim",
+            .sql = "SELECT TRIM('   apple   '), TRIM('\t\tapple\t'), TRIM('***apple***', '*'), TRIM(NULL), TRIM('abc', NULL)",
+            .rows = .{
+                .{ "apple", "apple", "apple", null, null },
+            },
+        },
+    },
+}

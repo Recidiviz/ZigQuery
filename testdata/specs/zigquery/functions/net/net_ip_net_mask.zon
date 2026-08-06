@@ -1,0 +1,39 @@
+.{
+    .spec = "zigquery/functions/net/net_ip_net_mask",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "net_ip_net_mask",
+            .sql =
+            \\
+            \\SELECT FORMAT("%T", NET.IP_NET_MASK(4, 0)) UNION ALL
+            \\SELECT FORMAT("%T", NET.IP_NET_MASK(4, 20)) UNION ALL
+            \\SELECT FORMAT("%T", NET.IP_NET_MASK(4, 32)) UNION ALL
+            \\SELECT FORMAT("%T", NET.IP_NET_MASK(16, 0)) UNION ALL
+            \\SELECT FORMAT("%T", NET.IP_NET_MASK(16, 1)) UNION ALL
+            \\SELECT FORMAT("%T", NET.IP_NET_MASK(16, 128))
+            ,
+            .rows = .{
+                .{"b\"\\x00\\x00\\x00\\x00\""},
+                .{"b\"\\xff\\xff\\xf0\\x00\""},
+                .{"b\"\\xff\\xff\\xff\\xff\""},
+                .{"b\"\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\""},
+                .{"b\"\\x80\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\""},
+                .{"b\"\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\""},
+            },
+        },
+        .{
+            .desc = "net_ip_net_mask with invalid output bytes",
+            .sql = "SELECT NET.IP_NET_MASK(1, 0)",
+            .expect_error = "NET.IP_NET_MASK: the first argument must be either 4 or 16",
+            .rows = .{},
+        },
+        .{
+            .desc = "net_ip_net_mask with invalid prefix length",
+            .sql = "SELECT NET.IP_NET_MASK(4, 33)",
+            .expect_error = "NET.IP_NET_MASK: the second argument must be in the range from 0 to 32",
+            .rows = .{},
+        },
+    },
+}

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/security/session_user",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "session_user",
+            .sql = "SELECT SESSION_USER()",
+            .rows = .{
+                .{"dummy"},
+            },
+        },
+    },
+}

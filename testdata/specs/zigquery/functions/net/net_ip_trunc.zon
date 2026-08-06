@@ -1,0 +1,43 @@
+.{
+    .spec = "zigquery/functions/net/net_ip_trunc",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "net_ip_trunc",
+            .sql =
+            \\
+            \\SELECT
+            \\  FORMAT("%T", NET.IP_TRUNC(x, prefix_length))
+            \\FROM (
+            \\  SELECT b"\xAA\xBB\xCC\xDD" as x, 0 as prefix_length UNION ALL
+            \\  SELECT b"\xAA\xBB\xCC\xDD", 11 UNION ALL
+            \\  SELECT b"\xAA\xBB\xCC\xDD", 12 UNION ALL
+            \\  SELECT b"\xAA\xBB\xCC\xDD", 24 UNION ALL
+            \\  SELECT b"\xAA\xBB\xCC\xDD", 32 UNION ALL
+            \\  SELECT b'0123456789@ABCDE', 80
+            \\)
+            ,
+            .rows = .{
+                .{"b\"\\x00\\x00\\x00\\x00\""},
+                .{"b\"\\xaa\\xa0\\x00\\x00\""},
+                .{"b\"\\xaa\\xb0\\x00\\x00\""},
+                .{"b\"\\xaa\\xbb\\xcc\\x00\""},
+                .{"b\"\\xaa\\xbb\\xcc\\xdd\""},
+                .{"b\"0123456789\\x00\\x00\\x00\\x00\\x00\\x00\""},
+            },
+        },
+        .{
+            .desc = "net_ip_trunc with invalid ip address",
+            .sql = "SELECT NET.IP_TRUNC(b\"\\xAA\\xbb\\xCC\", 0)",
+            .expect_error = "NET.IP_TRUNC: length of the first argument must be either 4 or 16",
+            .rows = .{},
+        },
+        .{
+            .desc = "net_ip_trunc with invalid length",
+            .sql = "SELECT NET.IP_TRUNC(b\"\\xAA\\xbb\\xCC\\xDD\", 33)",
+            .expect_error = "NET.IP_TRUNC: length must be in the range from 0 to 32",
+            .rows = .{},
+        },
+    },
+}

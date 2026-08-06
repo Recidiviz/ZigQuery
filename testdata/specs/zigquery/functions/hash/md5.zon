@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/hash/md5",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "md5",
+            .sql = "SELECT MD5(\"Hello World\")",
+            .rows = .{
+                .{"sQqNsWTgdUEFt6mb5y4/5Q=="},
+            },
+        },
+    },
+}

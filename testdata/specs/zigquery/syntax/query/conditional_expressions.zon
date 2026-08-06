@@ -1,0 +1,140 @@
+.{
+    .spec = "zigquery/syntax/query/conditional_expressions",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "case-when",
+            .sql =
+            \\
+            \\SELECT
+            \\  val,
+            \\  CASE val
+            \\    WHEN 1 THEN 'one'
+            \\    WHEN 2 THEN 'two'
+            \\    WHEN 3 THEN 'three'
+            \\    ELSE 'four'
+            \\    END
+            \\FROM UNNEST([1, 2, 3, 4]) AS val
+            ,
+            .rows = .{
+                .{ 1, "one" },
+                .{ 2, "two" },
+                .{ 3, "three" },
+                .{ 4, "four" },
+            },
+        },
+        .{
+            .desc = "case-when with compare",
+            .sql =
+            \\
+            \\SELECT
+            \\  val,
+            \\  CASE
+            \\    WHEN val > 3 THEN 'four'
+            \\    WHEN val > 2 THEN 'three'
+            \\    WHEN val > 1 THEN 'two'
+            \\    ELSE 'one'
+            \\    END
+            \\FROM UNNEST([1, 2, 3, 4]) AS val
+            ,
+            .rows = .{
+                .{ 1, "one" },
+                .{ 2, "two" },
+                .{ 3, "three" },
+                .{ 4, "four" },
+            },
+        },
+        .{
+            .desc = "coalesce",
+            .sql = "SELECT COALESCE('A', 'B', 'C')",
+            .rows = .{
+                .{"A"},
+            },
+        },
+        .{
+            .desc = "coalesce with null",
+            .sql = "SELECT COALESCE(NULL, 'B', 'C')",
+            .rows = .{
+                .{"B"},
+            },
+        },
+        .{
+            .desc = "coalesce with all nulls",
+            .sql = "SELECT COALESCE(NULL, NULL, NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "if return int64",
+            .sql = "SELECT IF(\"a\" = \"b\", 1, 2)",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "if return string",
+            .sql = "SELECT IF(\"a\" = \"a\", \"true\", \"false\")",
+            .rows = .{
+                .{"true"},
+            },
+        },
+        .{
+            .desc = "if with case that causes errors",
+            .sql = "SELECT IF(FALSE, ERROR(\"error case!\"), \"false\")",
+            .rows = .{
+                .{"false"},
+            },
+        },
+        .{
+            .desc = "ifnull with case that causes errors",
+            .sql = "SELECT IFNULL(\"STRING\", ERROR(\"error case!\"))",
+            .rows = .{
+                .{"STRING"},
+            },
+        },
+        .{
+            .desc = "case with case that causes errors",
+            .sql = "SELECT CASE WHEN FALSE THEN ERROR(\"error case!\") ELSE \"false\" END",
+            .rows = .{
+                .{"false"},
+            },
+        },
+        .{
+            .desc = "ifnull",
+            .sql = "SELECT IFNULL(10, 0)",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "ifnull with null",
+            .sql = "SELECT IFNULL(NULL, 0)",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "nullif true",
+            .sql = "SELECT NULLIF(0, 0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "nullif false",
+            .sql = "SELECT NULLIF(10, 0)",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "nullif null",
+            .sql = "SELECT NULLIF(null, 0)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

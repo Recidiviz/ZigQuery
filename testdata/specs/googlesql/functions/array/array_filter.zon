@@ -7,16 +7,16 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/array_functions.md#array_filter",
     .cases = .{
-    // A lambda-taking GoogleSQL function BigQuery does not have. Both refuse it,
-    // for different reasons, which is why the assertion is ours and not
-    // BigQuery's wording: real BigQuery answers `Function not found: ARRAY_FILTER`
-    // (bq CLI, 2026-08-04) because it has no such function and no lambda-taking
-    // function at all, while here the function exists in the googlesql catalog
-    // and it is the lambda argument that is refused.
-    //
-    // FEATURE_INLINE_LAMBDA_ARGUMENT resolves it correctly when enabled, so
-    // this is scope, not a gap — see shim/analyzer_shim.cc. Restated as the
-    // refusal so the case still pins something.
+        // A lambda-taking GoogleSQL function BigQuery does not have. Both refuse it,
+        // for different reasons, which is why the assertion is ours and not
+        // BigQuery's wording: real BigQuery answers `Function not found: ARRAY_FILTER`
+        // (bq CLI, 2026-08-04) because it has no such function and no lambda-taking
+        // function at all, while here the function exists in the googlesql catalog
+        // and it is the lambda argument that is refused.
+        //
+        // FEATURE_INLINE_LAMBDA_ARGUMENT resolves it correctly when enabled, so
+        // this is scope, not a gap — see shim/analyzer_shim.cc. Restated as the
+        // refusal so the case still pins something.
         .{
             .desc = "ARRAY_FILTER keeps elements matching the lambda",
             .sql = "SELECT TO_JSON_STRING(ARRAY_FILTER([1, 2, 3], (e) -> e > 1))",

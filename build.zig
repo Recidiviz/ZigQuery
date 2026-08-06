@@ -7,10 +7,10 @@ const std = @import("std");
 ///                      `file:/<name>?vfs=memdb`. Off (the default), that URI
 ///                      is taken as a literal filename and every `:memory:`
 ///                      database becomes a file on disk.
-///   MAX_FUNCTION_ARG   corpus cases 724/725 ("function call with many
-///                      arguments - under/above limit") are in baseline.txt
-///                      and pin the boundary at exactly 1000: 999 arguments
-///                      must evaluate, 1001 must raise "too many arguments on
+///   MAX_FUNCTION_ARG   the two cases in
+///                      testdata/specs/zigquery/syntax/query/function_arg_limit.zon
+///                      pin the boundary at exactly 1000: 999 arguments must
+///                      evaluate, 1001 must raise "too many arguments on
 ///                      function". The default of 127 fails both.
 ///   DQS=0              a double-quoted token that names no column stays an
 ///                      error rather than falling back to a string literal.
@@ -155,25 +155,7 @@ pub fn build(b: *std.Build) void {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     b.step("test", "Run unit tests").dependOn(&run_unit_tests.step);
 
-    // Conformance harness: replays testdata/corpus.json.
-    const corpus_exe = b.addExecutable(.{
-        .name = "corpus-runner",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/corpus_runner.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
-        }),
-    });
-    if (maybe_bazel) |bz| corpus_exe.step.dependOn(&bz.step);
-    b.installArtifact(corpus_exe);
-    const run_corpus = b.addRunArtifact(corpus_exe);
-    run_corpus.setCwd(.{ .cwd_relative = b.build_root.path.? });
-    if (b.args) |args| run_corpus.addArgs(args);
-    b.step("corpus", "Run the conformance corpus").dependOn(&run_corpus.step);
-
-    // Spec conformance: replays testdata/specs/**.zon, imported from
-    // goccy/googlesqlite by tools/spec_import.py.
+    // Conformance harness: replays testdata/specs/**.zon.
     const spec_exe = b.addExecutable(.{
         .name = "spec-runner",
         .root_module = b.createModule(.{
@@ -185,10 +167,14 @@ pub fn build(b: *std.Build) void {
     });
     if (maybe_bazel) |bz| spec_exe.step.dependOn(&bz.step);
     b.installArtifact(spec_exe);
+    // Just this binary. `install` would rebuild every harness and the server
+    // too, which is a slow way to start a debug session over one spec case.
+    b.step("install-spec", "Install zig-out/bin/spec-runner for debugging")
+        .dependOn(&b.addInstallArtifact(spec_exe, .{}).step);
     const run_spec = b.addRunArtifact(spec_exe);
     run_spec.setCwd(.{ .cwd_relative = b.build_root.path.? });
     if (b.args) |args| run_spec.addArgs(args);
-    b.step("spec", "Run the GoogleSQL spec corpus").dependOn(&run_spec.step);
+    b.step("spec", "Run the conformance spec corpus").dependOn(&run_spec.step);
 
     // Regenerates src/proto/resolved_ast.zig from the committed
     // proto/googlesql.fdset. Run when the googlesql submodule (and with it the

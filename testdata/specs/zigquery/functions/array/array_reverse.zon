@@ -1,0 +1,30 @@
+.{
+    .spec = "zigquery/functions/array/array_reverse",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "array_reverse function",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT [1, 2, 3] AS arr UNION ALL
+            \\  SELECT [4, 5] AS arr UNION ALL
+            \\  SELECT [] AS arr
+            \\) SELECT ARRAY_REVERSE(arr) AS reverse_arr FROM example
+            ,
+            .rows = .{
+                .{.{ 3, 2, 1 }},
+                .{.{ 5, 4 }},
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "array_reverse null",
+            .sql = "SELECT ARRAY_REVERSE(null)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

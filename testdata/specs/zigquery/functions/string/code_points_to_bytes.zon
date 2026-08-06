@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/code_points_to_bytes",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "code_points_to_bytes",
+            .sql = "SELECT CODE_POINTS_TO_BYTES([65, 98, 67, 100]), CODE_POINTS_TO_BYTES(NULL)",
+            .rows = .{
+                .{ "QWJDZA==", null },
+            },
+        },
+    },
+}

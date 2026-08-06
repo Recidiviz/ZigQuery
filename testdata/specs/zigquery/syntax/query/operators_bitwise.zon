@@ -1,0 +1,35 @@
+.{
+    .spec = "zigquery/syntax/query/operators_bitwise",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "bit not operator",
+            .sql = "SELECT ~1",
+            .rows = .{
+                .{-2},
+            },
+        },
+        .{
+            .desc = "bit and operator",
+            .sql = "SELECT 3 & 1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "bit xor operator",
+            .sql = "SELECT 10 ^ 12",
+            .rows = .{
+                .{6},
+            },
+        },
+        .{
+            .desc = "bit or operator",
+            .sql = "SELECT 1 | 2",
+            .rows = .{
+                .{3},
+            },
+        },
+    },
+}

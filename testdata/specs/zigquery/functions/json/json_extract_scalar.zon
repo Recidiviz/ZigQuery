@@ -1,0 +1,35 @@
+.{
+    .spec = "zigquery/functions/json/json_extract_scalar",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_extract_scalar with number",
+            .sql = "SELECT JSON_EXTRACT_SCALAR(JSON '{ \"name\" : \"Jakob\", \"age\" : \"6\" }', '$.age')",
+            .rows = .{
+                .{"6"},
+            },
+        },
+        .{
+            .desc = "json_extract_scalar with string",
+            .sql = "SELECT JSON_EXTRACT_SCALAR('{ \"name\" : \"Jakob\", \"age\" : \"6\" }', '$.name')",
+            .rows = .{
+                .{"Jakob"},
+            },
+        },
+        .{
+            .desc = "json_extract_scalar with array",
+            .sql = "SELECT JSON_EXTRACT_SCALAR('{\"fruits\": [\"apple\", \"banana\"]}', '$.fruits')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_extract_scalar with escape",
+            .sql = "SELECT JSON_EXTRACT_SCALAR('{\"a.b\": {\"c\": \"world\"}}', \"$['a.b'].c\")",
+            .rows = .{
+                .{"world"},
+            },
+        },
+    },
+}

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/code_points_to_string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "code_points_to_string",
+            .sql = "SELECT CODE_POINTS_TO_STRING([65, 255, 513, 1024]), CODE_POINTS_TO_STRING([97, 0, 0xF9B5]), CODE_POINTS_TO_STRING([65, 255, NULL, 1024]), CODE_POINTS_TO_STRING(NULL)",
+            .rows = .{
+                .{ "AÿȁЀ", "a例", null, null },
+            },
+        },
+    },
+}

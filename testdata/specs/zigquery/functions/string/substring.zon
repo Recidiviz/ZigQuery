@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/substring",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "substring",
+            .sql = "SELECT SUBSTRING('apple', 2), SUBSTRING('apple', 2, 2), SUBSTRING('apple', -2), SUBSTRING('apple', 1, 123), SUBSTRING('apple', 123)",
+            .rows = .{
+                .{ "pple", "pp", "le", "apple", "" },
+            },
+        },
+    },
+}

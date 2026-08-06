@@ -1,18 +1,20 @@
 //! Replays the ZON spec corpus under `testdata/specs/`.
 //!
-//! The specs come from goccy/googlesqlite, whose expected values were extracted
-//! from the **Examples** sections of the GoogleSQL reference docs — so the
-//! numbers on the right-hand side are Google's own published output. See
-//! `tools/spec_import.py` for the conversion and `docs/BENCH_GSQL.md`'s sibling
-//! `docs/SPEC_COVERAGE.md` for the report this emits.
+//! Three trees live there, and they answer to different authorities:
 //!
-//! ## Why this exists next to `zig build corpus`
+//!   - `googlesql/`, `bigquery/` — imported by `tools/spec_import.py` from
+//!     goccy/googlesqlite, whose expected values were extracted from the
+//!     **Examples** sections of the GoogleSQL reference docs. The numbers on the
+//!     right-hand side are Google's own published output, scraped out of ASCII
+//!     tables, so they arrive untyped and are compared leniently.
+//!   - `zigquery/` — this engine's own regression suite, migrated out of
+//!     `testdata/corpus.json` (go-zetasqlite's `query_test.go`). Every expected
+//!     value there was machine-exported *with its type*, so those files declare
+//!     `.typed = true` and get the exact, kind-checked comparison the retired
+//!     `corpus_runner.zig` performed. See `src/internal/spec_expect.zig`.
 //!
-//! `corpus` is deep but narrow: 748 cases inherited from go-zetasqlite's
-//! `query_test.go`, all sharing one `:memory:` database in slice order, so DDL
-//! from one case is visible to the next. This suite is broad and isolated: one
-//! spec per function, cases that declare their own `setup`, and a fresh
-//! connection wherever state exists.
+//! Spec files are discovered by walking the tree, sorted by path. There is no
+//! index to keep in step: a `.zon` file under `testdata/specs` is a spec.
 //!
 //! ## The `unsupported` bucket is detected, not declared
 //!
@@ -23,44 +25,45 @@
 //! which is what makes the suite a live ledger of what we do not have, instead
 //! of a document that rots.
 //!
-//! Usage: zig build spec -- [--filter SUBSTR] [--dialect googlesql|bigquery]
+//! Usage: zig build spec -- [--filter SUBSTR] [--case SUBSTR]
+//!                          [--dialect googlesql|bigquery|zigquery]
 //!                          [--verbose] [--markdown] [--update-baseline]
 //!                          [--strict]
+//!
+//! `--filter` selects spec files by path, `--case` selects cases within them
+//! by description. Together they narrow the run to a single query, which is
+//! what makes `zig-out/bin/spec-runner` usable as a debug target: point a
+//! breakpoint at the transformer and step through one case instead of 1760.
+//! See `.run/Debug spec case.run.xml`.
+//!
+//! `DUMP_SQL=<path>` additionally writes the SQL snapshot (see below).
 
 const std = @import("std");
 const builtin = @import("builtin");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
 const spec_expect = zetasqlite.spec_expect;
+const analyzer_ffi = zetasqlite.analyzer_ffi;
+const ast_dump = zetasqlite.ast_dump;
 
 const Zoir = std.zig.Zoir;
 
 const specs_root = "testdata/specs";
-const manifest_path = "testdata/specs/manifest.zon";
 const baseline_path = "testdata/spec_baseline.txt";
 
 /// The clock every case sees, so CURRENT_* is reproducible. Same instant the
-/// JSON corpus pins (2006-01-02 15:04:05 UTC, Go's reference time).
+/// JSON corpus pinned (2006-01-02 15:04:05 UTC, Go's reference time).
 const fixed_now_unix_micros: i64 = 1136239445000000;
 
-const Dialect = enum { googlesql, bigquery };
-
-/// `manifest.zon` — the one fixed-shape file here, so it gets the typed parser.
-const Manifest = struct {
-    generated_from: []const u8,
-    files: []const Entry,
-
-    const Entry = struct {
-        path: []const u8,
-        dialect: Dialect,
-        cases: u32,
-    };
-};
+const Dialect = enum { googlesql, bigquery, zigquery };
 
 const Outcome = enum { pass, fail, unsupported, skip };
 
 const Options = struct {
+    /// Substring of a spec file's path.
     filter: ?[]const u8 = null,
+    /// Substring of a case's `desc`, applied within the files `filter` kept.
+    case: ?[]const u8 = null,
     dialect: ?Dialect = null,
     verbose: bool = false,
     markdown: bool = false,
@@ -73,7 +76,102 @@ const Result = struct {
     desc: []const u8,
     outcome: Outcome,
     detail: []const u8 = "",
+    /// The three pipeline stages, captured under `--verbose` for cases that
+    /// did not pass. Empty otherwise, and empty for a stage the case never
+    /// reached — a query rejected by the analyzer has no SQL out.
+    in_sql: []const u8 = "",
+    out_ast: []const u8 = "",
+    out_sql: []const u8 = "",
 };
+
+// ----------------------------------------------------------------------
+// Pipeline trace (--verbose)
+// ----------------------------------------------------------------------
+//
+// `detail` says what went wrong; it does not say where. A case that returns
+// the wrong value could have been mis-analyzed, mis-transformed, or answered
+// wrongly by a UDF, and the three are told apart by reading the stages: the
+// GoogleSQL in, the resolved AST the analyzer returned, the SQLite SQL the
+// transformer emitted.
+//
+// Both sinks are process-global with no context argument, so the buffers they
+// append to are file-global. Sound because this runner is single-threaded and
+// runs one case at a time.
+//
+// Capture is scoped to the query itself — `traceBegin` immediately before it,
+// `traceEnd` after — so a case's `setup` DDL does not bury the statement under
+// test in its own SQL.
+//
+// ----------------------------------------------------------------------
+// SQL snapshot (DUMP_SQL=<path>)
+// ----------------------------------------------------------------------
+//
+// Every engine statement handed to sqlite3_prepare_v2, grouped by case, so a
+// change to the SQL builder is reviewed as a diff instead of as a delta in one
+// aggregate byte count. Analyse a snapshot (or two) with tools/sql_stats.py.
+//
+// It shares `sqlSink` with the verbose trace rather than fighting it over the
+// one global hook: each destination is gated on its own allocator being set.
+// The snapshot's is set for the whole run, so unlike the trace it does include
+// a case's `setup` DDL — that SQL comes out of the same builder and is worth
+// diffing.
+
+var trace_ast: std.ArrayList(u8) = .empty;
+var trace_sql: std.ArrayList(u8) = .empty;
+var trace_alloc: ?std.mem.Allocator = null;
+
+var snapshot_buf: std.ArrayList(u8) = .empty;
+var snapshot: std.ArrayList(u8) = .empty;
+var snapshot_alloc: ?std.mem.Allocator = null;
+
+fn astSink(node: *const zetasqlite.pb.AnyResolvedNodeProto) void {
+    const alloc = trace_alloc orelse return;
+    var w = std.Io.Writer.Allocating.fromArrayList(alloc, &trace_ast);
+    defer trace_ast = w.toArrayList();
+    // A spec case may be a script — a CREATE then the SELECT under test. Two
+    // trees run together read as one, so the boundary gets a rule.
+    if (w.written().len > 0) w.writer.writeAll("--\n") catch return;
+    ast_dump.dump(&w.writer, node, .{}) catch {};
+}
+
+fn sqlSink(sql: []const u8) void {
+    if (trace_alloc) |alloc| {
+        trace_sql.appendSlice(alloc, sql) catch {};
+        trace_sql.appendSlice(alloc, ";\n") catch {};
+    }
+    if (snapshot_alloc) |alloc| {
+        snapshot_buf.appendSlice(alloc, sql) catch {};
+        snapshot_buf.appendSlice(alloc, ";\n") catch {};
+    }
+}
+
+fn traceBegin(arena: std.mem.Allocator) void {
+    trace_alloc = arena;
+    traceClear();
+    analyzer_ffi.setAstSink(astSink);
+}
+
+fn traceClear() void {
+    trace_ast.clearRetainingCapacity();
+    trace_sql.clearRetainingCapacity();
+}
+
+fn traceEnd() void {
+    trace_alloc = null;
+    analyzer_ffi.setAstSink(null);
+}
+
+/// Closes out one case's snapshot block. Every case gets a header even when it
+/// emitted nothing (a SKIP, or a failure before prepare), so a case that stops
+/// emitting SQL shows up as a diff rather than as a silent shift of everything
+/// below it.
+fn snapshotCase(spec_name: []const u8, desc: []const u8) !void {
+    const alloc = snapshot_alloc orelse return;
+    try snapshot.print(alloc, "### {s}\t{s}\n", .{ spec_name, desc });
+    try snapshot.appendSlice(alloc, snapshot_buf.items);
+    try snapshot.append(alloc, '\n');
+    snapshot_buf.clearRetainingCapacity();
+}
 
 pub fn main(init: std.process.Init) !void {
     var stdout_buf: [8192]u8 = undefined;
@@ -92,29 +190,22 @@ pub fn main(init: std.process.Init) !void {
 
     const opts = try parseArgs(init.minimal.args, out);
 
-    const man_src = try std.Io.Dir.cwd().readFileAllocOptions(
-        init.io,
-        manifest_path,
-        arena,
-        .limited(1 << 22),
-        .of(u8),
-        0,
-    );
-    // No `defer man_diag.deinit(...)`: the parse allocates through `arena`, so
-    // the Ast and Zoir it stashes are arena memory. Deinit-ing with `gpa` is an
-    // invalid free, and deinit-ing with the arena allocator is pointless.
-    var man_diag: std.zon.parse.Diagnostics = .{};
-    const manifest = std.zon.parse.fromSliceAlloc(
-        Manifest,
-        arena,
-        man_src,
-        &man_diag,
-        .{},
-    ) catch {
-        try out.print("{s}: {f}\n", .{ manifest_path, &man_diag });
+    const paths = try findSpecs(arena, init.io);
+    if (paths.len == 0) {
+        try out.print("no .zon specs under {s}\n", .{specs_root});
         try out.flush();
         std.process.exit(1);
-    };
+    }
+
+    // Installed for the whole run, not per case: the sink is what both the
+    // snapshot and the verbose trace read from, and reinstalling it around each
+    // query would drop the setup DDL the snapshot wants.
+    const snapshot_path = init.environ_map.get("DUMP_SQL");
+    if (snapshot_path != null) snapshot_alloc = arena;
+    if (snapshot_path != null or opts.verbose) {
+        zetasqlite.phase.setPreparedSqlSink(sqlSink);
+    }
+    defer zetasqlite.phase.setPreparedSqlSink(null);
 
     var baseline = try loadBaseline(gpa, init.io, arena);
     defer baseline.deinit(gpa);
@@ -122,18 +213,47 @@ pub fn main(init: std.process.Init) !void {
     var results: std.ArrayList(Result) = .empty;
     defer results.deinit(gpa);
 
-    for (manifest.files) |entry| {
-        if (opts.dialect) |d| {
-            if (d != entry.dialect) continue;
-        }
+    var files_run: usize = 0;
+    for (paths) |path| {
         if (opts.filter) |f| {
-            if (std.mem.indexOf(u8, entry.path, f) == null) continue;
+            if (std.mem.indexOf(u8, path, f) == null) continue;
         }
-        try runSpecFile(gpa, arena, init.io, entry, &results);
+        // The dialect lives in the file, so unlike `--filter` this one can only
+        // be applied once the file is parsed; `runSpecFile` reports whether it
+        // kept it.
+        if (try runSpecFile(gpa, arena, init.io, path, &results, opts)) files_run += 1;
     }
 
-    try report(out, gpa, init.io, results.items, manifest, &baseline, opts);
+    if (snapshot_path) |path| {
+        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = snapshot.items });
+        try out.print("wrote SQL snapshot: {s} ({d} bytes)\n", .{ path, snapshot.items.len });
+    }
+
+    try report(out, gpa, init.io, results.items, files_run, &baseline, opts);
     try out.flush();
+}
+
+/// Every `.zon` under `specs_root`, relative to it, sorted. Sorted because the
+/// run order decides what a file's shared connection sees and what the report
+/// and the snapshot look like — none of which may depend on readdir order.
+fn findSpecs(arena: std.mem.Allocator, io: std.Io) ![]const []const u8 {
+    var dir = try std.Io.Dir.cwd().openDir(io, specs_root, .{ .iterate = true });
+    defer dir.close(io);
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    var walker = try dir.walk(arena);
+    defer walker.deinit();
+    while (try walker.next(io)) |e| {
+        if (e.kind != .file) continue;
+        if (!std.mem.endsWith(u8, e.path, ".zon")) continue;
+        try paths.append(arena, try arena.dupe(u8, e.path));
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lt);
+    return paths.items;
 }
 
 fn parseArgs(argv: anytype, out: *std.Io.Writer) !Options {
@@ -143,6 +263,8 @@ fn parseArgs(argv: anytype, out: *std.Io.Writer) !Options {
     while (it.next()) |arg| {
         if (std.mem.eql(u8, arg, "--filter")) {
             opts.filter = it.next();
+        } else if (std.mem.eql(u8, arg, "--case")) {
+            opts.case = it.next();
         } else if (std.mem.eql(u8, arg, "--dialect")) {
             const d = it.next() orelse "";
             opts.dialect = std.meta.stringToEnum(Dialect, d) orelse {
@@ -160,8 +282,9 @@ fn parseArgs(argv: anytype, out: *std.Io.Writer) !Options {
             opts.strict = true;
         } else {
             try out.print(
-                "usage: zig build spec -- [--filter SUBSTR] [--dialect D] " ++
-                    "[--verbose] [--markdown] [--update-baseline] [--strict]\n",
+                "usage: zig build spec -- [--filter SUBSTR] [--case SUBSTR] " ++
+                    "[--dialect D] [--verbose] [--markdown] [--update-baseline] " ++
+                    "[--strict]\n",
                 .{},
             );
             try out.flush();
@@ -197,6 +320,13 @@ fn boolField(zoir: Zoir, node: Zoir.Node.Index, name: []const u8) bool {
     return f.get(zoir) == .true;
 }
 
+/// The tag of an enum-literal field (`.dialect = .bigquery` -> "bigquery").
+fn enumField(zoir: Zoir, node: Zoir.Node.Index, name: []const u8) ?[]const u8 {
+    const f = field(zoir, node, name) orelse return null;
+    const n = f.get(zoir);
+    return if (n == .enum_literal) n.enum_literal.get(zoir) else null;
+}
+
 /// Elements of an array literal; `.{}` reads as empty rather than absent.
 fn elements(zoir: Zoir, node: Zoir.Node.Index) Zoir.Node.Index.Range {
     return switch (node.get(zoir)) {
@@ -205,8 +335,20 @@ fn elements(zoir: Zoir, node: Zoir.Node.Index) Zoir.Node.Index.Range {
     };
 }
 
-/// A ZON scalar as a bind parameter.
-fn cellFromNode(zoir: Zoir, node: Zoir.Node.Index) ?driver.Cell {
+/// A ZON value as a bind parameter. Containers are included: `zigquery` binds a
+/// STRUCT (`types/struct`, "struct field integration"), and a dropped argument
+/// would silently shift every positional one after it.
+///
+/// `type_text` is the case's declared GoogleSQL type for this argument, when it
+/// has one. It settles the single thing ZON cannot say: `.{}` is both the empty
+/// array literal and the empty struct literal, and Zig itself only tells them
+/// apart by the destination type. So does this.
+fn cellFromNode(
+    arena: std.mem.Allocator,
+    zoir: Zoir,
+    node: Zoir.Node.Index,
+    type_text: ?[]const u8,
+) !?driver.Cell {
     return switch (node.get(zoir)) {
         .null => .null,
         .true => .{ .bool = true },
@@ -217,20 +359,56 @@ fn cellFromNode(zoir: Zoir, node: Zoir.Node.Index) ?driver.Cell {
         },
         .float_literal => |f| .{ .float = @floatCast(f) },
         .string_literal => |s| .{ .string = s },
+        // Empty array unless the declared type says otherwise; `.{}` in value
+        // position reads as an empty array everywhere else too (spec_expect).
+        .empty_literal => if (type_text != null and
+            std.ascii.startsWithIgnoreCase(type_text.?, "STRUCT"))
+            .{ .struct_ = &.{} }
+        else
+            .{ .array = &.{} },
+        .array_literal => |range| {
+            const cells = try arena.alloc(driver.Cell, range.len);
+            var i: u32 = 0;
+            while (i < range.len) : (i += 1) {
+                cells[i] = try cellFromNode(arena, zoir, range.at(i), null) orelse return null;
+            }
+            return .{ .array = cells };
+        },
+        .struct_literal => |lit| {
+            const fields = try arena.alloc(driver.Cell.Field, lit.names.len);
+            for (lit.names, 0..) |name, i| {
+                const v = try cellFromNode(arena, zoir, lit.vals.at(@intCast(i)), null);
+                fields[i] = .{ .name = name.get(zoir), .value = v orelse return null };
+            }
+            return .{ .struct_ = fields };
+        },
         else => null,
     };
 }
 
+/// The `.arg_types` entry at `i` — the GoogleSQL type text a case declares for
+/// its `i`th positional argument, as `queryParameters.parameterType` would.
+fn argType(zoir: Zoir, c: Zoir.Node.Index, i: u32) ?[]const u8 {
+    const f = field(zoir, c, "arg_types") orelse return null;
+    const r = elements(zoir, f);
+    if (i >= r.len) return null;
+    const n = r.at(i).get(zoir);
+    return if (n == .string_literal) n.string_literal else null;
+}
+
 // ---- execution ----
 
+/// Runs one spec file. Returns false when `--dialect` excluded it, which is
+/// only knowable after the parse — the dialect is a field in the file.
 fn runSpecFile(
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     io: std.Io,
-    entry: Manifest.Entry,
+    rel_path: []const u8,
     results: *std.ArrayList(Result),
-) !void {
-    const path = try std.fs.path.join(arena, &.{ specs_root, entry.path });
+    opts: Options,
+) !bool {
+    const path = try std.fs.path.join(arena, &.{ specs_root, rel_path });
     const src = std.Io.Dir.cwd().readFileAllocOptions(
         io,
         path,
@@ -239,15 +417,15 @@ fn runSpecFile(
         .of(u8),
         0,
     ) catch |err| {
-        // The manifest is generated; a missing file means it is stale, which is
-        // a hard error rather than a silently shorter run.
+        // The walk just told us this file exists, so failing to read it is a
+        // hard error rather than a silently shorter run.
         try results.append(gpa, .{
-            .spec = entry.path,
+            .spec = rel_path,
             .desc = "(load)",
             .outcome = .fail,
             .detail = try std.fmt.allocPrint(arena, "cannot read: {s}", .{@errorName(err)}),
         });
-        return;
+        return true;
     };
 
     var ast = try std.zig.Ast.parse(gpa, src, .zon);
@@ -256,18 +434,41 @@ fn runSpecFile(
     defer zoir.deinit(gpa);
     if (zoir.compile_errors.len > 0) {
         try results.append(gpa, .{
-            .spec = entry.path,
+            .spec = rel_path,
             .desc = "(parse)",
             .outcome = .fail,
             .detail = "malformed ZON",
         });
-        return;
+        return true;
     }
+
+    // A file with no `.dialect`, or one naming a dialect this build does not
+    // know, is a malformed spec rather than a file to quietly run anyway.
+    const dialect = std.meta.stringToEnum(
+        Dialect,
+        enumField(zoir, .root, "dialect") orelse "",
+    ) orelse {
+        try results.append(gpa, .{
+            .spec = rel_path,
+            .desc = "(parse)",
+            .outcome = .fail,
+            .detail = "missing or unknown .dialect",
+        });
+        return true;
+    };
+    if (opts.dialect) |d| {
+        if (d != dialect) return false;
+    }
+
+    // `.typed` is how a file says its expectations carry their own types, which
+    // is true of `zigquery/` and of nothing else. See src/internal/spec_expect.zig.
+    const expect: spec_expect.Options =
+        if (boolField(zoir, .root, "typed")) spec_expect.typed_options else .{};
 
     // Duped: string literals point into `zoir.string_bytes`, which dies with
     // the `defer zoir.deinit` above, while `results` outlives this function.
-    const spec_name = try arena.dupe(u8, stringField(zoir, .root, "spec") orelse entry.path);
-    const cases = field(zoir, .root, "cases") orelse return;
+    const spec_name = try arena.dupe(u8, stringField(zoir, .root, "spec") orelse rel_path);
+    const cases = field(zoir, .root, "cases") orelse return true;
 
     // A file-level `.skip` applies to every case in it. That is a different
     // claim from the per-case one below: it says the whole spec does not
@@ -280,9 +481,10 @@ fn runSpecFile(
         null;
 
     // One connection for the whole file, opened lazily and reused by every
-    // setup-free case; only 9% of the corpus carries `setup`, and those get
-    // their own. See docs: this is the ordering coupling `corpus` has and this
-    // suite does not.
+    // setup-free case; the ~9% that carry `setup` get their own. So a file is
+    // the unit of shared state: DDL in one case is visible to the next case in
+    // the same file, and to nothing beyond it. `zigquery/` depends on that —
+    // it inherited a suite that shared one database across all 748 cases.
     var shared: ?*driver.Db = null;
     defer if (shared) |db| db.close();
 
@@ -293,13 +495,23 @@ fn runSpecFile(
         const desc = try arena.dupe(u8, stringField(zoir, c, "desc") orelse "(no desc)");
         const sql = stringField(zoir, c, "sql") orelse continue;
 
+        // Dropped before it reaches `results`, so the totals describe the run
+        // you asked for rather than a filtered view of a larger one.
+        if (opts.case) |want| {
+            if (std.mem.indexOf(u8, desc, want) == null) continue;
+        }
+
         if (stringField(zoir, c, "skip") orelse spec_skip) |reason| {
             try results.append(gpa, .{
                 .spec = spec_name,
                 .desc = desc,
                 .outcome = .skip,
                 .detail = try arena.dupe(u8, reason),
+                // Nothing ran, so there is no AST or emitted SQL — but the
+                // input is still worth showing beside the reason.
+                .in_sql = if (opts.verbose) try arena.dupe(u8, sql) else "",
             });
+            try snapshotCase(spec_name, desc);
             continue;
         }
 
@@ -316,22 +528,34 @@ fn runSpecFile(
             break :blk shared.?;
         };
 
-        const res = runCase(gpa, arena, zoir, c, db, sql, setup) catch |err| {
+        const res = runCase(gpa, arena, zoir, c, db, sql, setup, opts.verbose, expect) catch |err| {
             try results.append(gpa, .{
                 .spec = spec_name,
                 .desc = desc,
                 .outcome = .fail,
                 .detail = try std.fmt.allocPrint(arena, "harness: {s}", .{@errorName(err)}),
+                .in_sql = if (opts.verbose) try arena.dupe(u8, sql) else "",
             });
+            try snapshotCase(spec_name, desc);
             continue;
         };
+        // The trace buffers are reused by the next case, so a result that
+        // wants them has to take a copy now. Only non-passing cases do:
+        // verbose never prints a pass, and holding every AST in the arena
+        // costs tens of megabytes across the corpus.
+        const keep = opts.verbose and res.outcome != .pass;
         try results.append(gpa, .{
             .spec = spec_name,
             .desc = desc,
             .outcome = res.outcome,
             .detail = res.detail,
+            .in_sql = if (keep) try arena.dupe(u8, sql) else "",
+            .out_ast = if (keep) try arena.dupe(u8, trace_ast.items) else "",
+            .out_sql = if (keep) try arena.dupe(u8, trace_sql.items) else "",
         });
+        try snapshotCase(spec_name, desc);
     }
+    return true;
 }
 
 const CaseResult = struct { outcome: Outcome, detail: []const u8 = "" };
@@ -344,8 +568,16 @@ fn runCase(
     db: *driver.Db,
     sql: []const u8,
     setup: ?Zoir.Node.Index,
+    trace: bool,
+    expect: spec_expect.Options,
 ) !CaseResult {
     const qopts: driver.QueryOptions = .{ .current_time_unix_micros = fixed_now_unix_micros };
+
+    // Opened before `setup`, not before the query: a case whose setup fails
+    // never reaches the query, and would otherwise be reported against
+    // whatever the *previous* case left in the buffers.
+    if (trace) traceBegin(arena);
+    defer if (trace) traceEnd();
 
     if (setup) |s| {
         const stmts = elements(zoir, s);
@@ -355,7 +587,12 @@ fn runCase(
             const n = stmt_node.get(zoir);
             if (n != .string_literal) continue;
             db.exec(n.string_literal, &.{}, qopts) catch |err| {
-                if (classify(err, db.lastError())) |u| return u;
+                // Say so: the trace the reader is about to see is this setup
+                // statement's, not the `sql` printed above it.
+                if (classify(err, db.lastError())) |u| return .{
+                    .outcome = u.outcome,
+                    .detail = try std.fmt.allocPrint(arena, "setup: {s}", .{u.detail}),
+                };
                 return .{
                     .outcome = .fail,
                     .detail = try std.fmt.allocPrint(arena, "setup: {s}: {s}", .{
@@ -364,6 +601,8 @@ fn runCase(
                 };
             };
         }
+        // Setup got through, so its DDL is not what anyone is here to read.
+        if (trace) traceClear();
     }
 
     var args: std.ArrayList(driver.Param) = .empty;
@@ -372,7 +611,8 @@ fn runCase(
         const n = na.get(zoir);
         if (n == .struct_literal) {
             for (n.struct_literal.names, 0..) |name, i| {
-                const v = cellFromNode(zoir, n.struct_literal.vals.at(@intCast(i))) orelse continue;
+                const node = n.struct_literal.vals.at(@intCast(i));
+                const v = try cellFromNode(arena, zoir, node, null) orelse continue;
                 try args.append(arena, .{ .name = name.get(zoir), .value = v });
             }
         }
@@ -381,19 +621,37 @@ fn runCase(
         const r = elements(zoir, a);
         var i: u32 = 0;
         while (i < r.len) : (i += 1) {
-            const v = cellFromNode(zoir, r.at(i)) orelse continue;
-            try args.append(arena, .{ .value = v });
+            const t = argType(zoir, c, i);
+            const v = try cellFromNode(arena, zoir, r.at(i), t) orelse continue;
+            try args.append(arena, .{ .value = v, .type_text = t });
         }
     }
 
     const want_err = stringField(zoir, c, "expect_error");
 
+    // Where a case's error is expected to surface decides how hard we look at
+    // the message, and `typed` decides which rule applies:
+    //
+    //   - Analyze/prepare time. A doc-derived expectation is a prose fragment,
+    //     so substring. A `typed` one passes on any message, because
+    //     `query_test.go` compared none on this path and the exported string is
+    //     whatever go-zetasqlite happened to say.
+    //   - Row-iteration time. Substring again for the doc suite; `typed`
+    //     demands equality, since that message is this engine's own wording,
+    //     exported verbatim, and a change to it is worth seeing.
+    //
+    // `error.Unimplemented` is excluded from the `typed` prepare-time pass.
+    // That was the corpus runner's one deliberate deviation from Go and it is
+    // still the right one: a stubbed pipeline stage must not be able to
+    // masquerade as a satisfied error expectation.
     var rows = db.query(sql, args.items, qopts) catch |err| {
         const msg = db.lastError();
         if (want_err) |w| {
-            // Doc-derived expectations are prose fragments, so substring —
-            // not the corpus runner's exact match.
-            if (std.mem.indexOf(u8, msg, w) != null) return .{ .outcome = .pass };
+            if (expect.typed) {
+                if (err != error.Unimplemented) return .{ .outcome = .pass };
+            } else if (std.mem.indexOf(u8, msg, w) != null) {
+                return .{ .outcome = .pass };
+            }
         }
         if (classify(err, msg)) |u| return u;
         return .{
@@ -408,6 +666,13 @@ fn runCase(
     while (rows.next() catch |err| {
         const msg = db.lastError();
         if (want_err) |w| {
+            if (expect.typed) {
+                if (std.mem.eql(u8, w, msg)) return .{ .outcome = .pass };
+                return .{
+                    .outcome = .fail,
+                    .detail = try std.fmt.allocPrint(arena, "expected [{s}] got [{s}]", .{ w, msg }),
+                };
+            }
             if (std.mem.indexOf(u8, msg, w) != null) return .{ .outcome = .pass };
         }
         if (classify(err, msg)) |u| return u;
@@ -431,7 +696,15 @@ fn runCase(
     if (boolField(zoir, c, "nondeterministic")) return .{ .outcome = .pass };
 
     const want_rows = field(zoir, c, "rows") orelse return .{ .outcome = .pass };
-    return compareRows(gpa, arena, zoir, want_rows, got.items, boolField(zoir, c, "unordered"));
+    return compareRows(
+        gpa,
+        arena,
+        zoir,
+        want_rows,
+        got.items,
+        boolField(zoir, c, "unordered"),
+        expect,
+    );
 }
 
 fn compareRows(
@@ -441,6 +714,7 @@ fn compareRows(
     want_rows: Zoir.Node.Index,
     got: []const []const driver.Cell,
     unordered: bool,
+    expect: spec_expect.Options,
 ) !CaseResult {
     const want = elements(zoir, want_rows);
     if (want.len != got.len) {
@@ -453,7 +727,7 @@ fn compareRows(
     if (!unordered) {
         var i: u32 = 0;
         while (i < want.len) : (i += 1) {
-            if (!try rowMatches(gpa, zoir, want.at(i), got[i])) {
+            if (!try rowMatches(gpa, zoir, want.at(i), got[i], expect)) {
                 return .{
                     .outcome = .fail,
                     .detail = try std.fmt.allocPrint(arena, "row {d}: got {s}", .{
@@ -475,7 +749,7 @@ fn compareRows(
         var found = false;
         for (got, 0..) |row, j| {
             if (used[j]) continue;
-            if (try rowMatches(gpa, zoir, want.at(i), row)) {
+            if (try rowMatches(gpa, zoir, want.at(i), row, expect)) {
                 used[j] = true;
                 found = true;
                 break;
@@ -508,12 +782,13 @@ fn rowMatches(
     zoir: Zoir,
     want_row: Zoir.Node.Index,
     got_row: []const driver.Cell,
+    expect: spec_expect.Options,
 ) !bool {
     const cells = elements(zoir, want_row);
     if (cells.len != got_row.len) return false;
     var i: u32 = 0;
     while (i < cells.len) : (i += 1) {
-        if (!try spec_expect.matches(gpa, zoir, cells.at(i), got_row[i], .{})) return false;
+        if (!try spec_expect.matches(gpa, zoir, cells.at(i), got_row[i], expect)) return false;
     }
     return true;
 }
@@ -581,9 +856,14 @@ fn loadBaseline(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !B
     };
     var it = std.mem.splitScalar(u8, bytes, '\n');
     while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \r\t");
+        // Only `\r` comes off: a `desc` may legitimately end in a space
+        // ("parse timestamp with extra whitespace "), and trimming the key
+        // would leave that case permanently unable to match its own baseline
+        // entry — reported as newly passing on every run.
+        const entry = std.mem.trimEnd(u8, line, "\r");
+        const trimmed = std.mem.trim(u8, entry, " \t");
         if (trimmed.len == 0 or trimmed[0] == '#') continue;
-        try map.put(gpa, trimmed, {});
+        try map.put(gpa, entry, {});
     }
     return map;
 }
@@ -597,7 +877,7 @@ fn report(
     gpa: std.mem.Allocator,
     io: std.Io,
     results: []const Result,
-    manifest: Manifest,
+    files_run: usize,
     baseline: *Baseline,
     opts: Options,
 ) !void {
@@ -609,14 +889,14 @@ fn report(
     for (results) |r| counts.getPtr(r.outcome).* += 1;
 
     if (opts.markdown) {
-        try markdownReport(out, arena, results, manifest);
+        try markdownReport(out, arena, results);
         return;
     }
 
     if (builtin.mode == .Debug) {
         try out.print("WARNING: Debug build.\n\n", .{});
     }
-    try out.print("spec corpus ({s})\n", .{manifest.generated_from});
+    try out.print("spec corpus ({d} files under {s})\n", .{ files_run, specs_root });
     try out.print(
         "{d} PASS / {d} FAIL / {d} UNSUPPORTED / {d} SKIP  (of {d})\n\n",
         .{
@@ -634,6 +914,10 @@ fn report(
             });
             if (r.detail.len > 0) try out.print(" :: {s}", .{r.detail});
             try out.writeAll("\n");
+            try writeStage(out, "in  sql", r.in_sql);
+            try writeStage(out, "out ast", r.out_ast);
+            try writeStage(out, "out sql", r.out_sql);
+            if (r.in_sql.len > 0) try out.writeAll("\n");
         }
         try out.writeAll("\n");
     }
@@ -702,13 +986,31 @@ fn report(
     }
 }
 
+/// One captured pipeline stage under the case that produced it. Indented as a
+/// block and labelled on its first line only, so a multi-line AST still reads
+/// as one thing and the case header above it stays findable by eye.
+fn writeStage(out: *std.Io.Writer, name: []const u8, body: []const u8) !void {
+    const text = std.mem.trim(u8, body, " \t\r\n");
+    if (text.len == 0) return;
+
+    var first = true;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |line| {
+        if (first) {
+            try out.print("    {s} | {s}\n", .{ name, line });
+            first = false;
+        } else {
+            try out.print("            | {s}\n", .{line});
+        }
+    }
+}
+
 /// Per-category coverage, which is the number worth tracking: a single
 /// "N% of cases pass" is dominated by the categories we have not built at all.
 fn markdownReport(
     out: *std.Io.Writer,
     arena: std.mem.Allocator,
     results: []const Result,
-    manifest: Manifest,
 ) !void {
     const Row = struct {
         name: []const u8,
@@ -745,9 +1047,12 @@ fn markdownReport(
     try out.print(
         \\# Spec coverage
         \\
-        \\Generated by `zig build spec -- --markdown`. Corpus imported from
-        \\{s} by `tools/spec_import.py`; expected values are the GoogleSQL
-        \\reference docs' own published output.
+        \\Generated by `zig build spec -- --markdown` from `testdata/specs`.
+        \\`googlesql/` and `bigquery/` are imported by `tools/spec_import.py`
+        \\from goccy/googlesqlite, and their expected values are the GoogleSQL
+        \\reference docs' own published output; `zigquery/` is this engine's own
+        \\regression suite, inherited from go-zetasqlite's `query_test.go`. See
+        \\the `NOTICE` beside each.
         \\
         \\`unsupported` is detected at run time — `error.Unimplemented`, the
         \\analyzer's "Function not found", or a registered name with no UDF —
@@ -757,7 +1062,7 @@ fn markdownReport(
         \\| Category | pass | fail | unsupported | skip |
         \\|---|---:|---:|---:|---:|
         \\
-    , .{manifest.generated_from});
+    , .{});
 
     var tp: usize = 0;
     var tf: usize = 0;

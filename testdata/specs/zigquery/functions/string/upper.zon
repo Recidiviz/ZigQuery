@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/upper",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "upper",
+            .sql = "SELECT UPPER('foo'), UPPER('bar'), UPPER('baz'), UPPER(NULL)",
+            .rows = .{
+                .{ "FOO", "BAR", "BAZ", null },
+            },
+        },
+    },
+}

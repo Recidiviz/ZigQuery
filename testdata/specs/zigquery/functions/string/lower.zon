@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/lower",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "lower",
+            .sql = "SELECT LOWER('FOO'), LOWER('BAR'), LOWER('BAZ'), LOWER(NULL)",
+            .rows = .{
+                .{ "foo", "bar", "baz", null },
+            },
+        },
+    },
+}

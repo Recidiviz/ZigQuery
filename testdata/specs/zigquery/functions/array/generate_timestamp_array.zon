@@ -1,0 +1,74 @@
+.{
+    .spec = "zigquery/functions/array/generate_timestamp_array",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "generate_timestamp_array function",
+            .sql = "SELECT GENERATE_TIMESTAMP_ARRAY(TIMESTAMP '2016-10-05 00:00:00+00', '2016-10-07 00:00:00+00', INTERVAL 1 DAY) AS timestamp_array",
+            .rows = .{
+                .{.{ "1475625600.0", "1475712000.0", "1475798400.0" }},
+            },
+        },
+        .{
+            .desc = "generate_timestamp_array function interval 1 second",
+            .sql = "SELECT GENERATE_TIMESTAMP_ARRAY('2016-10-05 00:00:00+00', '2016-10-05 00:00:02+00', INTERVAL 1 SECOND) AS timestamp_array",
+            .rows = .{
+                .{.{ "1475625600.0", "1475625601.0", "1475625602.0" }},
+            },
+        },
+        .{
+            .desc = "generate_timestamp_array function negative interval",
+            .sql = "SELECT GENERATE_TIMESTAMP_ARRAY('2016-10-06 00:00:00+00', '2016-10-01 00:00:00+00', INTERVAL -2 DAY) AS timestamp_array",
+            .rows = .{
+                .{.{ "1475712000.0", "1475539200.0", "1475366400.0" }},
+            },
+        },
+        .{
+            .desc = "generate_timestamp_array function same value",
+            .sql = "SELECT GENERATE_TIMESTAMP_ARRAY('2016-10-05 00:00:00+00', '2016-10-05 00:00:00+00', INTERVAL 1 HOUR) AS timestamp_array",
+            .rows = .{
+                .{.{"1475625600.0"}},
+            },
+        },
+        .{
+            .desc = "generate_timestamp_array function over step",
+            .sql = "SELECT GENERATE_TIMESTAMP_ARRAY('2016-10-06 00:00:00+00', '2016-10-05 00:00:00+00', INTERVAL 1 HOUR) AS timestamp_array",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "generate_timestamp_array function with null",
+            .sql = "SELECT GENERATE_TIMESTAMP_ARRAY('2016-10-05 00:00:00+00', NULL, INTERVAL 1 HOUR) AS timestamp_array",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "generate_timestamp_array function with variable",
+            .sql =
+            \\
+            \\SELECT GENERATE_TIMESTAMP_ARRAY(start_timestamp, end_timestamp, INTERVAL 1 HOUR)
+            \\  AS timestamp_array
+            \\FROM
+            \\  (SELECT
+            \\    TIMESTAMP '2016-10-05 00:00:00+00' AS start_timestamp,
+            \\    TIMESTAMP '2016-10-05 02:00:00+00' AS end_timestamp
+            \\   UNION ALL
+            \\   SELECT
+            \\    TIMESTAMP '2016-10-05 12:00:00+00' AS start_timestamp,
+            \\    TIMESTAMP '2016-10-05 14:00:00+00' AS end_timestamp
+            \\   UNION ALL
+            \\   SELECT
+            \\    TIMESTAMP '2016-10-05 23:59:00+00' AS start_timestamp,
+            \\    TIMESTAMP '2016-10-06 01:59:00+00' AS end_timestamp)
+            ,
+            .rows = .{
+                .{.{ "1475625600.0", "1475629200.0", "1475632800.0" }},
+                .{.{ "1475668800.0", "1475672400.0", "1475676000.0" }},
+                .{.{ "1475711940.0", "1475715540.0", "1475719140.0" }},
+            },
+        },
+    },
+}

@@ -1,0 +1,12 @@
+.{
+    .spec = "zigquery/syntax/ddl/drop_table",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "simple drop",
+            .sql = "CREATE TABLE test_drop_target(id INT64); DROP TABLE test_drop_target;",
+            .rows = .{},
+        },
+    },
+}

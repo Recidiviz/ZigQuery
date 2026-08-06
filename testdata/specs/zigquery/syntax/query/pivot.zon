@@ -1,0 +1,33 @@
+.{
+    .spec = "zigquery/syntax/query/pivot",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "PIVOT",
+            .sql =
+            \\
+            \\WITH produce AS (
+            \\    SELECT 'Kale' AS product, 51 AS sales, 'Q1' AS quarter, 2020 AS year UNION ALL
+            \\    SELECT 'Kale', 23, 'Q2', 2020 UNION ALL
+            \\    SELECT 'Kale', 45, 'Q3', 2020 UNION ALL
+            \\    SELECT 'Kale', 3, 'Q4', 2020 UNION ALL
+            \\    SELECT 'Kale', 70, 'Q1', 2021 UNION ALL
+            \\    SELECT 'Kale', 85, 'Q2', 2021 UNION ALL
+            \\    SELECT 'Apple', 77, 'Q1', 2020 UNION ALL
+            \\    SELECT 'Apple', 0, 'Q2', 2020 UNION ALL
+            \\    SELECT 'Apple', 1, 'Q1', 2021
+            \\)
+            \\SELECT * FROM
+            \\  Produce
+            \\  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
+            ,
+            .rows = .{
+                .{ "Apple", 2020, 77, 0, null, null },
+                .{ "Apple", 2021, 1, null, null, null },
+                .{ "Kale", 2020, 51, 23, 45, 3 },
+                .{ "Kale", 2021, 70, 85, null, null },
+            },
+        },
+    },
+}

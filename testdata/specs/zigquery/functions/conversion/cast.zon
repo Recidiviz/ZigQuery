@@ -1,0 +1,119 @@
+.{
+    .spec = "zigquery/functions/conversion/cast",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "invalid cast",
+            .sql = "SELECT CAST(\"apple\" AS INT64) AS not_a_number",
+            .expect_error = "failed to analyze: INVALID_ARGUMENT: Could not cast literal \"apple\" to type INT64 [at 1:13]",
+            .rows = .{},
+        },
+        .{
+            .desc = "cast integer to datetime",
+            .sql = "WITH toks AS (SELECT \"20100317\" AS dt) SELECT CAST(dt AS DATETIME) FROM toks;",
+            .expect_error = "failed to convert 20100317 to time.Time type",
+            .rows = .{},
+        },
+        .{
+            .desc = "cast string to int64",
+            .sql = "SELECT CAST('0x87a' as INT64), CAST(CONCAT('0x', '87a') as INT64), CAST(SUBSTR('q0x87a', 2) as INT64), CAST(s AS INT64) FROM (SELECT CONCAT('0x', '87a') AS s)",
+            .rows = .{
+                .{ 2170, 2170, 2170, 2170 },
+            },
+        },
+        .{
+            .desc = "cast string to int64 - leading zeros",
+            .sql =
+            \\WITH toks AS (
+            \\                SELECT "000800" AS x
+            \\                UNION ALL SELECT "-0900"
+            \\                UNION ALL SELECT "+000100"
+            \\                UNION ALL SELECT "0"
+            \\                UNION ALL SELECT "0000"
+            \\            )
+            \\            SELECT ARRAY_AGG(CAST(x AS INT64)) FROM toks
+            ,
+            .rows = .{
+                .{.{ 800, -900, 100, 0, 0 }},
+            },
+        },
+        .{
+            .desc = "cast date as string (case 481)",
+            .sql = "SELECT CAST(DATE(\"2022-08-01 06:47:51.123456-07:00\") AS STRING)",
+            .rows = .{
+                .{"2022-08-01"},
+            },
+        },
+        .{
+            .desc = "cast date as string (case 482)",
+            .sql = "SELECT CAST(DATE(\"2022-08-01 06:47:51.123456-07:00\") AS STRING)",
+            .rows = .{
+                .{"2022-08-01"},
+            },
+        },
+        .{
+            .desc = "cast date as string (case 483)",
+            .sql = "SELECT CAST(DATE(\"2022-08-01 06:47:51.123456-07:00\") AS STRING)",
+            .rows = .{
+                .{"2022-08-01"},
+            },
+        },
+        .{
+            .desc = "cast datetime as string",
+            .sql = "SELECT CAST(DATETIME(TIMESTAMP(\"2022-08-01 06:47:51.123456-07:00\")) AS STRING)",
+            .rows = .{
+                .{"2022-08-01 13:47:51.123456"},
+            },
+        },
+        .{
+            .desc = "cast date as datetime",
+            .sql = "SELECT CAST(DATE(\"1987-01-25\") AS DATETIME)",
+            .rows = .{
+                .{"1987-01-25T00:00:00"},
+            },
+        },
+        .{
+            .desc = "cast time as string",
+            .sql = "SELECT CAST(TIME(\"2022-08-01 06:47:51.123456-04:00\") AS STRING)",
+            .rows = .{
+                .{"10:47:51.123456"},
+            },
+        },
+        .{
+            .desc = "cast time with timezone as string",
+            .sql = "SELECT CAST(TIME(\"2022-08-01 06:47:51.123456-04:00\", \"America/Los_Angeles\") AS STRING)",
+            .rows = .{
+                .{"03:47:51.123456"},
+            },
+        },
+        .{
+            .desc = "cast time from datetime as string",
+            .sql = "SELECT CAST(TIME(DATETIME(TIMESTAMP(\"2022-08-01 06:47:51.123456-04:00\"))) AS STRING)",
+            .rows = .{
+                .{"10:47:51.123456"},
+            },
+        },
+        .{
+            .desc = "cast timestamp as string",
+            .sql = "SELECT CAST(TIMESTAMP(\"2022-08-01 06:47:51.123456-07:00\") AS STRING);",
+            .rows = .{
+                .{"2022-08-01 13:47:51.123456+00"},
+            },
+        },
+        .{
+            .desc = "cast numeric and bignumeric",
+            .sql = "SELECT cast('12.4E17' as NUMERIC) numeric, cast('12.4E37' as BIGNUMERIC) bignumeric",
+            .rows = .{
+                .{ "1240000000000000000", "124000000000000000000000000000000000000" },
+            },
+        },
+        .{
+            .desc = "cast numeric and bignumeric to string",
+            .sql = "SELECT cast(PARSE_NUMERIC(\"123.456\") as STRING), cast(PARSE_BIGNUMERIC(\"123.456\") as STRING)",
+            .rows = .{
+                .{ "123.456", "123.456" },
+            },
+        },
+    },
+}

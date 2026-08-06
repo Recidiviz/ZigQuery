@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/interval/justify_hours",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "justify_hours",
+            .sql = "SELECT JUSTIFY_HOURS(INTERVAL 23 HOUR), JUSTIFY_HOURS(INTERVAL -24 HOUR), JUSTIFY_HOURS(INTERVAL 47 HOUR), JUSTIFY_HOURS(INTERVAL -12345 MINUTE)",
+            .rows = .{
+                .{ "0-0 0 23:0:0", "0-0 -1 0:0:0", "0-0 1 23:0:0", "0-0 -8 -13:45:0" },
+            },
+        },
+    },
+}

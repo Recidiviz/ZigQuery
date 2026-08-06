@@ -1,0 +1,25 @@
+.{
+    .spec = "zigquery/functions/string/char_length",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "char_length",
+            .sql =
+            \\
+            \\WITH example AS (SELECT 'абвгд' AS characters)
+            \\SELECT characters, CHAR_LENGTH(characters) FROM example
+            ,
+            .rows = .{
+                .{ "абвгд", 5 },
+            },
+        },
+        .{
+            .desc = "char_length null",
+            .sql = "SELECT CHAR_LENGTH(NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

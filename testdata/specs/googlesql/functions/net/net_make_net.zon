@@ -7,14 +7,14 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/net_functions.md#netmake_net",
     .cases = .{
-    // NET.MAKE_NET is not in BigQuery at all: real BigQuery answers
-    // `Function not found: NET.MAKE_NET` (bq CLI, 2026-08-04), in neither the
-    // GoogleSQL nor the legacy dialect. This engine emulates BigQuery, so
-    // implementing it would add surface production does not have.
-    //
-    // Restated as the refusal so the case still pins something. The assertion
-    // is deliberately loose: the engine reports UnsupportedFunction without
-    // naming the function, so this says "not implemented here", not which.
+        // NET.MAKE_NET is not in BigQuery at all: real BigQuery answers
+        // `Function not found: NET.MAKE_NET` (bq CLI, 2026-08-04), in neither the
+        // GoogleSQL nor the legacy dialect. This engine emulates BigQuery, so
+        // implementing it would add surface production does not have.
+        //
+        // Restated as the refusal so the case still pins something. The assertion
+        // is deliberately loose: the engine reports UnsupportedFunction without
+        // naming the function, so this says "not implemented here", not which.
         .{
             .desc = "basic IPv4 prefix",
             .sql = "SELECT NET.MAKE_NET('192.168.1.0', 24) AS v",

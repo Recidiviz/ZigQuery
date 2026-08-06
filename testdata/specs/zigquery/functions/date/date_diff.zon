@@ -1,0 +1,64 @@
+.{
+    .spec = "zigquery/functions/date/date_diff",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "date_diff with week",
+            .sql = "SELECT DATE_DIFF(DATE '2017-10-17', DATE '2017-10-12', WEEK) AS weeks_diff",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "date_diff with week day (case 461)",
+            .sql = "SELECT DATE_DIFF(DATE '2024-03-19', DATE '2024-03-24', WEEK(MONDAY))",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "date_diff with week day (case 462)",
+            .sql =
+            \\SELECT
+            \\  DATE_DIFF(DATE '2024-03-19', DATE '2024-03-24', WEEK(SUNDAY)),
+            \\  DATE_DIFF(DATE '2024-03-19', DATE '2024-03-24', WEEK(MONDAY)),
+            \\  DATE_DIFF(DATE '2024-03-25', DATE '2024-03-19', WEEK(SUNDAY)),
+            \\  DATE_DIFF(DATE '2024-03-19', DATE '2024-03-25', WEEK(MONDAY)),
+            \\  DATE_DIFF(DATE '2024-03-19', DATE '2017-10-25', WEEK(MONDAY)),
+            \\  DATE_DIFF('0001-01-01', '9999-12-31', WEEK(SUNDAY))
+            ,
+            .rows = .{
+                .{ -1, 0, 1, -1, 334, -521722 },
+            },
+        },
+        .{
+            .desc = "date_diff with month (case 467)",
+            .sql = "SELECT DATE_DIFF(DATE '2018-01-01', DATE '2017-10-30', MONTH) AS months_diff",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "date_diff with day (case 468)",
+            .sql = "SELECT DATE_DIFF(DATE '2021-06-06', DATE '2017-11-12', DAY) AS days_diff",
+            .rows = .{
+                .{1302},
+            },
+        },
+        .{
+            .desc = "date_diff with month (case 469)",
+            .sql = "SELECT DATE_DIFF(DATE '2018-01-01', DATE '2017-10-30', MONTH) AS months_diff",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "date_diff with day (case 470)",
+            .sql = "SELECT DATE_DIFF(DATE '2021-06-06', DATE '2017-11-12', DAY) AS days_diff",
+            .rows = .{
+                .{1302},
+            },
+        },
+    },
+}

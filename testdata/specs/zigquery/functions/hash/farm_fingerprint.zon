@@ -1,0 +1,23 @@
+.{
+    .spec = "zigquery/functions/hash/farm_fingerprint",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "farm_fingerprint",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT 1 AS x, "foo" AS y, true AS z UNION ALL
+            \\  SELECT 2 AS x, "apple" AS y, false AS z UNION ALL
+            \\  SELECT 3 AS x, "" AS y, true AS z
+            \\) SELECT *, FARM_FINGERPRINT(CONCAT(CAST(x AS STRING), y, CAST(z AS STRING))) FROM example
+            ,
+            .rows = .{
+                .{ 1, "foo", true, -1541654101129638711 },
+                .{ 2, "apple", false, 2794438866806483259 },
+                .{ 3, "", true, -4880158226897771312 },
+            },
+        },
+    },
+}

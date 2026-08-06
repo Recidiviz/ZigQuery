@@ -1,0 +1,61 @@
+.{
+    .spec = "zigquery/functions/aggregate/logical_and",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "logical_and",
+            .sql = "SELECT LOGICAL_AND(x) AS logical_and FROM UNNEST([true, false, true]) AS x",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and null",
+            .sql =
+            \\ WITH toks AS (SELECT FALSE AS x UNION ALL SELECT FALSE UNION ALL SELECT NULL)
+            \\SELECT LOGICAL_AND(x) AS logical_or FROM toks
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and default",
+            .sql =
+            \\SELECT LOGICAL_AND(a) OVER (ORDER BY b), a, b
+            \\FROM (
+            \\  SELECT CAST(a AS BOOL) AS a, b FROM UNNEST([
+            \\      STRUCT(False AS a, 1 AS b),
+            \\      STRUCT(False AS a, 2 AS b),
+            \\      STRUCT(false AS a, 3 AS b),
+            \\      STRUCT(False AS a, 4 AS b)
+            \\  ])
+            \\);
+            ,
+            .rows = .{
+                .{ false, false, 1 },
+                .{ false, false, 2 },
+                .{ false, false, 3 },
+                .{ false, false, 4 },
+            },
+        },
+        .{
+            .desc = "logical_and no rows",
+            .sql = "SELECT LOGICAL_AND(a) OVER (ORDER BY a) FROM ( SELECT CAST(a AS BOOL) AS a FROM UNNEST([]) a );",
+            .rows = .{},
+        },
+        .{
+            .desc = "logical_and with window",
+            .sql =
+            \\WITH toks AS ( SELECT true AS x UNION ALL SELECT false UNION ALL SELECT true)
+            \\                            SELECT LOGICAL_AND(x) OVER (ORDER BY x) FROM toks
+            ,
+            .rows = .{
+                .{false},
+                .{false},
+                .{false},
+            },
+        },
+    },
+}

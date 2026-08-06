@@ -1,0 +1,73 @@
+.{
+    .spec = "zigquery/functions/aggregate/string_agg",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "string_agg",
+            .sql = "SELECT STRING_AGG(fruit) AS string_agg FROM UNNEST([\"apple\", NULL, \"pear\", \"banana\", \"pear\"]) AS fruit",
+            .rows = .{
+                .{"apple,pear,banana,pear"},
+            },
+        },
+        .{
+            .desc = "string_agg with length 0",
+            .sql = "SELECT STRING_AGG(fruit) FROM UNNEST(ARRAY<STRING>[]) fruit;",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "string_agg with null",
+            .sql = "SELECT STRING_AGG(null) FROM UNNEST(ARRAY<STRING>[]);",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "string_agg with delimiter",
+            .sql = "SELECT STRING_AGG(fruit, \" & \") AS string_agg FROM UNNEST([\"apple\", \"pear\", \"banana\", \"pear\"]) AS fruit",
+            .rows = .{
+                .{"apple & pear & banana & pear"},
+            },
+        },
+        .{
+            .desc = "string_agg with distinct",
+            .sql = "SELECT STRING_AGG(DISTINCT fruit, \" & \") AS string_agg FROM UNNEST([\"apple\", \"pear\", \"banana\", \"pear\"]) AS fruit",
+            .rows = .{
+                .{"apple & pear & banana"},
+            },
+        },
+        .{
+            .desc = "string_agg with order by",
+            .sql = "SELECT STRING_AGG(fruit, \" & \" ORDER BY LENGTH(fruit)) AS string_agg FROM UNNEST([\"apple\", \"pear\", \"banana\", \"pear\"]) AS fruit",
+            .rows = .{
+                .{"pear & pear & apple & banana"},
+            },
+        },
+        .{
+            .desc = "string_agg with limit",
+            .sql = "SELECT STRING_AGG(fruit, \" & \" LIMIT 2) AS string_agg FROM UNNEST([\"apple\", \"pear\", \"banana\", \"pear\"]) AS fruit",
+            .rows = .{
+                .{"apple & pear"},
+            },
+        },
+        .{
+            .desc = "string_agg with distinct and order by and limit",
+            .sql = "SELECT STRING_AGG(DISTINCT fruit, \" & \" ORDER BY fruit DESC LIMIT 2) AS string_agg FROM UNNEST([\"apple\", \"pear\", \"banana\", \"pear\"]) AS fruit",
+            .rows = .{
+                .{"pear & banana"},
+            },
+        },
+        .{
+            .desc = "string_agg with window",
+            .sql = "SELECT fruit, STRING_AGG(fruit, \" & \") OVER (ORDER BY LENGTH(fruit)) FROM UNNEST([\"apple\", \"pear\", \"banana\", \"pear\"]) AS fruit",
+            .rows = .{
+                .{ "pear", "pear & pear" },
+                .{ "pear", "pear & pear" },
+                .{ "apple", "pear & pear & apple" },
+                .{ "banana", "pear & pear & apple & banana" },
+            },
+        },
+    },
+}

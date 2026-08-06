@@ -1,0 +1,36 @@
+The .zon spec files in this directory are this engine's own regression suite.
+Unlike googlesql/ and bigquery/, they are not imported from anywhere and are
+not regenerated: edit them by hand.
+
+They began as testdata/corpus.json, 748 cases exported from
+
+    https://github.com/Recidiviz/go-zetasqlite
+    query_test.go, via that repo's corpus_export_test.go
+
+go-zetasqlite is MIT licensed, Copyright (c) 2022 Masaaki Goshima.
+
+Two properties of the original suite are preserved here, and both cost
+something to keep:
+
+  - **Expected values carry their types.** Every corpus expectation was
+    type-tagged, and a bare conversion to the untyped scalars the doc-derived
+    specs use would have let 134 numeric-looking string cells be satisfied by an
+    integer result. So every file here declares `.typed = true`, which switches
+    src/internal/spec_expect.zig to exact, kind-checked comparison at the
+    corpus's own 1e-5 float tolerance.
+
+  - **Case order inside a file is the original slice order.** All 748 cases ran
+    against one shared :memory: database, so DDL leaked from each case to the
+    next. harness/spec_runner.zig shares one connection per *file*, which is the
+    same coupling at a smaller scale. Only one dependency actually survives in
+    the corpus -- syntax/ddl/create_function creates `customfunc` and the case
+    after it calls it -- but reordering cases within a file is still not a free
+    edit.
+
+Where a corpus case tests the same function as an upstream spec, it lives at the
+same path under this tree: `functions/string/concat` here and under googlesql/
+are the same function, seen by two suites.
+
+Three cases (LTRIM/TRIM of literal tab characters) are written as escaped
+one-line SQL strings rather than `\\` multiline literals, because Zig source
+cannot contain a raw tab and those tabs are the test.

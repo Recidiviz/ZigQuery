@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/length",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "length",
+            .sql = "SELECT LENGTH('абвгд'), LENGTH(CAST('абвгд' AS BYTES)), LENGTH(NULL)",
+            .rows = .{
+                .{ 5, 10, null },
+            },
+        },
+    },
+}

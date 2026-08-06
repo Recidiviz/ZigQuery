@@ -1,0 +1,81 @@
+.{
+    .spec = "zigquery/functions/window/dense_rank",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "window dense_rank",
+            .sql =
+            \\
+            \\WITH Numbers AS
+            \\ (SELECT 1 as x
+            \\  UNION ALL SELECT 2
+            \\  UNION ALL SELECT 2
+            \\  UNION ALL SELECT 5
+            \\  UNION ALL SELECT 8
+            \\  UNION ALL SELECT 10
+            \\  UNION ALL SELECT 10
+            \\)
+            \\SELECT x,
+            \\  DENSE_RANK() OVER (ORDER BY x ASC) AS dense_rank
+            \\FROM Numbers
+            ,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+                .{ 2, 2 },
+                .{ 5, 3 },
+                .{ 8, 4 },
+                .{ 10, 5 },
+                .{ 10, 5 },
+            },
+        },
+        .{
+            .desc = "window dense_rank with mixed types",
+            .sql =
+            \\SELECT DENSE_RANK() OVER(ORDER BY dt ASC )
+            \\FROM (
+            \\  SELECT DATE '2024-01-01' AS dt
+            \\  UNION ALL SELECT DATETIME '2024-01-01'
+            \\) r
+            ,
+            .skip = "upstream go-googlesql folds CAST(DATE AS DATETIME) to 1970; see comment",
+            .rows = .{
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "window dense_rank with group",
+            .sql =
+            \\
+            \\WITH finishers AS
+            \\ (SELECT 'Sophia Liu' as name,
+            \\  TIMESTAMP '2016-10-18 2:51:45' as finish_time,
+            \\  'F30-34' as division
+            \\  UNION ALL SELECT 'Lisa Stelzner', TIMESTAMP '2016-10-18 2:54:11', 'F35-39'
+            \\  UNION ALL SELECT 'Nikki Leith', TIMESTAMP '2016-10-18 2:59:01', 'F30-34'
+            \\  UNION ALL SELECT 'Lauren Matthews', TIMESTAMP '2016-10-18 3:01:17', 'F35-39'
+            \\  UNION ALL SELECT 'Desiree Berry', TIMESTAMP '2016-10-18 3:05:42', 'F35-39'
+            \\  UNION ALL SELECT 'Suzy Slane', TIMESTAMP '2016-10-18 3:06:24', 'F35-39'
+            \\  UNION ALL SELECT 'Jen Edwards', TIMESTAMP '2016-10-18 3:06:36', 'F30-34'
+            \\  UNION ALL SELECT 'Meghan Lederer', TIMESTAMP '2016-10-18 2:59:01', 'F30-34')
+            \\SELECT name,
+            \\  finish_time,
+            \\  division,
+            \\  DENSE_RANK() OVER (PARTITION BY division ORDER BY finish_time ASC) AS finish_rank
+            \\FROM finishers
+            ,
+            .rows = .{
+                .{ "Sophia Liu", "1476784305.0", "F30-34", 1 },
+                .{ "Nikki Leith", "1476784741.0", "F30-34", 2 },
+                .{ "Meghan Lederer", "1476784741.0", "F30-34", 2 },
+                .{ "Jen Edwards", "1476785196.0", "F30-34", 3 },
+                .{ "Lisa Stelzner", "1476784451.0", "F35-39", 1 },
+                .{ "Lauren Matthews", "1476784877.0", "F35-39", 2 },
+                .{ "Desiree Berry", "1476785142.0", "F35-39", 3 },
+                .{ "Suzy Slane", "1476785184.0", "F35-39", 4 },
+            },
+        },
+    },
+}

@@ -1,0 +1,102 @@
+.{
+    .spec = "zigquery/functions/datetime/datetime_diff",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "datetime_diff with week day (case 463)",
+            .sql =
+            \\SELECT
+            \\  DATETIME_DIFF(DATETIME '2024-03-19', DATETIME '2024-03-24', WEEK(SUNDAY)),
+            \\  DATETIME_DIFF(DATETIME '2024-03-19', DATETIME '2024-03-24', WEEK(MONDAY)),
+            \\  DATETIME_DIFF(DATETIME '2024-03-25', DATETIME '2024-03-19', WEEK(SUNDAY)),
+            \\  DATETIME_DIFF(DATETIME '2024-03-19', DATETIME '2024-03-25', WEEK(MONDAY)),
+            \\  DATETIME_DIFF(DATETIME '2024-03-19', DATETIME '2017-10-25', WEEK(MONDAY)),
+            \\    DATETIME_DIFF(DATETIME '2024-02-21', DATETIME '2024-02-29', WEEK(MONDAY))
+            ,
+            .rows = .{
+                .{ -1, 0, 1, -1, 334, -1 },
+            },
+        },
+        .{
+            .desc = "datetime_diff with week day 1 week",
+            .sql =
+            \\SELECT
+            \\    DATETIME_DIFF(DATETIME '2024-02-21', DATETIME '2024-02-29', WEEK(MONDAY))
+            ,
+            .rows = .{
+                .{-1},
+            },
+        },
+        .{
+            .desc = "datetime_diff with week day (case 465)",
+            .sql = "SELECT DATETIME_DIFF(DATETIME '2024-03-19', DATETIME '2024-03-25', WEEK(MONDAY))",
+            .rows = .{
+                .{-1},
+            },
+        },
+        .{
+            .desc = "datetime_diff with day, more than 24 hours",
+            .sql = "SELECT DATETIME_DIFF(DATETIME \"2010-07-07 10:20:00\", DATETIME \"2008-12-25 15:30:00\", DAY)",
+            .rows = .{
+                .{559},
+            },
+        },
+        .{
+            .desc = "datetime_diff with day, less than 24 hours and does not cross boundary",
+            .sql = "SELECT DATETIME_DIFF(DATETIME \"2024-02-01 16:00:00\", DATETIME \"2024-02-01 15:30:00\", DAY)",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "datetime_diff with day, less than 24 hours and does cross boundary",
+            .sql = "SELECT DATETIME_DIFF(DATETIME \"2024-02-02 02:00:00\", DATETIME \"2024-02-01 15:30:00\", DAY)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "datetime_diff with day, more than 24 hours, reverse",
+            .sql = "SELECT DATETIME_DIFF(DATETIME \"2008-12-25 15:30:00\", DATETIME \"2010-07-07 10:20:00\", DAY)",
+            .rows = .{
+                .{-559},
+            },
+        },
+        .{
+            .desc = "datetime_diff with day, less than 24 hours and does not cross boundary, reverse",
+            .sql = "SELECT DATETIME_DIFF(DATETIME \"2024-02-01 15:30:00\", DATETIME \"2024-02-01 16:00:00\", DAY)",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "datetime_diff with day, less than 24 hours and does cross boundary, reverse",
+            .sql = "SELECT DATETIME_DIFF(DATETIME \"2024-02-01 15:30:00\", DATETIME \"2024-02-02 02:00:00\", DAY)",
+            .rows = .{
+                .{-1},
+            },
+        },
+        .{
+            .desc = "datetime_diff with week",
+            .sql = "SELECT DATETIME_DIFF(DATETIME '2017-10-15 00:00:00', DATETIME '2017-10-14 00:00:00', WEEK)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "datetime_diff with year, ISOYEAR",
+            .sql = "SELECT DATETIME_DIFF('2017-12-30 00:00:00', '2014-12-30 00:00:00', YEAR), DATETIME_DIFF('2017-12-30 00:00:00', '2014-12-30 00:00:00', ISOYEAR)",
+            .rows = .{
+                .{ 3, 2 },
+            },
+        },
+        .{
+            .desc = "datetime_diff with isoweek",
+            .sql = "SELECT DATETIME_DIFF('2017-12-18', '2017-12-17', WEEK), DATETIME_DIFF('2017-12-18', '2017-12-17', WEEK(MONDAY)), DATETIME_DIFF('2017-12-18', '2017-12-17', ISOWEEK)",
+            .rows = .{
+                .{ 0, 1, 1 },
+            },
+        },
+    },
+}

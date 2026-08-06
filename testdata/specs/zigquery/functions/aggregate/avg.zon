@@ -1,0 +1,33 @@
+.{
+    .spec = "zigquery/functions/aggregate/avg",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "avg",
+            .sql = "SELECT AVG(x) as avg FROM UNNEST([0, 2, 4, 4, 5]) as x",
+            .rows = .{
+                .{3.0},
+            },
+        },
+        .{
+            .desc = "avg with distinct",
+            .sql = "SELECT AVG(DISTINCT x) AS avg FROM UNNEST([0, 2, 4, 4, 5]) AS x",
+            .rows = .{
+                .{2.75},
+            },
+        },
+        .{
+            .desc = "avg with window",
+            .sql = "SELECT x, AVG(x) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM UNNEST([0, 2, NULL, 4, 4, 5]) AS x",
+            .rows = .{
+                .{ null, null },
+                .{ 0, 0.0 },
+                .{ 2, 1.0 },
+                .{ 4, 3.0 },
+                .{ 4, 4.0 },
+                .{ 5, 4.5 },
+            },
+        },
+    },
+}

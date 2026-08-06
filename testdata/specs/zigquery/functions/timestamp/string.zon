@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/timestamp/string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "string",
+            .sql = "SELECT STRING(TIMESTAMP \"2008-12-25 15:30:00+00\", \"UTC\")",
+            .rows = .{
+                .{"2008-12-25 15:30:00+00"},
+            },
+        },
+    },
+}

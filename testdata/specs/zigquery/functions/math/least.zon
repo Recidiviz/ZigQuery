@@ -1,0 +1,28 @@
+.{
+    .spec = "zigquery/functions/math/least",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "least greatest between string",
+            .sql = "SELECT LEAST(\"a\", \"b\"), GREATEST(\"a\", \"b\"), \"b\" BETWEEN \"a\" AND \"c\";",
+            .rows = .{
+                .{ "a", "b", true },
+            },
+        },
+        .{
+            .desc = "least greatest between integer",
+            .sql = "SELECT LEAST(1, 2), GREATEST(1, 2), 2 BETWEEN 1 AND 3;",
+            .rows = .{
+                .{ 1, 2, true },
+            },
+        },
+        .{
+            .desc = "least greatest date",
+            .sql = "SELECT LEAST(DATE '2024-02-27', DATE '2024-02-28'), GREATEST(DATE '2024-02-27', DATE '2024-02-28');",
+            .rows = .{
+                .{ "2024-02-27", "2024-02-28" },
+            },
+        },
+    },
+}

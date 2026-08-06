@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/aggregate/approximate/approx_count_distinct",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "approx_count_distinct",
+            .sql = "SELECT APPROX_COUNT_DISTINCT(x) FROM UNNEST([0, 1, 1, 2, 3, 5]) as x",
+            .rows = .{
+                .{5},
+            },
+        },
+    },
+}

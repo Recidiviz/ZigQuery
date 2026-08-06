@@ -1,0 +1,43 @@
+.{
+    .spec = "zigquery/syntax/query/order_by",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "order by",
+            .sql = "SELECT x, y FROM (SELECT 1 AS x, true AS y UNION ALL SELECT 9, true UNION ALL SELECT NULL, false) ORDER BY x",
+            .rows = .{
+                .{ null, false },
+                .{ 1, true },
+                .{ 9, true },
+            },
+        },
+        .{
+            .desc = "order by with nulls last",
+            .sql = "SELECT x, y FROM (SELECT 1 AS x, true AS y UNION ALL SELECT 9, true UNION ALL SELECT NULL, false) ORDER BY x NULLS LAST",
+            .rows = .{
+                .{ 1, true },
+                .{ 9, true },
+                .{ null, false },
+            },
+        },
+        .{
+            .desc = "order by desc",
+            .sql = "SELECT x, y FROM (SELECT 1 AS x, true AS y UNION ALL SELECT 9, true UNION ALL SELECT NULL, false) ORDER BY x DESC",
+            .rows = .{
+                .{ 9, true },
+                .{ 1, true },
+                .{ null, false },
+            },
+        },
+        .{
+            .desc = "order by nulls first",
+            .sql = "SELECT x, y FROM (SELECT 1 AS x, true AS y UNION ALL SELECT 9, true UNION ALL SELECT NULL, false) ORDER BY x DESC NULLS FIRST",
+            .rows = .{
+                .{ null, false },
+                .{ 9, true },
+                .{ 1, true },
+            },
+        },
+    },
+}

@@ -117,8 +117,9 @@ independent of any of the above.
 1.23e77 unscaled against 2²⁵⁵ ≈ 5.79e76. It fits no fixed-width encoding, and
 BigQuery rejects the whole statement: `Invalid input to PARSE_BIGNUMERIC:
 "123.456E37"`. The value the corpus originally expected captured go-zetasqlite's
-lack of bounds checking, since `testdata/corpus.json` is exported from that
-project's `query_test.go` rather than recorded from BigQuery.
+lack of bounds checking, since those cases (now `testdata/specs/zigquery/**`,
+then `testdata/corpus.json`) are exported from that project's `query_test.go`
+rather than recorded from BigQuery.
 
 The case now carries `expected_err` and passes. Its message is this engine's
 wording rather than BigQuery's, which is the convention the corpus already

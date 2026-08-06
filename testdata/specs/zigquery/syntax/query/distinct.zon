@@ -1,0 +1,17 @@
+.{
+    .spec = "zigquery/syntax/query/distinct",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "distinct union",
+            .sql =
+            \\WITH toks AS (SELECT true AS x, 1 AS y)
+            \\                    SELECT DISTINCT x, x as y FROM toks
+            ,
+            .rows = .{
+                .{ true, true },
+            },
+        },
+    },
+}

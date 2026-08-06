@@ -1,0 +1,40 @@
+.{
+    .spec = "zigquery/functions/string/normalize",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "normalize",
+            .sql = "SELECT a, b, a = b FROM (SELECT NORMALIZE('\\u00ea') as a, NORMALIZE('\\u0065\\u0302') as b)",
+            .rows = .{
+                .{ "ê", "ê", true },
+            },
+        },
+        .{
+            .desc = "normalize null",
+            .sql = "SELECT NORMALIZE(NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "normalize with nfkc",
+            .sql =
+            \\
+            \\WITH EquivalentNames AS (
+            \\  SELECT name
+            \\  FROM UNNEST([
+            \\      'Jane\u2004Doe',
+            \\      'John\u2004Smith',
+            \\      'Jane\u2005Doe',
+            \\      'Jane\u2006Doe',
+            \\      'John Smith']) AS name
+            \\) SELECT NORMALIZE(name, NFKC) AS normalized_name, COUNT(*) AS name_count FROM EquivalentNames GROUP BY 1
+            ,
+            .rows = .{
+                .{ "Jane Doe", 3 },
+                .{ "John Smith", 2 },
+            },
+        },
+    },
+}

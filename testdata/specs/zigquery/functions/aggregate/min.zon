@@ -1,0 +1,31 @@
+.{
+    .spec = "zigquery/functions/aggregate/min",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "min from int group",
+            .sql = "SELECT MIN(x) AS min FROM UNNEST([8, 37, 4, 55]) AS x",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "min from date group",
+            .sql = "SELECT MIN(x) AS min FROM UNNEST([DATE '2022-01-01', DATE '2022-02-01', DATE '2022-01-02', DATE '2021-03-01']) AS x",
+            .rows = .{
+                .{"2021-03-01"},
+            },
+        },
+        .{
+            .desc = "min window from date group",
+            .sql = "SELECT MIN(x) OVER(),  MAX(x) OVER() FROM UNNEST([DATE '2022-01-01', DATE '2022-02-01', DATE '2022-01-02', DATE '2021-03-01']) AS x",
+            .rows = .{
+                .{ "2021-03-01", "2022-02-01" },
+                .{ "2021-03-01", "2022-02-01" },
+                .{ "2021-03-01", "2022-02-01" },
+                .{ "2021-03-01", "2022-02-01" },
+            },
+        },
+    },
+}

@@ -1,0 +1,86 @@
+.{
+    .spec = "zigquery/syntax/query/subquery_scalar",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "null array scan",
+            .sql =
+            \\
+            \\WITH file AS (
+            \\  SELECT 1 AS file_id, ARRAY<STRING>["r", "w"] AS modes
+            \\  UNION ALL SELECT 2, ARRAY<STRING>["w"]
+            \\)
+            \\SELECT id,
+            \\(SELECT mode FROM UNNEST(modes) AS mode WHERE mode = 'w') IS NOT NULL AS write_mode,
+            \\(SELECT mode FROM UNNEST(modes) AS mode WHERE mode = 'r') IS NOT NULL AS read_mode
+            \\FROM UNNEST([1, 2, 3]) id
+            \\LEFT JOIN file on file.file_id = id
+            ,
+            .rows = .{
+                .{ 1, true, true },
+                .{ 2, true, false },
+                .{ 3, false, false },
+            },
+        },
+        .{
+            .desc = "subselect qualifier",
+            .sql =
+            \\ WITH produce AS (SELECT 'banana' AS item, 3 AS purchases),
+            \\ toks AS (
+            \\     SELECT item FROM (
+            \\         SELECT * FROM produce
+            \\         WHERE item = 'banana'
+            \\     ) sub
+            \\     WHERE purchases = 3
+            \\ )
+            \\ SELECT * FROM toks;
+            ,
+            .rows = .{
+                .{"banana"},
+            },
+        },
+        .{
+            .desc = "subquery expr with scalar type at SELECT",
+            .sql = "SELECT (SELECT 1)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "subquery expr with scalar type at WHERE",
+            .sql = "SELECT * FROM UNNEST([1, 2, 3]) AS val WHERE val = (SELECT 1)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "subquery expr with scalar type at HAVING",
+            .sql = "SELECT * FROM UNNEST([1, 2, 3]) AS val GROUP BY val HAVING val = (SELECT 1)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "subquery expr with scalar type at function call",
+            .sql = "SELECT ABS((SELECT 1))",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "subquery expr with in type",
+            .sql = "SELECT * FROM UNNEST([1, 2, 3]) AS val WHERE val IN (SELECT 1)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "subquery expr with exists type",
+            .sql = "SELECT EXISTS ( SELECT val FROM UNNEST([1, 2, 3]) AS val WHERE val = 1 )",
+            .rows = .{
+                .{true},
+            },
+        },
+    },
+}

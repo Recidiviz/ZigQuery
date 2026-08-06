@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/json/int64",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_int64",
+            .sql = "SELECT INT64(JSON '2005') AS flight_number",
+            .rows = .{
+                .{2005},
+            },
+        },
+    },
+}

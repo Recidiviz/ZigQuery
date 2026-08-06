@@ -1,0 +1,21 @@
+.{
+    .spec = "zigquery/functions/date/current_date",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "current_date (case 446)",
+            .sql = "SELECT CURRENT_DATE()",
+            .rows = .{
+                .{"2006-01-02"},
+            },
+        },
+        .{
+            .desc = "current_date (case 457)",
+            .sql = "SELECT CURRENT_DATE()",
+            .rows = .{
+                .{"2006-01-02"},
+            },
+        },
+    },
+}

@@ -1,0 +1,16 @@
+.{
+    .spec = "zigquery/functions/aggregate/statistical/var_pop",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "var_pop window",
+            .sql = "SELECT VAR_POP(x) OVER() FROM UNNEST([10, 14, 18]) x",
+            .rows = .{
+                .{10.666666666666666},
+                .{10.666666666666666},
+                .{10.666666666666666},
+            },
+        },
+    },
+}

@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/types/array",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "array formatting",
+            .sql = "SELECT [0, 1, 1, 2, 3, 5] AS some_numbers;",
+            .rows = .{
+                .{.{ 0, 1, 1, 2, 3, 5 }},
+            },
+        },
+    },
+}

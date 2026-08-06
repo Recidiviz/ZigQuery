@@ -1,0 +1,116 @@
+.{
+    .spec = "zigquery/syntax/query/join",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "inner join with using",
+            .sql =
+            \\
+            \\WITH Roster AS
+            \\ (SELECT 'Adams' as LastName, 50 as SchoolID UNION ALL
+            \\  SELECT 'Buchanan', 52 UNION ALL
+            \\  SELECT 'Coolidge', 52 UNION ALL
+            \\  SELECT 'Davis', 51 UNION ALL
+            \\  SELECT 'Eisenhower', 77),
+            \\ TeamMascot AS
+            \\ (SELECT 50 as SchoolID, 'Jaguars' as Mascot UNION ALL
+            \\  SELECT 51, 'Knights' UNION ALL
+            \\  SELECT 52, 'Lakers' UNION ALL
+            \\  SELECT 53, 'Mustangs')
+            \\SELECT * FROM Roster INNER JOIN TeamMascot USING (SchoolID)
+            ,
+            .rows = .{
+                .{ 50, "Adams", "Jaguars" },
+                .{ 52, "Buchanan", "Lakers" },
+                .{ 52, "Coolidge", "Lakers" },
+                .{ 51, "Davis", "Knights" },
+            },
+        },
+        .{
+            .desc = "left join",
+            .sql =
+            \\
+            \\WITH Roster AS
+            \\ (SELECT 'Adams' as LastName, 50 as SchoolID UNION ALL
+            \\  SELECT 'Buchanan', 52 UNION ALL
+            \\  SELECT 'Coolidge', 52 UNION ALL
+            \\  SELECT 'Davis', 51 UNION ALL
+            \\  SELECT 'Eisenhower', 77),
+            \\ TeamMascot AS
+            \\ (SELECT 50 as SchoolID, 'Jaguars' as Mascot UNION ALL
+            \\  SELECT 51, 'Knights' UNION ALL
+            \\  SELECT 52, 'Lakers' UNION ALL
+            \\  SELECT 53, 'Mustangs')
+            \\SELECT Roster.LastName, TeamMascot.Mascot FROM Roster LEFT JOIN TeamMascot ON Roster.SchoolID = TeamMascot.SchoolID
+            ,
+            .rows = .{
+                .{ "Adams", "Jaguars" },
+                .{ "Buchanan", "Lakers" },
+                .{ "Coolidge", "Lakers" },
+                .{ "Davis", "Knights" },
+                .{ "Eisenhower", null },
+            },
+        },
+        .{
+            .desc = "right join",
+            .sql =
+            \\
+            \\WITH Roster AS
+            \\ (SELECT 'Adams' as LastName, 50 as SchoolID UNION ALL
+            \\  SELECT 'Buchanan', 52 UNION ALL
+            \\  SELECT 'Coolidge', 52 UNION ALL
+            \\  SELECT 'Davis', 51 UNION ALL
+            \\  SELECT 'Eisenhower', 77),
+            \\ TeamMascot AS
+            \\ (SELECT 50 as SchoolID, 'Jaguars' as Mascot UNION ALL
+            \\  SELECT 51, 'Knights' UNION ALL
+            \\  SELECT 52, 'Lakers' UNION ALL
+            \\  SELECT 53, 'Mustangs')
+            \\SELECT Roster.LastName, TeamMascot.Mascot FROM Roster RIGHT JOIN TeamMascot ON Roster.SchoolID = TeamMascot.SchoolID
+            ,
+            .rows = .{
+                .{ "Adams", "Jaguars" },
+                .{ "Buchanan", "Lakers" },
+                .{ "Coolidge", "Lakers" },
+                .{ "Davis", "Knights" },
+                .{ null, "Mustangs" },
+            },
+        },
+        .{
+            .desc = "full join",
+            .sql =
+            \\
+            \\WITH Roster AS
+            \\ (SELECT 'Adams' as LastName, 50 as SchoolID UNION ALL
+            \\  SELECT 'Buchanan', 52 UNION ALL
+            \\  SELECT 'Coolidge', 52 UNION ALL
+            \\  SELECT 'Davis', 51 UNION ALL
+            \\  SELECT 'Eisenhower', 77),
+            \\ TeamMascot AS
+            \\ (SELECT 50 as SchoolID, 'Jaguars' as Mascot UNION ALL
+            \\  SELECT 51, 'Knights' UNION ALL
+            \\  SELECT 52, 'Lakers' UNION ALL
+            \\  SELECT 53, 'Mustangs')
+            \\SELECT Roster.LastName, TeamMascot.Mascot FROM Roster FULL JOIN TeamMascot ON Roster.SchoolID = TeamMascot.SchoolID
+            ,
+            .rows = .{
+                .{ "Adams", "Jaguars" },
+                .{ "Buchanan", "Lakers" },
+                .{ "Coolidge", "Lakers" },
+                .{ "Davis", "Knights" },
+                .{ "Eisenhower", null },
+                .{ null, "Mustangs" },
+            },
+        },
+        .{
+            .desc = "join nested with",
+            .sql =
+            \\select * from (SELECT 1 AS id) as A LEFT JOIN (with tmp as (select 1 as id)  select * from tmp) as b on a.id = b.id
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+    },
+}

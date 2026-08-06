@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/interval/make_interval",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "make interval",
+            .sql = "SELECT MAKE_INTERVAL(1, 6, 15), MAKE_INTERVAL(hour => 10, second => 20), MAKE_INTERVAL(1, minute => 5, day => 2)",
+            .rows = .{
+                .{ "1-6 15 0:0:0", "0-0 0 10:0:20", "1-0 2 0:5:0" },
+            },
+        },
+    },
+}

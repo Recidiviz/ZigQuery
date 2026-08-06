@@ -1,0 +1,59 @@
+.{
+    .spec = "zigquery/functions/window/percentile_disc",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "percentile_disc single",
+            .sql =
+            \\
+            \\SELECT
+            \\  x,
+            \\  PERCENTILE_DISC(x, 0) OVER() AS min
+            \\FROM UNNEST(['c', NULL, 'b', 'a']) AS x
+            ,
+            .rows = .{
+                .{ "c", "a" },
+                .{ null, "a" },
+                .{ "b", "a" },
+                .{ "a", "a" },
+            },
+        },
+        .{
+            .desc = "percentile_disc",
+            .sql =
+            \\
+            \\SELECT
+            \\  x,
+            \\  PERCENTILE_DISC(x, 0) OVER() AS min,
+            \\  PERCENTILE_DISC(x, 0.5) OVER() AS median,
+            \\  PERCENTILE_DISC(x, 1) OVER() AS max
+            \\FROM UNNEST(['c', NULL, 'b', 'a']) AS x
+            ,
+            .rows = .{
+                .{ "c", "a", "b", "c" },
+                .{ null, "a", "b", "c" },
+                .{ "b", "a", "b", "c" },
+                .{ "a", "a", "b", "c" },
+            },
+        },
+        .{
+            .desc = "percentile_disc with respect nulls",
+            .sql =
+            \\
+            \\SELECT
+            \\  x,
+            \\  PERCENTILE_DISC(x, 0 RESPECT NULLS) OVER() AS min,
+            \\  PERCENTILE_DISC(x, 0.5 RESPECT NULLS) OVER() AS median,
+            \\  PERCENTILE_DISC(x, 1 RESPECT NULLS) OVER() AS max
+            \\FROM UNNEST(['c', NULL, 'b', 'a']) AS x
+            ,
+            .rows = .{
+                .{ "c", null, "a", "c" },
+                .{ null, null, "a", "c" },
+                .{ "b", null, "a", "c" },
+                .{ "a", null, "a", "c" },
+            },
+        },
+    },
+}

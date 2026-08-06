@@ -1,0 +1,112 @@
+.{
+    .spec = "zigquery/functions/string/contains_substr",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "contains_substr true",
+            .sql = "SELECT CONTAINS_SUBSTR('the blue house', 'Blue house')",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "contains_substr false",
+            .sql = "SELECT CONTAINS_SUBSTR('the red house', 'blue')",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "contains_substr normalize",
+            .sql = "SELECT '\\u2168 day' AS a, 'IX' AS b, CONTAINS_SUBSTR('\\u2168', 'IX')",
+            .rows = .{
+                .{ "Ⅸ day", "IX", true },
+            },
+        },
+        .{
+            .desc = "contains_substr struct_field",
+            .sql = "SELECT CONTAINS_SUBSTR((23, 35, 41), '35')",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "contains_substr recursive",
+            .sql = "SELECT CONTAINS_SUBSTR(('abc', ['def', 'ghi', 'jkl'], 'mno'), 'jk')",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "contains_substr struct with null",
+            .sql = "SELECT CONTAINS_SUBSTR((23, NULL, 41), '41')",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "contains_substr struct with null2",
+            .sql = "SELECT CONTAINS_SUBSTR((23, NULL, 41), '35')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "contains_substr nil",
+            .sql = "SELECT CONTAINS_SUBSTR('hello', NULL)",
+            .expect_error = "CONTAINS_SUBSTR: search literal must be not null",
+            .rows = .{},
+        },
+        .{
+            .desc = "contains_substr for table all rows",
+            .sql =
+            \\
+            \\        WITH Recipes AS (
+            \\         SELECT 'Blueberry pancakes' as Breakfast, 'Egg salad sandwich' as Lunch, 'Potato dumplings' as Dinner UNION ALL
+            \\         SELECT 'Potato pancakes', 'Toasted cheese sandwich', 'Beef stroganoff' UNION ALL
+            \\         SELECT 'Ham scramble', 'Steak avocado salad', 'Tomato pasta' UNION ALL
+            \\         SELECT 'Avocado toast', 'Tomato soup', 'Blueberry salmon' UNION ALL
+            \\         SELECT 'Corned beef hash', 'Lentil potato soup', 'Glazed ham'
+            \\        ) SELECT * FROM Recipes WHERE CONTAINS_SUBSTR(Recipes, 'toast')
+            ,
+            .rows = .{
+                .{ "Potato pancakes", "Toasted cheese sandwich", "Beef stroganoff" },
+                .{ "Avocado toast", "Tomato soup", "Blueberry salmon" },
+            },
+        },
+        .{
+            .desc = "contains_substr for table specified rows",
+            .sql =
+            \\
+            \\        WITH Recipes AS (
+            \\         SELECT 'Blueberry pancakes' as Breakfast, 'Egg salad sandwich' as Lunch, 'Potato dumplings' as Dinner UNION ALL
+            \\         SELECT 'Potato pancakes', 'Toasted cheese sandwich', 'Beef stroganoff' UNION ALL
+            \\         SELECT 'Ham scramble', 'Steak avocado salad', 'Tomato pasta' UNION ALL
+            \\         SELECT 'Avocado toast', 'Tomato soup', 'Blueberry salmon' UNION ALL
+            \\         SELECT 'Corned beef hash', 'Lentil potato soup', 'Glazed ham'
+            \\        ) SELECT * FROM Recipes WHERE CONTAINS_SUBSTR((Lunch, Dinner), 'potato')
+            ,
+            .rows = .{
+                .{ "Blueberry pancakes", "Egg salad sandwich", "Potato dumplings" },
+                .{ "Corned beef hash", "Lentil potato soup", "Glazed ham" },
+            },
+        },
+        .{
+            .desc = "contains_substr for table except",
+            .sql =
+            \\
+            \\        WITH Recipes AS (
+            \\         SELECT 'Blueberry pancakes' as Breakfast, 'Egg salad sandwich' as Lunch, 'Potato dumplings' as Dinner UNION ALL
+            \\         SELECT 'Potato pancakes', 'Toasted cheese sandwich', 'Beef stroganoff' UNION ALL
+            \\         SELECT 'Ham scramble', 'Steak avocado salad', 'Tomato pasta' UNION ALL
+            \\         SELECT 'Avocado toast', 'Tomato soup', 'Blueberry salmon' UNION ALL
+            \\         SELECT 'Corned beef hash', 'Lentil potato soup', 'Glazed ham'
+            \\        ) SELECT * FROM Recipes WHERE CONTAINS_SUBSTR((SELECT AS STRUCT Recipes.* EXCEPT (Lunch, Dinner)), 'potato')
+            ,
+            .rows = .{
+                .{ "Potato pancakes", "Toasted cheese sandwich", "Beef stroganoff" },
+            },
+        },
+    },
+}

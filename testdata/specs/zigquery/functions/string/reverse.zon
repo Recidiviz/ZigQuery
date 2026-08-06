@@ -1,0 +1,23 @@
+.{
+    .spec = "zigquery/functions/string/reverse",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "reverse",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT 'foo' AS sample_string, b'bar' AS sample_bytes UNION ALL
+            \\  SELECT 'абвгд', b'123' UNION ALL
+            \\  SELECT CAST(NULL AS STRING), CAST(NULL AS BYTES)
+            \\) SELECT sample_string, REVERSE(sample_string), sample_bytes, REVERSE(sample_bytes) FROM example
+            ,
+            .rows = .{
+                .{ "foo", "oof", "YmFy", "cmFi" },
+                .{ "абвгд", "дгвба", "MTIz", "MzIx" },
+                .{ null, null, null, null },
+            },
+        },
+    },
+}

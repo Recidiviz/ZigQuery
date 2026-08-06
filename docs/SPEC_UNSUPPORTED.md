@@ -3,14 +3,20 @@
 What the GoogleSQL spec corpus asks for that this engine does not yet answer, grouped by
 what it would take to answer it.
 
-The corpus lives in `testdata/specs/**.zon`, imported from
+This ledger covers the two imported trees, `testdata/specs/googlesql/**` and
+`testdata/specs/bigquery/**`, brought over from
 [goccy/googlesqlite](https://github.com/goccy/googlesqlite) by `tools/spec_import.py`;
-the expected values are the GoogleSQL reference docs' own published output. Run it with:
+their expected values are the GoogleSQL reference docs' own published output, which is
+what makes an unanswered case a statement about the *language* rather than about this
+engine's own history. The third tree, `testdata/specs/zigquery/**`, is that history —
+this engine's regression suite — and contributes no `unsupported` cases at all, so it is
+out of scope here. Run it with:
 
 ```
-zig build spec                 # summary + baseline gate
-zig build spec -- --verbose    # every non-passing case with its detection signal
-zig build spec -- --markdown   # per-category coverage table
+zig build spec                                  # summary + baseline gate
+zig build spec -- --verbose                     # every non-passing case with its signal
+zig build spec -- --markdown                    # per-category coverage table
+zig build spec -- --dialect googlesql --verbose # just the tree this ledger covers
 ```
 
 `unsupported` is **detected, not declared** (`harness/spec_runner.zig`, `classify`).
@@ -29,7 +35,10 @@ measurement, not by running the suite.
 
 ## Summary
 
-`zig build spec` on the current tree: **730 PASS / 0 FAIL / 251 UNSUPPORTED / 31 SKIP** (of 1012).
+`zig build spec` over the imported trees when this was written: **730 PASS / 0 FAIL /
+251 UNSUPPORTED / 31 SKIP** (of 1012). They stand at 749 / 0 / 232 / 31 today; the tier
+tables below have not been re-derived since, so read them as the shape of the gap rather
+than as a current count.
 
 | Detection signal | Cases | Specs | Meaning |
 |---|---:|---:|---|

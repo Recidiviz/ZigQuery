@@ -1,0 +1,98 @@
+.{
+    .spec = "zigquery/functions/json/json_query",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_query",
+            .sql = "SELECT JSON_QUERY(JSON '{\"class\":{\"students\":[{\"id\":5},{\"id\":12}]}}', '$.class')",
+            .rows = .{
+                .{"{\"students\":[{\"id\":5},{\"id\":12}]}"},
+            },
+        },
+        .{
+            .desc = "json_query for format",
+            .sql =
+            \\
+            \\SELECT JSON_QUERY(json_text, '$') AS json_text_string
+            \\FROM UNNEST([
+            \\  '{"class" : {"students" : [{"name" : "Jane"}]}}',
+            \\  '{"class" : {"students" : []}}',
+            \\  '{"class" : {"students" : [{"name" : "John"}, {"name": "Jamie"}]}}'
+            \\]) AS json_text
+            ,
+            .rows = .{
+                .{"{\"class\":{\"students\":[{\"name\":\"Jane\"}]}}"},
+                .{"{\"class\":{\"students\":[]}}"},
+                .{"{\"class\":{\"students\":[{\"name\":\"John\"},{\"name\":\"Jamie\"}]}}"},
+            },
+        },
+        .{
+            .desc = "json_query with array",
+            .sql =
+            \\
+            \\SELECT JSON_QUERY(json_text, '$.class.students[0]') AS first_student
+            \\FROM UNNEST([
+            \\  '{"class" : {"students" : [{"name" : "Jane"}]}}',
+            \\  '{"class" : {"students" : []}}',
+            \\  '{"class" : {"students" : [{"name" : "John"}, {"name": "Jamie"}]}}'
+            \\]) AS json_text
+            ,
+            .rows = .{
+                .{"{\"name\":\"Jane\"}"},
+                .{null},
+                .{"{\"name\":\"John\"}"},
+            },
+        },
+        .{
+            .desc = "json_query for name",
+            .sql =
+            \\
+            \\SELECT JSON_QUERY(json_text, '$.class.students[1].name') AS second_student_name
+            \\FROM UNNEST([
+            \\  '{"class" : {"students" : [{"name" : "Jane"}]}}',
+            \\  '{"class" : {"students" : []}}',
+            \\  '{"class" : {"students" : [{"name" : "John"}, {"name" : null}]}}',
+            \\  '{"class" : {"students" : [{"name" : "John"}, {"name": "Jamie"}]}}'
+            \\]) AS json_text
+            ,
+            .rows = .{
+                .{null},
+                .{null},
+                .{null},
+                .{"\"Jamie\""},
+            },
+        },
+        .{
+            .desc = "json_query with escape",
+            .sql =
+            \\
+            \\SELECT JSON_QUERY(json_text, '$.class."students"') AS student_names
+            \\FROM UNNEST([
+            \\  '{"class" : {"students" : [{"name" : "Jane"}]}}',
+            \\  '{"class" : {"students" : []}}',
+            \\  '{"class" : {"students" : [{"name" : "John"}, {"name": "Jamie"}]}}'
+            \\]) AS json_text
+            ,
+            .rows = .{
+                .{"[{\"name\":\"Jane\"}]"},
+                .{"[]"},
+                .{"[{\"name\":\"John\"},{\"name\":\"Jamie\"}]"},
+            },
+        },
+        .{
+            .desc = "json_query and null",
+            .sql =
+            \\
+            \\SELECT
+            \\  JSON_QUERY('{"a":null}', "$.a"),
+            \\  JSON_QUERY('{"a":null}', "$.b"),
+            \\  JSON_QUERY(JSON '{"a":null}', "$.a"),
+            \\  JSON_QUERY(JSON '{"a":null}', "$.b")
+            ,
+            .rows = .{
+                .{ null, null, null, null },
+            },
+        },
+    },
+}

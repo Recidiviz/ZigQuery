@@ -1,0 +1,16 @@
+.{
+    .spec = "zigquery/functions/aggregate/statistical/variance",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "variance window",
+            .sql = "SELECT VARIANCE(x) OVER()  FROM UNNEST([10, 14, 18]) x",
+            .rows = .{
+                .{16.0},
+                .{16.0},
+                .{16.0},
+            },
+        },
+    },
+}

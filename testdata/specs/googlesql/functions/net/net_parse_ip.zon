@@ -7,16 +7,16 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/net_functions.md#netparse_ip-deprecated",
     .cases = .{
-    // NET.PARSE_IP is not a GoogleSQL function in BigQuery: real BigQuery answers
-    // `Function not found: NET.PARSE_IP` (bq CLI, 2026-08-04). It exists in BigQuery's
-    // *legacy* SQL — `bq query --use_legacy_sql=true "SELECT PARSE_IP('1.2.3.4')"` answers
-    // normally — and GoogleSQL's own docs mark it deprecated (see the anchor in
-    // .upstream above). This engine emulates GoogleSQL-dialect BigQuery, so
-    // implementing it would add surface production does not have.
-    //
-    // Restated as the refusal so the case still pins something. The assertion
-    // is deliberately loose: the engine reports UnsupportedFunction without
-    // naming the function, so this says "not implemented here", not which.
+        // NET.PARSE_IP is not a GoogleSQL function in BigQuery: real BigQuery answers
+        // `Function not found: NET.PARSE_IP` (bq CLI, 2026-08-04). It exists in BigQuery's
+        // *legacy* SQL — `bq query --use_legacy_sql=true "SELECT PARSE_IP('1.2.3.4')"` answers
+        // normally — and GoogleSQL's own docs mark it deprecated (see the anchor in
+        // .upstream above). This engine emulates GoogleSQL-dialect BigQuery, so
+        // implementing it would add surface production does not have.
+        //
+        // Restated as the refusal so the case still pins something. The assertion
+        // is deliberately loose: the engine reports UnsupportedFunction without
+        // naming the function, so this says "not implemented here", not which.
         .{
             .desc = "identity round-trip via IP_TO_STRING(IP_FROM_STRING(x))",
             .sql = "SELECT NET.IP_TO_STRING(NET.IP_FROM_STRING('192.168.1.0')) AS v",

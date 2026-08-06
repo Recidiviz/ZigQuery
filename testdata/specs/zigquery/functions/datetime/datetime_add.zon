@@ -1,0 +1,21 @@
+.{
+    .spec = "zigquery/functions/datetime/datetime_add",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "datetime_add (case 512)",
+            .sql = "SELECT DATETIME \"2008-12-25 15:30:00\", DATETIME_ADD(DATETIME \"2008-12-25 15:30:00\", INTERVAL 10 MINUTE)",
+            .rows = .{
+                .{ "2008-12-25T15:30:00", "2008-12-25T15:40:00" },
+            },
+        },
+        .{
+            .desc = "datetime_add (case 513)",
+            .sql = "SELECT DATETIME_ADD(DATETIME '2023-01-29 00:00:00', INTERVAL 1 MONTH)",
+            .rows = .{
+                .{"2023-02-28T00:00:00"},
+            },
+        },
+    },
+}

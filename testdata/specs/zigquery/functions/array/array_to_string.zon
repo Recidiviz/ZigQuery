@@ -1,0 +1,45 @@
+.{
+    .spec = "zigquery/functions/array/array_to_string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "array_to_string function",
+            .sql =
+            \\
+            \\WITH items AS
+            \\  (SELECT ['coffee', 'tea', 'milk' ] as list
+            \\  UNION ALL
+            \\  SELECT ['cake', 'pie', NULL] as list)
+            \\SELECT ARRAY_TO_STRING(list, '--') AS text FROM items
+            ,
+            .rows = .{
+                .{"coffee--tea--milk"},
+                .{"cake--pie"},
+            },
+        },
+        .{
+            .desc = "array_to_string null",
+            .sql = "SELECT ARRAY_TO_STRING(NULL, '--')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_to_string function with null text",
+            .sql =
+            \\
+            \\WITH items AS
+            \\  (SELECT ['coffee', 'tea', 'milk' ] as list
+            \\  UNION ALL
+            \\  SELECT ['cake', 'pie', NULL] as list)
+            \\
+            \\SELECT ARRAY_TO_STRING(list, '--', 'MISSING') AS text FROM items
+            ,
+            .rows = .{
+                .{"coffee--tea--milk"},
+                .{"cake--pie--MISSING"},
+            },
+        },
+    },
+}

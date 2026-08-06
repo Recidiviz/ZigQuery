@@ -1,0 +1,196 @@
+.{
+    .spec = "zigquery/syntax/query/predicates",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "like operator",
+            .sql = "SELECT \"abcd\" LIKE \"a%d\"",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "like operator - special regex characters",
+            .sql = "SELECT 'my*string' LIKE '%%*%%', 'my*string' LIKE '%%([][%';",
+            .rows = .{
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "like operator2",
+            .sql = "SELECT \"abcd\" LIKE \"%a%\"",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "like operator3",
+            .sql = "SELECT \"abcd\" LIKE \"%b%\"",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "like operator4",
+            .sql = "SELECT \"dog\" LIKE \"o%\"",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "not like operator",
+            .sql = "SELECT \"abcd\" NOT LIKE \"a%d\"",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "between operator",
+            .sql = "SELECT DATE \"2022-09-10\" BETWEEN \"2022-09-01\" and \"2022-10-01\", (SELECT NULL) BETWEEN 0 AND 2",
+            .rows = .{
+                .{ true, null },
+            },
+        },
+        .{
+            .desc = "not between operator",
+            .sql = "SELECT DATE \"2020-09-10\" NOT BETWEEN \"2022-09-01\" and \"2022-10-01\", (SELECT NULL) BETWEEN 0 AND 2",
+            .rows = .{
+                .{ true, null },
+            },
+        },
+        .{
+            .desc = "in operator",
+            .sql = "SELECT 3 IN (1, 2, 3, 4), null IN (1), null IN (null)",
+            .rows = .{
+                .{ true, null, null },
+            },
+        },
+        .{
+            .desc = "in operator with function",
+            .sql = "SELECT NOT(RIGHT('apple', 3) IN (SELECT DISTINCT c FROM (select 'ple' as c)))",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "not in operator",
+            .sql = "SELECT 5 NOT IN (1, 2, 3, 4), null NOT IN (1), null NOT IN (null)",
+            .rows = .{
+                .{ true, null, null },
+            },
+        },
+        .{
+            .desc = "is null operator",
+            .sql = "SELECT NULL IS NULL",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is not null operator",
+            .sql = "SELECT 1 IS NOT NULL",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is true operator",
+            .sql = "SELECT true IS TRUE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is not true operator",
+            .sql = "SELECT false IS NOT TRUE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is false operator",
+            .sql = "SELECT false IS FALSE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is not false operator",
+            .sql = "SELECT true IS NOT FALSE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "exists",
+            .sql = "SELECT EXISTS ( SELECT val FROM UNNEST([1, 2, 3]) AS val WHERE val = 1 )",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "not exists",
+            .sql = "SELECT EXISTS ( SELECT val FROM UNNEST([1, 2, 3]) AS val WHERE val = 4 )",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "is distinct from with 1 and 2",
+            .sql = "SELECT 1 IS DISTINCT FROM 2",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is distinct from with 1 and null",
+            .sql = "SELECT 1 IS DISTINCT FROM NULL",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is not distinct from with 1 and 1",
+            .sql = "SELECT 1 IS NOT DISTINCT FROM 1",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is not distinct from with null and null",
+            .sql = "SELECT NULL IS NOT DISTINCT FROM NULL",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is distinct from with null and null",
+            .sql = "SELECT NULL IS DISTINCT FROM NULL",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "is distinct from with 1 and 1",
+            .sql = "SELECT 1 IS DISTINCT FROM 1",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "is not distinct from with 1 and 2",
+            .sql = "SELECT 1 IS NOT DISTINCT FROM 2",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "is not distinct from with 1 and null",
+            .sql = "SELECT 1 IS NOT DISTINCT FROM NULL",
+            .rows = .{
+                .{false},
+            },
+        },
+    },
+}

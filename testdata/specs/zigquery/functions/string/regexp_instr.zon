@@ -1,0 +1,83 @@
+.{
+    .spec = "zigquery/functions/string/regexp_instr",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "regexp_instr",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT 'ab@gmail.com' AS source_value, '@[^.]*' AS regexp UNION ALL
+            \\  SELECT 'ab@mail.com', '@[^.]*' UNION ALL
+            \\  SELECT 'abc@gmail.com', '@[^.]*' UNION ALL
+            \\  SELECT 'abc.com', '@[^.]*' UNION ALL
+            \\  SELECT NULL, '@[^.]*' UNION ALL
+            \\  SELECT 'abc.com', NULL
+            \\) SELECT source_value, regexp, REGEXP_INSTR(source_value, regexp) FROM example
+            ,
+            .rows = .{
+                .{ "ab@gmail.com", "@[^.]*", 3 },
+                .{ "ab@mail.com", "@[^.]*", 3 },
+                .{ "abc@gmail.com", "@[^.]*", 4 },
+                .{ "abc.com", "@[^.]*", 0 },
+                .{ null, "@[^.]*", null },
+                .{ "abc.com", null, null },
+            },
+        },
+        .{
+            .desc = "regexp_instr with position",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT 'a@gmail.com b@gmail.com' AS source_value, '@[^.]*' AS regexp, 1 AS position UNION ALL
+            \\  SELECT 'a@gmail.com b@gmail.com', '@[^.]*', 2 UNION ALL
+            \\  SELECT 'a@gmail.com b@gmail.com', '@[^.]*', 3 UNION ALL
+            \\  SELECT 'a@gmail.com b@gmail.com', '@[^.]*', 4 UNION ALL
+            \\  SELECT 'a@gmail.com b@gmail.com', '@[^.]*', NULL
+            \\) SELECT source_value, regexp, position, REGEXP_INSTR(source_value, regexp, position) FROM example
+            ,
+            .rows = .{
+                .{ "a@gmail.com b@gmail.com", "@[^.]*", 1, 2 },
+                .{ "a@gmail.com b@gmail.com", "@[^.]*", 2, 2 },
+                .{ "a@gmail.com b@gmail.com", "@[^.]*", 3, 14 },
+                .{ "a@gmail.com b@gmail.com", "@[^.]*", 4, 14 },
+                .{ "a@gmail.com b@gmail.com", "@[^.]*", null, null },
+            },
+        },
+        .{
+            .desc = "regexp_instr with occurrence",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT 'a@gmail.com b@gmail.com c@gmail.com' AS source_value, '@[^.]*' AS regexp, 1 AS position, 1 AS occurrence UNION ALL
+            \\  SELECT 'a@gmail.com b@gmail.com c@gmail.com', '@[^.]*', 1, 2 UNION ALL
+            \\  SELECT 'a@gmail.com b@gmail.com c@gmail.com', '@[^.]*', 1, 3 UNION ALL
+            \\  SELECT 'a@gmail.com b@gmail.com c@gmail.com', '@[^.]*', 1, NULL
+            \\) SELECT source_value, regexp, position, occurrence, REGEXP_INSTR(source_value, regexp, position, occurrence) FROM example
+            ,
+            .rows = .{
+                .{ "a@gmail.com b@gmail.com c@gmail.com", "@[^.]*", 1, 1, 2 },
+                .{ "a@gmail.com b@gmail.com c@gmail.com", "@[^.]*", 1, 2, 14 },
+                .{ "a@gmail.com b@gmail.com c@gmail.com", "@[^.]*", 1, 3, 26 },
+                .{ "a@gmail.com b@gmail.com c@gmail.com", "@[^.]*", 1, null, null },
+            },
+        },
+        .{
+            .desc = "regexp_instr with occurrence position",
+            .sql =
+            \\
+            \\WITH example AS (
+            \\  SELECT 'a@gmail.com' AS source_value, '@[^.]*' AS regexp, 1 AS position, 1 AS occurrence, 0 AS o_position UNION ALL
+            \\  SELECT 'a@gmail.com', '@[^.]*', 1, 1, 1 UNION ALL
+            \\  SELECT 'a@gmail.com', '@[^.]*', 1, 1, NULL
+            \\) SELECT source_value, regexp, position, occurrence, o_position, REGEXP_INSTR(source_value, regexp, position, occurrence, o_position) FROM example
+            ,
+            .rows = .{
+                .{ "a@gmail.com", "@[^.]*", 1, 1, 0, 2 },
+                .{ "a@gmail.com", "@[^.]*", 1, 1, 1, 8 },
+                .{ "a@gmail.com", "@[^.]*", 1, 1, null, null },
+            },
+        },
+    },
+}

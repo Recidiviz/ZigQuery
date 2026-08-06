@@ -1,0 +1,36 @@
+.{
+    .spec = "zigquery/functions/aggregate/countif",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "countif",
+            .sql = "SELECT COUNTIF(x<0) AS num_negative, COUNTIF(x>0) AS num_positive FROM UNNEST([5, -2, 3, 6, -10, -7, 4, 0]) AS x",
+            .rows = .{
+                .{ 3, 4 },
+            },
+        },
+        .{
+            .desc = "countif with null",
+            .sql = "SELECT COUNTIF(x<0) FROM UNNEST([NULL]) AS x",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "countif with window",
+            .sql = "SELECT x, COUNTIF(x<0) OVER (ORDER BY ABS(x) ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM UNNEST([5, -2, 3, 6, -10, NULL, -7, 4, 0]) AS x",
+            .rows = .{
+                .{ null, 0 },
+                .{ 0, 1 },
+                .{ -2, 1 },
+                .{ 3, 1 },
+                .{ 4, 0 },
+                .{ 5, 0 },
+                .{ 6, 1 },
+                .{ -7, 2 },
+                .{ -10, 2 },
+            },
+        },
+    },
+}

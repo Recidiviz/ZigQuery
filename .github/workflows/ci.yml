@@ -91,8 +91,8 @@ jobs:
       - run: zig build test -Dshim-dylib=${{ steps.shim.outputs.path }}
       - run: zig build test-server -Dshim-dylib=${{ steps.shim.outputs.path }}
 
-  corpus:
-    name: corpus (go-zetasqlite)
+  spec:
+    name: spec (googlesqlite + go-zetasqlite)
     needs: shim
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
@@ -109,35 +109,6 @@ jobs:
       # --strict is what makes this a real gate: without it the runner exits
       # nonzero only on a baseline regression, so a case that has never passed
       # can start returning wrong answers and still go green.
-      - name: zig build corpus --strict
-        run: |
-          set -euo pipefail
-          zig build corpus -Drelease=true \
-            -Dshim-dylib=${{ steps.shim.outputs.path }} -- --strict | tee corpus.log
-        env:
-          DUMP_FAILS: "1"
-
-      - name: summary
-        if: always()
-        run: |
-          { echo '## Corpus'; echo; echo '```'; head -8 corpus.log; echo '```'; } \
-            >> "$GITHUB_STEP_SUMMARY"
-
-  spec:
-    name: spec (googlesqlite)
-    needs: shim
-    runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
-    steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
-      - id: shim
-        uses: ./.github/actions/shim
-        with:
-          platform: linux-x64
-      - uses: ./.github/actions/zig
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
       - name: zig build spec --strict
         run: |
           set -euo pipefail
@@ -145,7 +116,7 @@ jobs:
             -Dshim-dylib=${{ steps.shim.outputs.path }} -- --strict | tee spec.log
 
       # Reuses the run above rather than invoking --markdown, which would
-      # replay all 1012 cases a second time for a per-category table.
+      # replay all cases a second time for a per-category table.
       - name: summary
         if: always()
         run: |

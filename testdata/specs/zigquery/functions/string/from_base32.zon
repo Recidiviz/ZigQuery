@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/from_base32",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "from_base32",
+            .sql = "SELECT FROM_BASE32('MFRGGZDF74======'), FROM_BASE32(NULL)",
+            .rows = .{
+                .{ "YWJjZGX/", null },
+            },
+        },
+    },
+}

@@ -748,3 +748,746 @@ googlesql/types/struct	struct same name fields positional access
 googlesql/types/time	cast string to TIME
 googlesql/types/time	TIME literal
 googlesql/types/timestamp	FORMAT_TIMESTAMP UTC
+zigquery/functions/aggregate/any_value	any_value
+zigquery/functions/aggregate/any_value	any_value with window
+zigquery/functions/aggregate/any_value	any_value with having max
+zigquery/functions/aggregate/any_value	any_value with having min
+zigquery/functions/aggregate/any_value	any_value having max with struct
+zigquery/functions/aggregate/any_value	any_value having min with struct
+zigquery/functions/aggregate/any_value	any_value having max and min together
+zigquery/functions/aggregate/any_value	any_value having max with different expression
+zigquery/functions/aggregate/approximate/approx_count_distinct	approx_count_distinct
+zigquery/functions/aggregate/approximate/approx_quantiles	approx_quantiles
+zigquery/functions/aggregate/approximate/approx_quantiles	approx_quantiles 2
+zigquery/functions/aggregate/approximate/approx_quantiles	approx_quantiles with distinct
+zigquery/functions/aggregate/approximate/approx_quantiles	approx_quantiles with null
+zigquery/functions/aggregate/approximate/approx_quantiles	approx_quantiles with respect nulls
+zigquery/functions/aggregate/approximate/approx_top_count	approx_top_count
+zigquery/functions/aggregate/approximate/approx_top_count	approx_top_count with null
+zigquery/functions/aggregate/approximate/approx_top_sum	approx_top_sum
+zigquery/functions/aggregate/approximate/approx_top_sum	approx_top_sum with null
+zigquery/functions/aggregate/approximate/approx_top_sum	approx_top_sum with null 2
+zigquery/functions/aggregate/approximate/approx_top_sum	approx_top_sum with null 3
+zigquery/functions/aggregate/array_agg	array_agg
+zigquery/functions/aggregate/array_agg	array_agg with distinct
+zigquery/functions/aggregate/array_agg	array_agg with limit
+zigquery/functions/aggregate/array_agg	array_agg with nulls
+zigquery/functions/aggregate/array_agg	array_agg with null in order by
+zigquery/functions/aggregate/array_agg	array_agg with struct
+zigquery/functions/aggregate/array_agg	array_agg with ignore nulls
+zigquery/functions/aggregate/array_agg	array_agg with ignore nulls and struct
+zigquery/functions/aggregate/array_agg	array_agg with abs
+zigquery/functions/aggregate/array_agg	array_agg with window
+zigquery/functions/aggregate/array_concat_agg	array_concat_agg
+zigquery/functions/aggregate/array_concat_agg	array_concat_agg with null in order by
+zigquery/functions/aggregate/array_concat_agg	array_concat_agg with format
+zigquery/functions/aggregate/avg	avg
+zigquery/functions/aggregate/avg	avg with distinct
+zigquery/functions/aggregate/avg	avg with window
+zigquery/functions/aggregate/bit_and	bit_and
+zigquery/functions/aggregate/bit_or	bit_or
+zigquery/functions/aggregate/bit_xor	bit_xor
+zigquery/functions/aggregate/bit_xor	bit_xor 2
+zigquery/functions/aggregate/bit_xor	bit_xor 3
+zigquery/functions/aggregate/count	count star and distinct
+zigquery/functions/aggregate/count	count with null
+zigquery/functions/aggregate/count	count with if
+zigquery/functions/aggregate/count	count with window
+zigquery/functions/aggregate/countif	countif
+zigquery/functions/aggregate/countif	countif with null
+zigquery/functions/aggregate/countif	countif with window
+zigquery/functions/aggregate/logical_and	logical_and
+zigquery/functions/aggregate/logical_and	logical_and null
+zigquery/functions/aggregate/logical_and	logical_and default
+zigquery/functions/aggregate/logical_and	logical_and no rows
+zigquery/functions/aggregate/logical_and	logical_and with window
+zigquery/functions/aggregate/logical_or	logical_or
+zigquery/functions/aggregate/logical_or	logical_or null
+zigquery/functions/aggregate/logical_or	logical_or window default
+zigquery/functions/aggregate/logical_or	logical_or window no rows
+zigquery/functions/aggregate/logical_or	logical_or with window
+zigquery/functions/aggregate/max	max from int group
+zigquery/functions/aggregate/max	max from date group
+zigquery/functions/aggregate/max	max window from date group
+zigquery/functions/aggregate/max_by	max_by basic
+zigquery/functions/aggregate/min	min from int group
+zigquery/functions/aggregate/min	min from date group
+zigquery/functions/aggregate/min	min window from date group
+zigquery/functions/aggregate/min_by	min_by basic
+zigquery/functions/aggregate/statistical/corr	corr window
+zigquery/functions/aggregate/statistical/covar_pop	covar_pop window
+zigquery/functions/aggregate/statistical/covar_samp	covar_samp window
+zigquery/functions/aggregate/statistical/stddev	stddev window
+zigquery/functions/aggregate/statistical/stddev_pop	stddev_pop window
+zigquery/functions/aggregate/statistical/stddev_samp	stddev_samp window
+zigquery/functions/aggregate/statistical/var_pop	var_pop window
+zigquery/functions/aggregate/statistical/var_samp	var_samp window
+zigquery/functions/aggregate/statistical/variance	variance window
+zigquery/functions/aggregate/string_agg	string_agg
+zigquery/functions/aggregate/string_agg	string_agg with length 0
+zigquery/functions/aggregate/string_agg	string_agg with null
+zigquery/functions/aggregate/string_agg	string_agg with delimiter
+zigquery/functions/aggregate/string_agg	string_agg with distinct
+zigquery/functions/aggregate/string_agg	string_agg with order by
+zigquery/functions/aggregate/string_agg	string_agg with limit
+zigquery/functions/aggregate/string_agg	string_agg with distinct and order by and limit
+zigquery/functions/aggregate/string_agg	string_agg with window
+zigquery/functions/aggregate/sum	sum
+zigquery/functions/aggregate/sum	sum with distinct
+zigquery/functions/aggregate/sum	sum with window
+zigquery/functions/aggregate/sum	sum with window and distinct
+zigquery/functions/aggregate/sum	sum null
+zigquery/functions/aggregate/sum	safe sum
+zigquery/functions/array/array	make_array
+zigquery/functions/array/array	array function
+zigquery/functions/array/array	array scan left outer join
+zigquery/functions/array/array	array scan inner join
+zigquery/functions/array/array	array function with other column
+zigquery/functions/array/array_concat	array_concat function
+zigquery/functions/array/array_first	array_first function
+zigquery/functions/array/array_first	array_first function empty
+zigquery/functions/array/array_last	array_last function
+zigquery/functions/array/array_last	array_last function empty
+zigquery/functions/array/array_length	array_length function
+zigquery/functions/array/array_length	array_length null
+zigquery/functions/array/array_length	array length comparison
+zigquery/functions/array/array_reverse	array_reverse function
+zigquery/functions/array/array_reverse	array_reverse null
+zigquery/functions/array/array_slice	array_slice basic
+zigquery/functions/array/array_slice	array_slice negative indices
+zigquery/functions/array/array_slice	array_slice start from beginning
+zigquery/functions/array/array_slice	array_slice to end
+zigquery/functions/array/array_slice	array_slice out of bounds negative
+zigquery/functions/array/array_slice	array_slice out of bounds start
+zigquery/functions/array/array_slice	array_slice start after end
+zigquery/functions/array/array_slice	array_slice null array
+zigquery/functions/array/array_slice	array_slice null start
+zigquery/functions/array/array_slice	array_slice null end
+zigquery/functions/array/array_slice	array_slice empty array
+zigquery/functions/array/array_slice	array_slice mixed negative positive
+zigquery/functions/array/array_slice	array_slice single element
+zigquery/functions/array/array_to_string	array_to_string function
+zigquery/functions/array/array_to_string	array_to_string null
+zigquery/functions/array/array_to_string	array_to_string function with null text
+zigquery/functions/array/generate_array	generate_array function
+zigquery/functions/array/generate_array	generate_array nil
+zigquery/functions/array/generate_array	generate_array function with step
+zigquery/functions/array/generate_array	generate_array function with negative step value
+zigquery/functions/array/generate_array	generate_array function with large step value
+zigquery/functions/array/generate_array	generate_array function with over step value
+zigquery/functions/array/generate_array	generate_array function with null
+zigquery/functions/array/generate_array	generate_array function for generate multiple array
+zigquery/functions/array/generate_date_array	generate_date_array function
+zigquery/functions/array/generate_date_array	generate_date_array nil
+zigquery/functions/array/generate_date_array	generate_date_array function with step
+zigquery/functions/array/generate_date_array	generate_date_array function with negative step
+zigquery/functions/array/generate_date_array	generate_date_array function with same value
+zigquery/functions/array/generate_date_array	generate_date_array function with over step
+zigquery/functions/array/generate_date_array	generate_date_array function with null
+zigquery/functions/array/generate_date_array	generate_date_array function with month
+zigquery/functions/array/generate_date_array	generate_date_array function with variable
+zigquery/functions/array/generate_timestamp_array	generate_timestamp_array function
+zigquery/functions/array/generate_timestamp_array	generate_timestamp_array function interval 1 second
+zigquery/functions/array/generate_timestamp_array	generate_timestamp_array function negative interval
+zigquery/functions/array/generate_timestamp_array	generate_timestamp_array function same value
+zigquery/functions/array/generate_timestamp_array	generate_timestamp_array function over step
+zigquery/functions/array/generate_timestamp_array	generate_timestamp_array function with null
+zigquery/functions/array/generate_timestamp_array	generate_timestamp_array function with variable
+zigquery/functions/bit/bit_count	bit_count
+zigquery/functions/conversion/cast	invalid cast
+zigquery/functions/conversion/cast	cast integer to datetime
+zigquery/functions/conversion/cast	cast string to int64
+zigquery/functions/conversion/cast	cast string to int64 - leading zeros
+zigquery/functions/conversion/cast	cast date as string (case 481)
+zigquery/functions/conversion/cast	cast date as string (case 482)
+zigquery/functions/conversion/cast	cast date as string (case 483)
+zigquery/functions/conversion/cast	cast datetime as string
+zigquery/functions/conversion/cast	cast date as datetime
+zigquery/functions/conversion/cast	cast time as string
+zigquery/functions/conversion/cast	cast time with timezone as string
+zigquery/functions/conversion/cast	cast time from datetime as string
+zigquery/functions/conversion/cast	cast timestamp as string
+zigquery/functions/conversion/cast	cast numeric and bignumeric
+zigquery/functions/conversion/cast	cast numeric and bignumeric to string
+zigquery/functions/conversion/parse_bignumeric	parse_bignumeric
+zigquery/functions/conversion/parse_numeric	parse_numeric
+zigquery/functions/conversion/safe_cast	safe cast
+zigquery/functions/conversion/safe_cast	safe cast for invalid cast
+zigquery/functions/date/current_date	current_date (case 446)
+zigquery/functions/date/current_date	current_date (case 457)
+zigquery/functions/date/date	date operator
+zigquery/functions/date/date_add	date_add
+zigquery/functions/date/date_add	date_add quarter
+zigquery/functions/date/date_diff	date_diff with week
+zigquery/functions/date/date_diff	date_diff with week day (case 461)
+zigquery/functions/date/date_diff	date_diff with week day (case 462)
+zigquery/functions/date/date_diff	date_diff with month (case 467)
+zigquery/functions/date/date_diff	date_diff with day (case 468)
+zigquery/functions/date/date_diff	date_diff with month (case 469)
+zigquery/functions/date/date_diff	date_diff with day (case 470)
+zigquery/functions/date/date_from_unix_date	date_from_unix_date
+zigquery/functions/date/date_sub	date_sub
+zigquery/functions/date/date_trunc	date_trunc with quarter
+zigquery/functions/date/date_trunc	date_trunc with day
+zigquery/functions/date/date_trunc	date_trunc with week
+zigquery/functions/date/date_trunc	date_trunc with month
+zigquery/functions/date/date_trunc	date_trunc with year
+zigquery/functions/date/extract	extract date
+zigquery/functions/date/format_date	format date with %t
+zigquery/functions/date/format_date	format_date with %x
+zigquery/functions/date/format_date	format_date with %y
+zigquery/functions/date/format_date	format_date with %b-%d-%Y
+zigquery/functions/date/format_date	format_date with %b %Y
+zigquery/functions/date/format_date	format_date with %E4Y
+zigquery/functions/date/last_day	last_day
+zigquery/functions/date/last_day	last_day with month
+zigquery/functions/date/last_day	last_day with year
+zigquery/functions/date/last_day	last_day with week(sunday)
+zigquery/functions/date/last_day	last_day with week(monday)
+zigquery/functions/date/parse_date	base date is epoch
+zigquery/functions/date/parse_date	parse date exceeding month maximum
+zigquery/functions/date/parse_date	parse date beneath month minimum
+zigquery/functions/date/parse_date	parse date exceeding day maximum
+zigquery/functions/date/parse_date	parse date beneath day minimum
+zigquery/functions/date/parse_date	parse date exceeding day of year maximum
+zigquery/functions/date/parse_date	parse date beneath day of year minimum
+zigquery/functions/date/parse_date	parse date with single-digit month %m
+zigquery/functions/date/parse_date	parse_date with %y
+zigquery/functions/date/parse_date	parse date with %A %b %e %Y
+zigquery/functions/date/parse_date	parse date with %Y%m%d
+zigquery/functions/date/parse_date	parse date with %e
+zigquery/functions/date/parse_date	parse date with %e - leading space allows multiple digits
+zigquery/functions/date/parse_date	parse date with %F no day field
+zigquery/functions/date/parse_date	parse date with %F no month field
+zigquery/functions/date/parse_date	parse date with %F separator but no month
+zigquery/functions/date/parse_date	parse date with %F
+zigquery/functions/date/parse_date	parse date with %x
+zigquery/functions/date/parse_date	parse date ( the year element is in different locations )
+zigquery/functions/date/parse_date	safe parse date ( the year element is in different locations )
+zigquery/functions/date/parse_date	parse date ( one of the year elements is missing )
+zigquery/functions/date/unix_date	unix_date
+zigquery/functions/datetime/current_datetime	current_datetime
+zigquery/functions/datetime/datetime	datetime
+zigquery/functions/datetime/datetime	datetime literal
+zigquery/functions/datetime/datetime_add	datetime_add (case 512)
+zigquery/functions/datetime/datetime_add	datetime_add (case 513)
+zigquery/functions/datetime/datetime_diff	datetime_diff with week day (case 463)
+zigquery/functions/datetime/datetime_diff	datetime_diff with week day 1 week
+zigquery/functions/datetime/datetime_diff	datetime_diff with week day (case 465)
+zigquery/functions/datetime/datetime_diff	datetime_diff with day, more than 24 hours
+zigquery/functions/datetime/datetime_diff	datetime_diff with day, less than 24 hours and does not cross boundary
+zigquery/functions/datetime/datetime_diff	datetime_diff with day, less than 24 hours and does cross boundary
+zigquery/functions/datetime/datetime_diff	datetime_diff with day, more than 24 hours, reverse
+zigquery/functions/datetime/datetime_diff	datetime_diff with day, less than 24 hours and does not cross boundary, reverse
+zigquery/functions/datetime/datetime_diff	datetime_diff with day, less than 24 hours and does cross boundary, reverse
+zigquery/functions/datetime/datetime_diff	datetime_diff with week
+zigquery/functions/datetime/datetime_diff	datetime_diff with year, ISOYEAR
+zigquery/functions/datetime/datetime_diff	datetime_diff with isoweek
+zigquery/functions/datetime/datetime_sub	datetime_sub (case 514)
+zigquery/functions/datetime/datetime_sub	datetime_sub (case 515)
+zigquery/functions/datetime/datetime_trunc	datetime_trunc with quarter
+zigquery/functions/datetime/datetime_trunc	datetime_trunc with day weekday
+zigquery/functions/datetime/datetime_trunc	datetime_trunc isoyear
+zigquery/functions/datetime/datetime_trunc	datetime_trunc with day
+zigquery/functions/datetime/datetime_trunc	datetime_trunc with weekday(monday)
+zigquery/functions/datetime/datetime_trunc	datetime_trunc with isoyear
+zigquery/functions/datetime/format_datetime	format_datetime with %c
+zigquery/functions/datetime/format_datetime	format_datetime with %b-%d-%Y
+zigquery/functions/datetime/format_datetime	format_datetime with %b %Y
+zigquery/functions/datetime/format_datetime	format_datetime with %E3S
+zigquery/functions/datetime/format_datetime	format_datetime with %E*S
+zigquery/functions/datetime/format_datetime	format_datetime with %E4Y
+zigquery/functions/datetime/parse_datetime	parse datetime
+zigquery/functions/datetime/parse_datetime	parse datetime with %c
+zigquery/functions/datetime/parse_datetime	parse datetime ( the year element is in different locations )
+zigquery/functions/datetime/parse_datetime	parse datetime ( one of the year elements is missing )
+zigquery/functions/datetime/parse_datetime	parse datetime %F respectfully consuming digits
+zigquery/functions/debug/error	error
+zigquery/functions/hash/farm_fingerprint	farm_fingerprint
+zigquery/functions/hash/md5	md5
+zigquery/functions/hash/sha1	sha1
+zigquery/functions/hash/sha256	sha256
+zigquery/functions/hash/sha512	sha512
+zigquery/functions/hll/hll_count_extract	hll_count.extract
+zigquery/functions/hll/hll_count_init	hll_count.init
+zigquery/functions/hll/hll_count_merge	hll_count.merge
+zigquery/functions/hll/hll_count_merge_partial	hll_count.merge_partial
+zigquery/functions/interval/extract	extract from interval
+zigquery/functions/interval/justify_days	justify_days
+zigquery/functions/interval/justify_hours	justify_hours
+zigquery/functions/interval/justify_interval	justify_interval
+zigquery/functions/interval/make_interval	make interval
+zigquery/functions/json/bool	json_bool
+zigquery/functions/json/float64	json_float64
+zigquery/functions/json/int64	json_int64
+zigquery/functions/json/json_extract	json_extract
+zigquery/functions/json/json_extract	json_extract for format
+zigquery/functions/json/json_extract	json_extract with array
+zigquery/functions/json/json_extract	json_extract for name
+zigquery/functions/json/json_extract	json_extract with escape
+zigquery/functions/json/json_extract	json_extract and null
+zigquery/functions/json/json_extract_array	json_extract_array
+zigquery/functions/json/json_extract_array	json_extract_array with integer
+zigquery/functions/json/json_extract_array	json_extract_array with integer cast
+zigquery/functions/json/json_extract_array	json_extract_array format
+zigquery/functions/json/json_extract_array	json_extract_array filter
+zigquery/functions/json/json_extract_array	json_extract_array with escape
+zigquery/functions/json/json_extract_array	json_extract_array with null
+zigquery/functions/json/json_extract_array	json_extract_array with empty array
+zigquery/functions/json/json_extract_scalar	json_extract_scalar with number
+zigquery/functions/json/json_extract_scalar	json_extract_scalar with string
+zigquery/functions/json/json_extract_scalar	json_extract_scalar with array
+zigquery/functions/json/json_extract_scalar	json_extract_scalar with escape
+zigquery/functions/json/json_extract_string_array	json_extract_string_array
+zigquery/functions/json/json_extract_string_array	json_extract_string_array with root only
+zigquery/functions/json/json_extract_string_array	json_extract_string_array with integer cast
+zigquery/functions/json/json_extract_string_array	json_extract_string_array with escape
+zigquery/functions/json/json_extract_string_array	json_extract_string_array with null
+zigquery/functions/json/json_extract_string_array	json_extract_string_array with empty array
+zigquery/functions/json/json_query	json_query
+zigquery/functions/json/json_query	json_query for format
+zigquery/functions/json/json_query	json_query with array
+zigquery/functions/json/json_query	json_query for name
+zigquery/functions/json/json_query	json_query with escape
+zigquery/functions/json/json_query	json_query and null
+zigquery/functions/json/json_query_array	json_query_array
+zigquery/functions/json/json_query_array	json_query_array with integer
+zigquery/functions/json/json_query_array	json_query_array with integer cast
+zigquery/functions/json/json_query_array	json_query_array format
+zigquery/functions/json/json_query_array	json_query_array filter
+zigquery/functions/json/json_query_array	json_query_array with escape
+zigquery/functions/json/json_query_array	json_query_array with null
+zigquery/functions/json/json_query_array	json_query_array with empty array
+zigquery/functions/json/json_type	json_type
+zigquery/functions/json/json_value	json value subscript operator
+zigquery/functions/json/json_value	json_value with number
+zigquery/functions/json/json_value	json_value with string
+zigquery/functions/json/json_value	json_value with array
+zigquery/functions/json/json_value	json_value with escape
+zigquery/functions/json/json_value	json_value with null
+zigquery/functions/json/json_value_array	json_value_array
+zigquery/functions/json/json_value_array	json_value_array with root only
+zigquery/functions/json/json_value_array	json_value_array with integer cast
+zigquery/functions/json/json_value_array	json_value_array with escape
+zigquery/functions/json/json_value_array	json_value_array with null
+zigquery/functions/json/json_value_array	json_value_array with empty array
+zigquery/functions/json/parse_json	parse_json
+zigquery/functions/json/string	json_string
+zigquery/functions/json/to_json	to_json
+zigquery/functions/json/to_json	to_json with struct
+zigquery/functions/json/to_json_string	date to json
+zigquery/functions/json/to_json_string	date struct to json
+zigquery/functions/json/to_json_string	datetime to json
+zigquery/functions/json/to_json_string	time to json string
+zigquery/functions/json/to_json_string	timestamp to json
+zigquery/functions/json/to_json_string	to_json_string
+zigquery/functions/json/to_json_string	to_json_string_null
+zigquery/functions/json/to_json_string	compare_arrays_with_json_null_only
+zigquery/functions/json/to_json_string	compare_arrays_with_json_mixed
+zigquery/functions/math/least	least greatest between string
+zigquery/functions/math/least	least greatest between integer
+zigquery/functions/math/least	least greatest date
+zigquery/functions/math/round	rounding
+zigquery/functions/math/round	rounding precision
+zigquery/functions/math/sign	sign
+zigquery/functions/net/net_host	net_host
+zigquery/functions/net/net_ip_from_string	net_ip_from_string
+zigquery/functions/net/net_ip_net_mask	net_ip_net_mask
+zigquery/functions/net/net_ip_net_mask	net_ip_net_mask with invalid output bytes
+zigquery/functions/net/net_ip_net_mask	net_ip_net_mask with invalid prefix length
+zigquery/functions/net/net_ip_to_string	net_ip_to_string
+zigquery/functions/net/net_ip_trunc	net_ip_trunc
+zigquery/functions/net/net_ip_trunc	net_ip_trunc with invalid ip address
+zigquery/functions/net/net_ip_trunc	net_ip_trunc with invalid length
+zigquery/functions/net/net_ipv4_from_int64	net_ipv4_from_int64
+zigquery/functions/net/net_ipv4_to_int64	net_ipv4_to_int64
+zigquery/functions/net/net_safe_ip_from_string	net_safe_if_from_string
+zigquery/functions/security/session_user	session_user
+zigquery/functions/string/ascii	ascii
+zigquery/functions/string/byte_length	byte_length
+zigquery/functions/string/byte_length	byte_length null
+zigquery/functions/string/char_length	char_length
+zigquery/functions/string/char_length	char_length null
+zigquery/functions/string/character_length	character_length
+zigquery/functions/string/chr	chr
+zigquery/functions/string/code_points_to_bytes	code_points_to_bytes
+zigquery/functions/string/code_points_to_string	code_points_to_string
+zigquery/functions/string/concat	concat string operator
+zigquery/functions/string/concat	concat array operator
+zigquery/functions/string/concat	concat
+zigquery/functions/string/contains_substr	contains_substr true
+zigquery/functions/string/contains_substr	contains_substr false
+zigquery/functions/string/contains_substr	contains_substr normalize
+zigquery/functions/string/contains_substr	contains_substr struct_field
+zigquery/functions/string/contains_substr	contains_substr recursive
+zigquery/functions/string/contains_substr	contains_substr struct with null
+zigquery/functions/string/contains_substr	contains_substr struct with null2
+zigquery/functions/string/contains_substr	contains_substr nil
+zigquery/functions/string/contains_substr	contains_substr for table all rows
+zigquery/functions/string/contains_substr	contains_substr for table specified rows
+zigquery/functions/string/contains_substr	contains_substr for table except
+zigquery/functions/string/ends_with	ends_with
+zigquery/functions/string/format	format %d
+zigquery/functions/string/format	format |%10d|
+zigquery/functions/string/format	format +%010d+
+zigquery/functions/string/format	format %'d
+zigquery/functions/string/format	format %s
+zigquery/functions/string/format	format %f %E
+zigquery/functions/string/from_base32	from_base32
+zigquery/functions/string/from_base64	from_base64
+zigquery/functions/string/from_hex	from_hex
+zigquery/functions/string/initcap	initcap
+zigquery/functions/string/initcap	initcap with delimiters
+zigquery/functions/string/instr	instr
+zigquery/functions/string/left	left shift operator
+zigquery/functions/string/left	left with string value
+zigquery/functions/string/left	left with bytes value
+zigquery/functions/string/length	length
+zigquery/functions/string/lower	lower
+zigquery/functions/string/lpad	lpad string without pattern
+zigquery/functions/string/lpad	lpad string with pattern
+zigquery/functions/string/lpad	lpad bytes without pattern
+zigquery/functions/string/lpad	lpad bytes with pattern
+zigquery/functions/string/ltrim	ltrim
+zigquery/functions/string/normalize	normalize
+zigquery/functions/string/normalize	normalize null
+zigquery/functions/string/normalize	normalize with nfkc
+zigquery/functions/string/normalize_and_casefold	normalize_and_casefold
+zigquery/functions/string/normalize_and_casefold	normalize_and_casefold with params
+zigquery/functions/string/octet_length	octet_length
+zigquery/functions/string/octet_length	octet_length null
+zigquery/functions/string/regexp_contains	regexp_contains
+zigquery/functions/string/regexp_contains	regexp_contains2
+zigquery/functions/string/regexp_contains	regexp_contains null pattern
+zigquery/functions/string/regexp_extract	regexp_extract
+zigquery/functions/string/regexp_extract	regexp_extract null pattern
+zigquery/functions/string/regexp_extract	regexp_extract with capture
+zigquery/functions/string/regexp_extract	regexp_extract with position and occurrence
+zigquery/functions/string/regexp_extract_all	regexp_extract_all
+zigquery/functions/string/regexp_extract_all	regexp_extract_all null
+zigquery/functions/string/regexp_instr	regexp_instr
+zigquery/functions/string/regexp_instr	regexp_instr with position
+zigquery/functions/string/regexp_instr	regexp_instr with occurrence
+zigquery/functions/string/regexp_instr	regexp_instr with occurrence position
+zigquery/functions/string/regexp_replace	regexp_replace
+zigquery/functions/string/regexp_replace	regexp_replace quoted
+zigquery/functions/string/regexp_replace	regexp_replace null
+zigquery/functions/string/regexp_substr	regexp_substr
+zigquery/functions/string/repeat	repeat
+zigquery/functions/string/replace	replace (case 411)
+zigquery/functions/string/replace	replace null
+zigquery/functions/string/replace	replace (case 629)
+zigquery/functions/string/replace	replace (case 630)
+zigquery/functions/string/reverse	reverse
+zigquery/functions/string/right	right shift operator
+zigquery/functions/string/right	right string
+zigquery/functions/string/right	right bytes
+zigquery/functions/string/rpad	rpad string
+zigquery/functions/string/rpad	rpad string with pattern
+zigquery/functions/string/rpad	rpad bytes
+zigquery/functions/string/rpad	rpad bytes with pattern
+zigquery/functions/string/rtrim	rtrim
+zigquery/functions/string/rtrim	rtrim2
+zigquery/functions/string/rtrim	rtrim3
+zigquery/functions/string/safe_convert_bytes_to_string	safe_convert_bytes_to_string
+zigquery/functions/string/soundex	soundex
+zigquery/functions/string/split	split
+zigquery/functions/string/split	split null delimiter
+zigquery/functions/string/starts_with	starts_with
+zigquery/functions/string/strpos	strpos
+zigquery/functions/string/substr	substr
+zigquery/functions/string/substring	substring
+zigquery/functions/string/to_base32	to_base32
+zigquery/functions/string/to_base64	to_base64
+zigquery/functions/string/to_code_points	to_code_points with string value
+zigquery/functions/string/to_code_points	to_code_points with bytes value
+zigquery/functions/string/to_code_points	to_code_points compare string and bytes
+zigquery/functions/string/to_hex	to_hex
+zigquery/functions/string/translate	translate
+zigquery/functions/string/translate	translate unicode source and target
+zigquery/functions/string/trim	trim
+zigquery/functions/string/unicode	unicode
+zigquery/functions/string/upper	upper
+zigquery/functions/time/current_time	current_time
+zigquery/functions/time/format_time	format_time with %k %l
+zigquery/functions/time/format_time	format_time with %R
+zigquery/functions/time/format_time	format_time with %E3S
+zigquery/functions/time/format_time	format_time with %E*S
+zigquery/functions/time/parse_time	parse_time with %R
+zigquery/functions/time/parse_time	parse_time with %R without minute element
+zigquery/functions/time/parse_time	parse_time with %R without separator
+zigquery/functions/time/parse_time	parse time with %I:%M:%S
+zigquery/functions/time/parse_time	parse time with %T
+zigquery/functions/time/parse_time	parse time ( the seconds element is in different locations )
+zigquery/functions/time/parse_time	parse time ( one of the seconds elements is missing )
+zigquery/functions/time/time	time
+zigquery/functions/time/time	time from datetime
+zigquery/functions/time/time_add	time_add
+zigquery/functions/time/time_diff	time_diff
+zigquery/functions/time/time_sub	time_sub
+zigquery/functions/time/time_trunc	time_trunc
+zigquery/functions/timestamp/current_timestamp	current_timestamp
+zigquery/functions/timestamp/extract	extract from timestamp
+zigquery/functions/timestamp/format_timestamp	format timestamp with %t
+zigquery/functions/timestamp/format_timestamp	format_timestamp with %c
+zigquery/functions/timestamp/format_timestamp	format_timestamp with %b-%d-%Y
+zigquery/functions/timestamp/format_timestamp	format_timestamp with %b %Y
+zigquery/functions/timestamp/format_timestamp	format_timestamp with %Y-%m-%d %H:%M:%S
+zigquery/functions/timestamp/format_timestamp	format_timestamp with %E3S
+zigquery/functions/timestamp/format_timestamp	format_timestamp with %E*S
+zigquery/functions/timestamp/format_timestamp	format_timestamp with %E4Y
+zigquery/functions/timestamp/format_timestamp	format_timestamp with %Ez
+zigquery/functions/timestamp/parse_timestamp	parse timestamp with %a %b %e %I:%M:%S %Y
+zigquery/functions/timestamp/parse_timestamp	parse timestamp with %c
+zigquery/functions/timestamp/parse_timestamp	parse timestamp with %k (case 594)
+zigquery/functions/timestamp/parse_timestamp	parse timestamp with %k (case 595)
+zigquery/functions/timestamp/parse_timestamp	parse_timestamp with %D
+zigquery/functions/timestamp/parse_timestamp	parse timestamp with %p
+zigquery/functions/timestamp/parse_timestamp	parse timestamp with extra whitespace 
+zigquery/functions/timestamp/parse_timestamp	parse timestamp with %Y-%m-%d %H:%M:%S%Ez
+zigquery/functions/timestamp/parse_timestamp	parse timestamp with %Y-%m-%d %H:%M:%E*S%Ez
+zigquery/functions/timestamp/parse_timestamp	parse timestamp ( the year element is in different locations )
+zigquery/functions/timestamp/parse_timestamp	parse timestamp ( one of the year elements is missing )
+zigquery/functions/timestamp/string	string
+zigquery/functions/timestamp/timestamp	timestamp
+zigquery/functions/timestamp/timestamp	timestamp with zone
+zigquery/functions/timestamp/timestamp	timestamp in zone
+zigquery/functions/timestamp/timestamp	timestamp from datetime
+zigquery/functions/timestamp/timestamp	timestamp from date
+zigquery/functions/timestamp/timestamp	timestamp to string
+zigquery/functions/timestamp/timestamp	timestamp parses with T value
+zigquery/functions/timestamp/timestamp_add	timestamp_add
+zigquery/functions/timestamp/timestamp_diff	timestamp diff with week day
+zigquery/functions/timestamp/timestamp_diff	timestamp_diff
+zigquery/functions/timestamp/timestamp_micros	timestamp_micros
+zigquery/functions/timestamp/timestamp_millis	timestamp_millis
+zigquery/functions/timestamp/timestamp_seconds	timestamp_seconds
+zigquery/functions/timestamp/timestamp_sub	timestamp_sub
+zigquery/functions/timestamp/timestamp_trunc	timestamp_trunc with quarter
+zigquery/functions/timestamp/timestamp_trunc	timestamp_trunc with day
+zigquery/functions/timestamp/timestamp_trunc	timestamp_trunc with week
+zigquery/functions/timestamp/timestamp_trunc	timestamp_trunc with year
+zigquery/functions/timestamp/unix_micros	unix_micros
+zigquery/functions/timestamp/unix_millis	unix_millis
+zigquery/functions/timestamp/unix_seconds	unix_seconds
+zigquery/functions/utility/generate_uuid	generate_uuid
+zigquery/functions/window/cume_dist	cume_dist
+zigquery/functions/window/dense_rank	window dense_rank
+zigquery/functions/window/dense_rank	window dense_rank with group
+zigquery/functions/window/first_value	window first_value
+zigquery/functions/window/lag	window lag
+zigquery/functions/window/lag	lag with option
+zigquery/functions/window/lag	window lag with offset
+zigquery/functions/window/lag	window lag with offset and default value
+zigquery/functions/window/last_value	window last_value
+zigquery/functions/window/last_value	window last_value with offset
+zigquery/functions/window/last_value	window last_value with named window
+zigquery/functions/window/lead	lead
+zigquery/functions/window/lead	lead with offset
+zigquery/functions/window/lead	lead with default
+zigquery/functions/window/nth_value	nth_value
+zigquery/functions/window/ntile	ntile
+zigquery/functions/window/percent_rank	percent_rank
+zigquery/functions/window/percentile_cont	percentile_cont
+zigquery/functions/window/percentile_cont	percentile_cont_non_zero_min_sorted
+zigquery/functions/window/percentile_cont	percentile_cont_non_zero_min_unsorted
+zigquery/functions/window/percentile_disc	percentile_disc single
+zigquery/functions/window/percentile_disc	percentile_disc
+zigquery/functions/window/percentile_disc	percentile_disc with respect nulls
+zigquery/functions/window/rank	window rank
+zigquery/functions/window/rank	rank with same order
+zigquery/functions/window/row_number	window row_number
+zigquery/functions/window/row_number	row_number nest
+zigquery/syntax/cte/with_recursive	recursive cte
+zigquery/syntax/cte/with_recursive	recursive cte 2
+zigquery/syntax/cte/with_recursive	recursive cte 3
+zigquery/syntax/cte/with_recursive	recursive cte 4
+zigquery/syntax/cte/with_recursive	recursive cte 5
+zigquery/syntax/cte/with_recursive	recursive cte 6
+zigquery/syntax/cte/with_recursive	recursive cte 7
+zigquery/syntax/cte/with_recursive	recursive cte integration
+zigquery/syntax/cte/with_recursive	recursive cte integration 2
+zigquery/syntax/cte/with_recursive	recursive cte with star expression
+zigquery/syntax/cte/with_recursive	recursive cte with list expression in WHERE
+zigquery/syntax/cte/with_recursive	recursive cte with unary expression
+zigquery/syntax/cte/with_recursive	recursive cte with complex list and star in join
+zigquery/syntax/ddl/create_function	create function
+zigquery/syntax/ddl/create_function	use function
+zigquery/syntax/ddl/create_function	create temp function
+zigquery/syntax/ddl/drop_function	simple drop function
+zigquery/syntax/ddl/drop_table	simple drop
+zigquery/syntax/dml/merge	merge two tables with empty source
+zigquery/syntax/dml/merge	merge two tables with non-empty source
+zigquery/syntax/dml/merge	merge two tables where target table name is substring of source table name
+zigquery/syntax/dml/merge	merge two tables where source table is evaluated using a SELECT expression
+zigquery/syntax/dml/merge	merge two tables deleting matched rows
+zigquery/syntax/dml/merge	merge two tables omitting INSERT column list and using ROW
+zigquery/syntax/dml/truncate_table	simple truncate
+zigquery/syntax/query/array_subscript	array index access operator
+zigquery/syntax/query/array_subscript	array boundary indexing test
+zigquery/syntax/query/array_subscript	out of range error
+zigquery/syntax/query/conditional_expressions	case-when
+zigquery/syntax/query/conditional_expressions	case-when with compare
+zigquery/syntax/query/conditional_expressions	coalesce
+zigquery/syntax/query/conditional_expressions	coalesce with null
+zigquery/syntax/query/conditional_expressions	coalesce with all nulls
+zigquery/syntax/query/conditional_expressions	if return int64
+zigquery/syntax/query/conditional_expressions	if return string
+zigquery/syntax/query/conditional_expressions	if with case that causes errors
+zigquery/syntax/query/conditional_expressions	ifnull with case that causes errors
+zigquery/syntax/query/conditional_expressions	case with case that causes errors
+zigquery/syntax/query/conditional_expressions	ifnull
+zigquery/syntax/query/conditional_expressions	ifnull with null
+zigquery/syntax/query/conditional_expressions	nullif true
+zigquery/syntax/query/conditional_expressions	nullif false
+zigquery/syntax/query/conditional_expressions	nullif null
+zigquery/syntax/query/distinct	distinct union
+zigquery/syntax/query/except	except (case 627)
+zigquery/syntax/query/except	except (case 628)
+zigquery/syntax/query/function_arg_limit	function call with many arguments - under limit
+zigquery/syntax/query/function_arg_limit	function call with many arguments - above limit
+zigquery/syntax/query/group_by	group by
+zigquery/syntax/query/group_by	group by rollup with one column
+zigquery/syntax/query/group_by	group by rollup with two columns
+zigquery/syntax/query/group_by	group by having
+zigquery/syntax/query/group_by	group by struct values basic
+zigquery/syntax/query/group_by	group by struct values with aggregation
+zigquery/syntax/query/group_by	group by array values basic
+zigquery/syntax/query/group_by	group by array values with aggregation
+zigquery/syntax/query/group_by	group by nested struct with arrays
+zigquery/syntax/query/group_by	group by array of structs
+zigquery/syntax/query/join	inner join with using
+zigquery/syntax/query/join	left join
+zigquery/syntax/query/join	right join
+zigquery/syntax/query/join	full join
+zigquery/syntax/query/join	join nested with
+zigquery/syntax/query/limit	limit offset test
+zigquery/syntax/query/operators_arith	unary plus operator
+zigquery/syntax/query/operators_arith	unary minus operator
+zigquery/syntax/query/operators_arith	mul operator
+zigquery/syntax/query/operators_arith	div operator
+zigquery/syntax/query/operators_arith	safe div operator
+zigquery/syntax/query/operators_arith	add operator
+zigquery/syntax/query/operators_arith	sub operator
+zigquery/syntax/query/operators_bitwise	bit not operator
+zigquery/syntax/query/operators_bitwise	bit and operator
+zigquery/syntax/query/operators_bitwise	bit xor operator
+zigquery/syntax/query/operators_bitwise	bit or operator
+zigquery/syntax/query/operators_compare	eq operator
+zigquery/syntax/query/operators_compare	lt operator
+zigquery/syntax/query/operators_compare	gt operator
+zigquery/syntax/query/operators_compare	lte operator
+zigquery/syntax/query/operators_compare	gte operator
+zigquery/syntax/query/operators_compare	ne operator
+zigquery/syntax/query/operators_compare	ne operator2
+zigquery/syntax/query/operators_field_access	field access operator
+zigquery/syntax/query/operators_logical	not operator
+zigquery/syntax/query/operators_logical	and operator
+zigquery/syntax/query/operators_logical	and operator with true and true
+zigquery/syntax/query/operators_logical	and operator with true and false
+zigquery/syntax/query/operators_logical	and operator with true and null
+zigquery/syntax/query/operators_logical	and operator with false and true
+zigquery/syntax/query/operators_logical	and operator with false and false
+zigquery/syntax/query/operators_logical	and operator with false and null
+zigquery/syntax/query/operators_logical	and operator with null and true
+zigquery/syntax/query/operators_logical	and operator with null and false
+zigquery/syntax/query/operators_logical	and operator with null and null
+zigquery/syntax/query/operators_logical	or operator
+zigquery/syntax/query/operators_logical	or operator with true and true
+zigquery/syntax/query/operators_logical	or operator with true and false
+zigquery/syntax/query/operators_logical	or operator with true and null
+zigquery/syntax/query/operators_logical	or operator with false and true
+zigquery/syntax/query/operators_logical	or operator with false and false
+zigquery/syntax/query/operators_logical	or operator with false and null
+zigquery/syntax/query/operators_logical	or operator with null and true
+zigquery/syntax/query/operators_logical	or operator with null and false
+zigquery/syntax/query/operators_logical	or operator with null and null
+zigquery/syntax/query/order_by	order by
+zigquery/syntax/query/order_by	order by with nulls last
+zigquery/syntax/query/order_by	order by desc
+zigquery/syntax/query/order_by	order by nulls first
+zigquery/syntax/query/parameters	single statement with named params
+zigquery/syntax/query/parameters	not enough named params given
+zigquery/syntax/query/parameters	single statement with positional params
+zigquery/syntax/query/parameters	not enough positional params given
+zigquery/syntax/query/parameters	simple binding
+zigquery/syntax/query/parameters	multiple statements with positional params
+zigquery/syntax/query/pivot	PIVOT
+zigquery/syntax/query/predicates	like operator
+zigquery/syntax/query/predicates	like operator - special regex characters
+zigquery/syntax/query/predicates	like operator2
+zigquery/syntax/query/predicates	like operator3
+zigquery/syntax/query/predicates	like operator4
+zigquery/syntax/query/predicates	not like operator
+zigquery/syntax/query/predicates	between operator
+zigquery/syntax/query/predicates	not between operator
+zigquery/syntax/query/predicates	in operator
+zigquery/syntax/query/predicates	in operator with function
+zigquery/syntax/query/predicates	not in operator
+zigquery/syntax/query/predicates	is null operator
+zigquery/syntax/query/predicates	is not null operator
+zigquery/syntax/query/predicates	is true operator
+zigquery/syntax/query/predicates	is not true operator
+zigquery/syntax/query/predicates	is false operator
+zigquery/syntax/query/predicates	is not false operator
+zigquery/syntax/query/predicates	exists
+zigquery/syntax/query/predicates	not exists
+zigquery/syntax/query/predicates	is distinct from with 1 and 2
+zigquery/syntax/query/predicates	is distinct from with 1 and null
+zigquery/syntax/query/predicates	is not distinct from with 1 and 1
+zigquery/syntax/query/predicates	is not distinct from with null and null
+zigquery/syntax/query/predicates	is distinct from with null and null
+zigquery/syntax/query/predicates	is distinct from with 1 and 1
+zigquery/syntax/query/predicates	is not distinct from with 1 and 2
+zigquery/syntax/query/predicates	is not distinct from with 1 and null
+zigquery/syntax/query/qualify	qualify
+zigquery/syntax/query/qualify	qualify without group by / where / having
+zigquery/syntax/query/qualify	qualify group
+zigquery/syntax/query/qualify	qualify direct
+zigquery/syntax/query/subquery_array	subquery expr with array type
+zigquery/syntax/query/subquery_scalar	null array scan
+zigquery/syntax/query/subquery_scalar	subselect qualifier
+zigquery/syntax/query/subquery_scalar	subquery expr with scalar type at SELECT
+zigquery/syntax/query/subquery_scalar	subquery expr with scalar type at WHERE
+zigquery/syntax/query/subquery_scalar	subquery expr with scalar type at HAVING
+zigquery/syntax/query/subquery_scalar	subquery expr with scalar type at function call
+zigquery/syntax/query/subquery_scalar	subquery expr with in type
+zigquery/syntax/query/subquery_scalar	subquery expr with exists type
+zigquery/syntax/query/union	with scan union all
+zigquery/syntax/query/union	with scan union distinct
+zigquery/syntax/query/union	having with union all
+zigquery/syntax/query/unnest	unnest with offset
+zigquery/syntax/query/unnest	unnest struct
+zigquery/syntax/query/unnest	unnest struct with offset and filter
+zigquery/syntax/query/unnest	unnest struct array with aggregation
+zigquery/syntax/query/unnest	unnest simple struct inline
+zigquery/syntax/query/unnest	unnest struct with multiple tables
+zigquery/syntax/query/unnest	unnest struct with nested arrays
+zigquery/syntax/query/unnest	unnest struct with cross join
+zigquery/syntax/query/unpivot	UNPIVOT
+zigquery/syntax/query/window_clause	window total
+zigquery/syntax/query/window_clause	window subtotal
+zigquery/syntax/query/window_clause	window cumulative
+zigquery/syntax/query/window_clause	window cumulative omit current row
+zigquery/syntax/query/window_clause	window offset
+zigquery/syntax/query/window_clause	window avg
+zigquery/syntax/query/window_clause	window order by
+zigquery/syntax/query/window_clause	window order by handles nil
+zigquery/syntax/query/window_clause	window range
+zigquery/syntax/query/window_clause	window partitions are distinct from each other
+zigquery/syntax/query/with_cte	with clause
+zigquery/syntax/query/with_cte	subquery with
+zigquery/syntax/query/with_cte	nested with
+zigquery/syntax/query/with_cte	nested with 2
+zigquery/syntax/query/with_cte	with ref scan maps column aliases correctly
+zigquery/syntax/script/begin_end	begin-end
+zigquery/types/array	array formatting
+zigquery/types/boolean	null
+zigquery/types/bytes	bytes_formatting
+zigquery/types/date	date type
+zigquery/types/date	minimum / maximum date value
+zigquery/types/interval	interval operator
+zigquery/types/interval	interval from sub operator
+zigquery/types/struct	struct with bool
+zigquery/types/struct	struct field integration
+zigquery/types/timestamp	minimum / maximum timestamp value uses microsecond precision and range

@@ -1,0 +1,59 @@
+.{
+    .spec = "zigquery/functions/json/json_value_array",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "json_value_array",
+            .sql = "SELECT JSON_VALUE_ARRAY(JSON '{\"fruits\":[\"apples\",\"oranges\",\"grapes\"]}','$.fruits')",
+            .rows = .{
+                .{.{ "apples", "oranges", "grapes" }},
+            },
+        },
+        .{
+            .desc = "json_value_array with root only",
+            .sql = "SELECT JSON_VALUE_ARRAY('[\"foo\",\"bar\",\"baz\"]','$')",
+            .rows = .{
+                .{.{ "foo", "bar", "baz" }},
+            },
+        },
+        .{
+            .desc = "json_value_array with integer cast",
+            .sql = "SELECT ARRAY(SELECT CAST(integer_element AS INT64) FROM UNNEST(JSON_VALUE_ARRAY('[1,2,3]','$')) AS integer_element)",
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "json_value_array with escape",
+            .sql = "SELECT JSON_VALUE_ARRAY('{\"a.b\": {\"c\": [\"world\"]}}', '$.\"a.b\".c')",
+            .rows = .{
+                .{.{"world"}},
+            },
+        },
+        .{
+            .desc = "json_value_array with null",
+            .sql =
+            \\
+            \\SELECT
+            \\  JSON_VALUE_ARRAY('}}','$'),
+            \\  JSON_VALUE_ARRAY(NULL,'$'),
+            \\  JSON_VALUE_ARRAY('{"a":["foo","bar","baz"]}','$.b'),
+            \\  JSON_VALUE_ARRAY('{"a":"foo"}','$'),
+            \\  JSON_VALUE_ARRAY('{"a":[{"b":"foo","c":1},{"b":"bar","c":2}],"d":"baz"}','$.a'),
+            \\  JSON_VALUE_ARRAY('{"a":[10, {"b": 20}]','$.a'),
+            \\  JSON_VALUE_ARRAY(JSON 'null', '$')
+            ,
+            .rows = .{
+                .{ null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "json_value_array with empty array",
+            .sql = "SELECT JSON_VALUE_ARRAY('{\"a\":\"foo\",\"b\":[]}','$.b')",
+            .rows = .{
+                .{.{}},
+            },
+        },
+    },
+}

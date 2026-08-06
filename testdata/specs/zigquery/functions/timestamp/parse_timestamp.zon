@@ -1,0 +1,82 @@
+.{
+    .spec = "zigquery/functions/timestamp/parse_timestamp",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "parse timestamp with %a %b %e %I:%M:%S %Y",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%a %b %e %I:%M:%S %Y\", \"Thu Dec 25 07:30:00 2008\")",
+            .rows = .{
+                .{"1230190200.0"},
+            },
+        },
+        .{
+            .desc = "parse timestamp with %c",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%c\", \"Thu Dec 25 07:30:00 2008\")",
+            .rows = .{
+                .{"1230190200.0"},
+            },
+        },
+        .{
+            .desc = "parse timestamp with %k (case 594)",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%k\", \" 9\");",
+            .rows = .{
+                .{"32400.0"},
+            },
+        },
+        .{
+            .desc = "parse timestamp with %k (case 595)",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%k\", \" 9\");",
+            .rows = .{
+                .{"32400.0"},
+            },
+        },
+        .{
+            .desc = "parse_timestamp with %D",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%D\", \"02/02/99\");",
+            .rows = .{
+                .{"917913600.0"},
+            },
+        },
+        .{
+            .desc = "parse timestamp with %p",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%I%p\", \"9am\"), PARSE_TIMESTAMP(\"%I%p\", \"12am\"), PARSE_TIMESTAMP(\"%l%p\", \" 12pm\"), PARSE_TIMESTAMP(\"%I%p\", \"10PM\");",
+            .rows = .{
+                .{ "32400.0", "0.0", "43200.0", "79200.0" },
+            },
+        },
+        .{
+            .desc = "parse timestamp with extra whitespace ",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%m/%d/%Y  %H:%M:%S\", \"7/2/2020    09:24:28\")",
+            .rows = .{
+                .{"1593681868.0"},
+            },
+        },
+        .{
+            .desc = "parse timestamp with %Y-%m-%d %H:%M:%S%Ez",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%Y-%m-%d %H:%M:%S%Ez\", \"2020-06-02 23:58:40+09:00\")",
+            .rows = .{
+                .{"1591109920.0"},
+            },
+        },
+        .{
+            .desc = "parse timestamp with %Y-%m-%d %H:%M:%E*S%Ez",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%Y-%m-%d %H:%M:%E*S%Ez\", \"2020-06-02 23:58:40.123+09:00\")",
+            .rows = .{
+                .{"1591109920.123000"},
+            },
+        },
+        .{
+            .desc = "parse timestamp ( the year element is in different locations )",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%a %b %e %Y %I:%M:%S\", \"Thu Dec 25 07:30:00 2008\")",
+            .expect_error = "error parsing [Thu Dec 25 07:30:00 2008] with format [%a %b %e %Y %I:%M:%S]: could not parse hour number: leading character is not a digit",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse timestamp ( one of the year elements is missing )",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%a %b %e %I:%M:%S\", \"Thu Dec 25 07:30:00 2008\")",
+            .expect_error = "error parsing [Thu Dec 25 07:30:00 2008] with format [%a %b %e %I:%M:%S]: found unparsed text [ 2008]",
+            .rows = .{},
+        },
+    },
+}

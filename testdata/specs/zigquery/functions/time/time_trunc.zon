@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/time/time_trunc",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "time_trunc",
+            .sql = "SELECT TIME_TRUNC(TIME \"15:30:00\", HOUR)",
+            .rows = .{
+                .{"15:00:00"},
+            },
+        },
+    },
+}

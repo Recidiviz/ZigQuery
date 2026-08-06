@@ -7,13 +7,13 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/debugging_functions.md#error",
     .cases = .{
-    // The five `|> IF` cases below assert the refusal rather than a result.
-    // Pipe IF is GoogleSQL syntax BigQuery does not have: real BigQuery answers
-    // `Pipe IF not supported` (bq CLI, 2026-08-04) — the same message this
-    // engine gives, since FEATURE_PIPE_IF is off for that reason. Enabling it
-    // resolves them correctly here, so this is scope, not a gap; see
-    // shim/analyzer_shim.cc. The other cases in this file are ordinary ERROR()
-    // coverage and are unaffected.
+        // The five `|> IF` cases below assert the refusal rather than a result.
+        // Pipe IF is GoogleSQL syntax BigQuery does not have: real BigQuery answers
+        // `Pipe IF not supported` (bq CLI, 2026-08-04) — the same message this
+        // engine gives, since FEATURE_PIPE_IF is off for that reason. Enabling it
+        // resolves them correctly here, so this is scope, not a gap; see
+        // shim/analyzer_shim.cc. The other cases in this file are ordinary ERROR()
+        // coverage and are unaffected.
         .{
             .desc = "assertion_succeeded_with_multiple_payloads",
             .setup = .{

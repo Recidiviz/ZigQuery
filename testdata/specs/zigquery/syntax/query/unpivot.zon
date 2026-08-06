@@ -1,0 +1,28 @@
+.{
+    .spec = "zigquery/syntax/query/unpivot",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "UNPIVOT",
+            .sql =
+            \\
+            \\WITH Produce AS (
+            \\  SELECT 'Kale' as product, 51 as Q1, 23 as Q2, 45 as Q3, 3 as Q4 UNION ALL
+            \\  SELECT 'Apple', 77, 0, 25, 2)
+            \\SELECT * FROM Produce
+            \\UNPIVOT(sales FOR quarter IN (Q1, Q2, Q3, Q4))
+            ,
+            .rows = .{
+                .{ "Kale", 51, "Q1" },
+                .{ "Kale", 23, "Q2" },
+                .{ "Kale", 45, "Q3" },
+                .{ "Kale", 3, "Q4" },
+                .{ "Apple", 77, "Q1" },
+                .{ "Apple", 0, "Q2" },
+                .{ "Apple", 25, "Q3" },
+                .{ "Apple", 2, "Q4" },
+            },
+        },
+    },
+}

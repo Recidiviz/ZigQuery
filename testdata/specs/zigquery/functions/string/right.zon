@@ -1,0 +1,48 @@
+.{
+    .spec = "zigquery/functions/string/right",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "right shift operator",
+            .sql = "SELECT 4 >> 1",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "right string",
+            .sql =
+            \\
+            \\WITH examples AS (
+            \\  SELECT 'apple' as example UNION ALL
+            \\  SELECT 'banana' as example UNION ALL
+            \\  SELECT 'абвгд' as example UNION ALL
+            \\  SELECT NULL as example
+            \\) SELECT example, RIGHT(example, 3) FROM examples
+            ,
+            .rows = .{
+                .{ "apple", "ple" },
+                .{ "banana", "ana" },
+                .{ "абвгд", "вгд" },
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "right bytes",
+            .sql =
+            \\
+            \\WITH examples AS (
+            \\  SELECT b'apple' as example UNION ALL
+            \\  SELECT b'banana' as example UNION ALL
+            \\  SELECT b'\xab\xcd\xef\xaa\xbb' as example
+            \\) SELECT example, RIGHT(example, 3) FROM examples
+            ,
+            .rows = .{
+                .{ "YXBwbGU=", "cGxl" },
+                .{ "YmFuYW5h", "YW5h" },
+                .{ "q83vqrs=", "76q7" },
+            },
+        },
+    },
+}

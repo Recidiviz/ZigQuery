@@ -1,0 +1,233 @@
+.{
+    .spec = "zigquery/syntax/query/group_by",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "group by",
+            .sql =
+            \\
+            \\WITH Sales AS (
+            \\  SELECT 123 AS sku, 1 AS day, 9.99 AS price UNION ALL
+            \\  SELECT 123, 1, 8.99 UNION ALL
+            \\  SELECT 456, 1, 4.56 UNION ALL
+            \\  SELECT 123, 2, 9.99 UNION ALL
+            \\  SELECT 789, 3, 1.00 UNION ALL
+            \\  SELECT 456, 3, 4.25 UNION ALL
+            \\  SELECT 789, 3, 0.99
+            \\)
+            \\SELECT
+            \\  day,
+            \\  SUM(price) AS total
+            \\FROM Sales
+            \\GROUP BY day
+            ,
+            .rows = .{
+                .{ 1, 23.54 },
+                .{ 2, 9.99 },
+                .{ 3, 6.24 },
+            },
+        },
+        .{
+            .desc = "group by rollup with one column",
+            .sql =
+            \\
+            \\WITH Sales AS (
+            \\  SELECT 123 AS sku, 1 AS day, 9.99 AS price UNION ALL
+            \\  SELECT 123, 1, 8.99 UNION ALL
+            \\  SELECT 456, 1, 4.56 UNION ALL
+            \\  SELECT 123, 2, 9.99 UNION ALL
+            \\  SELECT 789, 3, 1.00 UNION ALL
+            \\  SELECT 456, 3, 4.25 UNION ALL
+            \\  SELECT 789, 3, 0.99
+            \\)
+            \\SELECT
+            \\  day,
+            \\  SUM(price) AS total
+            \\FROM Sales
+            \\GROUP BY ROLLUP(day)
+            ,
+            .rows = .{
+                .{ null, 39.77 },
+                .{ 1, 23.54 },
+                .{ 2, 9.99 },
+                .{ 3, 6.24 },
+            },
+        },
+        .{
+            .desc = "group by rollup with two columns",
+            .sql =
+            \\
+            \\WITH Sales AS (
+            \\  SELECT 123 AS sku, 1 AS day, 9.99 AS price UNION ALL
+            \\  SELECT 123, 1, 8.99 UNION ALL
+            \\  SELECT 456, 1, 4.56 UNION ALL
+            \\  SELECT 123, 2, 9.99 UNION ALL
+            \\  SELECT 789, 3, 1.00 UNION ALL
+            \\  SELECT 456, 3, 4.25 UNION ALL
+            \\  SELECT 789, 3, 0.99
+            \\)
+            \\SELECT
+            \\  sku,
+            \\  day,
+            \\  SUM(price) AS total
+            \\FROM Sales
+            \\GROUP BY ROLLUP(sku, day)
+            \\ORDER BY sku, day
+            ,
+            .rows = .{
+                .{ null, null, 39.77 },
+                .{ 123, null, 28.97 },
+                .{ 123, 1, 18.98 },
+                .{ 123, 2, 9.99 },
+                .{ 456, null, 8.81 },
+                .{ 456, 1, 4.56 },
+                .{ 456, 3, 4.25 },
+                .{ 789, null, 1.99 },
+                .{ 789, 3, 1.99 },
+            },
+        },
+        .{
+            .desc = "group by having",
+            .sql =
+            \\
+            \\WITH Sales AS (
+            \\  SELECT 123 AS sku, 1 AS day, 9.99 AS price UNION ALL
+            \\  SELECT 123, 1, 8.99 UNION ALL
+            \\  SELECT 456, 1, 4.56 UNION ALL
+            \\  SELECT 123, 2, 9.99 UNION ALL
+            \\  SELECT 789, 2, 1.00 UNION ALL
+            \\  SELECT 456, 3, 4.25 UNION ALL
+            \\  SELECT 789, 3, 0.99
+            \\)
+            \\SELECT
+            \\  day,
+            \\  SUM(price) AS total
+            \\FROM Sales
+            \\GROUP BY day HAVING SUM(price) > 10
+            ,
+            .rows = .{
+                .{ 1, 23.54 },
+                .{ 2, 10.99 },
+            },
+        },
+        .{
+            .desc = "group by struct values basic",
+            .sql =
+            \\SELECT person, COUNT(*) AS count
+            \\FROM (
+            \\  SELECT STRUCT('Alice' AS name, 30 AS age) AS person
+            \\  UNION ALL
+            \\  SELECT STRUCT('Alice' AS name, 30 AS age) AS person
+            \\  UNION ALL
+            \\  SELECT STRUCT('Bob' AS name, 25 AS age) AS person
+            \\)
+            \\GROUP BY person
+            \\ORDER BY count DESC
+            ,
+            .rows = .{
+                .{ .{ .age = 30, .name = "Alice" }, 2 },
+                .{ .{ .age = 25, .name = "Bob" }, 1 },
+            },
+        },
+        .{
+            .desc = "group by struct values with aggregation",
+            .sql =
+            \\SELECT person, SUM(amount) AS total
+            \\FROM (
+            \\  SELECT STRUCT('Alice' AS name, 'Sales' AS dept) AS person, 100 AS amount
+            \\  UNION ALL
+            \\  SELECT STRUCT('Alice' AS name, 'Sales' AS dept) AS person, 200 AS amount
+            \\  UNION ALL
+            \\  SELECT STRUCT('Bob' AS name, 'Engineering' AS dept) AS person, 150 AS amount
+            \\  UNION ALL
+            \\  SELECT STRUCT('Bob' AS name, 'Engineering' AS dept) AS person, 250 AS amount
+            \\)
+            \\GROUP BY person
+            \\ORDER BY total DESC
+            ,
+            .rows = .{
+                .{ .{ .dept = "Engineering", .name = "Bob" }, 400 },
+                .{ .{ .dept = "Sales", .name = "Alice" }, 300 },
+            },
+        },
+        .{
+            .desc = "group by array values basic",
+            .sql =
+            \\SELECT tags, COUNT(*) AS count
+            \\FROM (
+            \\  SELECT ['go', 'sql'] AS tags
+            \\  UNION ALL
+            \\  SELECT ['go', 'sql'] AS tags
+            \\  UNION ALL
+            \\  SELECT ['python', 'data'] AS tags
+            \\)
+            \\GROUP BY tags
+            \\ORDER BY count DESC
+            ,
+            .rows = .{
+                .{ .{ "go", "sql" }, 2 },
+                .{ .{ "python", "data" }, 1 },
+            },
+        },
+        .{
+            .desc = "group by array values with aggregation",
+            .sql =
+            \\SELECT labels, SUM(value) AS total
+            \\FROM (
+            \\  SELECT ['A', 'B'] AS labels, 10 AS value
+            \\  UNION ALL
+            \\  SELECT ['A', 'B'] AS labels, 20 AS value
+            \\  UNION ALL
+            \\  SELECT ['C', 'D'] AS labels, 30 AS value
+            \\  UNION ALL
+            \\  SELECT ['C', 'D'] AS labels, 40 AS value
+            \\)
+            \\GROUP BY labels
+            \\ORDER BY total DESC
+            ,
+            .rows = .{
+                .{ .{ "C", "D" }, 70 },
+                .{ .{ "A", "B" }, 30 },
+            },
+        },
+        .{
+            .desc = "group by nested struct with arrays",
+            .sql =
+            \\SELECT data, COUNT(*) AS count
+            \\FROM (
+            \\  SELECT STRUCT(['tag1', 'tag2'] AS tags, 'user1' AS user_id) AS data
+            \\  UNION ALL
+            \\  SELECT STRUCT(['tag1', 'tag2'] AS tags, 'user1' AS user_id) AS data
+            \\  UNION ALL
+            \\  SELECT STRUCT(['tag3'] AS tags, 'user2' AS user_id) AS data
+            \\)
+            \\GROUP BY data
+            \\ORDER BY count DESC
+            ,
+            .rows = .{
+                .{ .{ .tags = .{ "tag1", "tag2" }, .user_id = "user1" }, 2 },
+                .{ .{ .tags = .{"tag3"}, .user_id = "user2" }, 1 },
+            },
+        },
+        .{
+            .desc = "group by array of structs",
+            .sql =
+            \\SELECT items, SUM(total) AS sum_total
+            \\FROM (
+            \\  SELECT [STRUCT('item1' AS name, 10 AS price), STRUCT('item2' AS name, 20 AS price)] AS items, 100 AS total
+            \\  UNION ALL
+            \\  SELECT [STRUCT('item1' AS name, 10 AS price), STRUCT('item2' AS name, 20 AS price)] AS items, 200 AS total
+            \\  UNION ALL
+            \\  SELECT [STRUCT('item3' AS name, 30 AS price)] AS items, 150 AS total
+            \\)
+            \\GROUP BY items
+            \\ORDER BY sum_total DESC
+            ,
+            .rows = .{
+                .{ .{ .{ .name = "item1", .price = 10 }, .{ .name = "item2", .price = 20 } }, 300 },
+                .{ .{.{ .name = "item3", .price = 30 }}, 150 },
+            },
+        },
+    },
+}

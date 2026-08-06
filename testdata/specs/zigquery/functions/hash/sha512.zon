@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/hash/sha512",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "sha512",
+            .sql = "SELECT SHA512(\"Hello World\")",
+            .rows = .{
+                .{"LHT9F+2v2A6ER7DUZ0HuJDt+t03SFJoKsbkkb7MDgvJ+hT2FhXGeDmfL2g2qj1FnEGRhXWRa4nrLFb+xRH9Fmw=="},
+            },
+        },
+    },
+}

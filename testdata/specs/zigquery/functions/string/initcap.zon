@@ -1,0 +1,53 @@
+.{
+    .spec = "zigquery/functions/string/initcap",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "initcap",
+            .sql =
+            \\
+            \\WITH example AS
+            \\(
+            \\  SELECT 'Hello World-everyone!' AS value UNION ALL
+            \\  SELECT 'tHe dog BARKS loudly+friendly' AS value UNION ALL
+            \\  SELECT 'apples&oranges;&pears' AS value UNION ALL
+            \\  SELECT 'καθίσματα ταινιών' AS value UNION ALL
+            \\  SELECT NULL as value
+            \\)
+            \\SELECT value, INITCAP(value) AS initcap_value FROM example
+            ,
+            .rows = .{
+                .{ "Hello World-everyone!", "Hello World-Everyone!" },
+                .{ "tHe dog BARKS loudly+friendly", "The Dog Barks Loudly+Friendly" },
+                .{ "apples&oranges;&pears", "Apples&Oranges;&Pears" },
+                .{ "καθίσματα ταινιών", "Καθίσματα Ταινιών" },
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "initcap with delimiters",
+            .sql =
+            \\
+            \\WITH example AS
+            \\(
+            \\  SELECT 'hello WORLD!' AS value, '' AS delimiters UNION ALL
+            \\  SELECT 'καθίσματα ταιντιώ@ν' AS value, 'τ@' AS delimiters UNION ALL
+            \\  SELECT 'Apples1oranges2pears' AS value, '12' AS delimiters UNION ALL
+            \\  SELECT 'tHisEisEaESentence' AS value, 'E' AS delimiters UNION ALL
+            \\  SELECT NULL AS value, '' AS delimiters UNION ALL
+            \\  SELECT 'foo' AS value, NULL AS delimiters
+            \\)
+            \\SELECT value, delimiters, INITCAP(value, delimiters) AS initcap_value FROM example
+            ,
+            .rows = .{
+                .{ "hello WORLD!", "", "Hello world!" },
+                .{ "καθίσματα ταιντιώ@ν", "τ@", "ΚαθίσματΑ τΑιντΙώ@Ν" },
+                .{ "Apples1oranges2pears", "12", "Apples1Oranges2Pears" },
+                .{ "tHisEisEaESentence", "E", "ThisEIsEAESentence" },
+                .{ null, "", null },
+                .{ "foo", null, null },
+            },
+        },
+    },
+}

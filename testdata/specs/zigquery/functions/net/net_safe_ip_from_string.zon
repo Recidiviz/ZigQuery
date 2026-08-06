@@ -1,0 +1,33 @@
+.{
+    .spec = "zigquery/functions/net/net_safe_ip_from_string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "net_safe_if_from_string",
+            .sql =
+            \\
+            \\SELECT
+            \\  FORMAT("%T", NET.SAFE_IP_FROM_STRING(v))
+            \\FROM (
+            \\  SELECT "48.49.50.51" AS v UNION ALL
+            \\  SELECT "::1" UNION ALL
+            \\  SELECT "3031:3233:3435:3637:3839:4041:4243:4445" UNION ALL
+            \\  SELECT "::ffff:192.0.2.128" UNION ALL
+            \\  SELECT "48.49.50.51/32" UNION ALL
+            \\  SELECT "48.49.50" UNION ALL
+            \\  SELECT "::wxyz"
+            \\)
+            ,
+            .rows = .{
+                .{"b\"0123\""},
+                .{"b\"\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01\""},
+                .{"b\"0123456789@ABCDE\""},
+                .{"b\"\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\xff\\xff\\xc0\\x00\\x02\\x80\""},
+                .{null},
+                .{null},
+                .{null},
+            },
+        },
+    },
+}

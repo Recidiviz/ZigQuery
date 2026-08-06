@@ -191,6 +191,11 @@ Each stage is one commit (or a short series), green on `zig build test` and
 `zig build corpus -Drelease=true`, with the S0 snapshot diff attached to the
 commit message.
 
+> Written before `zig build corpus` was retired. Its cases are now
+> `testdata/specs/zigquery/**` and the gate is `zig build spec`, which also owns
+> `DUMP_SQL` and `testdata/sql_snapshot.txt`. The plan below is otherwise
+> unchanged.
+
 ### S0 — Snapshot harness *(no product change)*
 
 `harness/corpus_runner.zig` already runs every case with its tables created and

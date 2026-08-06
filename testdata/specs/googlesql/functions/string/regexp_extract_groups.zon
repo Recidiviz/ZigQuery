@@ -7,21 +7,21 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/string_functions.md#regexp_extract_groups",
     .cases = .{
-    // REGEXP_EXTRACT_GROUPS is a GoogleSQL function BigQuery does not have: real
-    // BigQuery answers `Function not found: REGEXP_EXTRACT_GROUPS` (bq CLI,
-    // 2026-08-04). This engine emulates BigQuery, so implementing it would add
-    // surface production does not have -- a query that passes locally and fails
-    // on deploy.
-    //
-    // It is ungated upstream (builtin_function_internal_3.cc:641): no
-    // LanguageFeature is involved, the googlesql catalog simply carries a name
-    // BigQuery's does not.
-    //
-    // Restated as the refusal so the case still pins the decision. The assertion
-    // is the loose one, as with the net pins: the analyzer resolves the name, so
-    // the refusal comes from our transformer and reports UnsupportedFunction
-    // without saying which function. It still fails loudly if someone implements
-    // this without restating, which is the point.
+        // REGEXP_EXTRACT_GROUPS is a GoogleSQL function BigQuery does not have: real
+        // BigQuery answers `Function not found: REGEXP_EXTRACT_GROUPS` (bq CLI,
+        // 2026-08-04). This engine emulates BigQuery, so implementing it would add
+        // surface production does not have -- a query that passes locally and fails
+        // on deploy.
+        //
+        // It is ungated upstream (builtin_function_internal_3.cc:641): no
+        // LanguageFeature is involved, the googlesql catalog simply carries a name
+        // BigQuery's does not.
+        //
+        // Restated as the refusal so the case still pins the decision. The assertion
+        // is the loose one, as with the net pins: the analyzer resolves the name, so
+        // the refusal comes from our transformer and reports UnsupportedFunction
+        // without saying which function. It still fails loudly if someone implements
+        // this without restating, which is the point.
         .{
             .desc = "upstream example 1",
             .sql = "SELECT REGEXP_EXTRACT_GROUPS('abc123xyz', r'([a-z]+)([0-9]+)([a-z]+)') AS result",

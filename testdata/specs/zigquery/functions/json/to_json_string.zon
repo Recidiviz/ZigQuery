@@ -1,0 +1,102 @@
+.{
+    .spec = "zigquery/functions/json/to_json_string",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "date to json",
+            .sql = "SELECT TO_JSON_STRING(DATE(2024, 1, 1))",
+            .rows = .{
+                .{"\"2024-01-01\""},
+            },
+        },
+        .{
+            .desc = "date struct to json",
+            .sql = "SELECT TO_JSON_STRING(STRUCT (DATE(2024, 1, 1) AS d))",
+            .rows = .{
+                .{"{\"d\":\"2024-01-01\"}"},
+            },
+        },
+        .{
+            .desc = "datetime to json",
+            .sql = "SELECT TO_JSON_STRING(STRUCT(DATETIME \"2006-01-02T15:04:05.999999\" AS DT))",
+            .rows = .{
+                .{"{\"DT\":\"2006-01-02T15:04:05.999999\"}"},
+            },
+        },
+        .{
+            .desc = "time to json string",
+            .sql = "SELECT TO_JSON_STRING(TIME(\"2022-08-01 06:47:51.123456-04:00\"))",
+            .rows = .{
+                .{"\"10:47:51.123456\""},
+            },
+        },
+        .{
+            .desc = "timestamp to json",
+            .sql = "SELECT TO_JSON_STRING(STRUCT(TIMESTAMP \"2006-01-02T15:04:05.999999-07\" AS TIMESTAMP))",
+            .rows = .{
+                .{"{\"TIMESTAMP\":\"2006-01-02T22:04:05.999999Z\"}"},
+            },
+        },
+        .{
+            .desc = "to_json_string",
+            .sql =
+            \\
+            \\With CoordinatesTable AS (
+            \\    (SELECT 1 AS id, [10,20] AS coordinates) UNION ALL
+            \\    (SELECT 2 AS id, [30,40] AS coordinates) UNION ALL
+            \\    (SELECT 3 AS id, [50,60] AS coordinates))
+            \\SELECT id, coordinates, TO_JSON_STRING(t) AS json_data
+            \\FROM CoordinatesTable AS t
+            ,
+            .rows = .{
+                .{ 1, .{ 10, 20 }, "{\"id\":1,\"coordinates\":[10,20]}" },
+                .{ 2, .{ 30, 40 }, "{\"id\":2,\"coordinates\":[30,40]}" },
+                .{ 3, .{ 50, 60 }, "{\"id\":3,\"coordinates\":[50,60]}" },
+            },
+        },
+        .{
+            .desc = "to_json_string_null",
+            .sql = "SELECT TO_JSON_STRING(NULL) AS a",
+            .rows = .{
+                .{"null"},
+            },
+        },
+        .{
+            .desc = "compare_arrays_with_json_null_only",
+            .sql =
+            \\
+            \\WITH input_rows AS (
+            \\    SELECT a, b
+            \\    FROM UNNEST([
+            \\       STRUCT(NULL AS a, [] AS b)
+            \\    ])
+            \\)
+            \\SELECT TO_JSON_STRING(a) AS result
+            \\FROM input_rows
+            ,
+            .rows = .{
+                .{"null"},
+            },
+        },
+        .{
+            .desc = "compare_arrays_with_json_mixed",
+            .sql =
+            \\
+            \\WITH input_rows AS (
+            \\    SELECT a, b
+            \\    FROM UNNEST([
+            \\       STRUCT([1] AS a, [] AS b),
+            \\       STRUCT(NULL AS a, [] AS b)
+            \\    ])
+            \\)
+            \\SELECT TO_JSON_STRING(a) AS result
+            \\FROM input_rows
+            ,
+            .rows = .{
+                .{"[1]"},
+                .{"null"},
+            },
+        },
+    },
+}

@@ -1,0 +1,32 @@
+.{
+    .spec = "zigquery/functions/aggregate/max_by",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "max_by basic",
+            .sql =
+            \\
+            \\                WITH Store AS (
+            \\                    SELECT 20 AS sold, "apples" AS fruit
+            \\                    UNION ALL SELECT 40 AS sold, "pears" AS fruit
+            \\                    UNION ALL SELECT 50 AS sold, "oranges" AS fruit
+            \\                    UNION ALL SELECT 30 AS sold, "bananas" AS fruit
+            \\                    UNION ALL SELECT 10 AS sold, "bananas" AS fruit
+            \\                )
+            \\                SELECT
+            \\                    fruit,
+            \\                    MAX_BY(sold, sold) AS max_sales
+            \\                FROM Store
+            \\                GROUP BY fruit
+            \\                ORDER BY fruit
+            ,
+            .rows = .{
+                .{ "apples", 20 },
+                .{ "bananas", 30 },
+                .{ "oranges", 50 },
+                .{ "pears", 40 },
+            },
+        },
+    },
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Metrics over a SQL snapshot from harness/corpus_runner.zig.
+"""Metrics over a SQL snapshot from harness/spec_runner.zig.
 
-    DUMP_SQL=testdata/sql_snapshot.txt zig build corpus -Drelease=true
+    DUMP_SQL=testdata/sql_snapshot.txt zig build spec -Drelease=true
     python3 tools/sql_stats.py testdata/sql_snapshot.txt
     python3 tools/sql_stats.py <before> <after>     # diff two snapshots
 
@@ -19,7 +19,9 @@ import re
 import sys
 from collections import Counter
 
-CASE = re.compile(r"^### (\d+)\t(.*)$")
+# `### <spec path>\t<case desc>` -- the two halves of a spec_baseline.txt key,
+# which is also what identifies a case in a diff between two snapshots.
+CASE = re.compile(r"^### ([^\t]+)\t(.*)$")
 KEYWORD = re.compile(
     r"\b(SELECT|FROM|WHERE|GROUP|ORDER|LIMIT|UNION|INTERSECT|EXCEPT|HAVING|JOIN)\b"
 )
@@ -110,17 +112,21 @@ def classify(sql):
 
 
 def load(path):
-    cases, idx, name, buf = [], None, None, []
+    """`[(key, label, sql)]`, key being the case's `spec\\tdesc` identity --
+    unique, unlike the spec path, which every case in a file shares."""
+    cases, key, label, buf = [], None, None, []
     for line in open(path):
         m = CASE.match(line.rstrip("\n"))
         if m:
-            if idx is not None:
-                cases.append((idx, name, "".join(buf)))
-            idx, name, buf = int(m.group(1)), m.group(2), []
+            if key is not None:
+                cases.append((key, label, "".join(buf)))
+            key = "%s\t%s" % (m.group(1), m.group(2))
+            label = "%s :: %s" % (m.group(1), m.group(2))
+            buf = []
         else:
             buf.append(line)
-    if idx is not None:
-        cases.append((idx, name, "".join(buf)))
+    if key is not None:
+        cases.append((key, label, "".join(buf)))
     return cases
 
 
@@ -194,12 +200,17 @@ def main():
         ]
         print(f"\n  {len(moved)} cases changed level count")
         moved.sort(key=lambda r: r[1][2] - r[2][2], reverse=True)
-        for i, av, bv in moved[:15]:
-            print(f"    [{i:>3}] {av[2]:>3} -> {bv[2]:<3} levels  {av[0][:46]}")
+        for _, av, bv in moved[:15]:
+            print(f"    {av[2]:>3} -> {bv[2]:<3} levels  {av[0][:70]}")
         gone = set(a["per_case"]) - set(b["per_case"])
         new = set(b["per_case"]) - set(a["per_case"])
         if gone or new:
-            print(f"  !! cases only in one snapshot: -{sorted(gone)} +{sorted(new)}")
+            print(f"\n  !! {len(gone)} cases only in {sys.argv[1]}, "
+                  f"{len(new)} only in {sys.argv[2]}")
+            for k in sorted(gone)[:10]:
+                print("    - " + k.replace("\t", " :: "))
+            for k in sorted(new)[:10]:
+                print("    + " + k.replace("\t", " :: "))
         return
     print(__doc__)
     sys.exit(2)

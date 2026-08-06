@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/string/ascii",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "ascii",
+            .sql = "SELECT ASCII('abcd'), ASCII('a'), ASCII(''), ASCII(NULL)",
+            .rows = .{
+                .{ 97, 97, 0, null },
+            },
+        },
+    },
+}

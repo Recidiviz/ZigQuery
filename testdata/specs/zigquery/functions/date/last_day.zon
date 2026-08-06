@@ -1,0 +1,42 @@
+.{
+    .spec = "zigquery/functions/date/last_day",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "last_day",
+            .sql = "SELECT LAST_DAY(DATE '2008-11-25') AS last_day",
+            .rows = .{
+                .{"2008-11-30"},
+            },
+        },
+        .{
+            .desc = "last_day with month",
+            .sql = "SELECT LAST_DAY(DATE '2008-11-25', MONTH) AS last_day",
+            .rows = .{
+                .{"2008-11-30"},
+            },
+        },
+        .{
+            .desc = "last_day with year",
+            .sql = "SELECT LAST_DAY(DATE '2008-11-25', YEAR) AS last_day",
+            .rows = .{
+                .{"2008-12-31"},
+            },
+        },
+        .{
+            .desc = "last_day with week(sunday)",
+            .sql = "SELECT LAST_DAY(DATE '2008-11-10', WEEK(SUNDAY)) AS last_day",
+            .rows = .{
+                .{"2008-11-15"},
+            },
+        },
+        .{
+            .desc = "last_day with week(monday)",
+            .sql = "SELECT LAST_DAY(DATE '2008-11-10', WEEK(MONDAY)) AS last_day",
+            .rows = .{
+                .{"2008-11-16"},
+            },
+        },
+    },
+}

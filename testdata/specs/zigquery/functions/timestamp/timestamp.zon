@@ -1,0 +1,56 @@
+.{
+    .spec = "zigquery/functions/timestamp/timestamp",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "timestamp",
+            .sql = "SELECT TIMESTAMP(\"2008-12-25 15:30:00+00\")",
+            .rows = .{
+                .{"1230219000.0"},
+            },
+        },
+        .{
+            .desc = "timestamp with zone",
+            .sql = "SELECT TIMESTAMP(\"2008-12-25 15:30:00\", \"America/Los_Angeles\")",
+            .rows = .{
+                .{"1230247800.0"},
+            },
+        },
+        .{
+            .desc = "timestamp in zone",
+            .sql = "SELECT TIMESTAMP(\"2008-12-25 15:30:00 UTC\")",
+            .rows = .{
+                .{"1230219000.0"},
+            },
+        },
+        .{
+            .desc = "timestamp from datetime",
+            .sql = "SELECT TIMESTAMP(DATETIME \"2008-12-25 15:30:00\")",
+            .rows = .{
+                .{"1230219000.0"},
+            },
+        },
+        .{
+            .desc = "timestamp from date",
+            .sql = "SELECT TIMESTAMP(DATE \"2008-12-25\")",
+            .rows = .{
+                .{"1230163200.0"},
+            },
+        },
+        .{
+            .desc = "timestamp to string",
+            .sql = "WITH tmp AS ( SELECT TIMESTAMP \"2006-01-02T15:04:05-07\" AS TS ) SELECT ts, CAST(ts AS STRING) FROM tmp",
+            .rows = .{
+                .{ "1136239445.0", "2006-01-02 22:04:05+00" },
+            },
+        },
+        .{
+            .desc = "timestamp parses with T value",
+            .sql = "SELECT CAST(TIMESTAMP(\"2022-08-01T06:47:51.123456-07:00\") AS STRING);",
+            .rows = .{
+                .{"2022-08-01 13:47:51.123456+00"},
+            },
+        },
+    },
+}

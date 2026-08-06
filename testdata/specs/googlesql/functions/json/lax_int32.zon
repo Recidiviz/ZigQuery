@@ -7,21 +7,21 @@
     .dialect = .googlesql,
     .upstream = "https://github.com/google/googlesql/blob/master/docs/json_functions.md#lax_int32",
     .cases = .{
-    // LAX_INT32 is a GoogleSQL-only accessor. Real BigQuery answers `Function
-    // not found: LAX_INT32` (bq CLI, 2026-08-04), and it could not do otherwise:
-    // BigQuery has no INT32, UINT32, UINT64 or FLOAT type, so there is nothing
-    // for a JSON accessor of that name to return. INT64 and FLOAT64 are the
-    // whole numeric surface.
-    //
-    // Gated behind FEATURE_JSON_MORE_VALUE_EXTRACTION_FUNCTIONS +
-    // FEATURE_JSON_LAX_VALUE_EXTRACTION_FUNCTIONS
-    // (builtin_function_internal_3.cc:1845), which stays off in
-    // shim/analyzer_shim.cc.
-    //
-    // Restated as the refusal so the case still pins the decision. Unlike the
-    // net pins, this one is exact: the analyzer refuses at name resolution and
-    // its message is BigQuery's own, word for word, so the fixture names the
-    // function rather than only saying "not implemented here".
+        // LAX_INT32 is a GoogleSQL-only accessor. Real BigQuery answers `Function
+        // not found: LAX_INT32` (bq CLI, 2026-08-04), and it could not do otherwise:
+        // BigQuery has no INT32, UINT32, UINT64 or FLOAT type, so there is nothing
+        // for a JSON accessor of that name to return. INT64 and FLOAT64 are the
+        // whole numeric surface.
+        //
+        // Gated behind FEATURE_JSON_MORE_VALUE_EXTRACTION_FUNCTIONS +
+        // FEATURE_JSON_LAX_VALUE_EXTRACTION_FUNCTIONS
+        // (builtin_function_internal_3.cc:1845), which stays off in
+        // shim/analyzer_shim.cc.
+        //
+        // Restated as the refusal so the case still pins the decision. Unlike the
+        // net pins, this one is exact: the analyzer refuses at name resolution and
+        // its message is BigQuery's own, word for word, so the fixture names the
+        // function rather than only saying "not implemented here".
         .{
             .desc = "lax_int32 basic conversion",
             .sql = "SELECT LAX_INT32(JSON '42')",

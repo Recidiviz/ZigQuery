@@ -1,0 +1,48 @@
+.{
+    .spec = "zigquery/functions/string/regexp_contains",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "regexp_contains",
+            .sql =
+            \\
+            \\SELECT email, REGEXP_CONTAINS(email, r'@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
+            \\ FROM (SELECT ['foo@example.com', 'bar@example.org', 'www.example.net', NULL] AS addresses),
+            \\ UNNEST(addresses) AS email
+            ,
+            .rows = .{
+                .{ "foo@example.com", true },
+                .{ "bar@example.org", true },
+                .{ "www.example.net", false },
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "regexp_contains2",
+            .sql =
+            \\
+            \\SELECT email,
+            \\  REGEXP_CONTAINS(email, r'^([\w.+-]+@foo\.com|[\w.+-]+@bar\.org)$'),
+            \\  REGEXP_CONTAINS(email, r'^[\w.+-]+@foo\.com|[\w.+-]+@bar\.org$')
+            \\FROM
+            \\  (SELECT ['a@foo.com', 'a@foo.computer', 'b@bar.org', '!b@bar.org', 'c@buz.net'] AS addresses),
+            \\  UNNEST(addresses) AS email
+            ,
+            .rows = .{
+                .{ "a@foo.com", true, true },
+                .{ "a@foo.computer", false, true },
+                .{ "b@bar.org", true, true },
+                .{ "!b@bar.org", false, true },
+                .{ "c@buz.net", false, false },
+            },
+        },
+        .{
+            .desc = "regexp_contains null pattern",
+            .sql = "SELECT REGEXP_CONTAINS('abc', NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

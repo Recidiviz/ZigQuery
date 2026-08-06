@@ -1,0 +1,22 @@
+.{
+    .spec = "zigquery/functions/aggregate/statistical/corr",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "corr window",
+            .sql =
+            \\
+            \\SELECT CORR(y, x) OVER () FROM
+            \\UNNEST([STRUCT(1.0 AS y, 5.0 AS x),
+            \\      (3.0, 9.0),
+            \\      (4.0, 7.0)]);
+            ,
+            .rows = .{
+                .{0.6546536707079772},
+                .{0.6546536707079772},
+                .{0.6546536707079772},
+            },
+        },
+    },
+}

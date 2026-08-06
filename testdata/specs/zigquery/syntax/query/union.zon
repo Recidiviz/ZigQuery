@@ -1,0 +1,42 @@
+.{
+    .spec = "zigquery/syntax/query/union",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "with scan union all",
+            .sql =
+            \\(WITH toks AS (SELECT 1 AS x) SELECT x FROM toks)
+            \\UNION ALL
+            \\(WITH toks2 AS (SELECT 2 AS x) SELECT x FROM toks2)
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "with scan union distinct",
+            .sql =
+            \\(WITH toks AS (SELECT 1 AS x) SELECT x FROM toks)
+            \\UNION DISTINCT
+            \\(WITH toks2 AS (SELECT 1 AS x) SELECT x FROM toks2)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "having with union all",
+            .sql =
+            \\(WITH toks AS (SELECT 1 AS x) SELECT COUNT(x) AS total_rows FROM toks WHERE x > 0 HAVING total_rows >= 0)
+            \\UNION ALL
+            \\(WITH toks2 AS (SELECT 2 AS x) SELECT COUNT(x) AS total_rows FROM toks2 WHERE x > 0 HAVING total_rows >= 0)
+            ,
+            .rows = .{
+                .{1},
+                .{1},
+            },
+        },
+    },
+}

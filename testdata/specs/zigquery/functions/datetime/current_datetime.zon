@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/datetime/current_datetime",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "current_datetime",
+            .sql = "SELECT CURRENT_DATETIME()",
+            .rows = .{
+                .{"2006-01-02T22:04:05"},
+            },
+        },
+    },
+}

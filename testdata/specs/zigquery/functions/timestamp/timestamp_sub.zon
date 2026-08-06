@@ -1,0 +1,14 @@
+.{
+    .spec = "zigquery/functions/timestamp/timestamp_sub",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "timestamp_sub",
+            .sql = "SELECT TIMESTAMP_SUB(TIMESTAMP \"2008-12-25 15:30:00+00\", INTERVAL 10 MINUTE)",
+            .rows = .{
+                .{"1230218400.0"},
+            },
+        },
+    },
+}

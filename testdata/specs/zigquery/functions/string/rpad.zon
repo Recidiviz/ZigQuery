@@ -1,0 +1,62 @@
+.{
+    .spec = "zigquery/functions/string/rpad",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "rpad string",
+            .sql = "SELECT t, len, FORMAT('%T', RPAD(t, len)) FROM UNNEST([STRUCT('abc' AS t, 5 AS len),('abc', 2),('例子', 4),(NULL, 2),('abc', NULL)])",
+            .rows = .{
+                .{ "abc", 5, "\"abc  \"" },
+                .{ "abc", 2, "\"ab\"" },
+                .{ "例子", 4, "\"例子  \"" },
+                .{ null, 2, null },
+                .{ "abc", null, null },
+            },
+        },
+        .{
+            .desc = "rpad string with pattern",
+            .sql =
+            \\SELECT t, len, pattern, FORMAT('%T', RPAD(t, len, pattern)) FROM UNNEST([
+            \\  STRUCT('abc' AS t, 8 AS len, 'def' AS pattern),
+            \\  ('abc', 5, '-'),
+            \\  ('abc', 5, NULL),
+            \\  ('例子', 5, '中文')])
+            ,
+            .rows = .{
+                .{ "abc", 8, "def", "\"abcdefde\"" },
+                .{ "abc", 5, "-", "\"abc--\"" },
+                .{ "abc", 5, null, null },
+                .{ "例子", 5, "中文", "\"例子中文中\"" },
+            },
+        },
+        .{
+            .desc = "rpad bytes",
+            .sql =
+            \\SELECT FORMAT('%T', t) AS t, len, FORMAT('%T', RPAD(t, len)) FROM UNNEST([
+            \\  STRUCT(b'abc' AS t, 5 AS len),
+            \\  (b'abc', 2),
+            \\  (b'\xab\xcd\xef', 4)])
+            ,
+            .rows = .{
+                .{ "b\"abc\"", 5, "b\"abc  \"" },
+                .{ "b\"abc\"", 2, "b\"ab\"" },
+                .{ "b\"\\xab\\xcd\\xef\"", 4, "b\"\\xab\\xcd\\xef \"" },
+            },
+        },
+        .{
+            .desc = "rpad bytes with pattern",
+            .sql =
+            \\SELECT FORMAT('%T', t) AS t, len, FORMAT('%T', pattern) AS pattern, FORMAT('%T', RPAD(t, len, pattern)) FROM UNNEST([
+            \\  STRUCT(b'abc' AS t, 8 AS len, b'def' AS pattern),
+            \\  (b'abc', 5, b'-'),
+            \\  (b'\xab\xcd\xef', 5, b'\x00')])
+            ,
+            .rows = .{
+                .{ "b\"abc\"", 8, "b\"def\"", "b\"abcdefde\"" },
+                .{ "b\"abc\"", 5, "b\"-\"", "b\"abc--\"" },
+                .{ "b\"\\xab\\xcd\\xef\"", 5, "b\"\\x00\"", "b\"\\xab\\xcd\\xef\\x00\\x00\"" },
+            },
+        },
+    },
+}
