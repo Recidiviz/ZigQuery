@@ -18,6 +18,7 @@ const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
 const errors = @import("../error.zig");
 const query_handler = @import("query.zig");
+const queryparam = @import("../internal/types/queryparam.zig");
 
 /// Pulls `configuration.query.query` out of a jobs.insert body.
 pub fn queryFromJobConfig(root: std.json.Value) ?[]const u8 {
@@ -29,6 +30,23 @@ pub fn queryFromJobConfig(root: std.json.Value) ?[]const u8 {
     const sql = q.object.get("query") orelse return null;
     if (sql != .string) return null;
     return sql.string;
+}
+
+/// `configuration.query.queryParameters`, reshaped for the driver.
+///
+/// Empty when the job carries none. As on jobs.query, `parameterMode` is not
+/// read — the driver decides named vs positional from the SQL text.
+pub fn parametersFromJobConfig(
+    arena: std.mem.Allocator,
+    root: std.json.Value,
+) queryparam.Error![]const driver.Param {
+    if (root != .object) return &.{};
+    const cfg = root.object.get("configuration") orelse return &.{};
+    if (cfg != .object) return &.{};
+    const q = cfg.object.get("query") orelse return &.{};
+    if (q != .object) return &.{};
+    const params = q.object.get("queryParameters") orelse return &.{};
+    return queryparam.parse(arena, params);
 }
 
 pub const JobResource = struct {
@@ -116,6 +134,40 @@ test "a body without a query configuration yields null" {
     }) |body| {
         const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
         try testing.expectEqual(@as(?[]const u8, null), queryFromJobConfig(v));
+    }
+}
+
+test "extracts queryParameters from a jobs.insert body" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"configuration":{"query":{"query":"SELECT @a","useLegacySql":false,
+        \\  "parameterMode":"NAMED","queryParameters":[
+        \\    {"name":"a","parameterType":{"type":"STRING"},
+        \\     "parameterValue":{"value":"x"}}]}}}
+    , .{});
+    const params = try parametersFromJobConfig(arena, v);
+    try testing.expectEqual(@as(usize, 1), params.len);
+    try testing.expectEqualStrings("a", params[0].name.?);
+    try testing.expectEqualStrings("x", params[0].value.string);
+    try testing.expectEqualStrings("STRING", params[0].type_text.?);
+}
+
+test "a job with no queryParameters yields none" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    for ([_][]const u8{
+        "{}",
+        \\{"configuration":{"query":{"query":"SELECT 1"}}}
+        ,
+        \\{"configuration":{"copy":{}}}
+    }) |body| {
+        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+        try testing.expectEqual(@as(usize, 0), (try parametersFromJobConfig(arena, v)).len);
     }
 }
 

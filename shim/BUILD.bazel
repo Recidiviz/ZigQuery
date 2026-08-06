@@ -42,7 +42,9 @@ SHIM_DEPS = [
 # same set out of shim.lds as a `GoogleSQL_*` glob.
 SHIM_EXPORTS = [
     "GoogleSQL_AnalyzeNextStatement",
+    "GoogleSQL_AnalyzeNextStatementParams",
     "GoogleSQL_AnalyzeNextStatementWithCatalog",
+    "GoogleSQL_AnalyzeNextStatementWithCatalogParams",
     "GoogleSQL_CatalogCreate",
     "GoogleSQL_CatalogAddTables",
     "GoogleSQL_CatalogRemoveTable",

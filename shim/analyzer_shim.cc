@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -334,7 +335,96 @@ struct CatalogHandle {
   googlesql::LanguageOptions lang;
   googlesql::TypeFactory type_factory;
   std::unique_ptr<googlesql::SimpleCatalog> catalog;
+  // Query-parameter type text -> resolved type, cached for this connection.
+  // Saves a type-grammar parse per statement, and bounds the TypeFactory:
+  // it interns array types but allocates a fresh StructType on every
+  // MakeStructType, so a connection re-declaring the same struct parameter
+  // would otherwise accumulate one per statement for its whole lifetime.
+  std::map<std::string, const googlesql::Type*> declared_types;
 };
+
+// Declares query-parameter types on `options` from the parallel arrays the
+// caller passed across the FFI. `names[i]` is null for a positional entry;
+// `types[i]` is GoogleSQL type text ("STRING", "ARRAY<STRING>").
+//
+// Best-effort by design: a type text this build cannot resolve is left to the
+// analyzer's own inference rather than failing the query. Inference is what
+// every parameter got before declarations existed, so a client naming a type
+// we do not model is never worse off than one naming none.
+//
+// `memo` may be null (the stateless entry point owns a local TypeFactory, so
+// there is nothing to cache across).
+void DeclareQueryParameters(
+    googlesql::AnalyzerOptions* options, const googlesql::LanguageOptions& lang,
+    googlesql::Catalog* catalog, googlesql::TypeFactory* type_factory,
+    const char* const* names, const char* const* types, size_t count,
+    std::map<std::string, const googlesql::Type*>* memo) {
+  if (count == 0 || types == nullptr) return;
+
+  // Resolve against a pristine options object: AnalyzeType validates the
+  // options it is handed, and `options` is mid-mutation here.
+  const googlesql::AnalyzerOptions type_options(lang);
+
+  std::vector<const googlesql::Type*> resolved(count, nullptr);
+  size_t resolved_count = 0;
+  for (size_t i = 0; i < count; ++i) {
+    if (types[i] == nullptr || types[i][0] == '\0') continue;
+    const std::string text(types[i]);
+
+    if (memo != nullptr) {
+      auto it = memo->find(text);
+      if (it != memo->end()) {
+        resolved[i] = it->second;
+        ++resolved_count;
+        continue;
+      }
+    }
+
+    const googlesql::Type* type = nullptr;
+    if (!googlesql::AnalyzeType(text, type_options, catalog, type_factory,
+                                &type)
+             .ok() ||
+        type == nullptr || !type->IsSupportedType(lang)) {
+      continue;
+    }
+    if (memo != nullptr) (*memo)[text] = type;
+    resolved[i] = type;
+    ++resolved_count;
+  }
+  if (resolved_count == 0) return;
+
+  if (options->parameter_mode() == googlesql::PARAMETER_POSITIONAL) {
+    // All or nothing. Declaring even one positional type means turning
+    // undeclared inference off for the whole statement — AnalyzerOptions
+    // rejects the two together — which would then reject every `?` left
+    // undeclared. Partial declaration is strictly worse than none.
+    if (resolved_count != count) return;
+    options->set_allow_undeclared_parameters(false);
+    for (const googlesql::Type* type : resolved) {
+      if (!options->AddPositionalQueryParameter(type).ok()) {
+        // Unreachable: every entry was pre-checked above. Undo rather than
+        // analyze against a half-declared list.
+        options->clear_positional_query_parameters();
+        options->set_allow_undeclared_parameters(true);
+        return;
+      }
+    }
+    return;
+  }
+
+  // Named mode. Declared types and undeclared inference coexist by design:
+  // the resolver looks a name up in query_parameters() first and only falls
+  // through to an untyped INT64 when it is absent. So a name that failed to
+  // resolve, and any parameter the client did not send at all, behave exactly
+  // as they did before.
+  for (size_t i = 0; i < count; ++i) {
+    if (resolved[i] == nullptr) continue;
+    if (names == nullptr || names[i] == nullptr || names[i][0] == '\0') continue;
+    // Errors only on a duplicate name, where the first declaration wins.
+    // Not worth failing a query over.
+    (void)options->AddQueryParameter(names[i], resolved[i]);
+  }
+}
 
 // Merges `proto`'s tables and sub-catalogs into `into`, recursively.
 // Entries already present are left alone, so re-sending a table is harmless.
@@ -480,12 +570,21 @@ int GoogleSQL_CatalogAddTables(void* handle_ptr, const char* catalog_json,
   return 0;
 }
 
-// Same contract as GoogleSQL_AnalyzeNextStatement, but analyzes against a
-// handle's persistent catalog instead of rebuilding one from JSON.
-int GoogleSQL_AnalyzeNextStatementWithCatalog(
+// Same contract as GoogleSQL_AnalyzeNextStatementWithCatalog, plus query
+// parameter type declarations.
+//
+// param_names / param_types are parallel arrays of param_count entries.
+// param_types[i] is GoogleSQL type text ("STRING", "ARRAY<STRING>"), resolved
+// through AnalyzeType against this handle's catalog. In named mode
+// param_names[i] names the parameter; a null or empty entry is skipped. In
+// positional mode names are ignored and the entries declare positions
+// 1..param_count in order. param_count == 0 is exactly the old behaviour:
+// nothing is declared and every parameter is inferred.
+int GoogleSQL_AnalyzeNextStatementWithCatalogParams(
     void* handle_ptr, const char* sql, size_t* resume_offset,
-    const char* options_json, uint8_t** out_proto, size_t* out_len,
-    int* out_is_end, char** out_error) {
+    const char* options_json, const char* const* param_names,
+    const char* const* param_types, size_t param_count, uint8_t** out_proto,
+    size_t* out_len, int* out_is_end, char** out_error) {
   *out_proto = nullptr;
   *out_len = 0;
   *out_is_end = 0;
@@ -498,21 +597,19 @@ int GoogleSQL_AnalyzeNextStatementWithCatalog(
   }
 
   googlesql::AnalyzerOptions options(handle->lang);
-  // Undeclared parameters stay on for both modes. GoogleSQL does reject the
-  // combination with *declared* positional parameters, but this port never
-  // declares any — it relies on inference — so turning undeclared mode off
-  // for positional queries just makes them fail with "Query parameter number
-  // 1 is not defined". The corpus covers exactly that.
-  //
-  // Properly supporting Recidiviz/bigquery-emulator#69 means declaring
-  // positional parameter types via AddPositionalQueryParameter, using types
-  // inferred from the bound values; until then undeclared mode is what makes
-  // positional parameters work at all.
+  // Undeclared parameters stay on unless positional types are actually
+  // declared below, which is the one combination GoogleSQL rejects. Leaving
+  // it on is what lets a parameter the caller said nothing about still
+  // resolve by inference, exactly as every parameter did before declarations
+  // existed.
   options.set_allow_undeclared_parameters(true);
   if (options_json != nullptr &&
       std::strstr(options_json, "positional") != nullptr) {
     options.set_parameter_mode(googlesql::PARAMETER_POSITIONAL);
   }
+  DeclareQueryParameters(&options, handle->lang, handle->catalog.get(),
+                         &handle->type_factory, param_names, param_types,
+                         param_count, &handle->declared_types);
   options.set_parse_location_record_type(
       googlesql::PARSE_LOCATION_RECORD_FULL_NODE_SCOPE);
 
@@ -546,6 +643,18 @@ int GoogleSQL_AnalyzeNextStatementWithCatalog(
   return 0;
 }
 
+// Same contract as GoogleSQL_AnalyzeNextStatement, but analyzes against a
+// handle's persistent catalog instead of rebuilding one from JSON.
+int GoogleSQL_AnalyzeNextStatementWithCatalog(
+    void* handle_ptr, const char* sql, size_t* resume_offset,
+    const char* options_json, uint8_t** out_proto, size_t* out_len,
+    int* out_is_end, char** out_error) {
+  return GoogleSQL_AnalyzeNextStatementWithCatalogParams(
+      handle_ptr, sql, resume_offset, options_json, /*param_names=*/nullptr,
+      /*param_types=*/nullptr, /*param_count=*/0, out_proto, out_len,
+      out_is_end, out_error);
+}
+
 // Analyzes the next statement of `sql` starting at *resume_offset (bytes).
 //
 // catalog_json: SimpleCatalogProto in protobuf JSON form; "" or "{}" gives a
@@ -558,11 +667,11 @@ int GoogleSQL_AnalyzeNextStatementWithCatalog(
 // *out_is_end is nonzero when the input is exhausted.
 // Returns 1 on error: *out_error holds a malloc'd NUL-terminated message.
 // Free all returned buffers with GoogleSQL_Free.
-int GoogleSQL_AnalyzeNextStatement(const char* sql, size_t* resume_offset,
-                                   const char* catalog_json,
-                                   const char* options_json, uint8_t** out_proto,
-                                   size_t* out_len, int* out_is_end,
-                                   char** out_error) {
+int GoogleSQL_AnalyzeNextStatementParams(
+    const char* sql, size_t* resume_offset, const char* catalog_json,
+    const char* options_json, const char* const* param_names,
+    const char* const* param_types, size_t param_count, uint8_t** out_proto,
+    size_t* out_len, int* out_is_end, char** out_error) {
   *out_proto = nullptr;
   *out_len = 0;
   *out_is_end = 0;
@@ -619,6 +728,12 @@ int GoogleSQL_AnalyzeNextStatement(const char* sql, size_t* resume_offset,
   }
   catalog->AddBuiltinFunctions(googlesql::BuiltinFunctionOptions(lang));
 
+  // After the catalog exists: resolving type text can reach named types.
+  // No memo — this TypeFactory dies with the call.
+  DeclareQueryParameters(&options, lang, catalog.get(), &type_factory,
+                         param_names, param_types, param_count,
+                         /*memo=*/nullptr);
+
   googlesql::ParseResumeLocation location =
       googlesql::ParseResumeLocation::FromStringView(sql);
   location.set_byte_position(static_cast<int>(*resume_offset));
@@ -647,6 +762,17 @@ int GoogleSQL_AnalyzeNextStatement(const char* sql, size_t* resume_offset,
   *resume_offset = static_cast<size_t>(location.byte_position());
   *out_is_end = at_end_of_input ? 1 : 0;
   return 0;
+}
+
+int GoogleSQL_AnalyzeNextStatement(const char* sql, size_t* resume_offset,
+                                   const char* catalog_json,
+                                   const char* options_json, uint8_t** out_proto,
+                                   size_t* out_len, int* out_is_end,
+                                   char** out_error) {
+  return GoogleSQL_AnalyzeNextStatementParams(
+      sql, resume_offset, catalog_json, options_json, /*param_names=*/nullptr,
+      /*param_types=*/nullptr, /*param_count=*/0, out_proto, out_len,
+      out_is_end, out_error);
 }
 
 // ---------------------------------------------------------------------------

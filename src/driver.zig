@@ -90,6 +90,17 @@ pub const Cell = union(enum) {
 pub const Param = struct {
     name: ?[]const u8 = null,
     value: Cell,
+    /// GoogleSQL type text for this parameter ("STRING", "ARRAY<STRING>"),
+    /// when the caller knows it. The BigQuery REST surface always does —
+    /// `queryParameters` carries a `parameterType` beside every value — and
+    /// declaring it to the analyzer is the only way a parameter in a position
+    /// that cannot be inferred from context resolves correctly. `UNNEST(@ids)`
+    /// is the case that forces it: an undeclared parameter comes back as an
+    /// untyped INT64, and UNNEST rejects that.
+    ///
+    /// Null means "let the analyzer infer", which is what every in-process
+    /// caller does and what keeps their behaviour unchanged.
+    type_text: ?[]const u8 = null,
 };
 
 /// Parameter placeholder style of a query script (Go getParameterMode).
@@ -503,7 +514,9 @@ pub const Db = struct {
             .named => "{}",
         };
 
-        const analyzed = try db.analyzeOne(arena, sqlz, 0, opts, options_json);
+        // prepare takes no args, so there are no types to declare; a prepared
+        // statement's parameters are inferred, as they always were.
+        const analyzed = try db.analyzeOne(arena, sqlz, 0, opts, options_json, null);
         if (!analyzed.at_end) {
             db.setLastError("cannot prepare a multi-statement script");
             return error.Unimplemented;
@@ -967,6 +980,8 @@ pub const Db = struct {
         offset: usize,
         opts: QueryOptions,
         options_json: [:0]const u8,
+        /// Parameter types to declare, or null to let the analyzer infer.
+        decls: ?analyzer_ffi.ParamDecls,
     ) Error!analyzer_ffi.Analyzed {
         var analyze_timer = phase.Timer.begin(.analyze);
         defer analyze_timer.end();
@@ -980,6 +995,7 @@ pub const Db = struct {
                 sqlz,
                 offset,
                 options_json,
+                decls,
             ) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
@@ -1005,6 +1021,7 @@ pub const Db = struct {
             offset,
             catalog_json,
             options_json,
+            decls,
         ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {
@@ -1066,6 +1083,14 @@ pub const Db = struct {
         // parameters apply to every statement.
         var cur_args = args;
 
+        // Named declarations are constant across the script, so build them
+        // once; positional ones are rebuilt per statement below, because
+        // cur_args advances.
+        const named_decls = if (db.param_mode == .named)
+            try paramDecls(arena, args, .named)
+        else
+            null;
+
         // Collect temp tables/views created during this script; dropped when
         // the query's Rows is deinited (query mode) or right after the last
         // statement (exec mode), mirroring Go's per-action Cleanup.
@@ -1089,9 +1114,20 @@ pub const Db = struct {
         // is already current; re-reading only reintroduced the timestamp
         // cursor's lost-commit window and a SQLite round trip per statement.
         while (true) {
+            const decls = switch (db.param_mode) {
+                .named => named_decls,
+                // Declaring every *remaining* positional type is safe:
+                // supplying more than the statement has `?` is explicitly
+                // allowed, and the resolver only complains when a `?` sits
+                // past the end of the list. It has to be the remaining set
+                // rather than the whole one because cur_args has already
+                // advanced past what earlier statements consumed.
+                .positional => try paramDecls(arena, cur_args, .positional),
+            };
+
             // Re-rendered per statement: DDL/DML actions mutate the
             // catalog between statements of one script.
-            const analyzed = try db.analyzeOne(arena, sqlz, offset, opts, options_json);
+            const analyzed = try db.analyzeOne(arena, sqlz, offset, opts, options_json, decls);
             offset = analyzed.resume_offset;
             const last = analyzed.at_end;
 
@@ -1930,6 +1966,52 @@ fn parameterMode(
     return .named;
 }
 
+/// Analyzer-visible type declarations for `args`, or null when there is
+/// nothing to declare.
+///
+/// Declaring is opt-in: only a caller that knows the types — in practice the
+/// REST surface, where `queryParameters` names one beside every value — sets
+/// `Param.type_text`. Every in-process caller leaves it null, gets a null
+/// here, and analyzes through exactly the code that ran before declarations
+/// existed.
+///
+/// Named mode declares each named arg that carries a type and leaves the rest
+/// to inference; the two coexist. Positional mode is all-or-nothing, because
+/// declaring any positional type turns undeclared inference off for the whole
+/// statement, which would then reject every `?` left undeclared.
+fn paramDecls(
+    arena: std.mem.Allocator,
+    args: []const Param,
+    param_mode: ParamMode,
+) error{OutOfMemory}!?analyzer_ffi.ParamDecls {
+    if (args.len == 0) return null;
+
+    switch (param_mode) {
+        .named => {
+            var names: std.ArrayList(?[*:0]const u8) = .empty;
+            var types: std.ArrayList(?[*:0]const u8) = .empty;
+            for (args) |arg| {
+                const name = arg.name orelse continue;
+                const text = arg.type_text orelse continue;
+                try names.append(arena, (try arena.dupeZ(u8, name)).ptr);
+                try types.append(arena, (try arena.dupeZ(u8, text)).ptr);
+            }
+            if (types.items.len == 0) return null;
+            return .{ .names = names.items, .types = types.items };
+        },
+        .positional => {
+            for (args) |arg| if (arg.type_text == null) return null;
+            const names = try arena.alloc(?[*:0]const u8, args.len);
+            const types = try arena.alloc(?[*:0]const u8, args.len);
+            for (args, 0..) |arg, i| {
+                names[i] = null;
+                types[i] = (try arena.dupeZ(u8, arg.type_text.?)).ptr;
+            }
+            return .{ .names = names, .types = types };
+        },
+    }
+}
+
 /// Go namedParamPattern `@\w+`: an '@' followed by at least one word char.
 fn hasNamedParam(s: []const u8) bool {
     var i: usize = 0;
@@ -2308,6 +2390,7 @@ pub fn translateOn(
                     sqlz,
                     offset,
                     "{}",
+                    null,
                 ) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => {
@@ -4303,6 +4386,90 @@ test "mixing named and positional parameters is rejected" {
         .{ .value = .{ .int = 1 } },
         .{ .name = "a", .value = .{ .int = 2 } },
     }, .{}));
+}
+
+test "a declared parameter type overrides the analyzer's inference" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Undeclared, `@x` sits in no function or operator argument, so there is
+    // nothing to infer from and the analyzer stamps it INT64.
+    {
+        var rows = try db.query("SELECT @x AS a", &.{
+            .{ .name = "x", .value = .{ .string = "5" } },
+        }, .{});
+        defer rows.deinit();
+        try testing.expectEqual(Cell{ .int = 5 }, (try rows.next()).?[0]);
+    }
+
+    // Declaring the type is what the REST surface does — queryParameters
+    // names one beside every value — and it is the only way this column comes
+    // back as the STRING the client asked for.
+    {
+        var rows = try db.query("SELECT @x AS a", &.{
+            .{ .name = "x", .value = .{ .string = "5" }, .type_text = "STRING" },
+        }, .{});
+        defer rows.deinit();
+        try testing.expectEqualStrings("5", (try rows.next()).?[0].string);
+    }
+}
+
+test "a declared positional parameter type is honoured too" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Positional declaration switches undeclared inference off for the
+    // statement, so this is the all-or-nothing path.
+    var rows = try db.query("SELECT ? AS a", &.{
+        .{ .value = .{ .string = "hi" }, .type_text = "STRING" },
+    }, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("hi", (try rows.next()).?[0].string);
+}
+
+test "a declared ARRAY parameter can be UNNESTed" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // credit_calculator.py's `... IN UNNEST(@ids)`. UNNEST is not function
+    // argument coercion, so an undeclared parameter stays an untyped INT64
+    // and ResolveArrayScan rejects it outright — declaring the type is the
+    // only thing that makes this analyze at all.
+    var ids = [_]Cell{ .{ .string = "a" }, .{ .string = "b" } };
+    var rows = try db.query(
+        "SELECT COUNT(*) FROM UNNEST(@ids) AS id",
+        &.{.{ .name = "ids", .value = .{ .array = &ids }, .type_text = "ARRAY<STRING>" }},
+        .{},
+    );
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 2 }, (try rows.next()).?[0]);
+}
+
+test "an undeclared parameter still infers alongside a declared one" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Named declarations and undeclared inference coexist: @a is declared,
+    // @b is not, and both have to resolve.
+    var rows = try db.query("SELECT CONCAT(@a, @b) AS s", &.{
+        .{ .name = "a", .value = .{ .string = "x" }, .type_text = "STRING" },
+        .{ .name = "b", .value = .{ .string = "y" } },
+    }, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("xy", (try rows.next()).?[0].string);
+}
+
+test "an unresolvable declared type falls back to inference" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // A type text the analyzer cannot parse must not fail the query; the
+    // parameter is simply left undeclared, which is what it was before.
+    var rows = try db.query("SELECT CONCAT(@a, 'x') AS s", &.{
+        .{ .name = "a", .value = .{ .string = "h" }, .type_text = "NOT_A_TYPE" },
+    }, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("hx", (try rows.next()).?[0].string);
 }
 
 test "struct parameter is cast to the declared parameter type" {

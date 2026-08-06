@@ -284,8 +284,12 @@ pub const Server = struct {
         ) catch {
             return badRequest(arena, "failed to decode request body");
         };
-        const q = query_handler.parseQueryRequest(parsed) catch {
-            return badRequest(arena, "query is required");
+        const q = query_handler.parseQueryRequest(arena, parsed) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            error.InvalidParameter,
+            error.InvalidBase64Value,
+            => return badRequest(arena, "invalid query parameter"),
+            error.InvalidRequest => return badRequest(arena, "query is required"),
         };
 
         const job_id = try query_handler.randomId(arena, &s.rng);
@@ -297,6 +301,7 @@ pub const Server = struct {
             project_id,
             job_id,
             q.query,
+            q.params,
             int64_ts,
         );
         if (!res.ok) {
@@ -976,6 +981,12 @@ pub const Server = struct {
         const sql = jobs_handler.queryFromJobConfig(parsed) orelse {
             return badRequest(arena, "configuration.query.query is required");
         };
+        const params = jobs_handler.parametersFromJobConfig(arena, parsed) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            error.InvalidParameter,
+            error.InvalidBase64Value,
+            => return badRequest(arena, "invalid query parameter"),
+        };
 
         const job_id = try query_handler.randomId(arena, &s.rng);
         const job_t0 = nowSeed();
@@ -993,7 +1004,7 @@ pub const Server = struct {
         // materialization writes results. Run the DDL form instead of the
         // bare SELECT, then record the resulting table's metadata.
         const res = if (jobs_handler.destinationFromJobConfig(parsed)) |dst| blk: {
-            s.materializeInto(arena, dst, sql) catch |err| switch (err) {
+            s.materializeInto(arena, dst, sql, params) catch |err| switch (err) {
                 error.MaterializeFailed => return .{
                     .status = .bad_request,
                     .body = try errors.body(
@@ -1014,9 +1025,19 @@ pub const Server = struct {
                 try std.fmt.allocPrint(arena, "SELECT * FROM `{s}.{s}.{s}` LIMIT 0", .{
                     dst.project_id, dst.dataset_id, dst.table_id,
                 }),
+                // The probe is generated and has no placeholders of its own.
+                &.{},
                 int64_ts,
             );
-        } else try query_handler.runQueryFormatted(arena, s.db, project_id, job_id, sql, int64_ts);
+        } else try query_handler.runQueryFormatted(
+            arena,
+            s.db,
+            project_id,
+            job_id,
+            sql,
+            params,
+            int64_ts,
+        );
         s.slow_queries.record(nowSeed() -| job_t0, sql);
 
         if (!res.ok) {
@@ -1057,10 +1078,16 @@ pub const Server = struct {
         arena: std.mem.Allocator,
         dst: jobs_handler.Destination,
         sql: []const u8,
+        /// The job's queryParameters. Both DDL forms below *wrap* the user's
+        /// SQL, so its placeholders are still in there and still need values.
+        /// Neither wrapper prepends a placeholder of its own, so positional
+        /// ordinals are unchanged; and running the SQL twice (append, then
+        /// replace) is safe because each exec re-slices from `params`.
+        params: []const driver.Param,
     ) !void {
         if (jobs_handler.isAppend(dst)) {
             const append = try jobs_handler.appendDdl(arena, dst, sql);
-            if (s.db.exec(append, &.{}, .{})) |_| return else |_| {
+            if (s.db.exec(append, params, .{})) |_| return else |_| {
                 std.log.info(
                     "append into {s}.{s}.{s} did not fit the existing shape; " ++
                         "rebuilding from the query, as Go does ({s})",
@@ -1069,7 +1096,7 @@ pub const Server = struct {
             }
         }
         const replace = try jobs_handler.replaceDdl(arena, dst, sql);
-        s.db.exec(replace, &.{}, .{}) catch {
+        s.db.exec(replace, params, .{}) catch {
             std.log.warn(
                 "materialize failed for {s}.{s}.{s} ({s}): {s}\n  ddl: {s}",
                 .{
@@ -1339,6 +1366,181 @@ test "the /bigquery/v2 prefix reaches the same handler" {
         \\{"query":"SELECT 1 AS i"}
     );
     try testing.expectEqual(std.http.Status.ok, res.status);
+}
+
+// ---- query parameters ----
+//
+// The REST `queryParameters` field was parsed and silently dropped before
+// these existed, so every parameterized query failed with "not enough query
+// arguments" no matter how it was written.
+
+test "jobs.query binds a named scalar parameter" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const res = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT CONCAT(@a, 'x') AS s","parameterMode":"NAMED",
+        \\ "queryParameters":[{"name":"a","parameterType":{"type":"STRING"},
+        \\   "parameterValue":{"value":"hi"}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings("hix", try onlyCell(arena, res.body));
+}
+
+test "jobs.insert binds a positional parameter" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT ? + 1 AS n","useLegacySql":false,
+        \\ "parameterMode":"POSITIONAL",
+        \\ "queryParameters":[{"parameterType":{"type":"INT64"},
+        \\   "parameterValue":{"value":"5"}}]}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+
+    // jobs.insert answers with the job resource; the rows come back from
+    // getQueryResults, which replays the stored ResultSet.
+    const job_id = try jobIdOf(arena, res.body);
+    const got = try request(s, arena, .GET, try std.fmt.allocPrint(
+        arena,
+        "/projects/test/queries/{s}",
+        .{job_id},
+    ), "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expectEqualStrings("6", try onlyCell(arena, got.body));
+}
+
+test "a parameterized query with a value missing still reports the arity error" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const res = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT CONCAT(@a, @b) AS s",
+        \\ "queryParameters":[{"name":"a","parameterType":{"type":"STRING"},
+        \\   "parameterValue":{"value":"hi"}}]}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "not enough query arguments") != null);
+}
+
+test "a malformed queryParameters entry is a 400, not a crash" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const res = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT @a AS s","queryParameters":"nope"}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, res.status);
+}
+
+test "a bare SELECT @x returns the client's declared type" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    // `@x` is in no function argument, so inference alone would stamp it
+    // INT64 and the cast of "abc" would fail. The declared type is what
+    // makes both the value and the column type come out right.
+    const res = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT @x AS a",
+        \\ "queryParameters":[{"name":"x","parameterType":{"type":"STRING"},
+        \\   "parameterValue":{"value":"abc"}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        res.body,
+        "\"fields\":[{\"name\":\"a\",\"type\":\"STRING\"}]",
+    ) != null);
+    try testing.expectEqualStrings("abc", try onlyCell(arena, res.body));
+}
+
+test "a bare positional SELECT ? returns the declared type" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const res = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT ? AS a","parameterMode":"POSITIONAL",
+        \\ "queryParameters":[{"parameterType":{"type":"STRING"},
+        \\   "parameterValue":{"value":"abc"}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings("abc", try onlyCell(arena, res.body));
+}
+
+test "jobs.query binds an array parameter through IN UNNEST" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    // The credit_calculator.py shape. This is the case inference cannot
+    // reach: UNNEST checks the parameter's type directly, so an undeclared
+    // one fails with "Values referenced in UNNEST must be arrays".
+    const res = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM UNNEST(['a','b','c']) x WHERE x IN UNNEST(@ids)",
+        \\ "queryParameters":[{"name":"ids",
+        \\   "parameterType":{"type":"ARRAY","arrayType":{"type":"STRING"}},
+        \\   "parameterValue":{"arrayValues":[{"value":"a"},{"value":"c"}]}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings("2", try onlyCell(arena, res.body));
+}
+
+test "a materialization job binds its query parameters" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    _ = try request(s, arena, .POST, "/projects/test/datasets",
+        \\{"datasetReference":{"projectId":"test","datasetId":"d"}}
+    );
+
+    // The DDL forms wrap the SELECT, so the placeholder is still in the
+    // statement that actually runs.
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT CONCAT(@v, '!') AS x",
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"mat"},
+        \\ "writeDisposition":"WRITE_TRUNCATE",
+        \\ "queryParameters":[{"name":"v","parameterType":{"type":"STRING"},
+        \\   "parameterValue":{"value":"ok"}}]}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+
+    const read = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT x FROM `test.d.mat`"}
+    );
+    try testing.expectEqual(std.http.Status.ok, read.status);
+    try testing.expectEqualStrings("ok!", try onlyCell(arena, read.body));
 }
 
 test "a bad query returns 400 in the BigQuery error shape" {

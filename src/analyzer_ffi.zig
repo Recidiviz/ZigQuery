@@ -4,11 +4,14 @@
 const std = @import("std");
 const pb = @import("proto/resolved_ast.zig");
 
-extern fn GoogleSQL_AnalyzeNextStatement(
+extern fn GoogleSQL_AnalyzeNextStatementParams(
     sql: [*:0]const u8,
     resume_offset: *usize,
     catalog_json: [*:0]const u8,
     options_json: [*:0]const u8,
+    param_names: ?[*]const ?[*:0]const u8,
+    param_types: ?[*]const ?[*:0]const u8,
+    param_count: usize,
     out_proto: *?[*]u8,
     out_len: *usize,
     out_is_end: *c_int,
@@ -16,6 +19,28 @@ extern fn GoogleSQL_AnalyzeNextStatement(
 ) c_int;
 
 extern fn GoogleSQL_Free(p: ?*anyopaque) void;
+
+/// Query-parameter type declarations for the analyzer, as the parallel arrays
+/// the C boundary takes. `names[i]` is null for a positional declaration;
+/// `types[i]` is GoogleSQL type text ("STRING", "ARRAY<STRING>").
+///
+/// Declaring nothing — which is every caller that has no type information —
+/// leaves the analyzer inferring, exactly as it did before this existed.
+pub const ParamDecls = struct {
+    names: []const ?[*:0]const u8,
+    types: []const ?[*:0]const u8,
+};
+
+fn declPtrs(decls: ?ParamDecls) struct {
+    names: ?[*]const ?[*:0]const u8,
+    types: ?[*]const ?[*:0]const u8,
+    count: usize,
+} {
+    const d = decls orelse return .{ .names = null, .types = null, .count = 0 };
+    std.debug.assert(d.names.len == d.types.len);
+    if (d.types.len == 0) return .{ .names = null, .types = null, .count = 0 };
+    return .{ .names = d.names.ptr, .types = d.types.ptr, .count = d.types.len };
+}
 
 pub const AnalyzeError = error{
     AnalyzeFailed,
@@ -43,19 +68,22 @@ pub fn analyzeNextStatement(
     resume_offset: usize,
     catalog_json: [:0]const u8,
 ) AnalyzeError!Analyzed {
-    return analyzeNextStatementOpts(arena, sql, resume_offset, catalog_json, "{}");
+    return analyzeNextStatementOpts(arena, sql, resume_offset, catalog_json, "{}", null);
 }
 
 /// Like analyzeNextStatement but forwards `options_json` to the shim.
 /// options_json selects the parameter mode:
 /// `{"parameter_mode":"positional"}` for positional (`?`) parameters;
 /// anything else keeps named (`@name`) mode.
+///
+/// `decls` declares parameter types to the analyzer; null infers them.
 pub fn analyzeNextStatementOpts(
     arena: std.mem.Allocator,
     sql: [:0]const u8,
     resume_offset: usize,
     catalog_json: [:0]const u8,
     options_json: [:0]const u8,
+    decls: ?ParamDecls,
 ) AnalyzeError!Analyzed {
     var offset = resume_offset;
     var out_proto: ?[*]u8 = null;
@@ -63,11 +91,15 @@ pub fn analyzeNextStatementOpts(
     var out_is_end: c_int = 0;
     var out_error: ?[*:0]u8 = null;
 
-    const rc = GoogleSQL_AnalyzeNextStatement(
+    const d = declPtrs(decls);
+    const rc = GoogleSQL_AnalyzeNextStatementParams(
         sql.ptr,
         &offset,
         catalog_json.ptr,
         options_json.ptr,
+        d.names,
+        d.types,
+        d.count,
         &out_proto,
         &out_len,
         &out_is_end,
@@ -164,11 +196,14 @@ extern fn GoogleSQL_CatalogRemoveTable(
     name: [*:0]const u8,
     out_error: *?[*:0]u8,
 ) c_int;
-extern fn GoogleSQL_AnalyzeNextStatementWithCatalog(
+extern fn GoogleSQL_AnalyzeNextStatementWithCatalogParams(
     handle: ?*anyopaque,
     sql: [*:0]const u8,
     resume_offset: *usize,
     options_json: [*:0]const u8,
+    param_names: ?[*]const ?[*:0]const u8,
+    param_types: ?[*]const ?[*:0]const u8,
+    param_count: usize,
     out_proto: *?[*]u8,
     out_len: *usize,
     out_is_end: *c_int,
@@ -228,6 +263,7 @@ pub fn analyzeNextStatementWithCatalog(
     sql: [:0]const u8,
     resume_offset: usize,
     options_json: [:0]const u8,
+    decls: ?ParamDecls,
 ) AnalyzeError!Analyzed {
     var offset = resume_offset;
     var out_proto: ?[*]u8 = null;
@@ -235,11 +271,15 @@ pub fn analyzeNextStatementWithCatalog(
     var out_is_end: c_int = 0;
     var err: ?[*:0]u8 = null;
 
-    if (GoogleSQL_AnalyzeNextStatementWithCatalog(
+    const d = declPtrs(decls);
+    if (GoogleSQL_AnalyzeNextStatementWithCatalogParams(
         @ptrCast(handle),
         sql.ptr,
         &offset,
         options_json.ptr,
+        d.names,
+        d.types,
+        d.count,
         &out_proto,
         &out_len,
         &out_is_end,

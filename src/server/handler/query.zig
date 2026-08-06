@@ -17,15 +17,24 @@ const http_server = @import("../http/server.zig");
 const errors = @import("../error.zig");
 const response = @import("../internal/types/response.zig");
 const schema_mod = @import("../internal/types/schema.zig");
+const queryparam = @import("../internal/types/queryparam.zig");
 
 pub const Error = error{
     /// Body was not an object, or `query` was missing / not a string.
     InvalidRequest,
-} || std.mem.Allocator.Error;
+} || queryparam.Error;
 
 pub const QueryRequest = struct {
     query: []const u8,
     dry_run: bool = false,
+    /// `queryParameters`, already reshaped for the driver. Empty when the
+    /// request carries none.
+    ///
+    /// `parameterMode` is deliberately not read: the driver decides named vs
+    /// positional by scanning the SQL text (driver.parameterMode), which is
+    /// also what Go does, and the two cannot disagree without the query
+    /// itself being malformed.
+    params: []const driver.Param = &.{},
     /// Present but unused: Go's jobs.query ignores maxResults entirely, in
     /// both the body and the query string. Only getQueryResults honours it.
     /// Verified against the running Go emulator.
@@ -45,7 +54,10 @@ pub fn parseGoBool(s: []const u8) bool {
 }
 
 /// Parses a jobs.query body out of a std.json.Value tree.
-pub fn parseQueryRequest(root: std.json.Value) Error!QueryRequest {
+pub fn parseQueryRequest(
+    arena: std.mem.Allocator,
+    root: std.json.Value,
+) Error!QueryRequest {
     if (root != .object) return error.InvalidRequest;
     const obj = root.object;
 
@@ -80,6 +92,9 @@ pub fn parseQueryRequest(root: std.json.Value) Error!QueryRequest {
                 };
             }
         }
+    }
+    if (obj.get("queryParameters")) |qp| {
+        req.params = try queryparam.parse(arena, qp);
     }
     return req;
 }
@@ -269,7 +284,7 @@ pub fn runQuery(
     job_id: []const u8,
     sql: []const u8,
 ) !RunResult {
-    return runQueryFormatted(arena, db, project_id, job_id, sql, false);
+    return runQueryFormatted(arena, db, project_id, job_id, sql, &.{}, false);
 }
 
 pub const RunResult = struct {
@@ -289,11 +304,13 @@ pub fn runQueryFormatted(
     project_id: []const u8,
     job_id: []const u8,
     sql: []const u8,
+    /// The request's `queryParameters`, or empty.
+    params: []const driver.Param,
     /// Which rendering `body` uses. Both are built regardless whenever a
     /// top-level TIMESTAMP column exists, so a later reader can choose.
     want_int64_timestamps: bool,
 ) !RunResult {
-    var rows = db.query(sql, &.{}, .{}) catch {
+    var rows = db.query(sql, params, .{}) catch {
         const msg = try wrapEngineError(arena, db.lastError());
         return .{
             .body = try errors.body(arena, .invalid_query, msg),
@@ -387,7 +404,7 @@ test "parses the body shape the Go client sends" {
     ,
         .{},
     );
-    const req = try parseQueryRequest(v);
+    const req = try parseQueryRequest(arena, v);
     try testing.expectEqualStrings("SELECT 1", req.query);
     try testing.expectEqual(false, req.dry_run);
     try testing.expectEqual(@as(?i64, 10), req.max_results);
@@ -406,7 +423,7 @@ test "accepts maxResults as a JSON number or a string" {
         \\{"query":"SELECT 1","maxResults":25}
     }) |body| {
         const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-        try testing.expectEqual(@as(?i64, 25), (try parseQueryRequest(v)).max_results);
+        try testing.expectEqual(@as(?i64, 25), (try parseQueryRequest(arena, v)).max_results);
     }
 }
 
@@ -421,7 +438,7 @@ test "dryRun accepts both a bool and a stringified bool" {
         \\{"query":"SELECT 1","dryRun":"true"}
     }) |body| {
         const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-        try testing.expectEqual(true, (try parseQueryRequest(v)).dry_run);
+        try testing.expectEqual(true, (try parseQueryRequest(arena, v)).dry_run);
     }
 }
 
@@ -432,8 +449,35 @@ test "a missing or non-string query is rejected" {
 
     for ([_][]const u8{ "{}", "[]", "\"x\"", "{\"query\":123}" }) |body| {
         const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-        try testing.expectError(error.InvalidRequest, parseQueryRequest(v));
+        try testing.expectError(error.InvalidRequest, parseQueryRequest(arena, v));
     }
+}
+
+test "queryParameters reach the request" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"query":"SELECT @a","queryParameters":[
+        \\  {"name":"a","parameterType":{"type":"STRING"},
+        \\   "parameterValue":{"value":"x"}}]}
+    , .{});
+    const req = try parseQueryRequest(arena, v);
+    try testing.expectEqual(@as(usize, 1), req.params.len);
+    try testing.expectEqualStrings("a", req.params[0].name.?);
+    try testing.expectEqualStrings("x", req.params[0].value.string);
+}
+
+test "a body with no queryParameters has none" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"query":"SELECT 1"}
+    , .{});
+    try testing.expectEqual(@as(usize, 0), (try parseQueryRequest(arena, v)).params.len);
 }
 
 test "runQuery produces the Go emulator's response bytes" {

@@ -12,6 +12,7 @@ pub const errors = @import("error.zig");
 pub const govalue = @import("internal/types/govalue.zig");
 pub const schema = @import("internal/types/schema.zig");
 pub const rowvalue = @import("internal/types/rowvalue.zig");
+pub const queryparam = @import("internal/types/queryparam.zig");
 pub const response = @import("internal/types/response.zig");
 pub const storage = @import("storage.zig");
 pub const discovery = @import("discovery.zig");
