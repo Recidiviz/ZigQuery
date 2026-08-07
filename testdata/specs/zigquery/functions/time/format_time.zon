@@ -84,5 +84,22 @@
                 .{"12.3456"},
             },
         },
+        .{
+            .desc = "format_time %r is the 12-hour clock with a meridiem",
+            // Measured against BigQuery; absent from
+            // (format-elements.md#format_elements_date_time).
+            .sql = "SELECT FORMAT_TIME(\"%r\", TIME \"09:20:30\"), FORMAT_TIME(\"%r\", TIME \"13:05:09\"), FORMAT_TIME(\"%r\", TIME \"00:30:00\")",
+            .rows = .{
+                .{ "09:20:30 AM", "01:05:09 PM", "12:30:00 AM" },
+            },
+        },
+        .{
+            .desc = "format_time copies through an element no TIME can answer",
+            // Date elements, plus %s, which needs a date to count an epoch offset from.
+            .sql = "SELECT FORMAT_TIME(\"[%A][%B][%j][%Q][%G][%s][%E4Y][%x]\", TIME \"09:20:30\")",
+            .rows = .{
+                .{"[%A][%B][%j][%Q][%G][%s][%E4Y][%x]"},
+            },
+        },
     },
 }

@@ -157,25 +157,52 @@
                 .{ "0987", "-0768" },
             },
         },
+        // Formatting never raises: an element it cannot render, whether unknown or
+        // meaningless for the argument's type, is copied through as written. Measured against
+        // BigQuery (recidiviz-bigquery-sandbox, 2026-08-07); not stated in
+        // (format-elements.md#format_elements_date_time).
         .{
-            .desc = "format_date rejects an element it does not implement",
-            // %r is documented (the 12-hour time) but unimplemented here; see
-            // docs/SPEC_UNSUPPORTED.md.
-            .sql = "SELECT FORMAT_DATE(\"%r\", DATE \"2023-01-01\")",
-            .expect_error = "unexpected format type %r",
-            .rows = .{},
+            .desc = "format_date copies an unknown element through verbatim",
+            .sql = "SELECT FORMAT_DATE(\"[%!][%q][%OY]\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"[%!][%q][%OY]"},
+            },
         },
         .{
-            .desc = "format_date rejects an unknown element",
-            .sql = "SELECT FORMAT_DATE(\"%!\", DATE \"2023-01-01\")",
-            .expect_error = "unexpected format type %!",
-            .rows = .{},
+            .desc = "format_date copies through an element no DATE can answer",
+            // Clock and zone elements, none of which a DATE has a field for.
+            .sql = "SELECT FORMAT_DATE(\"[%H][%I][%l][%s][%X][%z][%Ez][%r][%E3S]\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"[%H][%I][%l][%s][%X][%z][%Ez][%r][%E3S]"},
+            },
         },
         .{
-            .desc = "format_date rejects an unknown %E combination",
-            .sql = "SELECT FORMAT_DATE(\"%Ex\", DATE \"2023-01-01\")",
-            .expect_error = "unexpected format type %x",
-            .rows = .{},
+            .desc = "format_date drops the E from an unrecognised %E combination",
+            // %Ex is not a combination, so the E falls away and plain %x runs. A run that
+            // stays unrecognised is copied through whole.
+            .sql = "SELECT FORMAT_DATE(\"[%Ex][%E4][a%]\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"[01/01/23][%E4][a%]"},
+            },
+        },
+        .{
+            .desc = "format_date renders the %O alternate-numeric forms as their plain counterparts",
+            // Measured against BigQuery; absent from
+            // (format-elements.md#format_elements_date_time). %OY is not one of them and
+            // comes back verbatim, above.
+            .sql = "SELECT FORMAT_DATE(\"[%Od][%Om][%Oy][%Ou][%OV]\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"[01][01][23][7][52]"},
+            },
+        },
+        .{
+            .desc = "format_date %J is the ISO day of the year, not the ISO year",
+            // 2023-01-01 is the Sunday closing ISO week 52 of 2022, so its ISO day-of-year
+            // is 52*7 = 364 where its plain day-of-year is 001.
+            .sql = "SELECT FORMAT_DATE(\"%J\", DATE \"2023-01-01\"), FORMAT_DATE(\"%j\", DATE \"2023-01-01\"), FORMAT_DATE(\"%G\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{ "364", "001", "2022" },
+            },
         },
     },
 }

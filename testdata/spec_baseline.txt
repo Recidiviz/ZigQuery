@@ -915,6 +915,8 @@ zigquery/functions/conversion/safe_cast	safe cast
 zigquery/functions/conversion/safe_cast	safe cast for invalid cast
 zigquery/functions/date/current_date	current_date (case 446)
 zigquery/functions/date/current_date	current_date (case 457)
+zigquery/functions/date/current_date	current_date reads its zone argument
+zigquery/functions/date/current_date	current_date propagates a NULL zone
 zigquery/functions/date/date	date operator
 zigquery/functions/date/date	date from a TIMESTAMP in a named zone
 zigquery/functions/date/date_add	date_add
@@ -926,6 +928,7 @@ zigquery/functions/date/date_diff	date_diff with month (case 467)
 zigquery/functions/date/date_diff	date_diff with day (case 468)
 zigquery/functions/date/date_diff	date_diff with month (case 469)
 zigquery/functions/date/date_diff	date_diff with day (case 470)
+zigquery/functions/date/date_diff	date_diff in ISOWEEK counts Monday boundaries across a year end
 zigquery/functions/date/date_from_unix_date	date_from_unix_date
 zigquery/functions/date/date_sub	date_sub
 zigquery/functions/date/date_trunc	date_trunc with quarter
@@ -933,6 +936,8 @@ zigquery/functions/date/date_trunc	date_trunc with day
 zigquery/functions/date/date_trunc	date_trunc with week
 zigquery/functions/date/date_trunc	date_trunc with month
 zigquery/functions/date/date_trunc	date_trunc with year
+zigquery/functions/date/date_trunc	date_trunc to ISOWEEK lands on the Monday
+zigquery/functions/date/date_trunc	date_trunc to ISOYEAR anchors on January 4th
 zigquery/functions/date/extract	extract date
 zigquery/functions/date/extract	extract rejects a part an INTERVAL has no field for
 zigquery/functions/date/format_date	format date with %t
@@ -953,9 +958,11 @@ zigquery/functions/date/format_date	format_date %Q is the quarter, taken from th
 zigquery/functions/date/format_date	format_date with the name elements %A %a %B %C
 zigquery/functions/date/format_date	format_date with %F and the literal elements %n %t %%
 zigquery/functions/date/format_date	format_date %E4Y zero-pads, and signs a year before 1 CE
-zigquery/functions/date/format_date	format_date rejects an element it does not implement
-zigquery/functions/date/format_date	format_date rejects an unknown element
-zigquery/functions/date/format_date	format_date rejects an unknown %E combination
+zigquery/functions/date/format_date	format_date copies an unknown element through verbatim
+zigquery/functions/date/format_date	format_date copies through an element no DATE can answer
+zigquery/functions/date/format_date	format_date drops the E from an unrecognised %E combination
+zigquery/functions/date/format_date	format_date renders the %O alternate-numeric forms as their plain counterparts
+zigquery/functions/date/format_date	format_date %J is the ISO day of the year, not the ISO year
 zigquery/functions/date/last_day	last_day
 zigquery/functions/date/last_day	last_day with month
 zigquery/functions/date/last_day	last_day with year
@@ -964,6 +971,7 @@ zigquery/functions/date/last_day	last_day with week(monday)
 zigquery/functions/date/last_day	last_day with the remaining WEEK(<weekday>) start days
 zigquery/functions/date/last_day	last_day week start days wrap rather than skipping a week
 zigquery/functions/date/last_day	last_day with quarter
+zigquery/functions/date/last_day	last_day with isoyear ends on a Sunday, rarely December 31st
 zigquery/functions/date/parse_date	base date is epoch
 zigquery/functions/date/parse_date	parse date exceeding month maximum
 zigquery/functions/date/parse_date	parse date beneath month minimum
@@ -1001,10 +1009,12 @@ zigquery/functions/date/parse_date	parse date rejects an unknown %E combination
 zigquery/functions/date/parse_date	parse date rejects an element with no parser
 zigquery/functions/date/unix_date	unix_date
 zigquery/functions/datetime/current_datetime	current_datetime
+zigquery/functions/datetime/current_datetime	current_datetime reads its zone argument
+zigquery/functions/datetime/current_datetime	current_datetime propagates a NULL zone
 zigquery/functions/datetime/datetime	datetime
 zigquery/functions/datetime/datetime	datetime literal
 zigquery/functions/datetime/datetime	datetime from a DATE, with and without a TIME
-zigquery/functions/datetime/datetime	datetime does not accept a DATETIME
+zigquery/functions/datetime/datetime	datetime of a DATETIME is the identity
 zigquery/functions/datetime/datetime_add	datetime_add (case 512)
 zigquery/functions/datetime/datetime_add	datetime_add (case 513)
 zigquery/functions/datetime/datetime_diff	datetime_diff with week day (case 463)
@@ -1035,6 +1045,9 @@ zigquery/functions/datetime/format_datetime	format_datetime with %E3S
 zigquery/functions/datetime/format_datetime	format_datetime with %E*S
 zigquery/functions/datetime/format_datetime	format_datetime with %E4Y
 zigquery/functions/datetime/format_datetime	format_datetime carries the date and clock elements together
+zigquery/functions/datetime/format_datetime	format_datetime %c space-pads a single-digit day
+zigquery/functions/datetime/format_datetime	format_datetime carries every fractional-second width
+zigquery/functions/datetime/format_datetime	format_datetime renders the %O alternate-numeric forms
 zigquery/functions/datetime/parse_datetime	parse datetime
 zigquery/functions/datetime/parse_datetime	parse datetime with %c
 zigquery/functions/datetime/parse_datetime	parse datetime ( the year element is in different locations )
@@ -1043,6 +1056,8 @@ zigquery/functions/datetime/parse_datetime	parse datetime %F respectfully consum
 zigquery/functions/datetime/parse_datetime	parse datetime with %E4S
 zigquery/functions/datetime/parse_datetime	parse datetime with an explicit %E<n>S precision
 zigquery/functions/datetime/parse_datetime	parse datetime rejects %Ez, which only a TIMESTAMP can carry
+zigquery/functions/datetime/parse_datetime	parse datetime %E<n>S consumes at most n fractional digits
+zigquery/functions/datetime/parse_datetime	parse datetime rejects more fractional digits than %E<n>S allows
 zigquery/functions/debug/error	error
 zigquery/functions/hash/farm_fingerprint	farm_fingerprint
 zigquery/functions/hash/md5	md5
@@ -1250,6 +1265,8 @@ zigquery/functions/string/trim	trim
 zigquery/functions/string/unicode	unicode
 zigquery/functions/string/upper	upper
 zigquery/functions/time/current_time	current_time
+zigquery/functions/time/current_time	current_time reads its zone argument
+zigquery/functions/time/current_time	current_time propagates a NULL zone
 zigquery/functions/time/format_time	format_time with %k %l
 zigquery/functions/time/format_time	format_time with %R
 zigquery/functions/time/format_time	format_time with %E3S
@@ -1259,6 +1276,8 @@ zigquery/functions/time/format_time	format_time %l is the same 12-hour clock, sp
 zigquery/functions/time/format_time	format_time %P and %p straddle noon
 zigquery/functions/time/format_time	format_time %k is the 24-hour clock, space-padded
 zigquery/functions/time/format_time	format_time with %E4S
+zigquery/functions/time/format_time	format_time %r is the 12-hour clock with a meridiem
+zigquery/functions/time/format_time	format_time copies through an element no TIME can answer
 zigquery/functions/time/parse_time	parse_time with %R
 zigquery/functions/time/parse_time	parse_time with %R without minute element
 zigquery/functions/time/parse_time	parse_time with %R without separator
@@ -1271,7 +1290,7 @@ zigquery/functions/time/parse_time	parse time rejects a meridiem that is neither
 zigquery/functions/time/parse_time	parse time rejects a date element, which no TIME can carry
 zigquery/functions/time/time	time
 zigquery/functions/time/time	time from datetime
-zigquery/functions/time/time	time does not accept a TIME
+zigquery/functions/time/time	time of a TIME is the identity
 zigquery/functions/time/time_add	time_add
 zigquery/functions/time/time_add	time_add by HOUR
 zigquery/functions/time/time_add	time_add rejects a part it cannot express
@@ -1294,6 +1313,7 @@ zigquery/functions/timestamp/format_timestamp	format_timestamp with %Ez
 zigquery/functions/timestamp/format_timestamp	format_timestamp %z is the offset as +HHMM, %Ez as +HH:MM
 zigquery/functions/timestamp/format_timestamp	format_timestamp %s is the count of seconds since the epoch
 zigquery/functions/timestamp/format_timestamp	format_timestamp renders the zone argument's local wall clock
+zigquery/functions/timestamp/format_timestamp	format_timestamp answers every element, being the widest type
 zigquery/functions/timestamp/parse_timestamp	parse timestamp with %a %b %e %I:%M:%S %Y
 zigquery/functions/timestamp/parse_timestamp	parse timestamp with %c
 zigquery/functions/timestamp/parse_timestamp	parse timestamp with %k (case 594)
@@ -1315,7 +1335,9 @@ zigquery/functions/timestamp/parse_timestamp	parse timestamp rejects a non-numer
 zigquery/functions/timestamp/parse_timestamp	parse timestamp rejects an offset that is neither Z nor signed
 zigquery/functions/timestamp/parse_timestamp	parse timestamp rejects a signed offset without a colon
 zigquery/functions/timestamp/string	string
-zigquery/functions/timestamp/string	string renders a JSON scalar
+zigquery/functions/timestamp/string	string extracts a JSON string
+zigquery/functions/timestamp/string	string rejects JSON that is not a string
+zigquery/functions/timestamp/string	safe.string turns that rejection into NULL
 zigquery/functions/timestamp/timestamp	timestamp
 zigquery/functions/timestamp/timestamp	timestamp with zone
 zigquery/functions/timestamp/timestamp	timestamp in zone
@@ -1324,7 +1346,7 @@ zigquery/functions/timestamp/timestamp	timestamp from date
 zigquery/functions/timestamp/timestamp	timestamp to string
 zigquery/functions/timestamp/timestamp	timestamp parses with T value
 zigquery/functions/timestamp/timestamp	timestamp applies its zone argument to a naive input carrying a fraction
-zigquery/functions/timestamp/timestamp	timestamp does not accept a TIMESTAMP
+zigquery/functions/timestamp/timestamp	timestamp of a TIMESTAMP is the identity
 zigquery/functions/timestamp/timestamp_add	timestamp_add
 zigquery/functions/timestamp/timestamp_add	timestamp_add by DAY
 zigquery/functions/timestamp/timestamp_add	timestamp_add rejects a part it cannot express

@@ -13,7 +13,8 @@ const null_v = Value.null;
 
 pub fn currentDatetime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    return tu.datetimeValue(.{ .civ = try fd.nowCiv(args) });
+    const civ = try fd.nowLocal(args) orelse return null_v;
+    return tu.datetimeValue(.{ .civ = civ });
 }
 
 /// DATETIME_BUCKET(datetime, width[, origin]). The origin defaults to
@@ -79,6 +80,8 @@ pub fn datetime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
             }
             return tu.datetimeValue(bt);
         },
+        // Identity form. (datetime_functions.md#datetime)
+        .datetime => return inner,
         else => return bind.fail("DATETIME: first argument must be DATE or TIMESTAMP type", .{}, error.UnsupportedOperation),
     }
 }

@@ -17,5 +17,21 @@
                 .{"2006-01-02"},
             },
         },
+        .{
+            .desc = "current_date reads its zone argument",
+            // The harness clock is 2006-01-02T22:04:05Z: the 3rd in Tokyo, still the 2nd
+            // in Los Angeles. (date_functions.md#current_date)
+            .sql = "SELECT CURRENT_DATE(), CURRENT_DATE(\"Asia/Tokyo\"), CURRENT_DATE(\"America/Los_Angeles\"), CURRENT_DATE(\"UTC\")",
+            .rows = .{
+                .{ "2006-01-02", "2006-01-03", "2006-01-02", "2006-01-02" },
+            },
+        },
+        .{
+            .desc = "current_date propagates a NULL zone",
+            .sql = "SELECT CURRENT_DATE(CAST(NULL AS STRING))",
+            .rows = .{
+                .{null},
+            },
+        },
     },
 }

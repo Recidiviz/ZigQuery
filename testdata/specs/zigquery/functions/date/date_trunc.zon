@@ -38,5 +38,35 @@
                 .{"2017-01-01"},
             },
         },
+        .{
+            .desc = "date_trunc to ISOWEEK lands on the Monday",
+            // An ISO week is a Monday-started week. (functions-and-operators.md#date_trunc)
+            .sql =
+            \\SELECT
+            \\  DATE_TRUNC(DATE '2024-03-15', ISOWEEK),
+            \\  DATE_TRUNC(DATE '2023-01-01', ISOWEEK),
+            \\  DATE_TRUNC(DATE '2024-03-11', ISOWEEK)
+            ,
+            // 2023-01-01 is a Sunday, so its ISO week opened the previous Monday.
+            .rows = .{
+                .{ "2024-03-11", "2022-12-26", "2024-03-11" },
+            },
+        },
+        .{
+            .desc = "date_trunc to ISOYEAR anchors on January 4th",
+            // The ISO year opens on the Monday of the week containing Jan 4, the earliest
+            // date always in ISO week 1. 2021 and 2022 both open on a Friday or Saturday,
+            // where that differs from the Jan 1 week.
+            .sql =
+            \\SELECT
+            \\  DATE_TRUNC(DATE '2021-06-15', ISOYEAR),
+            \\  DATE_TRUNC(DATE '2022-06-15', ISOYEAR),
+            \\  DATE_TRUNC(DATE '2015-06-15', ISOYEAR),
+            \\  DATE_TRUNC(DATE '2024-06-15', ISOYEAR)
+            ,
+            .rows = .{
+                .{ "2021-01-04", "2022-01-03", "2014-12-29", "2024-01-01" },
+            },
+        },
     },
 }

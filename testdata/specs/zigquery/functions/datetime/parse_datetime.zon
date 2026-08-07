@@ -63,5 +63,25 @@
             .expect_error = "unavailable format by datetime type",
             .rows = .{},
         },
+        .{
+            .desc = "parse datetime %E<n>S consumes at most n fractional digits",
+            // The digit is a maximum, not a requirement: BigQuery reads %E3S against
+            // "30.12" as 30.120, and rejects it against "30.123456".
+            .sql =
+            \\SELECT
+            \\  PARSE_DATETIME("%Y-%m-%d %H:%M:%E3S", "2024-03-15 10:20:30.123"),
+            \\  PARSE_DATETIME("%Y-%m-%d %H:%M:%E1S", "2024-03-15 10:20:30.1"),
+            \\  PARSE_DATETIME("%Y-%m-%d %H:%M:%E*S", "2024-03-15 10:20:30.123456")
+            ,
+            .rows = .{
+                .{ "2024-03-15T10:20:30.123", "2024-03-15T10:20:30.1", "2024-03-15T10:20:30.123456" },
+            },
+        },
+        .{
+            .desc = "parse datetime rejects more fractional digits than %E<n>S allows",
+            .sql = "SELECT PARSE_DATETIME(\"%Y-%m-%d %H:%M:%E3S\", \"2024-03-15 10:20:30.123456\")",
+            .expect_error = "found unparsed text",
+            .rows = .{},
+        },
     },
 }

@@ -18,32 +18,32 @@ pub fn currentTimestamp(alloc: std.mem.Allocator, args: []const Value) Error!Val
     return tu.timestampValue(.{ .civ = try fd.nowCiv(args) });
 }
 
+/// STRING(JSON): JSON strings only; LAX_STRING is the renderer. (json_functions.md#string_for_json)
+fn stringOfJson(alloc: std.mem.Allocator, doc: []const u8) Error!Value {
+    const parsed = std.json.parseFromSliceLeaky(
+        std.json.Value,
+        alloc,
+        doc,
+        .{ .parse_numbers = false },
+    ) catch return bind.fail("STRING: invalid json", .{}, error.FailedConversion);
+    return switch (parsed) {
+        .string => |s| Value{ .string = try alloc.dupe(u8, s) },
+        else => bind.fail(
+            "STRING: the provided JSON input is not a string",
+            .{},
+            error.FailedConversion,
+        ),
+    };
+}
+
 /// STRING(timestamp[,zone]): local wall clock rendered with a literal "+00".
 pub fn string(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len != 1 and args.len != 2)
         return bind.fail("STRING: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
-    // Go bindString: a JSON argument yields fmt.Sprint(json.Interface()) — the
-    // bare scalar text for a JSON string/number/bool.
-    {
-        const inner0 = if (args[0] == .safe) args[0].safe.* else args[0];
-        if (inner0 == .json) {
-            const parsed = std.json.parseFromSliceLeaky(
-                std.json.Value,
-                alloc,
-                inner0.json,
-                .{ .parse_numbers = false },
-            ) catch return bind.fail("STRING: invalid json", .{}, error.FailedConversion);
-            const s: []const u8 = switch (parsed) {
-                .string => |x| x,
-                .number_string => |x| x,
-                .bool => |b| if (b) "true" else "false",
-                .null => "null",
-                else => inner0.json,
-            };
-            return Value{ .string = try alloc.dupe(u8, s) };
-        }
-    }
+    const inner0 = if (args[0] == .safe) args[0].safe.* else args[0];
+    if (inner0 == .json) return stringOfJson(alloc, inner0.json);
+
     const bt = try tu.broken(args[0]);
     var off: i64 = 0;
     if (args.len == 2) off = try tu.zoneOffsetSeconds(try fd.partStr(args[1]), bt.civ);
@@ -81,6 +81,9 @@ pub fn timestamp(alloc: std.mem.Allocator, args: []const Value) Error!Value {
             const off = try tu.zoneOffsetSeconds(zone, bt.civ);
             return Value{ .timestamp = bt.civ - off * tu.second_micros };
         },
+        // Identity form; an instant has no wall clock for a zone to reinterpret.
+        // (timestamp_functions.md#timestamp)
+        .timestamp => return inner,
         else => return bind.fail("TIMESTAMP: invalid first argument type", .{}, error.UnsupportedOperation),
     }
 }

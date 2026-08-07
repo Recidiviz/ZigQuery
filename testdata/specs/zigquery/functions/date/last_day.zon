@@ -80,5 +80,20 @@
                 .{ "2024-03-31", "2024-12-31" },
             },
         },
+        .{
+            .desc = "last_day with isoyear ends on a Sunday, rarely December 31st",
+            // ISO 2024 runs 2024-01-01 to 2024-12-29; ISO 2023 happens to end on the
+            // Gregorian year end. The third argument is the trap: 2024-12-30 is already in
+            // ISO 2025. (date_functions.md#last_day)
+            .sql =
+            \\SELECT
+            \\  LAST_DAY(DATE '2024-06-15', ISOYEAR),
+            \\  LAST_DAY(DATE '2023-06-15', ISOYEAR),
+            \\  LAST_DAY(DATE '2024-12-30', ISOYEAR)
+            ,
+            .rows = .{
+                .{ "2024-12-29", "2023-12-31", "2025-12-28" },
+            },
+        },
     },
 }

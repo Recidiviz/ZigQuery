@@ -95,5 +95,13 @@
                 .{"2024-03-15 09:00:00"},
             },
         },
+        .{
+            .desc = "format_timestamp answers every element, being the widest type",
+            // A TIMESTAMP satisfies every element's type, so nothing here is copied through.
+            .sql = "SELECT FORMAT_TIMESTAMP(\"[%A][%H][%z][%c][%J][%r][%s][%Ez]\", TIMESTAMP \"2023-01-01 13:05:09+00\")",
+            .rows = .{
+                .{"[Sunday][13][+0000][Sun Jan  1 13:05:09 2023][364][01:05:09 PM][1672578309][+00:00]"},
+            },
+        },
     },
 }

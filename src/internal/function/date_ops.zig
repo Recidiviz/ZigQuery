@@ -17,9 +17,12 @@ fn unexpectedPart(part: []const u8) Error {
 }
 
 // go-zetasqlite WeekPartToOffset.
-fn weekPartOffset(part: []const u8) ?i64 {
+/// The weekday a week part starts its week on, Sun=0 .. Sat=6; null if `part` is not a week
+/// part. ISOWEEK is one: an ISO week is a Monday-started week.
+pub fn weekPartOffset(part: []const u8) ?i64 {
     const map = [_]struct { name: []const u8, off: i64 }{
         .{ .name = "WEEK", .off = 0 },
+        .{ .name = "ISOWEEK", .off = 1 },
         .{ .name = "WEEK_MONDAY", .off = 1 },
         .{ .name = "WEEK_TUESDAY", .off = 2 },
         .{ .name = "WEEK_WEDNESDAY", .off = 3 },
@@ -29,6 +32,13 @@ fn weekPartOffset(part: []const u8) ?i64 {
     };
     for (map) |m| if (std.mem.eql(u8, m.name, part)) return m.off;
     return null;
+}
+
+/// First day of ISO year `iso_year`: the Monday on or before January 4th, the earliest date
+/// always in ISO week 1. (date_functions.md#last_day)
+pub fn isoYearStart(iso_year: i64) BrokenTime {
+    const jan4 = BrokenTime{ .civ = tu.compose(iso_year, 1, 4, 0, 0, 0, 0) };
+    return .{ .civ = jan4.addDate(0, 0, -@mod(jan4.weekday() + 6, 7)).days() * tu.day_micros };
 }
 
 /// Go addMonth: shift by m months, clamping the day of month to the target
@@ -115,9 +125,8 @@ pub fn dateDiff(a: BrokenTime, b: BrokenTime, part: []const u8) Error!i64 {
     const iso_a = a.isoWeek();
     const iso_b = b.isoWeek();
 
-    if (std.mem.startsWith(u8, part, "WEEK")) {
-        const boundary = weekPartOffset(part) orelse
-            return bind.fail("unsupported week date part: {s}", .{part}, error.UnsupportedOperation);
+    // Week parts count boundary crossings; ISOWEEK is one despite its name.
+    if (weekPartOffset(part)) |boundary| {
         var is_negative = false;
         var start = b;
         var end = a;
@@ -144,8 +153,6 @@ pub fn dateDiff(a: BrokenTime, b: BrokenTime, part: []const u8) Error!i64 {
         if (a.civ > b.civ) return diffDay(a, b);
         return -diffDay(b, a);
     }
-    if (std.mem.eql(u8, part, "ISOWEEK"))
-        return (a.parts().year - b.parts().year) * 48 + iso_a.week - iso_b.week;
     if (std.mem.eql(u8, part, "MONTH")) {
         const ca = a.parts();
         const cb = b.parts();
@@ -174,16 +181,11 @@ pub fn dateTrunc(bt: BrokenTime, part: []const u8) Error!BrokenTime {
     const c = bt.parts();
     const iso = bt.isoWeek();
 
-    if (std.mem.startsWith(u8, part, "WEEK")) {
-        const start_of_week = weekPartOffset(part) orelse
-            return bind.fail("unknown week part: {s}", .{part}, error.UnsupportedOperation);
-        var t = bt;
-        while (t.weekday() != start_of_week) t = t.addDate(0, 0, -1);
-        return midnight(t);
+    // Back up to the weekday the part's week starts on.
+    if (weekPartOffset(part)) |start_of_week| {
+        return midnight(bt.addDate(0, 0, -@mod(bt.weekday() - start_of_week + 7, 7)));
     }
     if (std.mem.eql(u8, part, "DAY")) return midnight(bt);
-    if (std.mem.eql(u8, part, "ISOWEEK"))
-        return .{ .civ = tu.compose(iso.year, 0, 7 * iso.week, 0, 0, 0, 0) };
     if (std.mem.eql(u8, part, "MONTH"))
         return .{ .civ = tu.compose(c.year, c.month, 1, 0, 0, 0, 0) };
     if (std.mem.eql(u8, part, "QUARTER")) {
@@ -192,10 +194,7 @@ pub fn dateTrunc(bt: BrokenTime, part: []const u8) Error!BrokenTime {
     }
     if (std.mem.eql(u8, part, "YEAR"))
         return .{ .civ = tu.compose(c.year, 1, 1, 0, 0, 0, 0) };
-    if (std.mem.eql(u8, part, "ISOYEAR")) {
-        const first_day = tu.BrokenTime{ .civ = tu.compose(iso.year, 1, 1, 0, 0, 0, 0) };
-        return first_day.addDate(0, 0, 1 - first_day.weekday());
-    }
+    if (std.mem.eql(u8, part, "ISOYEAR")) return isoYearStart(iso.year);
     return unexpectedPart(part);
 }
 

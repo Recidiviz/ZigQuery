@@ -11,12 +11,25 @@
             },
         },
         .{
-            .desc = "string renders a JSON scalar",
-            // BigQuery restricts STRING(JSON) to JSON strings and errors on any
-            // other kind; this engine renders them. See docs/SPEC_UNSUPPORTED.md.
-            .sql = "SELECT STRING(JSON '\"purple\"'), STRING(JSON 'true'), STRING(JSON '2005')",
+            .desc = "string extracts a JSON string",
+            .sql = "SELECT STRING(JSON '\"purple\"')",
             .rows = .{
-                .{ "purple", "true", "2005" },
+                .{"purple"},
+            },
+        },
+        .{
+            .desc = "string rejects JSON that is not a string",
+            // STRING is the strict extractor; LAX_STRING is the renderer.
+            // (json_functions.md#string_for_json)
+            .sql = "SELECT STRING(JSON 'true')",
+            .expect_error = "STRING: the provided JSON input is not a string",
+            .rows = .{},
+        },
+        .{
+            .desc = "safe.string turns that rejection into NULL",
+            .sql = "SELECT SAFE.STRING(JSON 'true'), SAFE.STRING(JSON '2005'), SAFE.STRING(JSON 'null')",
+            .rows = .{
+                .{ null, null, null },
             },
         },
     },

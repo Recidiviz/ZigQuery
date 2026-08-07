@@ -158,35 +158,51 @@ evidence for what this section is *for*: every one of them was green, and stayed
 for as long as nothing ran the line. The cases that now pin them are in
 `testdata/specs/zigquery/functions/{date,datetime,time,timestamp}`.
 
-Still outstanding in the same area, all currently green on an answer BigQuery does not
-give:
+**5. Everything §4 left outstanding has since been closed**, and this time against real
+BigQuery (`recidiviz-bigquery-sandbox`, 2026-08-07) rather than against the vendored
+reference. Measuring changed two of the answers:
 
-- **`CURRENT_DATE(zone)` ignores both the zone and the injected clock.**
-  `src/internal/transformer/function.zig` appends the deterministic-now literal *after*
-  the call's own arguments, so `fn_date.nowCiv` sees the zone string in `args[0]`, fails
-  its `args[0] == .int` test, and reads the wall clock. Same for `CURRENT_TIME(zone)` and
-  `CURRENT_DATETIME(zone)`. No spec case can pin this until it is fixed — the result is
-  not reproducible — so it is covered by a unit test that asserts only the range.
-- **`TIME(TIME)`, `DATETIME(DATETIME)`, `TIMESTAMP(TIMESTAMP)` raise.**
-  `FEATURE_DATE_TIME_CONSTRUCTORS` is enabled, so the analyzer admits the identity forms;
-  BigQuery returns the value unchanged and this engine answers "invalid first argument
-  type". Pinned as `.expect_error` cases.
-- **`STRING(JSON)` renders any scalar.** `STRING(JSON 'true')` is `"true"` here; BigQuery
-  restricts the function to JSON strings and errors otherwise.
-- **`%r` and the `%O*` elements are unimplemented**, and rejected with "unexpected format
-  type". Documented; not built.
-- **`parseSecondPrecision` ignores its precision argument**, so `%E1S`…`%E6S` all consume
-  whatever fraction is present. `PARSE_DATETIME("…%E3S", "…30.123456")` reads six digits.
-- **The FORMAT side does no per-type gating at all.** `formatElement` discards its `typ`
-  parameter, so `FORMAT_TIME('%A', TIME '09:20:30')` answers `Thursday` — the weekday of
-  the epoch — where `format-elements.md` lists `%A` as DATE/DATETIME/TIMESTAMP only. The
-  PARSE side *does* gate, which is why `PARSE_DATE('%H', '10')` is an error. Same class
-  of over-acceptance as `PRODUCT_INTERNAL` above.
-- **`LAST_DAY(d, ISOYEAR)` returns the calendar year end.** It shares the `YEAR` arm, so
-  2024 ends `2024-12-31` where the ISO year 2024 ends `2024-12-29`.
-- **`tp.message` is never cleared.** `bind.clearDiagnostics()` resets `bind.message` but
-  not `time_parser`'s threadlocal, so a stale parser message from an earlier query can be
-  attached to a later unrelated error.
+- The reference **omits `%r` entirely** — zero grep hits across `third_party/googlesql/docs`
+  — but BigQuery renders it (`FORMAT_TIME('%r', TIME '09:20:30')` → `09:20:30 AM`). The
+  docs are not a complete list of what BigQuery accepts.
+- The FORMAT side's missing per-type gating was recorded here as over-acceptance, to be
+  fixed by rejecting like the PARSE side does. That was backwards. **BigQuery's format
+  side never raises**: an element that is unknown (`%!`, `%q`, `%OY`), or known but
+  inapplicable to the argument's type (`%H` on a DATE, `%A` on a TIME, `%z` on anything
+  but a TIMESTAMP), is *copied through verbatim*. So is a truncated run — `a%` is `a%`
+  and `%E4` is `%E4`. The engine raised on all of them.
+
+Closed: the format side now copies through instead of raising and honours the type
+column; `%J` answers the ISO day-of-year rather than the ISO year; `%r` and `%E7S`-`%E9S`
+render, as do the `%O` alternate-numeric forms; `%c` space-pads a single-digit day;
+`%E<n>S` consumes at most *n* fractional digits when parsing; the three identity
+constructors return their argument; `STRING(JSON)` rejects non-string JSON;
+`CURRENT_DATE/TIME/DATETIME(zone)` honour the zone, find the injected clock, and
+propagate a NULL zone; `LAST_DAY(d, ISOYEAR)` ends the ISO year; and
+`time_parser.message` is cleared with the rest of the diagnostics — it pointed into an
+arena `register.zig` had already reset, so it was a dangling read rather than merely a
+stale one.
+
+Three more turned up in the same family while measuring, all on lines the suite already
+covered, all now fixed: `DATE_TRUNC(d, ISOWEEK)` returned an arbitrary weekday,
+`DATE_TRUNC(d, ISOYEAR)` landed a week early whenever the year opened on a Friday or
+Saturday, and `DATE_DIFF(a, b, ISOWEEK)` used a `* 48` constant that answered `-3` for a
+one-week span crossing New Year. All three came of `"ISOWEEK"` failing the
+`startsWith(part, "WEEK")` test that reaches the week-part table.
+
+Still open in this area, and recorded rather than fixed:
+
+- **`FORMAT_TIMESTAMP('%Oz', …)` renders `+0000` in BigQuery** but comes back verbatim
+  here. `%O` is undocumented, and the set BigQuery renders is POSIX's alternate-numeric
+  forms plus `z` — an inconsistency (`%OY` is verbatim) not worth guessing at further.
+- **`%Z` is empty.** The engine is UTC-only and has no zone *names*, only offsets.
+- **`.expect_error` messages are not actually compared for single-row queries.**
+  `driver.query` takes the first `step()` itself, so a one-row `SELECT` that fails
+  surfaces from `db.query`, where the runner passes any message under `.typed`; the
+  exact-match branch only runs for errors raised on the second row or later. Every
+  date/time error case is a one-row `SELECT`, so their strings are documentation, not
+  assertions. Tightening the runner would re-gate ~40 cases at once and belongs on its
+  own.
 
 ---
 

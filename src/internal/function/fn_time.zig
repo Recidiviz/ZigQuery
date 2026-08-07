@@ -12,7 +12,9 @@ const null_v = Value.null;
 
 pub fn currentTime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    return tu.timeValue(.{ .civ = try fd.nowCiv(args) });
+    // Shift before timeValue's `mod day`, or the wrap uses the UTC instant.
+    const civ = try fd.nowLocal(args) orelse return null_v;
+    return tu.timeValue(.{ .civ = civ });
 }
 
 pub fn time(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -37,6 +39,8 @@ pub fn time(alloc: std.mem.Allocator, args: []const Value) Error!Value {
             return tu.timeValue(bt);
         },
         .datetime => return tu.timeValue(try tu.broken(inner)),
+        // Identity form, admitted by FEATURE_DATE_TIME_CONSTRUCTORS. (time_functions.md#time)
+        .time => return inner,
         else => return bind.fail("TIME: invalid first argument type", .{}, error.UnsupportedOperation),
     }
 }

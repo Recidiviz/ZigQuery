@@ -191,7 +191,9 @@
             // Unlike the format side, the parse side gates elements by target
             // type — see docs/SPEC_UNSUPPORTED.md.
             .sql = "SELECT PARSE_DATE(\"%H\", \"10\")",
-            .expect_error = "error parsing [10] with format [%H]: unavailable format by date type",
+            // Bare, with no "error parsing [...] with format [...]" prefix: the availability
+            // gate precedes the wrapper that adds one.
+            .expect_error = "unavailable format by date type",
             .rows = .{},
         },
         .{

@@ -5,9 +5,8 @@
     .cases = .{
         .{
             .desc = "timestamp_bucket buckets from the default 1950-01-01 origin",
-            // The rows are the worked example in
-            // third_party/googlesql/docs/time-series-functions.md, which is
-            // chosen to straddle the default origin in both directions.
+            // The rows are the worked example, chosen to straddle the default origin in both
+            // directions. (time-series-functions.md#timestamp_bucket)
             .sql =
             \\WITH some_timestamps AS (
             \\  SELECT TIMESTAMP '1949-12-30 13:00:00+00' AS my_timestamp UNION ALL

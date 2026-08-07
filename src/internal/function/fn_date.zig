@@ -16,11 +16,13 @@ fn brokenOf(v: Value) Error!tu.BrokenTime {
     return tu.broken(v);
 }
 
-/// The injected/fallback "now" as civil micros (UTC). The transformer appends
-/// an int64 nanos literal when a deterministic time is set; otherwise fall back
-/// to the wall clock (Go uses time.Now()).
+/// "Now" as civil micros (UTC). transformer/function.zig appends the injected nanos literal,
+/// so it is the last argument when present; a zone argument is a STRING, so an int in that
+/// slot is unambiguous. Falls back to the wall clock.
 pub fn nowCiv(args: []const Value) Error!i64 {
-    if (args.len >= 1 and args[0] == .int) return @divTrunc(args[0].int, 1000);
+    if (args.len >= 1 and args[args.len - 1] == .int) {
+        return @divTrunc(args[args.len - 1].int, 1000);
+    }
     // Fallback wall clock (Go uses time.Now()); the transformer always injects
     // a deterministic time when configured, so this is only for ad-hoc calls.
     var ts: std.posix.timespec = undefined;
@@ -31,9 +33,27 @@ pub fn nowCiv(args: []const Value) Error!i64 {
     );
 }
 
+/// The zone argument of a CURRENT_* call, or null. Args are `[zone?] ++ [now?]`.
+pub fn currentZone(args: []const Value) ?Value {
+    if (args.len == 0) return null;
+    const last_is_now = args[args.len - 1] == .int;
+    const zone_args = if (last_is_now) args[0 .. args.len - 1] else args;
+    return if (zone_args.len == 0) null else zone_args[0];
+}
+
+/// "Now" as a local wall clock in the call's zone. A NULL zone yields NULL.
+/// (date_functions.md#current_date)
+pub fn nowLocal(args: []const Value) Error!?i64 {
+    const civ = try nowCiv(args);
+    const zone = currentZone(args) orelse return civ;
+    if (zone == .null) return null;
+    return civ + try tu.zoneOffsetSeconds(try partStr(zone), civ) * tu.second_micros;
+}
+
 pub fn currentDate(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    return tu.dateValue(.{ .civ = try nowCiv(args) });
+    const civ = try nowLocal(args) orelse return null_v;
+    return tu.dateValue(.{ .civ = civ });
 }
 
 /// DATE(y,m,d) | DATE(timestamp[,zone]) | DATE(ts/datetime/string).
@@ -149,19 +169,16 @@ pub fn lastDay(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len == 2) part = try partStr(args[1]);
     const c = bt.parts();
     const wd = bt.weekday();
-    if (std.mem.eql(u8, part, "YEAR") or std.mem.eql(u8, part, "ISOYEAR"))
+    if (std.mem.eql(u8, part, "YEAR"))
         return tu.dateValue(.{ .civ = tu.compose(c.year + 1, 1, 0, 0, 0, 0, 0) });
+    // The day before the next ISO year starts: always a Sunday.
+    if (std.mem.eql(u8, part, "ISOYEAR"))
+        return tu.dateValue(ops.isoYearStart(bt.isoWeek().year + 1).addDate(0, 0, -1));
     if (std.mem.eql(u8, part, "MONTH"))
         return tu.dateValue(bt.addDate(0, 1, -c.day));
-    // Every week part asks the same question — how far forward to the end of a
-    // week that starts on some weekday — so the only thing that varies is the
-    // start day, and it reads better as data. Written out one arm each as
-    // `(start + 6) - wd`, they were also missing the wrap, and overshot by a
-    // full week whenever `wd` fell on or before `start`: LAST_DAY of Monday
-    // 2008-11-10 under WEEK(TUESDAY) is that same Monday, not the next one.
-    for (week_starts) |w| {
-        if (std.mem.eql(u8, part, w.part))
-            return tu.dateValue(bt.addDate(0, 0, toWeekEnd(wd, w.start)));
+    // Forward to the end of the week the part starts. (date_functions.md#last_day)
+    if (ops.weekPartOffset(part)) |start| {
+        return tu.dateValue(bt.addDate(0, 0, toWeekEnd(wd, start)));
     }
     if (std.mem.eql(u8, part, "QUARTER")) {
         // Same shape as the MONTH arm above, over the quarter's start month:
@@ -173,20 +190,6 @@ pub fn lastDay(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     }
     return bind.fail("LAST_DAY: unexpected part {s}", .{part}, error.UnsupportedOperation);
 }
-
-/// The weekday each LAST_DAY week part starts its week on, Sun=0..Sat=6.
-/// Bare `WEEK` starts Sunday; ISO weeks start Monday, which is the whole
-/// difference between `WEEK` and `ISOWEEK`.
-const week_starts = [_]struct { part: []const u8, start: i64 }{
-    .{ .part = "WEEK", .start = 0 },
-    .{ .part = "ISOWEEK", .start = 1 },
-    .{ .part = "WEEK_MONDAY", .start = 1 },
-    .{ .part = "WEEK_TUESDAY", .start = 2 },
-    .{ .part = "WEEK_WEDNESDAY", .start = 3 },
-    .{ .part = "WEEK_THURSDAY", .start = 4 },
-    .{ .part = "WEEK_FRIDAY", .start = 5 },
-    .{ .part = "WEEK_SATURDAY", .start = 6 },
-};
 
 /// Days from a date whose weekday is `wd` (Sun=0..Sat=6) forward to the last
 /// day of the week that begins on `start`, in the same numbering. Always 0-6.
@@ -317,23 +320,39 @@ fn propagate(e: Error) Error {
 
 const testing = std.testing;
 
-test "nowCiv reads the wall clock only when no time was injected" {
-    // The transformer appends the fixed-now literal for every CURRENT_* call it
-    // rewrites, so the spec suite never takes the fallback — see
-    // docs/SPEC_UNSUPPORTED.md for the CURRENT_DATE(zone) case where the
-    // argument order defeats the check and it wrongly does.
-    const injected = try nowCiv(&.{Value{ .int = 1_136_239_445_000_000_000 }});
-    try testing.expectEqual(@as(i64, 1_136_239_445_000_000), injected);
+test "nowCiv finds the injected clock behind a zone argument" {
+    const nanos = Value{ .int = 1_136_239_445_000_000_000 };
+    const micros: i64 = 1_136_239_445_000_000;
+    const zone = Value{ .string = "Asia/Tokyo" };
 
-    // With nothing to read, it must still answer something plausible rather
-    // than 0 — a clock later than 2020 and earlier than 2100.
+    // The literal is last in both shapes; a zone never occupies that slot.
+    try testing.expectEqual(micros, try nowCiv(&.{nanos}));
+    try testing.expectEqual(micros, try nowCiv(&.{ zone, nanos }));
+
+    // The zone is whatever the transformer did not append.
+    try testing.expect(currentZone(&.{nanos}) == null);
+    try testing.expect(currentZone(&.{}) == null);
+    try testing.expectEqualStrings("Asia/Tokyo", try partStr(currentZone(&.{ zone, nanos }).?));
+    try testing.expectEqualStrings("Asia/Tokyo", try partStr(currentZone(&.{zone}).?));
+
+    // The wall-clock fallback: the only path `zig build spec` cannot reach, since the
+    // harness always injects.
     const wall = try nowCiv(&.{});
     try testing.expect(wall > 1_577_836_800 * tu.second_micros);
     try testing.expect(wall < 4_102_444_800 * tu.second_micros);
+}
 
-    // A non-int first argument is a zone, not an injected clock.
-    const zoned = try nowCiv(&.{Value{ .string = "Asia/Tokyo" }});
-    try testing.expect(zoned > 1_577_836_800 * tu.second_micros);
+test "nowLocal shifts into the named zone and propagates a NULL one" {
+    const nanos = Value{ .int = 1_136_239_445_000_000_000 }; // 2006-01-02T22:04:05Z
+    const utc: i64 = 1_136_239_445_000_000;
+
+    try testing.expectEqual(utc, (try nowLocal(&.{nanos})).?);
+    try testing.expectEqual(
+        utc + 9 * 3600 * tu.second_micros,
+        (try nowLocal(&.{ Value{ .string = "Asia/Tokyo" }, nanos })).?,
+    );
+    // Tokyo is nine hours ahead, so that instant is the 3rd there.
+    try testing.expect(try nowLocal(&.{ Value.null, nanos }) == null);
 }
 
 test "LAST_DAY still refuses a part outside the analyzer's whitelist" {

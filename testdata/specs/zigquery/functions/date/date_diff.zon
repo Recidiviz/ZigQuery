@@ -60,5 +60,19 @@
                 .{1302},
             },
         },
+        .{
+            .desc = "date_diff in ISOWEEK counts Monday boundaries across a year end",
+            // The year boundary discriminates: ISO weeks belong to the ISO year.
+            // (date_functions.md#date_diff)
+            .sql =
+            \\SELECT
+            \\  DATE_DIFF(DATE '2018-01-01', DATE '2017-12-25', ISOWEEK),
+            \\  DATE_DIFF(DATE '2017-12-18', DATE '2017-12-17', ISOWEEK),
+            \\  DATE_DIFF(DATE '2017-12-25', DATE '2018-01-01', ISOWEEK)
+            ,
+            .rows = .{
+                .{ 1, 1, -1 },
+            },
+        },
     },
 }

@@ -66,10 +66,14 @@
             },
         },
         .{
-            .desc = "timestamp does not accept a TIMESTAMP",
-            .sql = "SELECT TIMESTAMP(TIMESTAMP \"2008-12-25 15:30:00+00\")",
-            .expect_error = "TIMESTAMP: invalid first argument type",
-            .rows = .{},
+            .desc = "timestamp of a TIMESTAMP is the identity",
+            // Only the one-argument form exists for a TIMESTAMP: the analyzer
+            // rejects TIMESTAMP(TIMESTAMP, zone), since an instant carries no
+            // wall clock for a zone to reinterpret.
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%Y-%m-%d %H:%M:%S\", TIMESTAMP(TIMESTAMP \"2008-12-25 15:30:00+00\"))",
+            .rows = .{
+                .{"2008-12-25 15:30:00"},
+            },
         },
     },
 }

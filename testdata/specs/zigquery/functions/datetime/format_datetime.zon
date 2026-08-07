@@ -55,5 +55,31 @@
                 .{"Sunday 001 01/00/52 2022-22 70 01PM 1"},
             },
         },
+        .{
+            .desc = "format_datetime %c space-pads a single-digit day",
+            // asctime shape, which is what BigQuery emits: "Sun Jan  1", two spaces. A
+            // two-digit day cannot tell the paddings apart.
+            .sql = "SELECT FORMAT_DATETIME(\"%c\", DATETIME \"2023-01-01 13:05:09\"), FORMAT_DATETIME(\"%c\", DATETIME \"2023-01-15 13:05:09\")",
+            .rows = .{
+                .{ "Sun Jan  1 13:05:09 2023", "Sun Jan 15 13:05:09 2023" },
+            },
+        },
+        .{
+            .desc = "format_datetime carries every fractional-second width",
+            // %E<number>S is written without bounding the number; BigQuery renders up to
+            // nine, padding past the microsecond this engine stores.
+            // (format-elements.md#format_elements_date_time)
+            .sql = "SELECT FORMAT_DATETIME(\"[%E1S][%E6S][%E7S][%E9S][%E*S]\", DATETIME \"2023-01-01 13:05:09.5\")",
+            .rows = .{
+                .{"[09.5][09.500000][09.5000000][09.500000000][09.500000]"},
+            },
+        },
+        .{
+            .desc = "format_datetime renders the %O alternate-numeric forms",
+            .sql = "SELECT FORMAT_DATETIME(\"[%Od][%Om][%Oy][%OH][%OM][%OS][%OY]\", DATETIME \"2023-01-01 13:05:09\")",
+            .rows = .{
+                .{"[01][01][23][13][05][09][%OY]"},
+            },
+        },
     },
 }

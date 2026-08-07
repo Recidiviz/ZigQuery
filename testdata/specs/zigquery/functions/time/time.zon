@@ -18,12 +18,13 @@
             },
         },
         .{
-            .desc = "time does not accept a TIME",
-            // As with DATETIME(DATETIME) — the analyzer admits it and BigQuery
-            // returns the value unchanged. See docs/SPEC_UNSUPPORTED.md.
+            .desc = "time of a TIME is the identity",
+            // FEATURE_DATE_TIME_CONSTRUCTORS gives the one-argument form a signature.
+            // (time_functions.md#time)
             .sql = "SELECT TIME(TIME \"15:30:00\")",
-            .expect_error = "TIME: invalid first argument type",
-            .rows = .{},
+            .rows = .{
+                .{"15:30:00"},
+            },
         },
     },
 }

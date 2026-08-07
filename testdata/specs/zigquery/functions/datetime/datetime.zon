@@ -25,13 +25,11 @@
             },
         },
         .{
-            .desc = "datetime does not accept a DATETIME",
-            // FEATURE_DATE_TIME_CONSTRUCTORS makes the analyzer admit the
-            // identity form, which BigQuery answers with the value unchanged.
-            // See docs/SPEC_UNSUPPORTED.md.
+            .desc = "datetime of a DATETIME is the identity",
             .sql = "SELECT DATETIME(DATETIME \"2008-12-25 15:30:00\")",
-            .expect_error = "DATETIME: first argument must be DATE or TIMESTAMP type",
-            .rows = .{},
+            .rows = .{
+                .{"2008-12-25T15:30:00"},
+            },
         },
     },
 }

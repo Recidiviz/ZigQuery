@@ -45,6 +45,19 @@ fn failFmt(alloc: std.mem.Allocator, comptime fmt: []const u8, args: anytype, er
 // FORMAT
 // ======================================================================
 
+/// What every format element needs: destination, instant, UTC offset, target type.
+const Fmt = struct {
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    bt: tu.BrokenTime,
+    c: Civil,
+    offset_sec: i64,
+    typ: FormatType,
+};
+
+/// Renders `format`. An element that is unknown, or inapplicable to `typ`, is copied through
+/// verbatim; only OOM fails. The PARSE side rejects instead, over the same `elementAvailable`
+/// predicate. (format-elements.md#format_elements_date_time)
 pub fn formatTime(
     alloc: std.mem.Allocator,
     format: []const u8,
@@ -53,29 +66,62 @@ pub fn formatTime(
     typ: FormatType,
 ) Error![]u8 {
     var out: std.ArrayList(u8) = .empty;
-    const c = bt.parts();
+    const f = Fmt{
+        .alloc = alloc,
+        .out = &out,
+        .bt = bt,
+        .c = bt.parts(),
+        .offset_sec = offset_sec,
+        .typ = typ,
+    };
     var i: usize = 0;
     while (i < format.len) {
-        const ch = format[i];
-        if (ch != '%') {
-            try out.append(alloc, ch);
+        if (format[i] != '%') {
+            try out.append(alloc, format[i]);
             i += 1;
             continue;
         }
-        i += 1;
-        if (i >= format.len) return failFmt(alloc, "invalid time format", .{}, error.InvalidDate);
-        const spec = format[i];
-        if (spec == 'E') {
-            i += 1;
-            if (i >= format.len) return failFmt(alloc, "invalid time format", .{}, error.InvalidDate);
-            const adv = try formatCombination(alloc, &out, format[i..], bt, c, offset_sec);
-            i += adv;
-            continue;
-        }
-        try formatElement(alloc, &out, spec, bt, c, offset_sec, typ);
-        i += 1;
+        i += try formatSpec(f, format[i..]);
     }
     return out.toOwnedSlice(alloc);
+}
+
+/// One `%`-run, starting at the `%`. Returns the bytes consumed, always at
+/// least 1, and writes either the rendered element or the run verbatim.
+fn formatSpec(f: Fmt, run: []const u8) Error!usize {
+    const alloc = f.alloc;
+    const out = f.out;
+    if (run.len < 2) {
+        try out.append(alloc, '%');
+        return 1;
+    }
+    switch (run[1]) {
+        // An unrecognized combination drops the `E` and retries the letter.
+        'E' => {
+            if (run.len >= 3) {
+                if (try formatCombination(f, run[2..])) |adv| {
+                    return 2 + adv;
+                }
+                if (try formatElement(f, run[2])) return 3;
+            }
+            try out.appendSlice(alloc, run[0..@min(3, run.len)]);
+            return @min(3, run.len);
+        },
+        // POSIX alternate-numeric forms render as their plain counterpart.
+        // Undocumented; the set is what BigQuery accepts.
+        'O' => {
+            if (run.len >= 3 and std.mem.indexOfScalar(u8, "deHImMSuUVwWyz", run[2]) != null) {
+                if (try formatElement(f, run[2])) return 3;
+            }
+            try out.appendSlice(alloc, run[0..@min(3, run.len)]);
+            return @min(3, run.len);
+        },
+        else => {
+            if (try formatElement(f, run[1])) return 2;
+            try out.appendSlice(alloc, run[0..2]);
+            return 2;
+        },
+    }
 }
 
 fn appendFmt(
@@ -87,55 +133,47 @@ fn appendFmt(
     try out.print(alloc, fmt, args);
 }
 
-/// %E<...> combination formatters (%Ez, %E<n>S, %E*S, %E4S, %E4Y).
-fn formatCombination(
-    alloc: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    rest: []const u8,
-    bt: tu.BrokenTime,
-    c: Civil,
-    offset_sec: i64,
-) Error!usize {
+/// `%Ez`, `%E<n>S`, `%E*S`, `%E4Y`. Returns the bytes consumed after the `E`, or null if
+/// `rest` is not a combination.
+fn formatCombination(f: Fmt, rest: []const u8) Error!?usize {
+    const alloc = f.alloc;
+    const out = f.out;
+    const c = f.c;
+    const typ = f.typ;
+    const offset_sec = f.offset_sec;
     const f0 = rest[0];
     switch (f0) {
         'z' => {
-            // timeZoneRFC3339Formatter: t.Format("-07:00").
+            // RFC 3339 offset; TIMESTAMP-only, as plain %z is.
+            if (typ != .timestamp) return null;
             try appendOffset(alloc, out, offset_sec);
             return 1;
         },
-        '1', '2', '3', '5', '6' => {
+        // 1-9 fractional digits, zero-filled past the stored microsecond.
+        '1', '2', '3', '4', '5', '6', '7', '8', '9' => {
             if (rest.len > 1 and rest[1] == 'S') {
+                if (typ == .date) return null;
                 const prec: usize = @intCast(f0 - '0');
                 try appendSecondPrecision(alloc, out, c, prec);
                 return 2;
             }
-        },
-        '4' => {
-            if (rest.len > 1) {
-                switch (rest[1]) {
-                    'S' => {
-                        try appendSecondPrecision(alloc, out, c, 4);
-                        return 2;
-                    },
-                    'Y' => {
-                        // timeYear4Formatter: t.Format("2006") (zero-padded 4).
-                        try appendYear4(alloc, out, c.year);
-                        return 2;
-                    },
-                    else => {},
-                }
+            if (f0 == '4' and rest.len > 1 and rest[1] == 'Y') {
+                // timeYear4Formatter: t.Format("2006") (zero-padded 4).
+                if (typ == .time) return null;
+                try appendYear4(alloc, out, c.year);
+                return 2;
             }
         },
         '*' => {
             if (rest.len > 1 and rest[1] == 'S') {
+                if (typ == .date) return null;
                 try appendSecondPrecision(alloc, out, c, 6);
                 return 2;
             }
         },
         else => {},
     }
-    _ = bt;
-    return failFmt(alloc, "unexpected format type %{c}", .{f0}, error.InvalidDate);
+    return null;
 }
 
 fn appendYear4(alloc: std.mem.Allocator, out: *std.ArrayList(u8), year: i64) Error!void {
@@ -176,16 +214,15 @@ fn appendOffset(alloc: std.mem.Allocator, out: *std.ArrayList(u8), offset_sec: i
     try appendFmt(alloc, out, "{c}{d:0>2}:{d:0>2}", .{ sign, h, m });
 }
 
-fn formatElement(
-    alloc: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    spec: u8,
-    bt: tu.BrokenTime,
-    c: Civil,
-    offset_sec: i64,
-    typ: FormatType,
-) Error!void {
-    _ = typ;
+/// Renders one element; false if it is unknown or inapplicable to `typ`.
+fn formatElement(f: Fmt, spec: u8) Error!bool {
+    const alloc = f.alloc;
+    const out = f.out;
+    const bt = f.bt;
+    const c = f.c;
+    const offset_sec = f.offset_sec;
+    const typ = f.typ;
+    if (!elementAvailable(spec, typ)) return false;
     switch (spec) {
         'A' => try out.appendSlice(alloc, day_names[@intCast(bt.weekday())]),
         'a' => try out.appendSlice(alloc, day_names[@intCast(bt.weekday())][0..3]),
@@ -206,7 +243,12 @@ fn formatElement(
             "{d:0>4}-{d:0>2}-{d:0>2}",
             .{ @as(u64, @intCast(@max(c.year, 0))), u(c.month), u(c.day) },
         ),
-        'G', 'J' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().year}),
+        'G' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().year}),
+        // 'J': ISO day of the year (format-elements.md#format_elements_date_time)
+        'J' => {
+            const iso_day = (bt.isoWeek().week - 1) * 7 + bt.isoWeekday();
+            try appendFmt(alloc, out, "{d:0>3}", .{u(iso_day)});
+        },
         'g' => try out.appendSlice(alloc, yearLast2(bt.isoWeek().year)),
         'H' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.hour)}),
         // %I and %l are the same 12-hour value and differ only in padding, so
@@ -229,6 +271,11 @@ fn formatElement(
         'p' => try out.appendSlice(alloc, if (c.hour < 12) "AM" else "PM"),
         'Q' => try appendFmt(alloc, out, "{d}", .{bt.quarter()}),
         'R' => try appendFmt(alloc, out, "{d:0>2}:{d:0>2}", .{ u(c.hour), u(c.minute) }),
+        // 'r': 12-hour time with meridiem. Absent from the reference; BigQuery renders it.
+        'r' => try appendFmt(alloc, out, "{d:0>2}:{d:0>2}:{d:0>2} {s}", .{
+            u(hour12(c.hour)),               u(c.minute), u(c.second),
+            if (c.hour < 12) "AM" else "PM",
+        }),
         'S' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.second)}),
         's' => try appendFmt(alloc, out, "{d}", .{bt.unixSeconds()}),
         'T', 'X' => try appendFmt(alloc, out, "{d:0>2}:{d:0>2}:{d:0>2}", .{ u(c.hour), u(c.minute), u(c.second) }),
@@ -248,8 +295,9 @@ fn formatElement(
         'Z' => {}, // zone name: unavailable (UTC-only)
         'z' => try appendOffsetCompact(alloc, out, offset_sec),
         '%' => try out.append(alloc, '%'),
-        else => return failFmt(alloc, "unexpected format type %{c}", .{spec}, error.InvalidDate),
+        else => return false,
     }
+    return true;
 }
 
 inline fn u(x: i64) u64 {
@@ -295,7 +343,8 @@ fn appendAnsic(
     bt: tu.BrokenTime,
     c: Civil,
 ) Error!void {
-    try appendFmt(alloc, out, "{s} {s} {d:0>2} {d:0>2}:{d:0>2}:{d:0>2} {d}", .{
+    // asctime shape: the day is space-padded.
+    try appendFmt(alloc, out, "{s} {s} {d: >2} {d:0>2}:{d:0>2}:{d:0>2} {d}", .{
         day_names[@intCast(bt.weekday())][0..3],
         month_names[@intCast(c.month - 1)][0..3],
         u(c.day),
@@ -399,7 +448,10 @@ fn elementAvailable(spec: u8, typ: FormatType) bool {
     // Availability mirrors formatPatternMap; only the common cases matter for
     // corpus, but the timestamp-only zone tokens must be rejected elsewhere.
     return switch (spec) {
-        'H', 'I', 'M', 'S', 's', 'k', 'l', 'P', 'p', 'R', 'T', 'X' => typ != .date,
+        'H', 'I', 'M', 'S', 'k', 'l', 'P', 'p', 'R', 'r', 'T', 'X' => typ != .date,
+        // Listed for TIME too, but BigQuery refuses it there: a TIME has no date to count
+        // an epoch offset from. (format-elements.md#format_elements_date_time)
+        's' => typ == .datetime or typ == .timestamp,
         'A', 'a', 'B', 'b', 'h', 'C', 'D', 'd', 'e', 'F' => typ != .time,
         'G', 'g', 'J', 'j', 'm', 'Q', 'U', 'W', 'V' => typ != .time,
         'u', 'w', 'x', 'Y', 'y' => typ != .time,
@@ -430,29 +482,20 @@ fn parseCombination(
             const p = try parseRFC3339Zone(st, target);
             return .{ .progress = p, .format_adv = 1 };
         },
-        '1', '2', '3', '5', '6' => {
+        '1', '2', '3', '4', '5', '6', '7', '8', '9' => {
             if (rest.len > 1 and rest[1] == 'S') {
-                const prec: usize = @intCast(f0 - '0');
-                const p = try parseSecondPrecision(st, prec, target);
+                const p = try parseSecondPrecision(st, @intCast(f0 - '0'), target);
+                return .{ .progress = p, .format_adv = 2 };
+            }
+            if (f0 == '4' and rest.len > 1 and rest[1] == 'Y') {
+                const p = try parseYear(st, target);
                 return .{ .progress = p, .format_adv = 2 };
             }
         },
-        '4' => {
-            if (rest.len > 1) switch (rest[1]) {
-                'S' => {
-                    const p = try parseSecondPrecision(st, 4, target);
-                    return .{ .progress = p, .format_adv = 2 };
-                },
-                'Y' => {
-                    const p = try parseYear(st, target);
-                    return .{ .progress = p, .format_adv = 2 };
-                },
-                else => {},
-            };
-        },
         '*' => {
             if (rest.len > 1 and rest[1] == 'S') {
-                const p = try parseSecondPrecision(st, 6, target);
+                // The only unbounded form.
+                const p = try parseSecondPrecision(st, null, target);
                 return .{ .progress = p, .format_adv = 2 };
             }
         },
@@ -820,17 +863,22 @@ fn parseRFC3339Zone(st: *State, target: []const u8) Error!usize {
 
 /// Go timePrecisionParser: regex `[0-9]{2}\.?[0-9]*` — seconds and optional
 /// fractional, truncated to `precision` digits.
-fn parseSecondPrecision(st: *State, precision: usize, target: []const u8) Error!usize {
-    _ = precision;
+/// `%E<n>S` and `%E*S`. `precision` is a maximum, not a requirement: fewer
+/// digits parse, extra digits are left for the caller to reject as unparsed
+/// text. Null for the `*` form.
+fn parseSecondPrecision(st: *State, precision: ?usize, target: []const u8) Error!usize {
     if (target.len < 2 or !std.ascii.isDigit(target[0]) or !std.ascii.isDigit(target[1]))
         return failFmt(st.alloc, "failed to parse seconds.nanoseconds for {s}", .{target}, error.InvalidDate);
     var idx: usize = 2;
     const sec = @as(i64, target[0] - '0') * 10 + (target[1] - '0');
     var micro: i64 = 0;
     if (idx < target.len and target[idx] == '.') {
+        const limit = precision orelse std.math.maxInt(usize);
         idx += 1;
+        var taken: usize = 0;
         var digits: usize = 0;
-        while (idx < target.len and std.ascii.isDigit(target[idx])) : (idx += 1) {
+        while (idx < target.len and std.ascii.isDigit(target[idx]) and taken < limit) : (idx += 1) {
+            taken += 1;
             if (digits < 6) {
                 micro = micro * 10 + (target[idx] - '0');
                 digits += 1;
