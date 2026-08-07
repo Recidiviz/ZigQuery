@@ -45,5 +45,392 @@
                 .{"1.100000 2.200000E+00"},
             },
         },
+
+        // Every value below was measured against BigQuery
+        // (recidiviz-bigquery-sandbox, 2026-08-07). The language is at
+        // (string_functions.md#format_specifiers).
+
+        // ---- sign flags ----
+        .{
+            .desc = "format + signs a non-negative value, including zero",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%+d]', 5), FORMAT('[%+d]', -5), FORMAT('[%+d]', 0),
+            \\  FORMAT('[%+x]', 255), FORMAT('[%+o]', 8),
+            \\  FORMAT('[%+g]', 1.5), FORMAT('[%+e]', -1.5)
+            ,
+            .rows = .{
+                .{ "[+5]", "[-5]", "[+0]", "[+ff]", "[+10]", "[+1.5]", "[-1.500000e+00]" },
+            },
+        },
+        .{
+            .desc = "format space reserves the sign column, and + outranks it",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[% d]', 5), FORMAT('[% d]', 0), FORMAT('[% d]', -5),
+            \\  FORMAT('[% x]', 255), FORMAT('[% f]', -1.5), FORMAT('[% +d]', 5)
+            ,
+            .rows = .{
+                .{ "[ 5]", "[ 0]", "[-5]", "[ ff]", "[-1.500000]", "[+5]" },
+            },
+        },
+        .{
+            .desc = "format ignores a sign flag for the string verbs",
+            .sql = "SELECT FORMAT('[%+s]', 'ab')",
+            .rows = .{
+                .{"[ab]"},
+            },
+        },
+
+        // ---- justification ----
+        .{
+            .desc = "format - left-justifies within the width",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%-10d]', 42), FORMAT('[%-10s]', 'ab'), FORMAT('[%-8.2f]', 3.14159)
+            ,
+            .rows = .{
+                .{ "[42        ]", "[ab        ]", "[3.14    ]" },
+            },
+        },
+        .{
+            .desc = "format takes flags in any order, repeated, and lets - outrank 0",
+            // A left-justified field cannot also be zero-filled, so the zero flag drops.
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%+010d]', 42), FORMAT('[%-+10d]', 42), FORMAT('[%++d]', 42),
+            \\  FORMAT('[%0-10d]', 42), FORMAT('[%-08d]', 42)
+            ,
+            .rows = .{
+                .{ "[+000000042]", "[+42       ]", "[+42]", "[42        ]", "[42      ]" },
+            },
+        },
+
+        // ---- the # flag ----
+        .{
+            .desc = "format # introduces the base, and leaves a zero value bare",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%#x]', 255), FORMAT('[%#X]', 255), FORMAT('[%#o]', 8),
+            \\  FORMAT('[%#x]', 0), FORMAT('[%#o]', 0), FORMAT('[%#010x]', 255)
+            ,
+            // The introducer stays in front of the zero padding.
+            .rows = .{
+                .{ "[0xff]", "[0XFF]", "[010]", "[0]", "[0]", "[0x000000ff]" },
+            },
+        },
+        .{
+            .desc = "format # keeps the decimal point with nothing after it",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%#.0f]', 1.0), FORMAT('[%#.0e]', 1.0),
+            \\  FORMAT('[%#f]', 1.0), FORMAT('[%#e]', 1.5)
+            ,
+            .rows = .{
+                .{ "[1.]", "[1.e+00]", "[1.000000]", "[1.500000e+00]" },
+            },
+        },
+        .{
+            .desc = "format # keeps the trailing zeros %g would trim",
+            .sql = "SELECT FORMAT('[%#g]', 1.0), FORMAT('[%#g]', 1234.5), FORMAT('[%#.3g]', 1.0)",
+            .rows = .{
+                .{ "[1.00000]", "[1234.50]", "[1.00]" },
+            },
+        },
+
+        // ---- the ' grouping flag ----
+        .{
+            .desc = "format ' groups decimal digits in threes with a comma",
+            .sql =
+            \\SELECT
+            \\  FORMAT("[%'d]", -1234567), FORMAT("[%'d]", 1000),
+            \\  FORMAT("[%+'d]", 1234567), FORMAT("[%'012d]", 1234567)
+            ,
+            .rows = .{
+                .{ "[-1,234,567]", "[1,000]", "[+1,234,567]", "[0001,234,567]" },
+            },
+        },
+        .{
+            .desc = "format ' groups hexadecimal in fours with a colon",
+            .sql =
+            \\SELECT
+            \\  FORMAT("[%'x]", 255), FORMAT("[%'x]", 65535), FORMAT("[%'x]", 1048575),
+            \\  FORMAT("[%'x]", 12345678), FORMAT("[%'x]", 123456789012),
+            \\  FORMAT("[%'X]", 12345678), FORMAT("[%'#x]", 12345678)
+            ,
+            .rows = .{
+                .{
+                    "[ff]",           "[ffff]",    "[f:ffff]",    "[bc:614e]",
+                    "[1c:be99:1a14]", "[BC:614E]", "[0xbc:614e]",
+                },
+            },
+        },
+        .{
+            .desc = "format ' groups octal in fours with a comma",
+            .sql =
+            \\SELECT
+            \\  FORMAT("[%'o]", 8), FORMAT("[%'o]", 4095),
+            \\  FORMAT("[%'o]", 55555), FORMAT("[%'o]", 32768)
+            ,
+            .rows = .{
+                .{ "[10]", "[7777]", "[15,4403]", "[10,0000]" },
+            },
+        },
+        .{
+            .desc = "format ' groups a float's integer part, and is ignored elsewhere",
+            // Scientific notation has no integer part to group, and the flag is not
+            // relevant to a string at all.
+            .sql =
+            \\SELECT
+            \\  FORMAT("[%'f]", 1234.5), FORMAT("[%'F]", 1234.5), FORMAT("[%'g]", 1234.5),
+            \\  FORMAT("[%'e]", 1234.5), FORMAT("[%'s]", 'ab')
+            ,
+            .rows = .{
+                .{ "[1,234.500000]", "[1,234.500000]", "[1,234.5]", "[1.234500e+03]", "[ab]" },
+            },
+        },
+
+        // ---- width and precision ----
+        .{
+            .desc = "format takes width and precision from arguments with *",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%*d]', 8, 42), FORMAT('[%.*f]', 3, 1.23456), FORMAT('[%*.*f]', 10, 2, 1.5)
+            ,
+            .rows = .{
+                .{ "[      42]", "[1.235]", "[      1.50]" },
+            },
+        },
+        .{
+            .desc = "format precision on an integer is a minimum digit count",
+            // Distinct from width, which pads with spaces; and a precision of zero writes
+            // nothing at all for a zero value.
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%.5d]', 42), FORMAT('[%.2d]', -7), FORMAT('[%.0d]', 0),
+            \\  FORMAT('[%8.3d]', 42), FORMAT('[%010.3d]', 42)
+            ,
+            // A precision says how many digits to write, so it outranks the zero flag.
+            .rows = .{
+                .{ "[00042]", "[-07]", "[]", "[     042]", "[       042]" },
+            },
+        },
+        .{
+            .desc = "format precision truncates a string rather than padding it",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%.2s]', 'abcdef'), FORMAT('[%10.3s]', 'abcdef'),
+            \\  FORMAT('[%-10.3s]', 'abcdef'), FORMAT('[%.2t]', 12345)
+            ,
+            .rows = .{
+                .{ "[ab]", "[       abc]", "[abc       ]", "[12]" },
+            },
+        },
+        .{
+            .desc = "format pads the string verbs to the width, always with spaces",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%10s]', 'ab'), FORMAT('[%010s]', 'ab'), FORMAT('[%10t]', 42)
+            ,
+            .rows = .{
+                .{ "[        ab]", "[        ab]", "[        42]" },
+            },
+        },
+        .{
+            .desc = "format rounds a float to the precision, zero decimals included",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%.0f]', 1.5), FORMAT('[%.0f]', 2.5), FORMAT('[%.0e]', 1234.0),
+            \\  FORMAT('[%5.2f]', 3.14159), FORMAT('[%012.3f]', 3.14159),
+            \\  FORMAT('[%08.2e]', 1234.5), FORMAT('[%+.0f]', 0.0)
+            ,
+            .rows = .{
+                .{ "[2]", "[3]", "[1e+03]", "[ 3.14]", "[00000003.142]", "[1.23e+03]", "[+0]" },
+            },
+        },
+
+        // ---- %g and %G ----
+        .{
+            .desc = "format %g picks decimal or scientific by the exponent",
+            // Six significant digits by default; scientific once the decimal exponent
+            // leaves [-4, 6). (string_functions.md#g_and_g_behavior)
+            .sql =
+            \\SELECT
+            \\  FORMAT('%g', 1.5), FORMAT('%g', 392.65), FORMAT('%g', 0.0),
+            \\  FORMAT('%g', -0.5), FORMAT('%g', 100000.0), FORMAT('%g', 1000000.0),
+            \\  FORMAT('%g', 0.00001), FORMAT('%g', 123456789.0), FORMAT('%g', 39265000.0)
+            ,
+            .rows = .{
+                .{
+                    "1.5",   "392.65",      "0",
+                    "-0.5",  "100000",      "1e+06",
+                    "1e-05", "1.23457e+08", "3.9265e+07",
+                },
+            },
+        },
+        .{
+            .desc = "format %g precision is a significant-digit count, and %G upcases",
+            // A precision under 1 reads as 1. (string_functions.md#precision)
+            .sql =
+            \\SELECT
+            \\  FORMAT('%.3g', 1234.5678), FORMAT('%.10g', 1.0/3), FORMAT('%.1g', 0.0001234),
+            \\  FORMAT('%.0g', 1234.0), FORMAT('%g', 1.0/3), FORMAT('%G', 0.000001234)
+            ,
+            .rows = .{
+                .{ "1.23e+03", "0.3333333333", "0.0001", "1e+03", "0.333333", "1.234E-06" },
+            },
+        },
+
+        // ---- non-finite floats ----
+        .{
+            .desc = "format spells a non-finite float to match the verb's case",
+            // (string_functions.md#rules_format_specifiers)
+            // IEEE_DIVIDE rather than a CAST: the analyzer folds `CAST('inf' AS FLOAT64)`
+            // to a literal and this engine emits that as `+Inf.0`, which SQLite cannot
+            // parse. NaN is absent because it does not survive the value codec at all —
+            // both in SPEC_UNSUPPORTED.md, and the NaN spelling is unit-tested instead.
+            .sql =
+            \\SELECT FORMAT('%f|%F|%e|%E|%g|%G', d, d, d, d, d, d), lbl
+            \\FROM UNNEST([
+            \\  STRUCT(IEEE_DIVIDE(1, 0) AS d, 'a_inf' AS lbl),
+            \\  STRUCT(IEEE_DIVIDE(-1, 0),     'b_ninf')
+            \\])
+            \\ORDER BY lbl
+            ,
+            .rows = .{
+                .{ "inf|INF|inf|INF|inf|INF", "a_inf" },
+                .{ "-inf|-INF|-inf|-INF|-inf|-INF", "b_ninf" },
+            },
+        },
+        .{
+            .desc = "format signs an infinity but never zero-pads one",
+            .sql =
+            \\SELECT
+            \\  FORMAT('[%+f]', IEEE_DIVIDE(1, 0)), FORMAT('[%08f]', IEEE_DIVIDE(1, 0))
+            ,
+            .rows = .{
+                .{ "[+inf]", "[     inf]" },
+            },
+        },
+
+        // ---- negative values in the base verbs ----
+        .{
+            .desc = "format renders a negative octal or hexadecimal as sign and magnitude",
+            .sql =
+            \\SELECT
+            \\  FORMAT('%o', -1), FORMAT('%o', -8), FORMAT('%x', -255),
+            \\  FORMAT('%X', -255), FORMAT('[%08x]', -255)
+            ,
+            .rows = .{
+                .{ "-1", "-10", "-ff", "-FF", "[-00000ff]" },
+            },
+        },
+
+        // ---- NULL arguments ----
+        .{
+            .desc = "format spells a NULL argument out for %t and %T",
+            // Every other verb makes the whole result NULL, which is what the %s cases
+            // above assert. (string_functions.md#null_format_specifiers)
+            .sql =
+            \\SELECT
+            \\  FORMAT('00-%t-00', CAST(NULL AS INT64)),
+            \\  FORMAT('00-%T-00', CAST(NULL AS INT64)),
+            \\  FORMAT('00-%T-00', CAST(NULL AS STRING)),
+            \\  FORMAT('%t|%s', CAST(NULL AS INT64), 'x')
+            ,
+            .rows = .{
+                .{ "00-NULL-00", "00-NULL-00", "00-NULL-00", "NULL|x" },
+            },
+        },
+        .{
+            .desc = "format with a NULL format string is NULL",
+            .sql = "SELECT FORMAT(CAST(NULL AS STRING), 1)",
+            .rows = .{
+                .{null},
+            },
+        },
+
+        // ---- error conditions ----
+        //
+        // BigQuery rejects each of these too, but at analysis time when the format string
+        // is a literal, which is where this engine's analyzer also stops them. Reading the
+        // format from a column defers the check to the UDF, which is the only way a case
+        // reaches these arms.
+        .{
+            .desc = "format rejects a specifier it does not know",
+            .sql = "SELECT FORMAT(f, 1) FROM UNNEST(['%q']) AS f",
+            .expect_error = "unexpected format type %q",
+            .rows = .{},
+        },
+        .{
+            .desc = "format rejects a format string ending in a bare percent",
+            .sql = "SELECT FORMAT(f, 1) FROM UNNEST(['%']) AS f",
+            .expect_error = "invalid format",
+            .rows = .{},
+        },
+        .{
+            .desc = "format rejects a format with more specifiers than arguments",
+            .sql = "SELECT FORMAT(f) FROM UNNEST(['%d']) AS f",
+            .expect_error = "not enough arguments for format",
+            .rows = .{},
+        },
+        .{
+            .desc = "format rejects an argument the specifier cannot take",
+            .sql =
+            \\SELECT FORMAT(f, 1) FROM UNNEST(['%s']) AS f
+            ,
+            .expect_error = "invalid argument type: string of characters format (%s) required string type",
+            .rows = .{},
+        },
+        .{
+            .desc = "format rejects an argument the numeric verbs cannot take",
+            .sql =
+            \\SELECT FORMAT(f, 1.5) FROM UNNEST(['%d']) AS f
+            ,
+            .expect_error = "invalid argument type: decimal integer format (%d or %i) required int64 type",
+            .rows = .{},
+        },
+        .{
+            .desc = "format rejects a string where a float verb wants a number",
+            .sql =
+            \\SELECT FORMAT(f, 'a') FROM UNNEST(['%f']) AS f
+            ,
+            .expect_error = "invalid argument type: decimal notation format (%f or %F) required float64 or numeric type",
+            .rows = .{},
+        },
+        .{
+            .desc = "format requires an integer for a * width or precision",
+            .sql =
+            \\SELECT
+            \\  (SELECT FORMAT(f, 1.5, 2) FROM UNNEST(['%*d']) AS f)
+            ,
+            .expect_error = "width type required int64 value",
+            .rows = .{},
+        },
+        .{
+            .desc = "format requires an integer for a * precision as well",
+            .sql =
+            \\SELECT FORMAT(f, 1.5, 2.0) FROM UNNEST(['%.*f']) AS f
+            ,
+            .expect_error = "precision type required int64 value",
+            .rows = .{},
+        },
+        .{
+            .desc = "format reports the offending specifier once a row has already succeeded",
+            // The only shape whose message the runner compares: the failure has to be
+            // raised past the first row. It carries the driver's wrapper.
+            .sql = "SELECT FORMAT(f, 1) FROM UNNEST(['%d', '%q']) AS f",
+            .expect_error = "SQL logic error: unexpected format type %q (1)",
+            .rows = .{},
+        },
+
+        // ---- literals ----
+        .{
+            .desc = "format %% is a literal percent",
+            .sql = "SELECT FORMAT('[%%]'), FORMAT('a%%b%%c')",
+            .rows = .{
+                .{ "[%]", "a%b%c" },
+            },
+        },
     },
 }

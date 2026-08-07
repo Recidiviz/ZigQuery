@@ -384,6 +384,8 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "unix_date", .min_args = 1, .handler = fdate.unixDate },
     .{ .name = "extract", .min_args = 2, .handler = fdate.extract },
     .{ .name = "extract_date", .min_args = 1, .handler = fdate.extractDate },
+    .{ .name = "extract_time", .min_args = 1, .handler = fdate.extractTime },
+    .{ .name = "extract_datetime", .min_args = 1, .handler = fdate.extractDatetime },
     .{ .name = "generate_date_array", .min_args = 2, .handler = fdate.generateDateArray },
 
     // datetime family (Go function_datetime.go)

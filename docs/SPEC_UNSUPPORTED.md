@@ -31,7 +31,9 @@ written against. Re-run the two commands above to refresh them.
 One thing the ledger cannot see is in the next section but one: a case that **passes on
 a wrong answer** is invisible here by construction, because the corpus asserts what
 GoogleSQL documents and this engine emulates BigQuery. Those have to be found by
-measurement, not by running the suite.
+measurement, not by running the suite. `zig build coverage-spec` is the instrument —
+every entry in §4-6 below came of reading the lines it reported as never executed. See
+[COVERAGE.md](COVERAGE.md) for the current figures and how to read them.
 
 ## Summary
 
@@ -203,6 +205,101 @@ Still open in this area, and recorded rather than fixed:
   date/time error case is a one-row `SELECT`, so their strings are documentation, not
   assertions. Tightening the runner would re-gate ~40 cases at once and belongs on its
   own.
+
+  Measured further (2026-08-07): the reach is narrower still. A multi-row query whose
+  plan has to materialise — anything with `ORDER BY` — also raises at `db.query`, so the
+  exact-match branch needs an unsorted scan that survives its first row. And the message
+  the branch would compare is the driver's wrapped form,
+  `SQL logic error: <engine message> (1)`, which no case in the suite records. Tightening
+  the runner therefore means choosing a form as well as a gate.
+
+  One consequence was worth fixing on its own: the four DATE and DATETIME `NANOSECOND`
+  cases recorded `"<FN>: unexpected part value NANOSECOND"`, but those two families raise
+  through `date_ops.unexpectedPart`, which formats no function prefix — so the string named
+  a message the engine has never produced. They now record the bare text. The TIME and
+  TIMESTAMP families are the other way round: `fn_time.zig` and `fn_timestamp.zig` build
+  the prefix into their own `bind.fail` calls, and their four cases were right as written.
+
+**6. `date_ops.zig` and `time_util.zig`, the two files the date/time family calls.** They
+sat at 81.7% and 84.3% under `zig build coverage-spec` while their five callers reached
+95–99.6%. Measuring the gap against BigQuery (`recidiviz-bigquery-sandbox`, 2026-08-07)
+found two more divergences, both now fixed:
+
+- **`EXTRACT(WEEK FROM …)` was the ISO week.** `extractPart` computed it as
+  `addDate(0,0,-weekday()).isoWeek().week`, which answered **52** for 2023-01-01 where
+  BigQuery answers **1**. `EXTRACT(WEEK(<weekday>) FROM …)` was not implemented at all.
+  This is the same conflation `%U`/`%W` had, in the one caller that kept it; both now go
+  through `BrokenTime.weekOfYear` and the shared `weekPartOffset` table.
+- **The numeric time-zone offset parser took the wrong strings.** BigQuery's grammar is
+  `(+|-)H[H][:M[M]]`, bounded at ±14:00, and the colon may be dropped. The engine
+  required exactly two hour digits, so it refused `+9:00` and `-0`; it read minutes only
+  when they were two digits behind a colon, so `+09:5` silently lost the five; and it
+  range-checked nothing, so `+24:00`, `+09:60`, `+900` and the trailing-seconds
+  `+09:00:00` all resolved instead of being refused. Invalid zones now report BigQuery's
+  own `Invalid time zone: <zone>` rather than a bare `FailedConversion`.
+
+`EXTRACT(TIME FROM …)` and `EXTRACT(DATETIME FROM …)` were a third gap of a different
+kind: googlesql gives those two parts functions of their own, and only `extract_date` had
+a UDF, so the transformer emitted names nothing served and `extractPart`'s TIME and
+DATETIME arms were unreachable. Both are registered now.
+
+**7. `FORMAT` implemented about a third of its format language.** `fn_format.zig` sat at
+59.2% under `zig build coverage-spec` with six cases in the corpus, and reading the
+unexecuted lines against `string_functions.md#format_specifiers` found the file *refusing*
+flags BigQuery accepts — `"currently doesn't support - flag for integer value"` and three
+siblings, inherited from go-zetasqlite. Measured throughout against
+`recidiviz-bigquery-sandbox` (2026-08-07). Now fixed:
+
+| | was | now |
+|---|---|---|
+| non-finite floats | `NaN` / `+Inf` / `-Inf` | `nan` `inf` `-inf`, upper-cased for `%F %E %G` |
+| a NULL argument | nulled the whole call | nulls it unless `%t`/`%T` takes it, which spell `NULL` |
+| `%s` `%t` `%T` | width and precision dropped | `[%10s]` pads, `[%.2s]` truncates |
+| flags | only the first was read | any order, repeated, `-` outranking `0` |
+| `-` `#` | refused | left-justify; `0x`/`0X`/`0` introducers and forced decimal points |
+| `'` | `%d`/`%i` only | also `%o` and `%x`/`%X` in fours (`bc:614e`), and a float's integer part |
+| precision on an integer | ignored | a minimum digit count: `[%.5d]` of 42 is `[00042]` |
+| negative `%o` `%x` `%X` | an error | sign and magnitude, `-ff` |
+
+The reference was wrong twice more, in opposite directions:
+
+- **It lists `%u`.** BigQuery answers `FORMAT('%u', 7)` with *Invalid format specifier
+  character "u"*. This engine already rejected it, so the doc is wrong and nothing changed.
+- **It says a negative INT64 to `%o`/`%x`/`%X` "produces an error".** BigQuery renders it.
+  The engine had followed the doc; that is the last row of the table above.
+
+Two limitations found on the way, recorded rather than fixed:
+
+- **A NaN does not survive the value codec.** SQLite has no NaN in REAL storage, so
+  `IEEE_DIVIDE(0, 0)` reads back as NULL and even `IS_NAN` of it is NULL. No SQL can
+  therefore reach the `nan` spelling, which is unit-tested in `fn_format.zig` instead.
+  Infinity round-trips fine.
+- **A non-finite float *literal* emits invalid SQL.** The analyzer folds
+  `CAST('inf' AS FLOAT64)` to a literal and the engine writes it as `+Inf.0`, which SQLite
+  cannot parse. The spec cases use `IEEE_DIVIDE` to reach an infinity without a literal.
+
+**8. Four `zigquery` cases asserted an answer BigQuery does not give**, exposed by §7's
+NULL fix rather than by anything failing: `rpad` (two), `net_ip_from_string` and
+`net_safe_ip_from_string` all wrap a possibly-NULL value in `FORMAT('%T', …)` and recorded
+SQL NULL. BigQuery returns the four-character string `NULL`. They came over from
+go-zetasqlite's `query_test.go` and had been green since import — the same failure mode
+this section exists for, in the engine's own regression suite rather than in the imported
+trees.
+
+**9. `formatFloatGo` still spells non-finite values Go's way.** `value.zig:2328` returns
+`NaN` / `+Inf` / `-Inf` where `CAST(CAST('inf' AS FLOAT64) AS STRING)` is `inf` in
+BigQuery. It has eight call sites — CAST, `%t`, the JSON family and the row encoder — and
+a unit test pinning the current strings, so it is left for a change of its own. Also
+measured: `FORMAT('%T', <infinity>)` is `CAST("inf" AS FLOAT64)` in BigQuery, since `%T`
+wraps values that have no literal representation; this engine gives the bare word. Both
+are unreachable today anyway, because of the two limitations under §7.
+
+Still open, and recorded rather than fixed: **BigQuery resolves any tzdata zone and this
+engine carries four.** `DATETIME(TIMESTAMP '2024-03-14 12:00:00+00', 'Europe/Paris')` is
+`2024-03-14 13:00:00` there and `Invalid time zone: Europe/Paris` here. Asia/Tokyo,
+America/Los_Angeles, America/New_York and Pacific/Auckland are hardcoded with their DST
+rules at day granularity; `time_util.zig`'s header states the UTC-only design, and a real
+tzdata lookup is its own change.
 
 ---
 

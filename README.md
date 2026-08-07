@@ -121,6 +121,11 @@ committed one: diffing it is how a change to the SQL builder is reviewed as a
 diff rather than as a delta in one aggregate byte count. `tools/sql_stats.py`
 summarises one snapshot or the difference between two.
 
+`zig build coverage` and `zig build coverage-spec` measure what the unit tests
+and the corpus each execute. [docs/COVERAGE.md](docs/COVERAGE.md) has the
+current figures and the two caveats worth knowing before quoting one: the runs
+cannot be summed, and a line counts as covered once control reaches it.
+
 ## CI & releases
 
 | Workflow | Trigger | What it does |

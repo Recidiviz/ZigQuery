@@ -39,6 +39,20 @@
             },
         },
         .{
+            .desc = "date_trunc to WEEK(<weekday>) backs up to that weekday",
+            // 2024-03-14 is a Thursday, so each part reaches back a different distance.
+            // Measured (recidiviz-bigquery-sandbox, 2026-08-07).
+            .sql =
+            \\SELECT
+            \\  DATE_TRUNC(DATE '2024-03-14', WEEK(SUNDAY)),
+            \\  DATE_TRUNC(DATE '2024-03-14', WEEK(WEDNESDAY)),
+            \\  DATE_TRUNC(DATE '2024-03-14', WEEK(SATURDAY))
+            ,
+            .rows = .{
+                .{ "2024-03-10", "2024-03-13", "2024-03-09" },
+            },
+        },
+        .{
             .desc = "date_trunc to ISOWEEK lands on the Monday",
             // An ISO week is a Monday-started week. (functions-and-operators.md#date_trunc)
             .sql =

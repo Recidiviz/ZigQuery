@@ -40,5 +40,17 @@
                 .{"2024-01-01 12:15:00"},
             },
         },
+        .{
+            .desc = "timestamp_bucket rejects a month width, which is not a fixed duration",
+            .sql = "SELECT TIMESTAMP_BUCKET(TIMESTAMP '2024-03-14 00:00:00+00', INTERVAL 1 MONTH)",
+            .expect_error = "Bucket width INTERVAL with non-zero MONTH part is not allowed; error in TIMESTAMP_BUCKET expression",
+            .rows = .{},
+        },
+        .{
+            .desc = "timestamp_bucket rejects a width mixing days with sub-second parts",
+            .sql = "SELECT TIMESTAMP_BUCKET(TIMESTAMP '2024-03-14 00:00:00+00', INTERVAL '1 2:0:0' DAY TO SECOND)",
+            .expect_error = "Bucket width INTERVAL with mixed DAY and subsecond parts is not allowed; error in TIMESTAMP_BUCKET expression",
+            .rows = .{},
+        },
     },
 }

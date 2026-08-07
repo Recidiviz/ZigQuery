@@ -238,6 +238,23 @@ pub fn extract(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 pub fn extractDate(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
+    return extractAs(args, "DATE");
+}
+
+pub fn extractTime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    return extractAs(args, "TIME");
+}
+
+pub fn extractDatetime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    return extractAs(args, "DATETIME");
+}
+
+/// EXTRACT(DATE|TIME|DATETIME FROM x [AT TIME ZONE z]). googlesql gives these three parts
+/// a function of their own instead of the date-part argument the rest of EXTRACT takes,
+/// so they arrive here rather than through `extract`. (date_functions.md#extract)
+fn extractAs(args: []const Value, part: []const u8) Error!Value {
     if (bind.existsNull(args)) return null_v;
     var zone: []const u8 = "UTC";
     if (args.len == 2) zone = try partStr(args[1]);
@@ -247,7 +264,7 @@ pub fn extractDate(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         const off = try tu.zoneOffsetSeconds(zone, bt.civ);
         bt = .{ .civ = bt.civ + off * tu.second_micros };
     }
-    return ops.extractPart(bt, "DATE");
+    return ops.extractPart(bt, part);
 }
 
 fn extractInterval(iv: value_mod.Interval, part: []const u8) Error!Value {

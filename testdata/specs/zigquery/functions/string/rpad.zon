@@ -10,8 +10,8 @@
                 .{ "abc", 5, "\"abc  \"" },
                 .{ "abc", 2, "\"ab\"" },
                 .{ "例子", 4, "\"例子  \"" },
-                .{ null, 2, null },
-                .{ "abc", null, null },
+                .{ null, 2, "NULL" },
+                .{ "abc", null, "NULL" },
             },
         },
         .{
@@ -26,7 +26,7 @@
             .rows = .{
                 .{ "abc", 8, "def", "\"abcdefde\"" },
                 .{ "abc", 5, "-", "\"abc--\"" },
-                .{ "abc", 5, null, null },
+                .{ "abc", 5, null, "NULL" },
                 .{ "例子", 5, "中文", "\"例子中文中\"" },
             },
         },

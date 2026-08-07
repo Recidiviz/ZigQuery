@@ -920,7 +920,16 @@ zigquery/functions/date/current_date	current_date propagates a NULL zone
 zigquery/functions/date/date	date operator
 zigquery/functions/date/date	date from a TIMESTAMP in a named zone
 zigquery/functions/date/date_add	date_add
+zigquery/functions/date/date_add	date_add year clamps February 29th to the 28th
+zigquery/functions/date/date_add	date_add week is seven days
 zigquery/functions/date/date_add	date_add quarter
+zigquery/functions/date/date_bucket	date_bucket floors toward -infinity, so it holds before the origin
+zigquery/functions/date/date_bucket	date_bucket with a month width lands on the origin's day of month, clamped short
+zigquery/functions/date/date_bucket	date_bucket with a mid-month origin turns the bucket over on that day
+zigquery/functions/date/date_bucket	date_bucket with a multi-month width counts from the origin, not from January
+zigquery/functions/date/date_bucket	date_bucket rejects a width with a part a DATE has no meaning for
+zigquery/functions/date/date_bucket	date_bucket rejects a width of zero
+zigquery/functions/date/date_bucket	date_bucket rejects a negative width
 zigquery/functions/date/date_diff	date_diff with week
 zigquery/functions/date/date_diff	date_diff with week day (case 461)
 zigquery/functions/date/date_diff	date_diff with week day (case 462)
@@ -928,17 +937,23 @@ zigquery/functions/date/date_diff	date_diff with month (case 467)
 zigquery/functions/date/date_diff	date_diff with day (case 468)
 zigquery/functions/date/date_diff	date_diff with month (case 469)
 zigquery/functions/date/date_diff	date_diff with day (case 470)
+zigquery/functions/date/date_diff	date_diff counts boundaries of the weekday the part names
 zigquery/functions/date/date_diff	date_diff in ISOWEEK counts Monday boundaries across a year end
 zigquery/functions/date/date_from_unix_date	date_from_unix_date
 zigquery/functions/date/date_sub	date_sub
+zigquery/functions/date/date_sub	date_sub year and week
+zigquery/functions/date/date_sub	date_sub month across the start of the year
 zigquery/functions/date/date_trunc	date_trunc with quarter
 zigquery/functions/date/date_trunc	date_trunc with day
 zigquery/functions/date/date_trunc	date_trunc with week
 zigquery/functions/date/date_trunc	date_trunc with month
 zigquery/functions/date/date_trunc	date_trunc with year
+zigquery/functions/date/date_trunc	date_trunc to WEEK(<weekday>) backs up to that weekday
 zigquery/functions/date/date_trunc	date_trunc to ISOWEEK lands on the Monday
 zigquery/functions/date/date_trunc	date_trunc to ISOYEAR anchors on January 4th
 zigquery/functions/date/extract	extract date
+zigquery/functions/date/extract	extract WEEK counts from the year's first Sunday, not the ISO week
+zigquery/functions/date/extract	extract DAYOFYEAR and DAYOFWEEK
 zigquery/functions/date/extract	extract rejects a part an INTERVAL has no field for
 zigquery/functions/date/format_date	format date with %t
 zigquery/functions/date/format_date	format_date with %x
@@ -1015,8 +1030,24 @@ zigquery/functions/datetime/datetime	datetime
 zigquery/functions/datetime/datetime	datetime literal
 zigquery/functions/datetime/datetime	datetime from a DATE, with and without a TIME
 zigquery/functions/datetime/datetime	datetime of a DATETIME is the identity
+zigquery/functions/datetime/datetime	datetime takes every spelling of a numeric zone offset
+zigquery/functions/datetime/datetime	datetime reads a single-digit minute field, and a zero offset either way
+zigquery/functions/datetime/datetime	datetime accepts the offset bounds, which are plus and minus 14 hours
+zigquery/functions/datetime/datetime	datetime rejects an offset past 14 hours
+zigquery/functions/datetime/datetime	datetime rejects an hour field of 24
+zigquery/functions/datetime/datetime	datetime rejects a minute field of 60
+zigquery/functions/datetime/datetime	datetime rejects a seconds field on a zone offset
+zigquery/functions/datetime/datetime	datetime rejects three colon-free digits whose first two are not an hour
+zigquery/functions/datetime/datetime	datetime rejects a signed zone that is not digits
+zigquery/functions/datetime/datetime	datetime follows US daylight saving into November
+zigquery/functions/datetime/datetime	datetime reads New York on the same US rule, five hours further east
+zigquery/functions/datetime/datetime	datetime follows New Zealand daylight saving, which runs the other half of the year
 zigquery/functions/datetime/datetime_add	datetime_add (case 512)
 zigquery/functions/datetime/datetime_add	datetime_add (case 513)
+zigquery/functions/datetime/datetime_add	datetime_add rejects a part it cannot express
+zigquery/functions/datetime/datetime_bucket	datetime_bucket keeps the origin's time of day
+zigquery/functions/datetime/datetime_bucket	datetime_bucket takes a month width, which DATE and DATETIME alone accept
+zigquery/functions/datetime/datetime_bucket	datetime_bucket rejects a mixed width on the count alone
 zigquery/functions/datetime/datetime_diff	datetime_diff with week day (case 463)
 zigquery/functions/datetime/datetime_diff	datetime_diff with week day 1 week
 zigquery/functions/datetime/datetime_diff	datetime_diff with week day (case 465)
@@ -1029,8 +1060,10 @@ zigquery/functions/datetime/datetime_diff	datetime_diff with day, less than 24 h
 zigquery/functions/datetime/datetime_diff	datetime_diff with week
 zigquery/functions/datetime/datetime_diff	datetime_diff with year, ISOYEAR
 zigquery/functions/datetime/datetime_diff	datetime_diff with isoweek
+zigquery/functions/datetime/datetime_diff	datetime_diff rejects a part it cannot express
 zigquery/functions/datetime/datetime_sub	datetime_sub (case 514)
 zigquery/functions/datetime/datetime_sub	datetime_sub (case 515)
+zigquery/functions/datetime/datetime_sub	datetime_sub rejects a part it cannot express
 zigquery/functions/datetime/datetime_trunc	datetime_trunc with quarter
 zigquery/functions/datetime/datetime_trunc	datetime_trunc with day weekday
 zigquery/functions/datetime/datetime_trunc	datetime_trunc isoyear
@@ -1038,6 +1071,7 @@ zigquery/functions/datetime/datetime_trunc	datetime_trunc with day
 zigquery/functions/datetime/datetime_trunc	datetime_trunc with weekday(monday)
 zigquery/functions/datetime/datetime_trunc	datetime_trunc with isoyear
 zigquery/functions/datetime/datetime_trunc	datetime_trunc keeps the unit it is asked for
+zigquery/functions/datetime/datetime_trunc	datetime_trunc rejects a part it cannot express
 zigquery/functions/datetime/format_datetime	format_datetime with %c
 zigquery/functions/datetime/format_datetime	format_datetime with %b-%d-%Y
 zigquery/functions/datetime/format_datetime	format_datetime with %b %Y
@@ -1189,6 +1223,40 @@ zigquery/functions/string/format	format +%010d+
 zigquery/functions/string/format	format %'d
 zigquery/functions/string/format	format %s
 zigquery/functions/string/format	format %f %E
+zigquery/functions/string/format	format + signs a non-negative value, including zero
+zigquery/functions/string/format	format space reserves the sign column, and + outranks it
+zigquery/functions/string/format	format ignores a sign flag for the string verbs
+zigquery/functions/string/format	format - left-justifies within the width
+zigquery/functions/string/format	format takes flags in any order, repeated, and lets - outrank 0
+zigquery/functions/string/format	format # introduces the base, and leaves a zero value bare
+zigquery/functions/string/format	format # keeps the decimal point with nothing after it
+zigquery/functions/string/format	format # keeps the trailing zeros %g would trim
+zigquery/functions/string/format	format ' groups decimal digits in threes with a comma
+zigquery/functions/string/format	format ' groups hexadecimal in fours with a colon
+zigquery/functions/string/format	format ' groups octal in fours with a comma
+zigquery/functions/string/format	format ' groups a float's integer part, and is ignored elsewhere
+zigquery/functions/string/format	format takes width and precision from arguments with *
+zigquery/functions/string/format	format precision on an integer is a minimum digit count
+zigquery/functions/string/format	format precision truncates a string rather than padding it
+zigquery/functions/string/format	format pads the string verbs to the width, always with spaces
+zigquery/functions/string/format	format rounds a float to the precision, zero decimals included
+zigquery/functions/string/format	format %g picks decimal or scientific by the exponent
+zigquery/functions/string/format	format %g precision is a significant-digit count, and %G upcases
+zigquery/functions/string/format	format spells a non-finite float to match the verb's case
+zigquery/functions/string/format	format signs an infinity but never zero-pads one
+zigquery/functions/string/format	format renders a negative octal or hexadecimal as sign and magnitude
+zigquery/functions/string/format	format spells a NULL argument out for %t and %T
+zigquery/functions/string/format	format with a NULL format string is NULL
+zigquery/functions/string/format	format rejects a specifier it does not know
+zigquery/functions/string/format	format rejects a format string ending in a bare percent
+zigquery/functions/string/format	format rejects a format with more specifiers than arguments
+zigquery/functions/string/format	format rejects an argument the specifier cannot take
+zigquery/functions/string/format	format rejects an argument the numeric verbs cannot take
+zigquery/functions/string/format	format rejects a string where a float verb wants a number
+zigquery/functions/string/format	format requires an integer for a * width or precision
+zigquery/functions/string/format	format requires an integer for a * precision as well
+zigquery/functions/string/format	format reports the offending specifier once a row has already succeeded
+zigquery/functions/string/format	format %% is a literal percent
 zigquery/functions/string/from_base32	from_base32
 zigquery/functions/string/from_base64	from_base64
 zigquery/functions/string/from_hex	from_hex
@@ -1301,6 +1369,7 @@ zigquery/functions/time/time_trunc	time_trunc keeps the unit it is asked for
 zigquery/functions/time/time_trunc	time_trunc rejects a part it cannot express
 zigquery/functions/timestamp/current_timestamp	current_timestamp
 zigquery/functions/timestamp/extract	extract from timestamp
+zigquery/functions/timestamp/extract	extract TIME and DATETIME from a timestamp
 zigquery/functions/timestamp/format_timestamp	format timestamp with %t
 zigquery/functions/timestamp/format_timestamp	format_timestamp with %c
 zigquery/functions/timestamp/format_timestamp	format_timestamp with %b-%d-%Y
@@ -1352,6 +1421,8 @@ zigquery/functions/timestamp/timestamp_add	timestamp_add by DAY
 zigquery/functions/timestamp/timestamp_add	timestamp_add rejects a part it cannot express
 zigquery/functions/timestamp/timestamp_bucket	timestamp_bucket buckets from the default 1950-01-01 origin
 zigquery/functions/timestamp/timestamp_bucket	timestamp_bucket takes an explicit origin as its third argument
+zigquery/functions/timestamp/timestamp_bucket	timestamp_bucket rejects a month width, which is not a fixed duration
+zigquery/functions/timestamp/timestamp_bucket	timestamp_bucket rejects a width mixing days with sub-second parts
 zigquery/functions/timestamp/timestamp_diff	timestamp diff with week day
 zigquery/functions/timestamp/timestamp_diff	timestamp_diff
 zigquery/functions/timestamp/timestamp_micros	timestamp_micros

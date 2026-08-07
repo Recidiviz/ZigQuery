@@ -10,5 +10,26 @@
                 .{"2023-02-28"},
             },
         },
+        .{
+            .desc = "date_sub year and week",
+            // Measured (recidiviz-bigquery-sandbox, 2026-08-07).
+            .sql =
+            \\SELECT
+            \\  DATE_SUB(DATE '2024-02-29', INTERVAL 1 YEAR),
+            \\  DATE_SUB(DATE '2024-03-14', INTERVAL 3 WEEK)
+            ,
+            .rows = .{
+                .{ "2023-02-28", "2024-02-22" },
+            },
+        },
+        .{
+            .desc = "date_sub month across the start of the year",
+            // The month count goes negative before it is carried into the year, which is
+            // the branch a within-year shift never reaches.
+            .sql = "SELECT DATE_SUB(DATE '2024-01-15', INTERVAL 2 MONTH), DATE_SUB(DATE '2024-01-15', INTERVAL 14 MONTH)",
+            .rows = .{
+                .{ "2023-11-15", "2022-11-15" },
+            },
+        },
     },
 }

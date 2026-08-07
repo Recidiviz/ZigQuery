@@ -45,7 +45,7 @@ fn fail(comptime msg: []const u8, err: ValueError) ValueError {
 
 /// fail() for messages carrying runtime values; falls back to the format
 /// string itself if the rendering would overflow the buffer.
-fn failFmt(comptime fmt: []const u8, args: anytype, err: ValueError) ValueError {
+pub fn failFmt(comptime fmt: []const u8, args: anytype, err: ValueError) ValueError {
     diagnostic = std.fmt.bufPrint(&diag_buf, fmt, args) catch fmt;
     return err;
 }

@@ -18,5 +18,20 @@
                 .{ 25, 24, "2008-12-25" },
             },
         },
+        .{
+            .desc = "extract TIME and DATETIME from a timestamp",
+            // The zone shifts the extracted TIME with the instant, Tokyo being nine hours
+            // ahead. Measured (recidiviz-bigquery-sandbox, 2026-08-07).
+            .sql =
+            \\SELECT
+            \\  EXTRACT(TIME FROM DATETIME '2024-03-14 07:35:21.123456'),
+            \\  EXTRACT(TIME FROM TIMESTAMP '2024-03-14 07:35:21+00'),
+            \\  EXTRACT(TIME FROM TIMESTAMP '2024-03-14 07:35:21+00' AT TIME ZONE 'Asia/Tokyo'),
+            \\  EXTRACT(DATETIME FROM TIMESTAMP '2024-03-14 07:35:21+00')
+            ,
+            .rows = .{
+                .{ "07:35:21.123456", "07:35:21", "16:35:21", "2024-03-14T07:35:21" },
+            },
+        },
     },
 }
