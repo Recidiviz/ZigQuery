@@ -444,6 +444,52 @@ pub fn build(b: *std.Build) void {
     b.step("coverage", b.fmt("Line coverage for the unit tests -> {s}/index.html", .{cov_report}))
         .dependOn(&kcov_merge.step);
 
+    // Coverage from the other direction. `coverage` measures what the unit
+    // tests reach; this measures what replaying testdata/specs reaches, which
+    // is a different and larger part of the engine — the transformer and the
+    // UDFs are driven almost entirely by SQL, not by `test` blocks, and read
+    // near 0% there.
+    //
+    // Kept as its own report rather than merged into `coverage`: a line the
+    // spec corpus covers is asserted against a *published expected value*,
+    // while a line a unit test covers is asserted against whatever that test
+    // says. Averaging the two would hide which kind of evidence a given file
+    // actually has. Pass `-- --filter zigquery/` to scope the replay.
+    const cov_spec_exe = b.addExecutable(.{
+        .name = "spec-runner-cov",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/spec_runner.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{.{ .name = "zetasqlite", .module = cov_mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| cov_spec_exe.step.dependOn(&bz.step);
+
+    const cov_spec_runs = b.pathJoin(&.{ cov_root, "spec-runs" });
+    const cov_spec_report = b.pathJoin(&.{ cov_root, "spec-report" });
+    const cov_spec_mkdir = b.addSystemCommand(&.{ "mkdir", "-p", cov_spec_runs, cov_spec_report });
+
+    const kcov_spec = b.addSystemCommand(&.{ "kcov", "--clean", cov_include, cov_spec_runs });
+    kcov_spec.addArtifactArg(cov_spec_exe);
+    if (b.args) |args| kcov_spec.addArgs(args);
+    // The runner resolves testdata/specs against the cwd, and kcov inherits it.
+    kcov_spec.setCwd(.{ .cwd_relative = b.build_root.path.? });
+    kcov_spec.has_side_effects = true;
+    kcov_spec.step.dependOn(&cov_spec_mkdir.step);
+
+    // One binary, so there is nothing to merge — but kcov's per-run directory
+    // is named after the executable, and `--merge` is what produces a stable
+    // top-level index.html to open.
+    const kcov_spec_merge = b.addSystemCommand(&.{ "kcov", "--merge", cov_spec_report, cov_spec_runs });
+    kcov_spec_merge.has_side_effects = true;
+    kcov_spec_merge.step.dependOn(&kcov_spec.step);
+
+    b.step(
+        "coverage-spec",
+        b.fmt("Line coverage for the spec corpus -> {s}/index.html", .{cov_spec_report}),
+    ).dependOn(&kcov_spec_merge.step);
+
     // Ephor static analysis
     // A build tool: it runs here, so it follows the host and not `-Dtarget`.
     // Built for `target` it would be a foreign binary that addRunArtifact then
@@ -462,6 +508,40 @@ pub fn build(b: *std.Build) void {
     ephor_upgrade_cmd.addArgs(&.{"upgrade"});
     const ephor_upgrade_step = b.step("ephor-upgrade", "Upgrade ephor to latest version");
     ephor_upgrade_step.dependOn(&ephor_upgrade_cmd.step);
+
+    // Debuggable test binaries (ZigBrains: FalsePattern/ZigBrains#82).
+    //
+    // A debugger needs a path to attach to, and the binary behind `zig build
+    // test` never leaves the cache under a name anyone can predict. Installing
+    // it fixes that. The checked-in run configurations in `.run/` point here.
+    //
+    // These install the artifacts `test` and `test-server` already run rather
+    // than declaring new ones: a second `addTest` over the same module would
+    // compile the whole tree again, and you would be debugging a binary no CI
+    // step ever ran. `dest_sub_path` names them, because `addTest` calls every
+    // artifact "test" and both land in the same directory.
+    //
+    // Build these at Debug — which is already the default here, since
+    // preferred_optimize_mode only picks *which* release mode `-Drelease=true`
+    // selects. Under `-Drelease=true` a breakpoint on, say, the
+    // `normal_func_names.has` line resolves into inlined StaticStringMap code
+    // and the enclosing function's arguments are gone, so pass
+    // `-Drelease=false` explicitly from anything that might inherit a
+    // `--release` from elsewhere.
+    const install_engine_tests = b.addInstallArtifact(unit_tests, .{
+        .dest_dir = .{ .override = .{ .custom = "tests" } },
+        .dest_sub_path = "engine-tests",
+    });
+    const install_server_tests = b.addInstallArtifact(server_tests, .{
+        .dest_dir = .{ .override = .{ .custom = "tests" } },
+        .dest_sub_path = "server-tests",
+    });
+    const install_test_step = b.step(
+        "install-test",
+        "Install test binaries to zig-out/tests/ for debugging",
+    );
+    install_test_step.dependOn(&install_engine_tests.step);
+    install_test_step.dependOn(&install_server_tests.step);
 }
 
 /// Everything the engine module needs beyond an optimize mode.
