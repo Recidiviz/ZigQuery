@@ -10,5 +10,22 @@
                 .{"1230218400.0"},
             },
         },
+        .{
+            .desc = "timestamp_sub by DAY",
+            .sql =
+            \\SELECT FORMAT_TIMESTAMP(
+            \\  "%Y-%m-%d %H:%M:%S",
+            \\  TIMESTAMP_SUB(TIMESTAMP "2008-12-25 15:30:00+00", INTERVAL 2 DAY))
+            ,
+            .rows = .{
+                .{"2008-12-23 15:30:00"},
+            },
+        },
+        .{
+            .desc = "timestamp_sub rejects a part it cannot express",
+            .sql = "SELECT TIMESTAMP_SUB(TIMESTAMP \"2008-12-25 15:30:00+00\", INTERVAL 1 NANOSECOND)",
+            .expect_error = "TIMESTAMP_SUB: unexpected part value NANOSECOND",
+            .rows = .{},
+        },
     },
 }

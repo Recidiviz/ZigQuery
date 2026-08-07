@@ -36,5 +36,32 @@
                 .{"1419811200.0"},
             },
         },
+        .{
+            .desc = "timestamp_trunc keeps the unit it is asked for",
+            .sql =
+            \\SELECT
+            \\  FORMAT_TIMESTAMP("%H:%M:%E*S", TIMESTAMP_TRUNC(TIMESTAMP "2024-03-15 10:20:30.123456+00", MICROSECOND)),
+            \\  FORMAT_TIMESTAMP("%H:%M:%E*S", TIMESTAMP_TRUNC(TIMESTAMP "2024-03-15 10:20:30.123456+00", MILLISECOND)),
+            \\  FORMAT_TIMESTAMP("%H:%M:%E*S", TIMESTAMP_TRUNC(TIMESTAMP "2024-03-15 10:20:30.123456+00", SECOND)),
+            \\  FORMAT_TIMESTAMP("%H:%M:%E*S", TIMESTAMP_TRUNC(TIMESTAMP "2024-03-15 10:20:30.123456+00", MINUTE)),
+            \\  FORMAT_TIMESTAMP("%H:%M:%E*S", TIMESTAMP_TRUNC(TIMESTAMP "2024-03-15 10:20:30.123456+00", HOUR))
+            ,
+            .rows = .{
+                .{ "10:20:30.123456", "10:20:30.123000", "10:20:30.000000", "10:20:00.000000", "10:00:00.000000" },
+            },
+        },
+        .{
+            .desc = "timestamp_trunc truncates in the zone it is given",
+            // 2024-03-15 00:30 UTC is 09:30 on the same day in Tokyo, so a DAY
+            // truncation there lands at 2024-03-15 00:00 +09:00 = 14th 15:00Z.
+            .sql =
+            \\SELECT FORMAT_TIMESTAMP(
+            \\  "%Y-%m-%d %H:%M:%S",
+            \\  TIMESTAMP_TRUNC(TIMESTAMP "2024-03-15 00:30:00+00", DAY, "Asia/Tokyo"))
+            ,
+            .rows = .{
+                .{"2024-03-14 15:00:00"},
+            },
+        },
     },
 }

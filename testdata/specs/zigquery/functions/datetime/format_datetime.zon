@@ -45,5 +45,15 @@
                 .{"2008"},
             },
         },
+        .{
+            .desc = "format_datetime carries the date and clock elements together",
+            // 2023-01-01 is a Sunday in ISO week 52 of 2022, at 13:05 — one
+            // input that exercises the week, weekday and 12-hour elements at
+            // once, all of which used to be wrong.
+            .sql = "SELECT FORMAT_DATETIME(\"%A %j %U/%W/%V %G-%g %u%w %I%p %Q\", DATETIME \"2023-01-01 13:05:00\")",
+            .rows = .{
+                .{"Sunday 001 01/00/52 2022-22 70 01PM 1"},
+            },
+        },
     },
 }

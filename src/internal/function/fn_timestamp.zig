@@ -166,9 +166,10 @@ pub fn timestampTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value
     if (std.mem.eql(u8, part, "MICROSECOND")) {
         truncated_local = local.civ;
     } else if (std.mem.eql(u8, part, "MILLISECOND")) {
-        truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0);
+        const ms = tu.truncMillis(c.micro);
+        truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, ms);
     } else if (std.mem.eql(u8, part, "SECOND")) {
-        truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0);
+        truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0);
     } else if (std.mem.eql(u8, part, "MINUTE")) {
         truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0);
     } else if (std.mem.eql(u8, part, "HOUR")) {
@@ -288,4 +289,63 @@ pub fn generateTimestampArray(alloc: std.mem.Allocator, args: []const Value) Err
 fn propagate(e: Error) Error {
     if (tp.message) |m| return bind.failMsg(m, e);
     return e;
+}
+
+// ---- tests ----
+//
+// Only what SQL cannot reach; everything else is asserted against the GoogleSQL
+// reference in testdata/specs/zigquery/functions/timestamp.
+
+const testing = std.testing;
+
+test "TIMESTAMP rejects an argument type the analyzer would have to admit" {
+    try testing.expectError(
+        error.UnsupportedOperation,
+        timestamp(testing.allocator, &.{Value{ .bool = true }}),
+    );
+}
+
+test "STRING refuses a JSON payload that does not parse" {
+    // Unreachable through SQL: a JSON literal is validated by the analyzer, and
+    // every other `.json` cell was produced by this engine's own writer or by
+    // fn_json's parser under the same options. The branch guards against those
+    // two ever disagreeing.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectError(error.FailedConversion, string(
+        arena.allocator(),
+        &.{Value{ .json = "{not json" }},
+    ));
+}
+
+test "the arity guards the analyzer makes unreachable still hold" {
+    // STRING's widest signature is (TIMESTAMP, STRING); FORMAT_TIMESTAMP's is
+    // (STRING, TIMESTAMP, STRING); GENERATE_TIMESTAMP_ARRAY takes exactly four,
+    // all required. Each is also declared with a min_args the trampoline
+    // enforces, so under-supply never arrives either.
+    const alloc = testing.allocator;
+    const ts = Value{ .timestamp = 0 };
+    try testing.expectError(
+        error.UnsupportedOperation,
+        string(alloc, &.{ ts, Value{ .string = "UTC" }, Value{ .string = "extra" } }),
+    );
+    try testing.expectError(
+        error.UnsupportedOperation,
+        formatTimestamp(alloc, &.{Value{ .string = "%Y" }}),
+    );
+    try testing.expectError(
+        error.UnsupportedOperation,
+        generateTimestampArray(alloc, &.{ ts, ts }),
+    );
+}
+
+test "propagate prefers the parser's message and falls back to the bare error" {
+    tp.message = null;
+    try testing.expectEqual(Error.OutOfMemory, propagate(error.OutOfMemory));
+
+    tp.message = "error parsing [x] with format [%s]: unexpected unixtime length";
+    try testing.expectEqual(Error.InvalidDate, propagate(error.InvalidDate));
+    try testing.expectEqualStrings(tp.message.?, bind.message.?);
+    tp.message = null;
+    bind.clearDiagnostics();
 }

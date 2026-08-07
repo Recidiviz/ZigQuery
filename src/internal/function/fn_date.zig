@@ -153,14 +153,16 @@ pub fn lastDay(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return tu.dateValue(.{ .civ = tu.compose(c.year + 1, 1, 0, 0, 0, 0, 0) });
     if (std.mem.eql(u8, part, "MONTH"))
         return tu.dateValue(bt.addDate(0, 1, -c.day));
-    if (std.mem.eql(u8, part, "WEEK") or std.mem.eql(u8, part, "ISOWEEK"))
-        return tu.dateValue(bt.addDate(0, 0, 6 - wd));
-    if (std.mem.eql(u8, part, "WEEK_MONDAY")) return tu.dateValue(bt.addDate(0, 0, 7 - wd));
-    if (std.mem.eql(u8, part, "WEEK_TUESDAY")) return tu.dateValue(bt.addDate(0, 0, 8 - wd));
-    if (std.mem.eql(u8, part, "WEEK_WEDNESDAY")) return tu.dateValue(bt.addDate(0, 0, 9 - wd));
-    if (std.mem.eql(u8, part, "WEEK_THURSDAY")) return tu.dateValue(bt.addDate(0, 0, 10 - wd));
-    if (std.mem.eql(u8, part, "WEEK_FRIDAY")) return tu.dateValue(bt.addDate(0, 0, 11 - wd));
-    if (std.mem.eql(u8, part, "WEEK_SATURDAY")) return tu.dateValue(bt.addDate(0, 0, 12 - wd));
+    // Every week part asks the same question — how far forward to the end of a
+    // week that starts on some weekday — so the only thing that varies is the
+    // start day, and it reads better as data. Written out one arm each as
+    // `(start + 6) - wd`, they were also missing the wrap, and overshot by a
+    // full week whenever `wd` fell on or before `start`: LAST_DAY of Monday
+    // 2008-11-10 under WEEK(TUESDAY) is that same Monday, not the next one.
+    for (week_starts) |w| {
+        if (std.mem.eql(u8, part, w.part))
+            return tu.dateValue(bt.addDate(0, 0, toWeekEnd(wd, w.start)));
+    }
     if (std.mem.eql(u8, part, "QUARTER")) {
         // Same shape as the MONTH arm above, over the quarter's start month:
         // step to the first of the following quarter, then back one day.
@@ -170,6 +172,26 @@ pub fn lastDay(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return tu.dateValue(q_start.addDate(0, 3, -1));
     }
     return bind.fail("LAST_DAY: unexpected part {s}", .{part}, error.UnsupportedOperation);
+}
+
+/// The weekday each LAST_DAY week part starts its week on, Sun=0..Sat=6.
+/// Bare `WEEK` starts Sunday; ISO weeks start Monday, which is the whole
+/// difference between `WEEK` and `ISOWEEK`.
+const week_starts = [_]struct { part: []const u8, start: i64 }{
+    .{ .part = "WEEK", .start = 0 },
+    .{ .part = "ISOWEEK", .start = 1 },
+    .{ .part = "WEEK_MONDAY", .start = 1 },
+    .{ .part = "WEEK_TUESDAY", .start = 2 },
+    .{ .part = "WEEK_WEDNESDAY", .start = 3 },
+    .{ .part = "WEEK_THURSDAY", .start = 4 },
+    .{ .part = "WEEK_FRIDAY", .start = 5 },
+    .{ .part = "WEEK_SATURDAY", .start = 6 },
+};
+
+/// Days from a date whose weekday is `wd` (Sun=0..Sat=6) forward to the last
+/// day of the week that begins on `start`, in the same numbering. Always 0-6.
+fn toWeekEnd(wd: i64, start: i64) i64 {
+    return @mod(start + 6 - wd, 7);
 }
 
 pub fn parseDate(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -283,4 +305,93 @@ pub fn partStr(v: Value) Error![]const u8 {
 fn propagate(e: Error) Error {
     if (tp.message) |m| return bind.failMsg(m, e);
     return e;
+}
+
+// ---- tests ----
+//
+// Everything the SQL spec corpus can reach is asserted there, against the
+// GoogleSQL reference, in testdata/specs/zigquery/functions/date. What is left
+// here is only what no query can execute: the wall-clock fallback, the `.safe`
+// prong, the arity guards the analyzer rejects first, and the error-message
+// propagator. They are defensive rather than dead, and this is the difference.
+
+const testing = std.testing;
+
+test "nowCiv reads the wall clock only when no time was injected" {
+    // The transformer appends the fixed-now literal for every CURRENT_* call it
+    // rewrites, so the spec suite never takes the fallback — see
+    // docs/SPEC_UNSUPPORTED.md for the CURRENT_DATE(zone) case where the
+    // argument order defeats the check and it wrongly does.
+    const injected = try nowCiv(&.{Value{ .int = 1_136_239_445_000_000_000 }});
+    try testing.expectEqual(@as(i64, 1_136_239_445_000_000), injected);
+
+    // With nothing to read, it must still answer something plausible rather
+    // than 0 — a clock later than 2020 and earlier than 2100.
+    const wall = try nowCiv(&.{});
+    try testing.expect(wall > 1_577_836_800 * tu.second_micros);
+    try testing.expect(wall < 4_102_444_800 * tu.second_micros);
+
+    // A non-int first argument is a zone, not an injected clock.
+    const zoned = try nowCiv(&.{Value{ .string = "Asia/Tokyo" }});
+    try testing.expect(zoned > 1_577_836_800 * tu.second_micros);
+}
+
+test "LAST_DAY still refuses a part outside the analyzer's whitelist" {
+    // CheckLastDayArguments admits exactly the twelve parts the handler
+    // implements, so this arm cannot be reached by any query — it guards
+    // against the two lists drifting apart.
+    try testing.expectError(error.UnsupportedOperation, lastDay(
+        testing.allocator,
+        &.{ Value{ .date = 0 }, Value{ .string = "DAY" } },
+    ));
+}
+
+test "intervalOf and partStr unwrap a SAFE-wrapped argument" {
+    // `Value.safe` is a port of go-zetasqlite's *SafeValue. Nothing in this
+    // engine builds one: SAFE. is implemented by the trampoline in
+    // register.zig, no decode path produces `.safe`, and both codecs unwrap it
+    // on encode. The prong exists for parity, so only a hand-built value
+    // reaches it.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const wrapped = try value_mod.safeValue(a, Value{ .string = "MONTH" });
+    try testing.expectEqualStrings("MONTH", try partStr(wrapped));
+
+    // And still refuses a value that carries no text at all.
+    try testing.expectError(error.FailedConversion, partStr(Value{ .bool = true }));
+
+    const iv = value_mod.Interval{ .months = 1, .days = 2, .hours = 3 };
+    const wrapped_iv = try value_mod.safeValue(a, Value{ .interval = iv });
+    try testing.expectEqual(iv, try intervalOf(wrapped_iv));
+}
+
+test "the arity guards the analyzer makes unreachable still hold" {
+    // GENERATE_DATE_ARRAY is declared with min_args = 2 in bind.func_table and
+    // the analyzer rejects any arity but 2 or 4, so no query reaches this.
+    const alloc = testing.allocator;
+    try testing.expectError(
+        error.UnsupportedOperation,
+        generateDateArray(alloc, &.{Value{ .date = 0 }}),
+    );
+    try testing.expectError(
+        error.UnsupportedOperation,
+        lastDay(alloc, &.{ Value{ .date = 0 }, Value{ .string = "MONTH" }, Value{ .string = "extra" } }),
+    );
+}
+
+test "propagate prefers the parser's message and falls back to the bare error" {
+    // The fallback needs `tp.message` to be null, which in a live process means
+    // an OOM inside time_parser before any other parser error has run — nothing
+    // clears the threadlocal afterwards.
+    // `propagate` returns the error as a value rather than raising it, so this
+    // compares rather than catching.
+    tp.message = null;
+    try testing.expectEqual(Error.OutOfMemory, propagate(error.OutOfMemory));
+
+    tp.message = "error parsing [x] with format [%Y]: unexpected year number";
+    try testing.expectEqual(Error.InvalidDate, propagate(error.InvalidDate));
+    try testing.expectEqualStrings(tp.message.?, bind.message.?);
+    tp.message = null;
+    bind.clearDiagnostics();
 }

@@ -78,5 +78,76 @@
             .expect_error = "error parsing [Thu Dec 25 07:30:00 2008] with format [%a %b %e %I:%M:%S]: found unparsed text [ 2008]",
             .rows = .{},
         },
+
+        // Read back through FORMAT_TIMESTAMP rather than asserting the raw
+        // "seconds.remainder" the older cases above use: the point of a case is
+        // that a reader can check it against the reference, and 1710460800.0
+        // cannot be checked by eye.
+        .{
+            .desc = "parse timestamp with %s, seconds since the epoch",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%Y-%m-%d %H:%M:%S\", PARSE_TIMESTAMP(\"%s\", \"1710460800\"))",
+            .rows = .{
+                .{"2024-03-15 00:00:00"},
+            },
+        },
+        .{
+            .desc = "parse timestamp with %Ez accepting a literal Z for UTC",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%Y-%m-%d %H:%M:%S\", PARSE_TIMESTAMP(\"%Y-%m-%dT%H:%M:%S%Ez\", \"2024-03-15T10:20:30Z\"))",
+            .rows = .{
+                .{"2024-03-15 10:20:30"},
+            },
+        },
+        .{
+            .desc = "parse timestamp with %Ez accepting a signed offset",
+            // 10:20:30+09:00 is 01:20:30 UTC.
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%Y-%m-%d %H:%M:%S\", PARSE_TIMESTAMP(\"%Y-%m-%dT%H:%M:%S%Ez\", \"2024-03-15T10:20:30+09:00\"))",
+            .rows = .{
+                .{"2024-03-15 01:20:30"},
+            },
+        },
+        .{
+            .desc = "parse timestamp reads its third argument as the zone of a naive input",
+            // 15:30 Pacific on 2008-12-25 is PST (UTC-8), so 23:30 UTC.
+            .sql =
+            \\SELECT FORMAT_TIMESTAMP(
+            \\  "%Y-%m-%d %H:%M:%S",
+            \\  PARSE_TIMESTAMP("%Y-%m-%d %H:%M:%S", "2008-12-25 15:30:00", "America/Los_Angeles"))
+            ,
+            .rows = .{
+                .{"2008-12-25 23:30:00"},
+            },
+        },
+        .{
+            .desc = "parse timestamp rejects %z, which has no parser",
+            // %z formats but does not parse; only %Ez reads an offset back.
+            .sql = "SELECT PARSE_TIMESTAMP(\"%z\", \"+09:00\")",
+            .expect_error = "error parsing [+09:00] with format [%z]: unexpected format type %z",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse timestamp rejects a short unix-seconds field",
+            // %s consumes exactly ten digits.
+            .sql = "SELECT PARSE_TIMESTAMP(\"%s\", \"171046080\")",
+            .expect_error = "error parsing [171046080] with format [%s]: unexpected unixtime length",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse timestamp rejects a non-numeric unix-seconds field",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%s\", \"17104608xx\")",
+            .expect_error = "error parsing [17104608xx] with format [%s]: unexpected unixtime number",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse timestamp rejects an offset that is neither Z nor signed",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%Y%Ez\", \"2024UTC\")",
+            .expect_error = "unexpected offset format: %U",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse timestamp rejects a signed offset without a colon",
+            .sql = "SELECT PARSE_TIMESTAMP(\"%Y%Ez\", \"2024+09000\")",
+            .expect_error = "unexpected offset format",
+            .rows = .{},
+        },
     },
 }

@@ -12,6 +12,11 @@ const Civil = tu.Civil;
 
 pub const FormatType = enum { date, datetime, time, timestamp };
 
+/// Names the target type in "unavailable format by <type> type". The
+/// `.timestamp` arm is unreachable and stays only because the switch must be
+/// exhaustive: a TIMESTAMP satisfies every arm of `elementAvailable`, and the
+/// one other caller guards on `typ != .timestamp`, so no input produces
+/// "unavailable format by timestamp type".
 fn typeName(t: FormatType) []const u8 {
     return switch (t) {
         .date => "date",
@@ -130,7 +135,7 @@ fn formatCombination(
         else => {},
     }
     _ = bt;
-    return failFmt(alloc, "unexpected format type %%{c}", .{f0}, error.InvalidDate);
+    return failFmt(alloc, "unexpected format type %{c}", .{f0}, error.InvalidDate);
 }
 
 fn appendYear4(alloc: std.mem.Allocator, out: *std.ArrayList(u8), year: i64) Error!void {
@@ -194,7 +199,7 @@ fn formatElement(
         'c' => try appendAnsic(alloc, out, bt, c), // "Mon Jan 02 15:04:05 2006"
         'D', 'x' => try appendFmt(alloc, out, "{d:0>2}/{d:0>2}/{s}", .{ u(c.month), u(c.day), yearLast2(c.year) }),
         'd' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.day)}),
-        'e' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.day)}),
+        'e' => try appendFmt(alloc, out, "{d: >2}", .{u(c.day)}),
         'F' => try appendFmt(
             alloc,
             out,
@@ -202,57 +207,76 @@ fn formatElement(
             .{ @as(u64, @intCast(@max(c.year, 0))), u(c.month), u(c.day) },
         ),
         'G', 'J' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().year}),
-        'g' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().year}),
+        'g' => try out.appendSlice(alloc, yearLast2(bt.isoWeek().year)),
         'H' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.hour)}),
-        'I' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.hour)}), // Go hour12Formatter uses Hour() as-is
-        'j' => try appendFmt(alloc, out, "{d}", .{bt.yearDay()}),
+        // %I and %l are the same 12-hour value and differ only in padding, so
+        // they share one expression. go-zetasqlite's hour12Formatter used
+        // Hour() as-is for %I and Hour()%12 for %l, which answered 13 and " 0"
+        // where format-elements.md documents 01 and "12"; midnight and noon
+        // both map to 12, which is what the %12 form gets wrong.
+        'I' => try appendFmt(alloc, out, "{d:0>2}", .{u(hour12(c.hour))}),
+        'l' => try appendFmt(alloc, out, "{d: >2}", .{u(hour12(c.hour))}),
+        'j' => try appendFmt(alloc, out, "{d:0>3}", .{u(bt.yearDay())}),
         'k' => { // space-preceding single digit 24h
             if (c.hour < 10) {
                 try appendFmt(alloc, out, " {d}", .{c.hour});
             } else try appendFmt(alloc, out, "{d}", .{c.hour});
-        },
-        'l' => { // space-preceding single digit 12h (Hour()%12)
-            const h12 = @mod(c.hour, 12);
-            if (h12 < 10) {
-                try appendFmt(alloc, out, " {d}", .{h12});
-            } else try appendFmt(alloc, out, "{d}", .{h12});
         },
         'M' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.minute)}),
         'm' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.month)}),
         'n' => try out.append(alloc, '\n'),
         'P' => try out.appendSlice(alloc, if (c.hour < 12) "am" else "pm"),
         'p' => try out.appendSlice(alloc, if (c.hour < 12) "AM" else "PM"),
-        'Q' => { // quarter from YearDay
-            const day = bt.yearDay();
-            const q: u8 = if (day < 90)
-                '1'
-            else if (day < 180)
-                '2'
-            else if (day < 270)
-                '3'
-            else
-                '4';
-            try out.append(alloc, q);
-        },
+        'Q' => try appendFmt(alloc, out, "{d}", .{bt.quarter()}),
         'R' => try appendFmt(alloc, out, "{d:0>2}:{d:0>2}", .{ u(c.hour), u(c.minute) }),
         'S' => try appendFmt(alloc, out, "{d:0>2}", .{u(c.second)}),
         's' => try appendFmt(alloc, out, "{d}", .{bt.unixSeconds()}),
         'T', 'X' => try appendFmt(alloc, out, "{d:0>2}:{d:0>2}:{d:0>2}", .{ u(c.hour), u(c.minute), u(c.second) }),
         't' => try out.append(alloc, '\t'),
-        'U', 'W', 'V' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().week}),
-        'u' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().week}),
-        'w' => try appendFmt(alloc, out, "{d}", .{bt.isoWeek().week - 1}),
+        // Three different quantities that used to share one: %U counts weeks
+        // from the year's first Sunday, %W from its first Monday, and %V is the
+        // ISO week, which belongs to the ISO year and so disagrees with both
+        // around New Year. 2023-01-01 is %U=01, %W=00, %V=52.
+        'U' => try appendFmt(alloc, out, "{d:0>2}", .{u(bt.weekOfYear(.sunday))}),
+        'W' => try appendFmt(alloc, out, "{d:0>2}", .{u(bt.weekOfYear(.monday))}),
+        'V' => try appendFmt(alloc, out, "{d:0>2}", .{u(bt.isoWeek().week)}),
+        // Weekdays, not week numbers.
+        'u' => try appendFmt(alloc, out, "{d}", .{bt.isoWeekday()}),
+        'w' => try appendFmt(alloc, out, "{d}", .{bt.weekday()}),
         'Y' => try appendFmt(alloc, out, "{d}", .{c.year}),
         'y' => try out.appendSlice(alloc, yearLast2(c.year)),
         'Z' => {}, // zone name: unavailable (UTC-only)
-        'z' => try appendFmt(alloc, out, "{d}", .{offset_sec}),
+        'z' => try appendOffsetCompact(alloc, out, offset_sec),
         '%' => try out.append(alloc, '%'),
-        else => return failFmt(alloc, "unexpected format type %%{c}", .{spec}, error.InvalidDate),
+        else => return failFmt(alloc, "unexpected format type %{c}", .{spec}, error.InvalidDate),
     }
 }
 
 inline fn u(x: i64) u64 {
     return @intCast(x);
+}
+
+/// The 12-hour clock reading of a 24-hour hour: 1-12, with both 0 and 12
+/// answering 12. `%I` zero-pads it and `%l` space-pads it; nothing else differs.
+inline fn hour12(hour: i64) i64 {
+    return @mod(hour + 11, 12) + 1;
+}
+
+/// `%z`: the UTC offset as `+HHMM` / `-HHMM`. Printing the raw second count is
+/// what it used to do, and `+0900` is what format-elements.md documents. The
+/// colon-separated `+09:00` form beside it is `%Ez`, which is RFC 3339.
+fn appendOffsetCompact(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    offset_sec: i64,
+) Error!void {
+    const sign: u8 = if (offset_sec < 0) '-' else '+';
+    const a: u64 = @abs(offset_sec);
+    try appendFmt(alloc, out, "{c}{d:0>2}{d:0>2}", .{
+        sign,
+        @divTrunc(a, 3600),
+        @divTrunc(@rem(a, 3600), 60),
+    });
 }
 
 threadlocal var year2_buf: [4]u8 = undefined;
@@ -434,7 +458,7 @@ fn parseCombination(
         },
         else => {},
     }
-    return failFmt(st.alloc, "unexpected format type %%{c}", .{f0}, error.InvalidDate);
+    return failFmt(st.alloc, "unexpected format type %{c}", .{f0}, error.InvalidDate);
 }
 
 /// Go parseDigitRespectingOptionalPlaces: parse up to len(maxNumber) digits,
@@ -500,7 +524,7 @@ fn parseElement(st: *State, spec: u8, target: []const u8) Error!usize {
         'Y' => parseYear(st, target),
         'y' => parseYearNoCentury(st, target),
         '%' => parseLiteral(st, target, '%'),
-        else => failFmt(st.alloc, "unexpected format type %%{c}", .{spec}, error.InvalidDate),
+        else => failFmt(st.alloc, "unexpected format type %{c}", .{spec}, error.InvalidDate),
     };
 }
 
@@ -791,7 +815,7 @@ fn parseRFC3339Zone(st: *State, target: []const u8) Error!usize {
         st.offset_sec = sign * (h * 3600 + m * 60);
         return 6;
     }
-    return failFmt(st.alloc, "unexpected offset format: %%{c}", .{target[0]}, error.InvalidDate);
+    return failFmt(st.alloc, "unexpected offset format: %{c}", .{target[0]}, error.InvalidDate);
 }
 
 /// Go timePrecisionParser: regex `[0-9]{2}\.?[0-9]*` — seconds and optional

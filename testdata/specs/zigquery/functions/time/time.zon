@@ -17,5 +17,13 @@
                 .{"15:30:00"},
             },
         },
+        .{
+            .desc = "time does not accept a TIME",
+            // As with DATETIME(DATETIME) — the analyzer admits it and BigQuery
+            // returns the value unchanged. See docs/SPEC_UNSUPPORTED.md.
+            .sql = "SELECT TIME(TIME \"15:30:00\")",
+            .expect_error = "TIME: invalid first argument type",
+            .rows = .{},
+        },
     },
 }

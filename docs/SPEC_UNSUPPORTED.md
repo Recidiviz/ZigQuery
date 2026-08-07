@@ -132,6 +132,62 @@ do not. Fixing it means editing 6 goccy-derived corpus expectations (`to_json` /
 `to_json_string`, `{"id":1,"coordinates":[10,20]}`), which is a policy change: the
 corpus has never been edited away from goccy.
 
+**4. Fifteen date/time behaviours that have since been fixed.** Found by pointing
+`zig build coverage-spec` at the five date/time files and reading every line the suite
+never executed. Thirteen `FORMAT_*` elements and one `_TRUNC` ladder were answering
+something other than what `third_party/googlesql/docs/format-elements.md` documents,
+none of them exercised by any case:
+
+| | was | now |
+|---|---|---|
+| `%e` | `05` (zero-padded) | `" 5"` |
+| `%j` | `5` | `005` |
+| `%u` `%w` | the ISO **week** number | the weekday, Mon=1..7 and Sun=0..6 |
+| `%U` `%W` | the ISO week number | weeks from the year's first Sunday / Monday |
+| `%V` | `1` | `01` |
+| `%g` | `2022` | `22` |
+| `%I` `%l` | the raw hour, and `hour % 12` | the 12-hour clock, `12` at both 0 and 12 |
+| `%Q` | day-of-year thresholds, so Q2 for 2024-03-30 | the quarter of the month |
+| `%z` | `32400` | `+0900` |
+| `TIME_TRUNC` / `DATETIME_TRUNC` / `TIMESTAMP_TRUNC` at MILLISECOND, SECOND | each dropped the unit it was named for, so MILLISECOND meant SECOND and SECOND meant MINUTE | keeps it |
+| `LAST_DAY(d, WEEK(<day>))` | overshot by a week whenever the date fell on or before the start day | wraps |
+| `LAST_DAY(d, ISOWEEK)` | Sunday-start weeks | Monday-start, as ISO defines |
+
+They are recorded here rather than only in the changelog because they are the clearest
+evidence for what this section is *for*: every one of them was green, and stayed green,
+for as long as nothing ran the line. The cases that now pin them are in
+`testdata/specs/zigquery/functions/{date,datetime,time,timestamp}`.
+
+Still outstanding in the same area, all currently green on an answer BigQuery does not
+give:
+
+- **`CURRENT_DATE(zone)` ignores both the zone and the injected clock.**
+  `src/internal/transformer/function.zig` appends the deterministic-now literal *after*
+  the call's own arguments, so `fn_date.nowCiv` sees the zone string in `args[0]`, fails
+  its `args[0] == .int` test, and reads the wall clock. Same for `CURRENT_TIME(zone)` and
+  `CURRENT_DATETIME(zone)`. No spec case can pin this until it is fixed — the result is
+  not reproducible — so it is covered by a unit test that asserts only the range.
+- **`TIME(TIME)`, `DATETIME(DATETIME)`, `TIMESTAMP(TIMESTAMP)` raise.**
+  `FEATURE_DATE_TIME_CONSTRUCTORS` is enabled, so the analyzer admits the identity forms;
+  BigQuery returns the value unchanged and this engine answers "invalid first argument
+  type". Pinned as `.expect_error` cases.
+- **`STRING(JSON)` renders any scalar.** `STRING(JSON 'true')` is `"true"` here; BigQuery
+  restricts the function to JSON strings and errors otherwise.
+- **`%r` and the `%O*` elements are unimplemented**, and rejected with "unexpected format
+  type". Documented; not built.
+- **`parseSecondPrecision` ignores its precision argument**, so `%E1S`…`%E6S` all consume
+  whatever fraction is present. `PARSE_DATETIME("…%E3S", "…30.123456")` reads six digits.
+- **The FORMAT side does no per-type gating at all.** `formatElement` discards its `typ`
+  parameter, so `FORMAT_TIME('%A', TIME '09:20:30')` answers `Thursday` — the weekday of
+  the epoch — where `format-elements.md` lists `%A` as DATE/DATETIME/TIMESTAMP only. The
+  PARSE side *does* gate, which is why `PARSE_DATE('%H', '10')` is an error. Same class
+  of over-acceptance as `PRODUCT_INTERNAL` above.
+- **`LAST_DAY(d, ISOYEAR)` returns the calendar year end.** It shares the `YEAR` arm, so
+  2024 ends `2024-12-31` where the ISO year 2024 ends `2024-12-29`.
+- **`tp.message` is never cleared.** `bind.clearDiagnostics()` resets `bind.message` but
+  not `time_parser`'s threadlocal, so a stale parser message from an earlier query can be
+  attached to a later unrelated error.
+
 ---
 
 ### The flag experiment

@@ -36,5 +36,32 @@
                 .{ "0003-01-01T00:00:00", "0003-01-01T00:00:00", "0003-01-11T00:00:00" },
             },
         },
+        .{
+            .desc = "parse datetime with %E4S",
+            .sql = "SELECT PARSE_DATETIME(\"%Y-%m-%d %H:%M:%E4S\", \"2024-03-15 10:20:30.1234\")",
+            .rows = .{
+                .{"2024-03-15T10:20:30.1234"},
+            },
+        },
+        .{
+            .desc = "parse datetime with an explicit %E<n>S precision",
+            // The digit selects a dispatch arm but not a width: the parser
+            // consumes whatever fraction is present either way, which is why
+            // %E3S reads six digits here. See docs/SPEC_UNSUPPORTED.md.
+            .sql =
+            \\SELECT
+            \\  PARSE_DATETIME("%Y-%m-%d %H:%M:%E3S", "2024-03-15 10:20:30.123"),
+            \\  PARSE_DATETIME("%Y-%m-%d %H:%M:%E6S", "2024-03-15 10:20:30.123456")
+            ,
+            .rows = .{
+                .{ "2024-03-15T10:20:30.123", "2024-03-15T10:20:30.123456" },
+            },
+        },
+        .{
+            .desc = "parse datetime rejects %Ez, which only a TIMESTAMP can carry",
+            .sql = "SELECT PARSE_DATETIME(\"%Ez\", \"+09:00\")",
+            .expect_error = "unavailable format by datetime type",
+            .rows = .{},
+        },
     },
 }

@@ -10,5 +10,14 @@
                 .{"2008-12-25 15:30:00+00"},
             },
         },
+        .{
+            .desc = "string renders a JSON scalar",
+            // BigQuery restricts STRING(JSON) to JSON strings and errors on any
+            // other kind; this engine renders them. See docs/SPEC_UNSUPPORTED.md.
+            .sql = "SELECT STRING(JSON '\"purple\"'), STRING(JSON 'true'), STRING(JSON '2005')",
+            .rows = .{
+                .{ "purple", "true", "2005" },
+            },
+        },
     },
 }

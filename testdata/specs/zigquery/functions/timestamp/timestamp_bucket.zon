@@ -1,0 +1,45 @@
+.{
+    .spec = "zigquery/functions/timestamp/timestamp_bucket",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "timestamp_bucket buckets from the default 1950-01-01 origin",
+            // The rows are the worked example in
+            // third_party/googlesql/docs/time-series-functions.md, which is
+            // chosen to straddle the default origin in both directions.
+            .sql =
+            \\WITH some_timestamps AS (
+            \\  SELECT TIMESTAMP '1949-12-30 13:00:00+00' AS my_timestamp UNION ALL
+            \\  SELECT TIMESTAMP '1949-12-31 00:00:00+00' UNION ALL
+            \\  SELECT TIMESTAMP '1950-01-01 00:00:00+00' UNION ALL
+            \\  SELECT TIMESTAMP '1950-01-01 13:00:00+00'
+            \\)
+            \\SELECT FORMAT_TIMESTAMP("%Y-%m-%d %H:%M:%S", TIMESTAMP_BUCKET(my_timestamp, INTERVAL 12 HOUR))
+            \\FROM some_timestamps
+            \\ORDER BY my_timestamp
+            ,
+            .rows = .{
+                .{"1949-12-30 12:00:00"},
+                .{"1949-12-31 00:00:00"},
+                .{"1950-01-01 00:00:00"},
+                .{"1950-01-01 12:00:00"},
+            },
+        },
+        .{
+            .desc = "timestamp_bucket takes an explicit origin as its third argument",
+            // An origin at :15 past shifts every bucket boundary with it.
+            .sql =
+            \\SELECT FORMAT_TIMESTAMP(
+            \\  "%Y-%m-%d %H:%M:%S",
+            \\  TIMESTAMP_BUCKET(
+            \\    TIMESTAMP "2024-01-01 12:34:56+00",
+            \\    INTERVAL 1 HOUR,
+            \\    TIMESTAMP "1970-01-01 00:15:00+00"))
+            ,
+            .rows = .{
+                .{"2024-01-01 12:15:00"},
+            },
+        },
+    },
+}

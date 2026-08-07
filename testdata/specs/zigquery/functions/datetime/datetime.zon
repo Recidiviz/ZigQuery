@@ -17,5 +17,21 @@
                 .{"2023-01-01T12:01:00"},
             },
         },
+        .{
+            .desc = "datetime from a DATE, with and without a TIME",
+            .sql = "SELECT DATETIME(DATE \"2008-12-25\", TIME \"15:30:00\"), DATETIME(DATE \"2008-12-25\")",
+            .rows = .{
+                .{ "2008-12-25T15:30:00", "2008-12-25T00:00:00" },
+            },
+        },
+        .{
+            .desc = "datetime does not accept a DATETIME",
+            // FEATURE_DATE_TIME_CONSTRUCTORS makes the analyzer admit the
+            // identity form, which BigQuery answers with the value unchanged.
+            // See docs/SPEC_UNSUPPORTED.md.
+            .sql = "SELECT DATETIME(DATETIME \"2008-12-25 15:30:00\")",
+            .expect_error = "DATETIME: first argument must be DATE or TIMESTAMP type",
+            .rows = .{},
+        },
     },
 }
