@@ -1441,6 +1441,9 @@ zigquery/functions/timestamp/unix_micros	unix_micros
 zigquery/functions/timestamp/unix_millis	unix_millis
 zigquery/functions/timestamp/unix_seconds	unix_seconds
 zigquery/functions/utility/generate_uuid	generate_uuid
+zigquery/functions/utility/safe_prefix	safe on a function that is neither aggregate nor analytic
+zigquery/functions/utility/safe_prefix	safe names the function it was applied to
+zigquery/functions/utility/safe_prefix	a function with no implementation names itself
 zigquery/functions/window/cume_dist	cume_dist
 zigquery/functions/window/dense_rank	window dense_rank
 zigquery/functions/window/dense_rank	window dense_rank with group
@@ -1466,6 +1469,7 @@ zigquery/functions/window/percentile_disc	percentile_disc
 zigquery/functions/window/percentile_disc	percentile_disc with respect nulls
 zigquery/functions/window/rank	window rank
 zigquery/functions/window/rank	rank with same order
+zigquery/functions/window/rank	safe rank
 zigquery/functions/window/row_number	window row_number
 zigquery/functions/window/row_number	row_number nest
 zigquery/syntax/cte/with_recursive	recursive cte

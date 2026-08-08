@@ -20,12 +20,12 @@
         .{
             .desc = "format 0 as 0.0.0.0",
             .sql = "SELECT NET.FORMAT_IP(0)",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "net_format_ip is not implemented",
         },
         .{
             .desc = "format 16909060 as 1.2.3.4",
             .sql = "SELECT NET.FORMAT_IP(16909060)",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "net_format_ip is not implemented",
         },
     },
 }

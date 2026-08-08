@@ -727,7 +727,7 @@ test "cast function (foundation kinds)" {
     try env.expectNullResult(try env.fmt("SELECT zetasqlite_cast(NULL, {s}, {s}, 0)", .{ t_string, t_int }));
     try env.expectNullResult(try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 1)", .{ try env.encStr("abc"), t_string, t_int }));
     try env.expectErrorMsg(
-        "failed to convert string to int64",
+        "Bad int64 value: abc",
         try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("abc"), t_string, t_int }),
     );
     // string -> timestamp parses the date/datetime/timestamp form (a bare

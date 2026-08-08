@@ -228,32 +228,51 @@ fn getZetasqliteFuncName(
     var func_prefix: []const u8 = "zetasqlite";
     const error_mode = fcb.error_mode orelse .DEFAULT_ERROR_MODE;
     if (error_mode == .SAFE_ERROR_MODE) {
-        // Go: "SAFE is not supported for function %s"
-        if (!exists_normal) return error.UnsupportedFunction;
+        if (!exists_normal) return safeUnsupported(func_name, exists_aggregate, exists_window);
         func_prefix = "zetasqlite_safe";
     }
-
-    if (std.mem.startsWith(u8, func_name, "$")) {
+    // The operator names the analyzer spells with a leading `$` ($add,
+    // $interval, ...) are registered under the bare name, so this strip has to
+    // happen before any lookup — and it is itself the answer: a `$` name maps
+    // unconditionally, without consulting a table. Deciding it from
+    // `exists_normal` instead reads "$interval" against a map keyed on
+    // "interval" and rejects every operator in the language.
+    const is_operator = std.mem.startsWith(u8, func_name, "$");
+    if (is_operator) {
+        func_name = func_name[1..];
         if (is_window_func) {
-            return std.fmt.allocPrint(alloc, "{s}_window_{s}", .{ func_prefix, func_name[1..] });
+            return std.fmt.allocPrint(alloc, "{s}_window_{s}", .{ func_prefix, func_name });
         }
-        return std.fmt.allocPrint(alloc, "{s}_{s}", .{ func_prefix, func_name[1..] });
-    } else if (exists_current_time) {
         return std.fmt.allocPrint(alloc, "{s}_{s}", .{ func_prefix, func_name });
-    } else if (exists_normal) {
+    }
+
+    if (exists_current_time or exists_normal) {
         return std.fmt.allocPrint(alloc, "{s}_{s}", .{ func_prefix, func_name });
     } else if (!is_window_func and exists_aggregate) {
         return std.fmt.allocPrint(alloc, "{s}_{s}", .{ func_prefix, func_name });
     } else if (is_window_func and exists_window) {
         return std.fmt.allocPrint(alloc, "{s}_window_{s}", .{ func_prefix, func_name });
     } else {
-        // Go: builtins with no runtime mapping -> "%s function is
-        // unimplemented"; otherwise getFuncName recovers the registered UDF
-        // name from FunctionNamePath (formatPath joins with "_", which the
-        // "."->"_" replacement above already produced).
-        if (is_builtin) return error.UnsupportedFunction;
+        if (is_builtin) {
+            value_mod.setDiagnostic("{s} is not implemented", .{func_name});
+            return error.UnsupportedFunction;
+        }
         return func_name;
     }
+}
+
+/// BigQuery words the rejection by what kind of function SAFE was applied to, and lower-
+/// cases the name — which is the spelling the analyzer hands us. Measured against
+/// BigQuery (recidiviz-bigquery-sandbox, 2026-08-07).
+fn safeUnsupported(name: []const u8, is_aggregate: bool, is_window: bool) Error {
+    if (is_aggregate) {
+        value_mod.setDiagnostic("SAFE is unsupported with aggregate function {s}", .{name});
+    } else if (is_window) {
+        value_mod.setDiagnostic("SAFE is unsupported with analytic function {s}", .{name});
+    } else {
+        value_mod.setDiagnostic("SAFE with function {s} is not supported.", .{name});
+    }
+    return error.UnsupportedFunction;
 }
 
 fn replaceDots(alloc: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]u8 {
@@ -1969,8 +1988,13 @@ pub const NodeExtractor = struct {
         if (std.mem.eql(u8, original_func_name, "min_by") or
             std.mem.eql(u8, original_func_name, "max_by"))
         {
-            // requires exactly 2 arguments
-            if (arguments.items.len != 2) return error.UnsupportedFunction;
+            if (arguments.items.len != 2) {
+                value_mod.setDiagnostic(
+                    "{s} requires exactly 2 arguments, got {d}",
+                    .{ original_func_name, arguments.items.len },
+                );
+                return error.UnsupportedFunction;
+            }
             const having_func: []const u8 = if (std.mem.eql(u8, original_func_name, "min_by"))
                 "zetasqlite_having_min"
             else
@@ -2201,8 +2225,10 @@ pub const NodeExtractor = struct {
 
         var frame_clause = try windowFuncFixedRange(alloc, function.name);
         if (frame_clause != null and node.window_frame != null) {
-            // Go: "%s: window framing clause is not allowed for analytic
-            // function"
+            value_mod.setDiagnostic(
+                "{s}: window framing clause is not allowed for analytic function",
+                .{function.name},
+            );
             return error.UnsupportedFunction;
         }
         if (frame_clause == null) {
@@ -2784,4 +2810,22 @@ test "extract STRUCT field access becomes zetasqlite_get_struct_field" {
     try testing.expectEqualStrings("zetasqlite_get_struct_field", function.name);
     try testing.expectEqual(@as(usize, 2), function.arguments.len);
     try value_mod.expectValueEqual(.{ .int = 1 }, function.arguments[1].literal.?.value);
+}
+
+test "normal_func_names covers every registered scalar exactly once" {
+    // The map merges two tables, and StaticStringMap accepts a duplicate key
+    // silently — so a name landing in both would go unnoticed here and
+    // register a function twice in register.zig.
+    var seen: std.StringHashMap(void) = .init(std.testing.allocator);
+    defer seen.deinit();
+    for (normal_func_names.keys()) |name| {
+        try std.testing.expect(!seen.contains(name));
+        try seen.put(name, {});
+    }
+    for (bind.func_table) |info| try std.testing.expect(existsNormalFunc(info.name));
+    for (agg_opt.option_func_table) |info| try std.testing.expect(existsNormalFunc(info.name));
+
+    // Go's setupNormalFuncMap alias.
+    try std.testing.expect(existsNormalFunc("safe_add"));
+    try std.testing.expect(!existsNormalFunc("safe_nonesuch"));
 }

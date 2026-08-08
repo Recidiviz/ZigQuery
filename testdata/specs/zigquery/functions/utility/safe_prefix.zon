@@ -1,0 +1,38 @@
+.{
+    .spec = "zigquery/functions/utility/safe_prefix",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        // SAFE. is a language feature rather than a function, so its rejections live
+        // together here. BigQuery words them by the kind of function SAFE was applied to,
+        // and the aggregate and analytic forms are asserted where those functions live —
+        // aggregate/sum.zon and window/rank.zon. Measured
+        // (recidiviz-bigquery-sandbox, 2026-08-07).
+        .{
+            .desc = "safe on a function that is neither aggregate nor analytic",
+            // The general phrasing, trailing period included. ST_AREA is the probe because
+            // BigQuery has it and answers exactly this; the engine reaches the same arm
+            // for any function it has no SAFE form for.
+            .sql = "SELECT SAFE.ST_AREA(ST_GEOGPOINT(0, 0))",
+            .expect_error = "SAFE with function st_area is not supported.",
+            .rows = .{},
+        },
+        .{
+            .desc = "safe names the function it was applied to",
+            // Whatever the function, the message carries its name rather than an internal
+            // error tag. These two are GoogleSQL-only, so BigQuery answers "Function not
+            // found" instead; the wording under test is the engine's, verified above.
+            .sql = "SELECT SAFE.REGEXP_MATCH('a', 'a')",
+            .expect_error = "SAFE with function regexp_match is not supported.",
+            .rows = .{},
+        },
+        .{
+            .desc = "a function with no implementation names itself",
+            // The other UnsupportedFunction arm: the name resolves and the analyzer
+            // accepts it, but nothing in the dispatch maps answers to it.
+            .sql = "SELECT SPLIT_SUBSTR('a,b,c', ',', 1)",
+            .expect_error = "split_substr is not implemented",
+            .rows = .{},
+        },
+    },
+}

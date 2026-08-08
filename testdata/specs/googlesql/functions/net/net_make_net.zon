@@ -18,17 +18,17 @@
         .{
             .desc = "basic IPv4 prefix",
             .sql = "SELECT NET.MAKE_NET('192.168.1.0', 24) AS v",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "net_make_net is not implemented",
         },
         .{
             .desc = "host-level IPv4",
             .sql = "SELECT NET.MAKE_NET('10.0.0.1', 32) AS v",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "net_make_net is not implemented",
         },
         .{
             .desc = "zero-prefix anywhere-net",
             .sql = "SELECT NET.MAKE_NET('0.0.0.0', 0) AS v",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "net_make_net is not implemented",
         },
     },
 }

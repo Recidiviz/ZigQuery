@@ -629,57 +629,32 @@ fn runCase(
 
     const want_err = stringField(zoir, c, "expect_error");
 
-    // Where a case's error is expected to surface decides how hard we look at
-    // the message, and `typed` decides which rule applies:
+    // An `expect_error` is satisfied when the recorded text appears anywhere in what the
+    // driver reports, on either path and in every dialect. Substring rather than equality
+    // for two reasons: a doc-derived expectation is a prose fragment, and the driver wraps
+    // a UDF failure as "SQL logic error: <message> (1)", so a case records the engine's
+    // own words and the wrapper stays out of the corpus.
     //
-    //   - Analyze/prepare time. A doc-derived expectation is a prose fragment,
-    //     so substring. A `typed` one passes on any message, because
-    //     `query_test.go` compared none on this path and the exported string is
-    //     whatever go-zetasqlite happened to say.
-    //   - Row-iteration time. Substring again for the doc suite; `typed`
-    //     demands equality, since that message is this engine's own wording,
-    //     exported verbatim, and a change to it is worth seeing.
+    // Both paths, because which one a case lands on is not a property of the case.
+    // `driver.query` takes the first `step()` itself, so a single-row SELECT fails during
+    // `db.query` while the same expression over two rows fails during iteration.
     //
-    // `error.Unimplemented` is excluded from the `typed` prepare-time pass.
-    // That was the corpus runner's one deliberate deviation from Go and it is
-    // still the right one: a stubbed pipeline stage must not be able to
-    // masquerade as a satisfied error expectation.
+    // `error.Unimplemented` can never satisfy an expectation. That was the corpus runner's
+    // one deliberate deviation from Go and it is still the right one: a stubbed pipeline
+    // stage must not masquerade as a satisfied error case.
     var rows = db.query(sql, args.items, qopts) catch |err| {
-        const msg = db.lastError();
-        if (want_err) |w| {
-            if (expect.typed) {
-                if (err != error.Unimplemented) return .{ .outcome = .pass };
-            } else if (std.mem.indexOf(u8, msg, w) != null) {
-                return .{ .outcome = .pass };
-            }
-        }
-        if (classify(err, msg)) |u| return u;
-        return .{
-            .outcome = .fail,
-            .detail = try std.fmt.allocPrint(arena, "{s}: {s}", .{ @errorName(err), msg }),
-        };
+        if (matchError(want_err, err, db.lastError())) |r| return r;
+        if (classify(err, db.lastError())) |u| return u;
+        return try errorDetail(arena, want_err, err, db.lastError());
     };
     defer rows.deinit();
 
     var got: std.ArrayList([]const driver.Cell) = .empty;
     defer got.deinit(arena);
     while (rows.next() catch |err| {
-        const msg = db.lastError();
-        if (want_err) |w| {
-            if (expect.typed) {
-                if (std.mem.eql(u8, w, msg)) return .{ .outcome = .pass };
-                return .{
-                    .outcome = .fail,
-                    .detail = try std.fmt.allocPrint(arena, "expected [{s}] got [{s}]", .{ w, msg }),
-                };
-            }
-            if (std.mem.indexOf(u8, msg, w) != null) return .{ .outcome = .pass };
-        }
-        if (classify(err, msg)) |u| return u;
-        return .{
-            .outcome = .fail,
-            .detail = try std.fmt.allocPrint(arena, "{s}: {s}", .{ @errorName(err), msg }),
-        };
+        if (matchError(want_err, err, db.lastError())) |r| return r;
+        if (classify(err, db.lastError())) |u| return u;
+        return try errorDetail(arena, want_err, err, db.lastError());
     }) |row| {
         try got.append(arena, row);
     }
@@ -793,6 +768,32 @@ fn rowMatches(
     return true;
 }
 
+/// A pass when the case expected an error and `msg` carries the recorded text; null when
+/// the caller should go on to classify the failure.
+fn matchError(want: ?[]const u8, err: anyerror, msg: []const u8) ?CaseResult {
+    const w = want orelse return null;
+    if (err == error.Unimplemented) return null;
+    if (std.mem.indexOf(u8, msg, w) == null) return null;
+    return .{ .outcome = .pass };
+}
+
+/// The detail line for a failure, naming the expectation it missed when there was one.
+fn errorDetail(
+    arena: std.mem.Allocator,
+    want: ?[]const u8,
+    err: anyerror,
+    msg: []const u8,
+) !CaseResult {
+    if (want) |w| return .{
+        .outcome = .fail,
+        .detail = try std.fmt.allocPrint(arena, "expected [{s}] got [{s}]", .{ w, msg }),
+    };
+    return .{
+        .outcome = .fail,
+        .detail = try std.fmt.allocPrint(arena, "{s}: {s}", .{ @errorName(err), msg }),
+    };
+}
+
 /// Is this failure "we have not built that yet" rather than "we built it wrong"?
 ///
 /// The line: **rejected at analyze or transform time as a missing capability**
@@ -807,8 +808,10 @@ fn classify(err: anyerror, msg: []const u8) ?CaseResult {
     if (err == error.Unimplemented) {
         return .{ .outcome = .unsupported, .detail = "Unimplemented" };
     }
-    // extractor.zig:241 — a resolved name with no entry in the dispatch maps.
-    if (std.mem.indexOf(u8, msg, "UnsupportedFunction") != null) {
+    // A resolved name with no entry in the dispatch maps, or a call shape the transformer
+    // has no rewrite for. Keyed on the error rather than the text, because the text is the
+    // diagnostic naming the function and is free to change.
+    if (err == error.UnsupportedFunction) {
         return .{ .outcome = .unsupported, .detail = "no such function in the transformer" };
     }
     // A resolved AST node kind the extractor has no case for (TABLESAMPLE, TVF

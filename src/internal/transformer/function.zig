@@ -21,6 +21,7 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const common = @import("common.zig");
+const value_mod = @import("../value.zig");
 
 const Error = types_data.Error;
 const ExpressionData = types_data.ExpressionData;
@@ -273,9 +274,10 @@ fn optimizeFunctionToSQL(
     function_name: []const u8,
     args: []const *SQLExpression,
 ) Error!*SQLExpression {
-    // Go: "unknown optimizable function: %s"
-    const operator = function_to_operator.get(function_name) orelse
+    const operator = function_to_operator.get(function_name) orelse {
+        value_mod.setDiagnostic("unknown optimizable function: {s}", .{function_name});
         return error.UnsupportedFunction;
+    };
 
     if (std.mem.eql(u8, function_name, "zetasqlite_and") or
         std.mem.eql(u8, function_name, "zetasqlite_or"))

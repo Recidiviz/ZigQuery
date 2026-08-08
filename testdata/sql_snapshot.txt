@@ -19474,6 +19474,15 @@ SELECT
 zetasqlite_length(zetasqlite_generate_uuid()) AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/utility/safe_prefix	safe on a function that is neither aggregate nor analytic
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+
+### zigquery/functions/utility/safe_prefix	safe names the function it was applied to
+
+### zigquery/functions/utility/safe_prefix	a function with no implementation names itself
+
 ### zigquery/functions/window/cume_dist	cume_dist
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -20848,6 +20857,8 @@ FROM `Numbers` AS `wrs29`
 ) AS `with_ref_scan_29`  
 ORDER BY `x__9` ASC
 ) AS `analytic_scan_28`;
+
+### zigquery/functions/window/rank	safe rank
 
 ### zigquery/functions/window/row_number	window row_number
 PRAGMA user_version;

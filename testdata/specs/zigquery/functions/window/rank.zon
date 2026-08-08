@@ -54,5 +54,14 @@
                 .{ 10, 6 },
             },
         },
+        .{
+            .desc = "safe rank",
+            // SAFE is rejected per function kind, and BigQuery names the kind:
+            // an analytic function here, an aggregate in aggregate/sum.zon.
+            // Measured (recidiviz-bigquery-sandbox, 2026-08-07).
+            .sql = "SELECT SAFE.RANK() OVER (ORDER BY x) FROM UNNEST([1, 2]) AS x",
+            .expect_error = "SAFE is unsupported with analytic function rank",
+            .rows = .{},
+        },
     },
 }

@@ -39,6 +39,11 @@ pub const Error = error{
     AnalyzeFailed,
     /// AST -> SQLite transformation failed (non-Unimplemented pipeline error).
     TransformFailed,
+    /// A resolved function this build has no rewrite or UDF for (message in
+    /// Db.lastError, naming the function). Distinct from TransformFailed because
+    /// "we have not built that yet" is a different answer from "the transformer
+    /// broke", and callers -- the spec runner among them -- act on the difference.
+    UnsupportedFunction,
     /// SQLite prepare/step failed (message in Db.lastError).
     ExecFailed,
     /// Result-cell decoding failed.
@@ -1474,16 +1479,24 @@ pub const Db = struct {
         const data = extractor.ExtractExpressionData(arena, expr, ctx) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Unimplemented => return error.Unimplemented,
+            error.UnsupportedFunction => {
+                db.setLastError(value_mod.diagnostic orelse @errorName(err));
+                return error.UnsupportedFunction;
+            },
             else => {
-                db.setLastError(@errorName(err));
+                db.setLastError(value_mod.diagnostic orelse @errorName(err));
                 return error.TransformFailed;
             },
         };
         const sql_expr = coordinator.transformExpression(data, ctx) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Unimplemented => return error.Unimplemented,
+            error.UnsupportedFunction => {
+                db.setLastError(value_mod.diagnostic orelse @errorName(err));
+                return error.UnsupportedFunction;
+            },
             else => {
-                db.setLastError(@errorName(err));
+                db.setLastError(value_mod.diagnostic orelse @errorName(err));
                 return error.TransformFailed;
             },
         };
@@ -2187,8 +2200,12 @@ fn transformStatementFragment(
     const fragment = coordinator.transformStatementNode(node, ctx) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Unimplemented => return error.Unimplemented,
+        error.UnsupportedFunction => {
+            if (db) |d| d.setLastError(value_mod.diagnostic orelse @errorName(err));
+            return error.UnsupportedFunction;
+        },
         else => {
-            if (db) |d| d.setLastError(@errorName(err));
+            if (db) |d| d.setLastError(value_mod.diagnostic orelse @errorName(err));
             return error.TransformFailed;
         },
     };

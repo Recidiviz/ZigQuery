@@ -20,12 +20,12 @@
         .{
             .desc = "round-trip via IP_TO_STRING",
             .sql = "SELECT NET.IP_TO_STRING(NET.PARSE_PACKED_IP('192.168.1.0')) AS v",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "net_parse_packed_ip is not implemented",
         },
         .{
             .desc = "zero address round-trip",
             .sql = "SELECT NET.IP_TO_STRING(NET.PARSE_PACKED_IP('0.0.0.0')) AS v",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "net_parse_packed_ip is not implemented",
         },
     },
 }

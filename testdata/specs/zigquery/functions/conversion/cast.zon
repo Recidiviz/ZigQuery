@@ -6,7 +6,8 @@
         .{
             .desc = "invalid cast",
             .sql = "SELECT CAST(\"apple\" AS INT64) AS not_a_number",
-            .expect_error = "failed to analyze: INVALID_ARGUMENT: Could not cast literal \"apple\" to type INT64 [at 1:13]",
+            // The message names the offending input, as BigQuery's does.
+            .expect_error = "Bad int64 value: apple",
             .rows = .{},
         },
         .{
