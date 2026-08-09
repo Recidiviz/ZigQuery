@@ -14,19 +14,27 @@ engine does not answer. This file owns everything else the engine answers
 
 ## How to add an entry
 
-Compare a query both ways and record the pair. Provenance goes on the finding,
-because a service's behaviour is dated:
+`tools/vsbq.py` runs a spec file's queries both ways and diffs them, issuing the
+BigQuery side concurrently through the Python client — 43 cases take ~7s:
 
 ```sh
-./zig-out/bin/zetasqlite-zig "<sql>"
-bq --project_id=<project> query --use_legacy_sql=false --format=json "<sql>"
+zig build -Drelease=true
+uv run tools/vsbq.py --jobs 12 testdata/specs/zigquery/functions/window/*.zon
+uv run tools/vsbq.py --quiet  testdata/specs/zigquery/**/*.zon   # divergences only
 ```
 
-`--format=json` rather than `csv`: CSV refuses repeated fields, and JSON renders
-every scalar as a string, which is a stable shape to diff. Beware two false
-signals when diffing mechanically — an anonymous column is `$col1` here and
-`f0_` there, and a query with no top-level `ORDER BY` has no guaranteed row
-order on either side.
+It reports three kinds of difference separately from real ones, each a property
+of the comparison rather than of the engine: an anonymous column is `$col1` here
+and `f0_` there, a query with no top-level `ORDER BY` has no guaranteed row order
+either side, and BigQuery renders TIMESTAMP as text where the CLI prints epoch
+seconds. Exit status is 1 when a real divergence is found.
+
+BigQuery's own result cache is asked for and its hits are reported, so a repeat
+run says how much of itself it re-executed. It saves execution, not the round
+trip.
+
+Record the pair, and the project and date it was measured on — a service's
+behaviour is dated in a way a doc is not.
 
 ## Open divergences
 

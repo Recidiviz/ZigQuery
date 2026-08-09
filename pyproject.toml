@@ -1,0 +1,22 @@
+# Dependencies for the development tools under tools/. Nothing here is built or
+# published — `package = false` keeps uv from trying to install the repo itself,
+# which has no Python package in it.
+#
+#   uv run tools/vsbq.py testdata/specs/zigquery/functions/window/*.zon
+#   uv run tools/spec_import.py --src <checkout>
+[project]
+name = "zetasqlite-tools"
+version = "0.0.0"
+description = "Development tooling for zetasqlite-zig."
+requires-python = ">=3.11"
+dependencies = [
+    # tools/vsbq.py: compares the spec corpus against real BigQuery. The client
+    # rather than the `bq` CLI because the CLI pays ~1s of Python startup per
+    # query, which dominates a run of a few hundred small queries.
+    "google-cloud-bigquery>=3.25",
+    # tools/spec_import.py: reads goccy/googlesqlite's YAML corpus.
+    "pyyaml>=6",
+]
+
+[tool.uv]
+package = false
