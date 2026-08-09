@@ -517,6 +517,12 @@ test "comparison and logical functions" {
     try env.expectInt(0, "SELECT zetasqlite_is_null(1)");
     try env.expectInt(1, "SELECT zetasqlite_is_true(1)");
     try env.expectInt(1, "SELECT zetasqlite_is_false(0)");
+    // Total predicates: FALSE for a NULL argument. The analyzer spells
+    // `IS NOT TRUE` as $not($is_true(x)), covered by the two below.
+    try env.expectInt(0, "SELECT zetasqlite_is_true(NULL)");
+    try env.expectInt(0, "SELECT zetasqlite_is_false(NULL)");
+    try env.expectInt(1, "SELECT zetasqlite_not(zetasqlite_is_true(NULL))");
+    try env.expectInt(1, "SELECT zetasqlite_not(zetasqlite_is_false(NULL))");
     try env.expectInt(1, "SELECT zetasqlite_not(0)");
     try env.expectInt(0, "SELECT zetasqlite_not(1)");
 

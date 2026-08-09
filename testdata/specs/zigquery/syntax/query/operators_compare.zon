@@ -52,5 +52,79 @@
                 .{true},
             },
         },
+        // The kinds codec_sortable.zig stores memcomparably, which lower to
+        // SQLite's own operators over the encoded bytes: each case asserts that
+        // byte order is value order. The analyzer folds most of these operands
+        // to literals, which carry the same bytes a column holds because
+        // LiteralFromValue delegates to EncodeValue. The table-backed case at
+        // the end of the group covers the round trip through storage.
+        .{
+            .desc = "ordering over date columns",
+            .sql = "SELECT lo < hi, hi < lo, lo = lo, lo BETWEEN lo AND hi FROM (SELECT DATE '1968-07-04' AS lo, DATE '2024-03-04' AS hi)",
+            .rows = .{
+                .{ true, false, true, true },
+            },
+        },
+        .{
+            .desc = "ordering over timestamp, datetime and time columns",
+            .sql = "SELECT ts_lo < ts_hi, dt_lo < dt_hi, t_lo < t_hi FROM (SELECT TIMESTAMP '1901-02-03 04:05:06 UTC' AS ts_lo, TIMESTAMP '2024-03-04 05:06:07 UTC' AS ts_hi, DATETIME '1901-02-03 04:05:06' AS dt_lo, DATETIME '2024-03-04 05:06:07' AS dt_hi, TIME '04:05:06' AS t_lo, TIME '17:06:07' AS t_hi)",
+            .rows = .{
+                .{ true, true, true },
+            },
+        },
+        .{
+            .desc = "ordering over bytes columns is unsigned byte order",
+            .sql = "SELECT lo < hi, pre < lo, lo IN (lo, hi) FROM (SELECT b'\\x00\\xff' AS lo, b'\\x01\\x00' AS hi, b'\\x00' AS pre)",
+            .rows = .{
+                .{ true, true, true },
+            },
+        },
+        .{
+            .desc = "ordering over numeric and bignumeric columns crosses zero",
+            .sql = "SELECT n_lo < n_hi, n_lo < 0, b_lo < b_hi FROM (SELECT NUMERIC '-1.5' AS n_lo, NUMERIC '0.25' AS n_hi, BIGNUMERIC '-1e30' AS b_lo, BIGNUMERIC '1e30' AS b_hi)",
+            .rows = .{
+                .{ true, true, true },
+            },
+        },
+        .{
+            .desc = "equality over range columns",
+            .sql = "SELECT a = a, a = b, a IS NOT DISTINCT FROM a FROM (SELECT RANGE(DATE '2024-01-01', DATE '2024-02-01') AS a, RANGE(DATE '2024-01-01', DATE '2024-03-01') AS b)",
+            .rows = .{
+                .{ true, false, true },
+            },
+        },
+        // IS [NOT] DISTINCT FROM lowers onto SQLite's NULL-safe IS / IS NOT.
+        .{
+            .desc = "is distinct from over columns, including nulls",
+            .sql = "SELECT a IS NOT DISTINCT FROM b, a IS NOT DISTINCT FROM n, n IS NOT DISTINCT FROM n, a IS DISTINCT FROM n FROM (SELECT DATE '2024-01-01' AS a, DATE '2024-01-01' AS b, CAST(NULL AS DATE) AS n)",
+            .rows = .{
+                .{ true, false, true, true },
+            },
+        },
+        // IS NULL inspects only NULL-ness, so it lowers over kinds no
+        // comparison operator may touch.
+        .{
+            .desc = "is null over array and struct columns",
+            .sql = "SELECT arr IS NULL, s IS NULL, nil IS NULL FROM (SELECT [1, 2] AS arr, STRUCT(1 AS x) AS s, CAST(NULL AS ARRAY<INT64>) AS nil)",
+            .rows = .{
+                .{ false, false, true },
+            },
+        },
+        // The same comparisons against values that went through storage.
+        // spec.sqliteTypeName declares DATE, TIMESTAMP and NUMERIC columns TEXT
+        // and BYTES BLOB while the encodings are BLOBs, so this pins that
+        // neither affinity coerces them in either direction.
+        .{
+            .setup = .{
+                "CREATE TABLE Sortable (d DATE, ts TIMESTAMP, n NUMERIC, b BYTES)",
+                "INSERT INTO Sortable VALUES (DATE '1968-07-04', TIMESTAMP '1901-02-03 04:05:06 UTC', NUMERIC '-1.5', b'\\x00\\xff'), (DATE '2024-03-04', TIMESTAMP '2024-03-04 05:06:07 UTC', NUMERIC '0.25', b'\\x01\\x00')",
+            },
+            .desc = "stored columns compare and order the same as literals",
+            .sql = "SELECT d, d < DATE '2000-01-01', ts < TIMESTAMP '2000-01-01 00:00:00 UTC', n < 0, b > b'\\x00' FROM Sortable ORDER BY d DESC",
+            .rows = .{
+                .{ "2024-03-04", false, false, false, true },
+                .{ "1968-07-04", true, true, true, true },
+            },
+        },
     },
 }

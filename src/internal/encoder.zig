@@ -3,8 +3,8 @@
 //! shapes chosen by kind and told apart by tag range:
 //!
 //!   0x40+       the memcomparable encoding (codec_sortable.zig), for the kinds
-//!               that can be ordered: STRING, BYTES, DATE, TIME, DATETIME,
-//!               TIMESTAMP, RANGE.
+//!               that can be ordered: DATE, TIME, DATETIME, TIMESTAMP, STRING,
+//!               BYTES, NUMERIC, BIGNUMERIC, RANGE.
 //!   0x00-0x3f   the self-delimiting codec (codec_binary.zig), for the kinds
 //!               that cannot: ARRAY, STRUCT, JSON, INTERVAL. Its uvarint length
 //!               prefixes would sort by length before content, which does not
@@ -13,6 +13,9 @@
 //!
 //! RANGE appears in both lists on purpose: ordered at the top level, but
 //! self-delimiting when nested inside an ARRAY or STRUCT.
+//!
+//! The first list is also the set the transformer may lower a comparison over;
+//! see `isPrimitiveKind` in transformer/function.zig.
 
 const std = @import("std");
 const value_mod = @import("value.zig");
@@ -23,7 +26,7 @@ const phase = @import("phase.zig");
 pub const Value = value_mod.Value;
 pub const ValueError = value_mod.ValueError;
 
-/// The value as it crosses the SQLite boundary (Go: driver.Value).
+/// The value as it crosses the SQLite boundary
 pub const SqliteRepr = union(enum) {
     null,
     int: i64,
@@ -40,14 +43,6 @@ pub const SqliteRepr = union(enum) {
 /// SQLITE_TRANSIENT. So a single buffer, cleared before each value and freed
 /// only with the connection, serves every value that connection will encode:
 /// past the largest value yet seen, the encode path stops allocating.
-///
-/// What that replaced was an allocation from whichever arena the call site
-/// happened to hold, and on three paths that arena is not reset per row —
-/// `window.xValue` (per row, released only at the end of the partition) and the
-/// `UNNEST` and INFORMATION_SCHEMA vtabs (per row, released at the end of the
-/// scan). Each retained every row's encoded bytes for the whole scan. The CPU
-/// was never the point: the encode path measures ~3 ns per value once the
-/// timer's own ~18 ns is subtracted (`docs/CODEC_PERF.md` §0).
 pub const Scratch = struct {
     gpa: std.mem.Allocator,
     buf: std.ArrayList(u8) = .empty,
@@ -61,7 +56,7 @@ pub const Scratch = struct {
     }
 };
 
-/// Go EncodeValue: scalar kinds pass through natively; see the file header for
+/// scalar kinds pass through natively; see the file header for
 /// how the rest divide between the two BLOB payload shapes.
 ///
 /// `sink` is comptime-dispatched and implements `putNull`, `putInt`, `putFloat`
@@ -139,9 +134,8 @@ pub fn EncodeValue(alloc: std.mem.Allocator, v: Value) ValueError!SqliteRepr {
     return out;
 }
 
-/// Go LiteralFromValue: renders a Value as a SQL literal for embedded query
-/// text. Every non-scalar value is a BLOB, so every non-scalar literal is an
-/// X'..' literal.
+/// renders a Value as a SQL literal for embedded query text.
+/// Every non-scalar value is a BLOB, represented as a X'..' literal.
 pub fn LiteralFromValue(alloc: std.mem.Allocator, v: Value) ValueError![]u8 {
     var t = phase.CodecTimer.begin(.codec_literal);
     defer t.end();

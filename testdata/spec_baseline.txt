@@ -1554,6 +1554,14 @@ zigquery/syntax/query/operators_compare	lte operator
 zigquery/syntax/query/operators_compare	gte operator
 zigquery/syntax/query/operators_compare	ne operator
 zigquery/syntax/query/operators_compare	ne operator2
+zigquery/syntax/query/operators_compare	ordering over date columns
+zigquery/syntax/query/operators_compare	ordering over timestamp, datetime and time columns
+zigquery/syntax/query/operators_compare	ordering over bytes columns is unsigned byte order
+zigquery/syntax/query/operators_compare	ordering over numeric and bignumeric columns crosses zero
+zigquery/syntax/query/operators_compare	equality over range columns
+zigquery/syntax/query/operators_compare	is distinct from over columns, including nulls
+zigquery/syntax/query/operators_compare	is null over array and struct columns
+zigquery/syntax/query/operators_compare	stored columns compare and order the same as literals
 zigquery/syntax/query/operators_field_access	field access operator
 zigquery/syntax/query/operators_logical	not operator
 zigquery/syntax/query/operators_logical	and operator
@@ -1576,6 +1584,7 @@ zigquery/syntax/query/operators_logical	or operator with false and null
 zigquery/syntax/query/operators_logical	or operator with null and true
 zigquery/syntax/query/operators_logical	or operator with null and false
 zigquery/syntax/query/operators_logical	or operator with null and null
+zigquery/syntax/query/operators_logical	or nested inside and keeps its grouping
 zigquery/syntax/query/order_by	order by
 zigquery/syntax/query/order_by	order by with nulls last
 zigquery/syntax/query/order_by	order by desc
@@ -1595,7 +1604,12 @@ zigquery/syntax/query/predicates	like operator4
 zigquery/syntax/query/predicates	not like operator
 zigquery/syntax/query/predicates	between operator
 zigquery/syntax/query/predicates	not between operator
+zigquery/syntax/query/predicates	between operator with a null bound
+zigquery/syntax/query/predicates	between operator with a null bound, over columns
 zigquery/syntax/query/predicates	in operator
+zigquery/syntax/query/predicates	in operator with a null in the list
+zigquery/syntax/query/predicates	in operator with a null in the list, over columns
+zigquery/syntax/query/predicates	in operator with a null in a longer list
 zigquery/syntax/query/predicates	in operator with function
 zigquery/syntax/query/predicates	not in operator
 zigquery/syntax/query/predicates	is null operator
@@ -1604,6 +1618,9 @@ zigquery/syntax/query/predicates	is true operator
 zigquery/syntax/query/predicates	is not true operator
 zigquery/syntax/query/predicates	is false operator
 zigquery/syntax/query/predicates	is not false operator
+zigquery/syntax/query/predicates	is true and is false over a null are false, not null
+zigquery/syntax/query/predicates	is not true and is not false over a null are true, not null
+zigquery/syntax/query/predicates	is true over a null column, where nothing folds
 zigquery/syntax/query/predicates	exists
 zigquery/syntax/query/predicates	not exists
 zigquery/syntax/query/predicates	is distinct from with 1 and 2

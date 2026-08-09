@@ -125,21 +125,33 @@ fn likeMatch(alloc: std.mem.Allocator, s: []const u8, pattern: []const u8) Error
 // BETWEEN / IN
 // ---------------------------------------------------------------------
 
+/// `x BETWEEN lo AND hi` is `x >= lo AND x <= hi` under three-valued logic: a
+/// FALSE from either bound wins over a NULL from the other.
+/// operators.md#comparison_operators
 pub fn between(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    if (bind.existsNull(args)) return null_v;
-    const ge_start = try args[0].gte(args[1]);
-    const le_end = try args[0].lte(args[2]);
-    return Value{ .bool = ge_start and le_end };
+    if (args[0] == .null) return null_v;
+    const ge_start: ?bool = if (args[1] == .null) null else try args[0].gte(args[1]);
+    const le_end: ?bool = if (args[2] == .null) null else try args[0].lte(args[2]);
+    if (ge_start == false or le_end == false) return Value{ .bool = false };
+    if (ge_start == null or le_end == null) return null_v;
+    return Value{ .bool = true };
 }
 
+/// A NULL list element is an unknown value: it blocks a FALSE but never a TRUE.
+/// operators.md#in_operators
 pub fn in(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    if (bind.existsNull(args)) return null_v;
+    if (args[0] == .null) return null_v;
+    var saw_null = false;
     for (args[1..]) |v| {
-        if (v == .null) continue;
+        if (v == .null) {
+            saw_null = true;
+            continue;
+        }
         if (try args[0].eq(v)) return Value{ .bool = true };
     }
+    if (saw_null) return null_v;
     return Value{ .bool = false };
 }
 
@@ -152,15 +164,18 @@ pub fn isNull(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return Value{ .bool = args[0] == .null };
 }
 
+/// Total predicates: TRUE or FALSE for every input, NULL included. The analyzer
+/// spells `IS NOT TRUE` as `$not($is_true(x))`, so `not` sees a boolean here.
+/// operators.md#is_operators
 pub fn isTrue(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    if (bind.existsNull(args)) return null_v;
+    if (args[0] == .null) return Value{ .bool = false };
     return Value{ .bool = try args[0].toBool() };
 }
 
 pub fn isFalse(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    if (bind.existsNull(args)) return null_v;
+    if (args[0] == .null) return Value{ .bool = false };
     return Value{ .bool = !try args[0].toBool() };
 }
 

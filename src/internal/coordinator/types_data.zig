@@ -61,6 +61,13 @@ pub const FunctionCallData = struct {
     arguments: []ExpressionData = &.{},
     window_spec: ?*WindowSpecificationData = null,
     signature: ?*FunctionSignature = null,
+    /// The call's resolved result type. A bare kind rather than a `*spec.Type`
+    /// because its one consumer, the transformer's `isPrimitiveSQLiteType`,
+    /// asks only whether the produced value may meet a native SQLite operator.
+    ///
+    /// TYPE_UNKNOWN carries "unknown": nodes the transformer synthesises leave
+    /// it unset, and the transformer reads that as non-primitive.
+    result_kind: pb.TypeKind = .TYPE_UNKNOWN,
 };
 
 /// Go NewFunctionCallExpressionData (variadic; here the args slice must be

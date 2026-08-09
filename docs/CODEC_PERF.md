@@ -351,3 +351,108 @@ decoding does, for every kind"`. `value` and `skipValue` each decide how wide a
 payload is; if they disagree the walk desynchronises silently and surfaces as
 CorruptData somewhere unrelated. This change moved four widths at once, and both
 now read them from one table (`BinReader.fixedWidth`).
+
+## 8. Predicates: the fast path catches up with the codec
+
+The largest remaining consumer of the codec was not the codec's fault. Every
+`WHERE` predicate over a DATE, TIMESTAMP, BYTES or NUMERIC column still went
+through a `zetasqlite_*` UDF that decoded both operands and encoded a BOOL, once
+per row — because `isPrimitiveSQLiteType` (`transformer/function.zig`) had never
+been widened past the kinds Go could lower, and Go could only lower the ones
+SQLite stored natively. Storage format 3 had made nine kinds memcomparable two
+sections ago; the predicate list was still the base64 era's.
+
+Three things were wrong at once, and the smallest was the type list:
+
+- **The type list.** DATE, TIME, DATETIME, TIMESTAMP, BYTES, NUMERIC,
+  BIGNUMERIC and RANGE now lower. The licence is `test "memcmp over encodings
+  matches compareForCollation"` in `codec_sortable.zig`: `compareForCollation`
+  is defined via `Value.eq`/`gt`, which *are* what `zetasqlite_equal` and
+  `zetasqlite_less` call, so SQLite's byte comparison is the UDF's own answer.
+- **Operand shape, which blocked more than type did.** A `.function` operand
+  counted as primitive only if it was itself an operator — so
+  `get_struct_field(s, 0) = 1`, `array_length(a) = 0` and `EXTRACT(YEAR FROM d)
+  = 2025` all stayed UDFs despite returning INT64. Function calls now carry
+  their resolved result kind (`FunctionCallData.result_kind`, one i32 off the
+  ResolvedExpr base) and qualify on it.
+- **`IN` never lowered past one list element.** `canOptimizeFunction` funnelled
+  it into the comparison operators' `!= 2` arity check, so `x IN (a, b, c)` was
+  rejected — while `optimizeFunctionToSQL` had always rendered N arguments
+  correctly. A pure bug, inherited whole.
+
+Four operators were also added to the table: `IS NULL` (97 call sites in
+`sql_snapshot.txt`, the largest single group, and type-independent — it lowers
+over ARRAY and STRUCT too), `BETWEEN`, and `IS [NOT] DISTINCT FROM` onto
+SQLite's NULL-safe `IS` / `IS NOT`. `LIKE` is deliberately absent: SQLite's is
+ASCII-case-insensitive and coerces BLOBs to text.
+
+**Measured**, 200 k rows of `(INT64, DATE, TIMESTAMP, STRING)`, `-Drelease=true`,
+timers off. The load statement is timed separately and is byte-identical work in
+both builds, so the difference is the query and nothing else:
+
+| | before | after | |
+|---|---|---|---|
+| load 200 k rows | 0.13s | 0.13s | unchanged, as it must be |
+| `d BETWEEN … AND …` | 13.5 ms/query | **4.0 ms** | −70% |
+| that `AND ts < …` `AND s IN (…4)` | 44.0 ms/query | **6.0 ms** | −86% |
+
+Per-query figures are `(20 queries + load − load) / 20`; three interleaved runs
+agreed to 0.01s. The composite predicate is the better number *and* the less
+representative one — it lowers five UDF calls per row (three comparisons and two
+`AND`s), so it is close to the best case. The single `BETWEEN` is the honest
+floor at ~3.4×.
+
+Corpus-wide, the 273 lowerable calls in `sql_snapshot.txt` became 32, and every
+survivor is blocked for a real reason: a STRUCT operand, a correlated subquery
+operand, or a NULL literal (deliberately excluded — see
+`isPrimitiveSQLiteType`).
+
+### 8.1 Two things this uncovered
+
+**A latent precedence bug.** `BinaryExpression.writeSql` renders `left OP right`
+with no parentheses, which is fine while every nesting binds tighter than its
+parent — `a = b AND c = d` — and silently wrong when it does not: `(a OR b) AND
+c` rendered as `a OR b AND c`, which SQLite reads as `a OR (b AND c)`. The
+corpus never exercised it, and widening the fast path would have made it
+reachable. Operands that are themselves binary are now wrapped (`grouped`), and
+`test "or nested inside and keeps its grouping"` fails without it.
+
+**`isCheapToDuplicate` treated every list as expensive**, so each parenthesised
+operand put a subquery level back around expressions that had just been
+simplified — two cases in the corpus gained a level before this was fixed. A
+list costs exactly what its elements cost. With that corrected the change
+*removes* 18 levels net and adds none.
+
+### 8.2 Two UDFs were wrong, and lowering exposed it
+
+Both `fn_compare.in` and `fn_compare.between` opened with a blanket
+`existsNull(args) -> NULL`, which is not three-valued logic:
+
+| | UDF, before | BigQuery / SQLite |
+|---|---|---|
+| `1 IN (1, NULL)` | NULL | **TRUE** |
+| `5 BETWEEN 10 AND NULL` | NULL | **FALSE** |
+
+A NULL in an `IN` list blocks a FALSE but never a TRUE; a FALSE from one side of
+a `BETWEEN` wins over a NULL from the other. Both are fixed, so the lowered and
+UDF paths give one answer — which matters more now that which path runs depends
+on whether the operands happen to be literals.
+
+`zetasqlite_is_true` / `_is_false` had the same shape of bug and were fixed with
+them, though for a different reason — neither lowers, so no two paths were
+disagreeing; they were simply wrong. `IS TRUE` and `IS FALSE` are *total*
+predicates that answer TRUE or FALSE and never NULL, which is the entire reason
+the syntax exists: it tests a possibly-NULL boolean without NULL propagation,
+and `x IS TRUE` would be indistinguishable from plain `x` otherwise. All four
+forms returned NULL for a NULL operand, because `IS NOT TRUE` is
+`$not($is_true(x))` and `not` propagates what it is given:
+
+| | before | BigQuery |
+|---|---|---|
+| `NULL IS TRUE` / `NULL IS FALSE` | NULL | **FALSE** |
+| `NULL IS NOT TRUE` / `NULL IS NOT FALSE` | NULL | **TRUE** |
+
+The four spec cases that existed all used non-NULL operands, so they never
+exercised the only input where the predicate differs from `x` itself. That is
+the general lesson of this section: each of these three bugs sat behind a test
+that passed because it tested the uninteresting half of the domain.
