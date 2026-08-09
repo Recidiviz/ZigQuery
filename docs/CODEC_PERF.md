@@ -5,8 +5,9 @@ An experiment log for the work that produced storage format 3, in the style of
 longest shelf life — **what was tried and reverted, with the number that killed
 it**. Four optimizations in here look obviously good on paper and are not.
 
-Semantics are the other document's job: `NUMERIC_FIDELITY.md` records where the
-engine diverges from BigQuery. This one is only about cost.
+Semantics are the other documents' job: `NUMERIC_FIDELITY.md` for the two
+decimal types, `bigquery_divergence_findings.md` for everything else measured
+against the real service. This one is only about cost.
 
 Reproduce any figure with:
 

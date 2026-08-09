@@ -1,0 +1,109 @@
+# BigQuery divergence findings
+
+Where this engine answers differently from BigQuery, found by running the
+`zigquery` spec corpus against the real service rather than against the
+reference docs. That distinction is the point of this file: the docs are wrong
+often enough that three entries below contradict what a careful reading of them
+would predict, and two of them are pinned into spec expectations, so the suite
+is green *because* it asserts the divergent answer.
+
+Scope. `NUMERIC_FIDELITY.md` owns the two decimal types. `SPEC_UNSUPPORTED.md`
+owns what the imported `googlesql/**` and `bigquery/**` trees ask for and this
+engine does not answer. This file owns everything else the engine answers
+*differently*, and only where a real BigQuery run says so.
+
+## How to add an entry
+
+Compare a query both ways and record the pair. Provenance goes on the finding,
+because a service's behaviour is dated:
+
+```sh
+./zig-out/bin/zetasqlite-zig "<sql>"
+bq --project_id=<project> query --use_legacy_sql=false --format=json "<sql>"
+```
+
+`--format=json` rather than `csv`: CSV refuses repeated fields, and JSON renders
+every scalar as a string, which is a stable shape to diff. Beware two false
+signals when diffing mechanically — an anonymous column is `$col1` here and
+`f0_` there, and a query with no top-level `ORDER BY` has no guaranteed row
+order on either side.
+
+## Open divergences
+
+### Zoneless TIMESTAMP literals resolve in America/Los_Angeles, not UTC
+
+*(recidiviz-rnd-planner, 2026-08-08)*
+
+| | ours | BigQuery |
+|---|---|---|
+| `UNIX_SECONDS(TIMESTAMP '2016-10-18 2:51:45')` | 1476784305 | **1476759105** |
+| `... '2016-10-18 2:51:45+00'` | 1476759105 | 1476759105 |
+| `... '2016-10-18 2:51:45 UTC'` | 1476759105 | 1476759105 |
+
+Exactly the PDT offset for that date. Only the zoneless form differs, and the
+`TZ` environment variable does not move it, so the zone is coming from the
+engine rather than the host.
+
+**Pinned:** `zigquery/functions/window/dense_rank.zon` asserts `"1476784305.0"`,
+the engine's answer. Reach is 10 zoneless literals across 2 spec files.
+
+### DATETIME subtraction is not normalised into days
+
+*(recidiviz-rnd-planner, 2026-08-08)*
+
+`DATETIME "2021-06-01 12:34:56.789" - DATETIME "2021-05-31 00:00:00"` gives
+`0-0 0 36:34:56.789` here and `0-0 1 12:34:56.789` there. The same elapsed time,
+carried differently: BigQuery normalises a DATETIME difference into days, and a
+TIMESTAMP difference into hours. The TIMESTAMP half of the same case agrees.
+
+**Pinned:** `zigquery/types/interval.zon`.
+
+### DATE and DATETIME are not peers under ORDER BY
+
+*(recidiviz-rnd-planner, 2026-08-08)*
+
+`DENSE_RANK() OVER (ORDER BY dt)` over `DATE '2024-01-01'` and
+`DATETIME '2024-01-01'` ranks them 1 and 2; BigQuery coerces and ranks both 1.
+
+**Already recorded:** the case is `.skip`ped in
+`zigquery/functions/window/dense_rank.zon` with the upstream `go-googlesql`
+cause in its comment. Listed here so the three date/time entries sit together.
+
+## Over-acceptance
+
+Queries BigQuery refuses and this engine answers. Harmless to a working query,
+but it means a spec case can assert a value for SQL that would not run.
+
+| query | BigQuery |
+|---|---|
+| `STRING_AGG(DISTINCT x) OVER ()` | `Analytic function string_agg does not support DISTINCT.` |
+| `ARRAY_AGG(x IGNORE NULLS) OVER ()` | `Analytic function array_agg does not support IGNORE NULLS or RESPECT NULLS.` |
+
+Per-function, not a blanket rule: `MIN`, `SUM` and `COUNT` all take
+`DISTINCT ... OVER ()` and agree with this engine on the result.
+
+## Coverage
+
+What has actually been compared, so the next reader knows what a green suite
+does and does not vouch for.
+
+| tree | state |
+|---|---|
+| `zigquery/functions/window/**` + `syntax/query/window_clause` | compared in full, 43 cases: 39 agree, 1 row-order only, 1 rejected by both, 2 divergent (above) |
+| `zigquery/types/interval` | compared, 1 divergence (above) |
+| `zigquery/functions/aggregate/**`, `syntax/query/{group_by,distinct}` | sweep started, not reviewed — flagged cases are unexamined and are **not** evidence of divergence |
+| everything else | not compared |
+
+## Corrected, for the record
+
+Answers that were wrong and no longer are, so nobody re-derives them. All were
+found by reading rather than by a BigQuery run, except where noted.
+
+- `1 IN (1, NULL)` returned NULL; `5 BETWEEN 10 AND NULL` returned NULL.
+- All four `IS [NOT] TRUE|FALSE` forms returned NULL for a NULL operand.
+- `MIN`/`SUM` with `DISTINCT ... OVER ()` failed outright on a frame containing
+  a NULL.
+- `COUNT(DISTINCT x)` over `[0.0, -0.0]` answered 2, disagreeing with this
+  engine's own `GROUP BY` and `SELECT DISTINCT`.
+- `GROUP BY` over an ARRAY or STRUCT joined elements with `"||"`, so `['a||b']`
+  and `['a', 'b']` shared a group. Confirmed against BigQuery before the fix.
