@@ -97,10 +97,28 @@ does and does not vouch for.
 
 | tree | state |
 |---|---|
-| `zigquery/functions/window/**` + `syntax/query/window_clause` | compared in full, 43 cases: 39 agree, 1 row-order only, 1 rejected by both, 2 divergent (above) |
-| `zigquery/types/interval` | compared, 1 divergence (above) |
-| `zigquery/functions/aggregate/**`, `syntax/query/{group_by,distinct}` | sweep started, not reviewed — flagged cases are unexamined and are **not** evidence of divergence |
-| everything else | not compared |
+| `zigquery/**`, all 944 cases | swept; 781 agree, 94 rejected by both, 21 differ only in client rendering, 5 row-order only, 13 one-sided errors, 30 flagged |
+| `googlesql/**`, `bigquery/**` | not compared |
+
+Of the 30 flagged, 8 are a clock or the environment (`CURRENT_*`, `SESSION_USER`,
+`GENERATE_UUID`, HLL sketch bytes) and are not divergences. **The remaining 22 are
+candidates, not findings.** Only the three recorded above have been confirmed
+case by case; the rest have not been read individually and must not be quoted as
+divergences until they are.
+
+That caution is not boilerplate. The first sweep reported 110 differences and
+every class examined turned out to be the comparator's, not the engine's:
+
+| what the tool did | what it manufactured |
+|---|---|
+| rewrote ISO datetime text to epoch seconds | ~40, across `datetime/**` |
+| guessed a container from `[...]`-shaped text, so `FORMAT("[%'d]", 1000)` read as a two-element array | 16, the whole `format` file, which in fact agrees exactly |
+| sorted STRUCT fields on one side only | `group by struct values` |
+| canonicalised `''` to NULL, split nested containers on commas | `split`, `to_json`, `parse_json` |
+
+Each was found by checking a flagged case by hand and finding the engine right.
+`ltrim` is still flagged and its CLI output is provably well-formed, so at least
+one class remains. Treat a flag as a question.
 
 ## Corrected, for the record
 

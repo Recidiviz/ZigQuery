@@ -37,6 +37,7 @@ import base64
 import concurrent.futures
 import datetime
 import decimal
+import math
 import re
 import subprocess
 import sys
@@ -51,9 +52,6 @@ DESC = re.compile(r'\s*\.desc = "((?:[^"\\]|\\.)*)"')
 SPEC = re.compile(r'\s*\.spec = "([^"]*)"')
 SQL_INLINE = re.compile(r'\s*\.sql = "((?:[^"\\]|\\.)*)",?\s*$')
 SQL_BLOCK = re.compile(r"\s*\.sql =\s*$")
-TIMESTAMP = re.compile(
-    r"^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d):(\d\d)(?:\.\d+)?(?: UTC)?$"
-)
 ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\"}
 
 
@@ -105,7 +103,7 @@ def canon(v):
     if isinstance(v, list):
         return "[" + ",".join(canon(e) for e in v) + "]"
     if isinstance(v, dict):
-        return "{" + ",".join(f"{k}:{canon(x)}" for k, x in sorted(v.items())) + "}"
+        return "{" + ",".join(f"{k}:{canon(x)}" for k, x in v.items()) + "}"
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, bytes):
@@ -113,49 +111,48 @@ def canon(v):
     if isinstance(v, datetime.datetime):
         # Aware is a TIMESTAMP, naive a DATETIME; only the first is an instant.
         if v.tzinfo is not None:
-            return str(int(v.timestamp()))
+            return canon(v.timestamp())
         return v.isoformat()
     if isinstance(v, (datetime.date, datetime.time)):
         return v.isoformat()
     if isinstance(v, decimal.Decimal):
         v = str(v)
     s = str(v).strip()
-    if s in ("", "NULL", "None"):
+    if s in ("NULL", "None"):
         return "NULL"
     if s.lower() in ("true", "false"):
         return s.lower()
-    if m := TIMESTAMP.match(s):
-        d = datetime.datetime(*[int(m.group(i)) for i in range(1, 7)],
-                              tzinfo=datetime.timezone.utc)
-        return str(int(d.timestamp()))
     try:
         f = float(s)
     except ValueError:
         return s
-    return str(int(f)) if f == int(f) and abs(f) < 1e15 else "%.9g" % f
+    # int(inf) raises, so this precedes the magnitude test rather than joining
+    # it. Both sides spell these the same way, modulo case and "infinity".
+    if not math.isfinite(f):
+        return {"infinity": "inf", "-infinity": "-inf"}.get(s.lower(), s.lower())
+    if f == int(f) and abs(f) < 1e15:
+        return str(int(f))
+    return f"{f:.6f}".rstrip("0").rstrip(".")
 
 
-def canon_engine_cell(s):
-    """The CLI prints containers as `[a, b]` and `{k: v}`; match canon()'s shape.
+def canon_engine_cell(s, container=False):
+    """The CLI prints containers as `[a, b]` and `{k: v}`; canon() emits them
+    without the spaces.
 
-    Splitting on commas is enough for the corpus and wrong for a nested
-    container or a string holding one; such a cell simply compares as its own
-    text, which shows up as a difference to read rather than a silent pass.
+    Whether a cell *is* a container has to be told, not guessed: the CLI's TSV
+    carries no types, and `FORMAT("[%\'d]", 1000)` produces `[1,000]`, which
+    guessing reads as a two-element array. BigQuery's side knows the schema, so
+    its value decides.
     """
     s = s.strip()
-    if s.startswith("[") and s.endswith("]"):
+    if not container:
+        return canon(s)
+    if s[:1] == "[" and s[-1:] == "]" and not re.search(r"[\[{]", s[1:-1]):
         inner = s[1:-1].strip()
         return "[]" if not inner else "[" + ",".join(canon(p) for p in inner.split(",")) + "]"
-    if s.startswith("{") and s.endswith("}"):
-        inner = s[1:-1].strip()
-        if not inner:
-            return "{}"
-        pairs = []
-        for part in inner.split(","):
-            k, _, val = part.partition(":")
-            pairs.append(f"{k.strip()}:{canon(val)}")
-        return "{" + ",".join(sorted(pairs)) + "}"
-    return canon(s)
+    # Nested: normalise the spacing rather than splitting, which a comma inside
+    # an element would break.
+    return re.sub(r"([,:])\s+", r"\1", s)
 
 
 def run_engine(sql):
@@ -167,11 +164,9 @@ def run_engine(sql):
     if not lines:
         return [], None
     header = lines[0].split("\t")
-    rows = [
-        dict(zip(header, [canon_engine_cell(c) for c in l.split("\t")]))
-        for l in lines[1:]
-    ]
-    return rows, None
+    # Raw: the cells are canonicalised in compare(), where BigQuery's schema
+    # says which of them are containers.
+    return [dict(zip(header, l.split("\t"))) for l in lines[1:]], None
 
 
 _local = threading.local()
@@ -193,17 +188,45 @@ def run_bq(sql, project):
     try:
         job = client(project).query(
             sql, job_config=bigquery.QueryJobConfig(use_query_cache=True))
-        rows = [{k: canon(v) for k, v in row.items()} for row in job.result()]
+        # Native values: their Python types are the only thing that says which
+        # engine cells are containers.
+        rows = [dict(row.items()) for row in job.result()]
         return rows, None, bool(job.cache_hit)
     except Exception as e:  # google.api_core.exceptions.*, mostly BadRequest
         first = str(e).strip().split("\n")[0]
         return None, first[:240], False
 
 
+def render_artifact(a, b):
+    """Whether two cells differ only in how BigQuery's client renders a value.
+
+    A NULL ARRAY comes back as `[]` rather than None -- the REST surface has no
+    other spelling for it, which `tools/capture_golden.py` records as well. And
+    an INTERVAL arrives as a dateutil relativedelta, whose repr has nothing to
+    do with the canonical `Y-M D H:M:S` text.
+    """
+    if (a == "NULL" and b == "[]") or (a == "[]" and b == "NULL"):
+        return True
+    if a.startswith("relativedelta(") or b.startswith("relativedelta("):
+        return True
+    # A JSON column arrives parsed, so it has lost the quoting the engine
+    # prints around keys and strings. Same value, two renderings.
+    return a.replace('"', "") == b.replace('"', "") and a != b
+
+
 def classify(ours, theirs):
-    """agree | name | order | diff, given two canonicalised row lists."""
+    """agree | render | name | order | diff, given two canonicalised row lists."""
     if ours == theirs:
         return "agree"
+    if (len(ours) == len(theirs)
+            and all(sorted(x) == sorted(y) for x, y in zip(
+                (list(r) for r in ours), (list(r) for r in theirs)))
+            and all(render_artifact(str(x), str(y))
+                    for ro, rt in zip(ours, theirs)
+                    for x, y in zip(ro.values(), rt.values()) if x != y)
+            and any(x != y for ro, rt in zip(ours, theirs)
+                    for x, y in zip(ro.values(), rt.values()))):
+        return "render"
     ovals = [sorted(r.values()) for r in ours]
     bvals = [sorted(r.values()) for r in theirs]
     if ovals == bvals:
@@ -215,9 +238,45 @@ def classify(ours, theirs):
 
 
 def compare(case, project):
+    """Never raises: a run of a thousand cases should not be lost to one of
+    them, and a tool bug should read as a result rather than as a traceback."""
+    try:
+        return _compare(case, project)
+    except Exception as e:
+        spec, desc, sql = case
+        return "error", spec, desc, sql, f"{type(e).__name__}: {e}"[:240], None, None, None, False
+
+
+def align(ours, theirs):
+    """Canonicalise both sides, pairing columns by name where the two agree on
+    them and by position otherwise (an anonymous column is `$col1` here and
+    `f0_` there)."""
+    out_o, out_t = [], []
+    for ro, rt in zip(ours, theirs):
+        keys_t = list(rt)
+        by_name = set(ro) == set(keys_t)
+        co, ct = {}, {}
+        for i, ko in enumerate(ro):
+            kt = ko if by_name else (keys_t[i] if i < len(keys_t) else None)
+            tval = rt.get(kt) if kt is not None else None
+            name = ko if by_name else f"c{i}"
+            co[name] = canon_engine_cell(ro[ko], isinstance(tval, (list, dict)))
+            ct[name] = canon(tval)
+        out_o.append(co)
+        out_t.append(ct)
+    return out_o, out_t
+
+
+def _compare(case, project):
     spec, desc, sql = case
     ours, oerr = run_engine(sql)
     theirs, berr, cached = run_bq(sql, project)
+    if not (oerr or berr):
+        if len(ours) != len(theirs):
+            ours = [{k: canon_engine_cell(v) for k, v in r.items()} for r in ours]
+            theirs = [{k: canon(v) for k, v in r.items()} for r in theirs]
+        else:
+            ours, theirs = align(ours, theirs)
     if oerr or berr:
         # Both refusing is agreement about the language, not a divergence.
         verdict = "both-reject" if (oerr and berr) else "error"
@@ -228,7 +287,7 @@ def compare(case, project):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("paths", nargs="+", help=".zon spec files")
-    ap.add_argument("--project", default="recidiviz-rnd-planner")
+    ap.add_argument("--project", default="recidiviz-bigquery-sandbox")
     ap.add_argument("--jobs", type=int, default=8,
                     help="concurrent BigQuery queries (default 8)")
     ap.add_argument("--quiet", action="store_true",
@@ -264,6 +323,8 @@ def main():
             print(f"[ERR ] {label}\n       ours: {oerr or 'ok'}\n       bq  : {berr or 'ok'}")
         elif verdict == "both-reject":
             print(f"[both] {label}  (rejected by both)")
+        elif verdict == "render":
+            print(f"[rndr] {label}  (differs only in how the client renders it)")
         elif verdict == "name":
             print(f"[name] {label}  (values agree; column names differ)")
         elif verdict == "order":
