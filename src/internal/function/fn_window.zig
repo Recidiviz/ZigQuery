@@ -54,25 +54,48 @@ pub const WindowMode = enum {
 pub const WindowFuncAggregatedStatus = struct {
     values: std.ArrayList(Value) = .empty,
     opt: AggregatorOption = .{},
+    /// The last `relevantValues` result, held while `values` stands still. SQLite calls xValue
+    /// once per row, and a frame that does not move between rows — `OVER ()` and every other
+    /// unbounded frame — asks the same question each time.
+    relevant: ?[]Value = null,
+    /// Allocator for `relevant`, outliving the per-row arena `done()` gets. Set where the Group
+    /// is built (window.zig).
+    cache_alloc: std.mem.Allocator = undefined,
 
     /// Go RelevantValues: apply IGNORE NULLS and DISTINCT to the buffered set.
-    pub fn relevantValues(s: *WindowFuncAggregatedStatus, alloc: std.mem.Allocator) Error![]Value {
+    ///
+    /// The result belongs to the aggregator and is shared across the rows of a standing frame.
+    /// A caller that reorders or writes to it wants a copy.
+    pub fn relevantValues(s: *WindowFuncAggregatedStatus) Error![]Value {
+        if (s.relevant) |cached| return cached;
+
+        const a = s.cache_alloc;
         var filtered: std.ArrayList(Value) = .empty;
         var seen: std.StringHashMapUnmanaged(void) = .empty;
+        defer seen.deinit(a);
         for (s.values.items) |v| {
             if (s.opt.ignore_nulls and v == .null) continue;
             if (s.opt.distinct) {
-                const key = try v.toString(alloc);
-                const entry = try seen.getOrPut(alloc, key);
+                const entry = try seen.getOrPut(a, try agg_opt.groupingKey(a, v));
                 if (entry.found_existing) continue;
             }
-            try filtered.append(alloc, v);
+            try filtered.append(a, v);
         }
-        return filtered.toOwnedSlice(alloc);
+        const out = try filtered.toOwnedSlice(a);
+        s.relevant = out;
+        return out;
+    }
+
+    /// Assigns the markers parsed off a row's arguments. IGNORE NULLS and DISTINCT select the
+    /// relevant set, so this drops the cache with them.
+    pub fn setOption(s: *WindowFuncAggregatedStatus, opt: AggregatorOption) void {
+        s.relevant = null;
+        s.opt = opt;
     }
 
     /// Go Step: append a value to the window.
     pub fn step(s: *WindowFuncAggregatedStatus, alloc: std.mem.Allocator, v: Value) Error!void {
+        s.relevant = null;
         try s.values.append(alloc, v);
     }
 
@@ -82,6 +105,7 @@ pub const WindowFuncAggregatedStatus = struct {
     pub fn inverse(s: *WindowFuncAggregatedStatus, v: Value) Error!void {
         for (s.values.items, 0..) |item, i| {
             if (inverseEqual(item, v)) {
+                s.relevant = null;
                 _ = s.values.orderedRemove(i);
                 break;
             }
@@ -136,7 +160,7 @@ pub const WINDOW_ARRAY_AGG = struct {
         alloc: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        return value_mod.arrayValue(alloc, try agg.relevantValues(alloc));
+        return value_mod.arrayValue(alloc, try agg.relevantValues());
     }
 };
 
@@ -149,7 +173,7 @@ pub const WINDOW_AVG = struct {
     ) Error!Value {
         var sum: Value = .null;
         var total: i64 = 0;
-        for (try agg.relevantValues(alloc)) |v| {
+        for (try agg.relevantValues()) |v| {
             if (v == .null) continue;
             total += 1;
             if (sum == .null) {
@@ -178,10 +202,10 @@ pub const WINDOW_COUNT = struct {
     }
     pub fn done(
         _: *WINDOW_COUNT,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        return .{ .int = @intCast((try agg.relevantValues(alloc)).len) };
+        return .{ .int = @intCast((try agg.relevantValues()).len) };
     }
 };
 
@@ -189,10 +213,10 @@ pub const WINDOW_COUNT_STAR = struct {
     pub const window_mode: WindowMode = .no_args;
     pub fn done(
         _: *WINDOW_COUNT_STAR,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        return .{ .int = @intCast((try agg.relevantValues(alloc)).len) };
+        return .{ .int = @intCast((try agg.relevantValues()).len) };
     }
 };
 
@@ -200,11 +224,11 @@ pub const WINDOW_COUNTIF = struct {
     pub const window_mode: WindowMode = .single;
     pub fn done(
         _: *WINDOW_COUNTIF,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
         var count: i64 = 0;
-        for (try agg.relevantValues(alloc)) |v| {
+        for (try agg.relevantValues()) |v| {
             if (v == .null) continue;
             if (try v.toBool()) count += 1;
         }
@@ -216,11 +240,11 @@ pub const WINDOW_MAX = struct {
     pub const window_mode: WindowMode = .single;
     pub fn done(
         _: *WINDOW_MAX,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
         var max: Value = .null;
-        for (try agg.relevantValues(alloc)) |v| {
+        for (try agg.relevantValues()) |v| {
             if (v == .null) continue;
             if (max == .null) {
                 max = v;
@@ -236,11 +260,11 @@ pub const WINDOW_MIN = struct {
     pub const window_mode: WindowMode = .single;
     pub fn done(
         _: *WINDOW_MIN,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
         var min: Value = .null;
-        for (try agg.relevantValues(alloc)) |v| {
+        for (try agg.relevantValues()) |v| {
             if (v == .null) continue;
             if (min == .null) {
                 min = v;
@@ -271,7 +295,7 @@ pub const WINDOW_STRING_AGG = struct {
     ) Error!Value {
         var out: std.ArrayList(u8) = .empty;
         var wrote = false;
-        for (try agg.relevantValues(alloc)) |v| {
+        for (try agg.relevantValues()) |v| {
             if (v == .null) continue;
             if (wrote) try out.appendSlice(alloc, f.delim);
             try out.appendSlice(alloc, try v.toString(alloc));
@@ -290,7 +314,7 @@ pub const WINDOW_SUM = struct {
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
         var sum: Value = .null;
-        for (try agg.relevantValues(alloc)) |v| {
+        for (try agg.relevantValues()) |v| {
             if (v == .null) continue;
             if (sum == .null) {
                 sum = v;
@@ -306,10 +330,10 @@ pub const WINDOW_LOGICAL_AND = struct {
     pub const window_mode: WindowMode = .single;
     pub fn done(
         _: *WINDOW_LOGICAL_AND,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        for (try agg.relevantValues(alloc)) |v| {
+        for (try agg.relevantValues()) |v| {
             if (!(try v.toBool())) return .{ .bool = false };
         }
         return .{ .bool = true };
@@ -320,10 +344,10 @@ pub const WINDOW_LOGICAL_OR = struct {
     pub const window_mode: WindowMode = .single;
     pub fn done(
         _: *WINDOW_LOGICAL_OR,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        for (try agg.relevantValues(alloc)) |v| {
+        for (try agg.relevantValues()) |v| {
             if (try v.toBool()) return .{ .bool = true };
         }
         return .{ .bool = false };
@@ -338,10 +362,10 @@ pub const WINDOW_FIRST_VALUE = struct {
     pub const window_mode: WindowMode = .single;
     pub fn done(
         _: *WINDOW_FIRST_VALUE,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        const values = try agg.relevantValues(alloc);
+        const values = try agg.relevantValues();
         if (values.len == 0) return .null;
         return values[0];
     }
@@ -351,10 +375,10 @@ pub const WINDOW_LAST_VALUE = struct {
     pub const window_mode: WindowMode = .single;
     pub fn done(
         _: *WINDOW_LAST_VALUE,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        const values = try agg.relevantValues(alloc);
+        const values = try agg.relevantValues();
         if (values.len == 0) return .null;
         return values[values.len - 1];
     }
@@ -376,10 +400,10 @@ pub const WINDOW_NTH_VALUE = struct {
     }
     pub fn done(
         f: *WINDOW_NTH_VALUE,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        const values = try agg.relevantValues(alloc);
+        const values = try agg.relevantValues();
         if (@as(i64, @intCast(values.len)) - 1 < f.n) return .null;
         return values[@intCast(f.n)];
     }
@@ -452,10 +476,10 @@ pub const WINDOW_RANK = struct {
     pub const window_mode: WindowMode = .no_args;
     pub fn done(
         _: *WINDOW_RANK,
-        alloc: std.mem.Allocator,
+        _: std.mem.Allocator,
         agg: *WindowFuncAggregatedStatus,
     ) Error!Value {
-        return .{ .int = @intCast((try agg.relevantValues(alloc)).len) };
+        return .{ .int = @intCast((try agg.relevantValues()).len) };
     }
 };
 
@@ -694,7 +718,7 @@ fn tupleFloats(
     agg: *WindowFuncAggregatedStatus,
     comptime what: []const u8,
 ) Error!?struct { x: []f64, y: []f64 } {
-    const values = try agg.relevantValues(alloc);
+    const values = try agg.relevantValues();
     if (values.len < 2) return null;
     var xs: std.ArrayList(f64) = .empty;
     var ys: std.ArrayList(f64) = .empty;
@@ -714,7 +738,7 @@ fn tupleFloats(
 
 /// Reads the buffered scalars into a float slice (>=2 required, Go quirk).
 fn scalarFloats(alloc: std.mem.Allocator, agg: *WindowFuncAggregatedStatus) Error!?[]f64 {
-    const values = try agg.relevantValues(alloc);
+    const values = try agg.relevantValues();
     if (values.len < 2) return null;
     var xs: std.ArrayList(f64) = .empty;
     for (values) |value| try xs.append(alloc, try value.toFloat64());
@@ -841,7 +865,7 @@ pub const WINDOW_PERCENTILE_CONT = struct {
         if (try f.percentile.gt(.{ .int = 1 })) {
             return bind.fail("PERCENTILE_CONT: percentile value must be less than one", .{}, error.UnsupportedOperation);
         }
-        const values = try agg.relevantValues(alloc);
+        const values = try agg.relevantValues();
         if (values.len == 0) return .null;
 
         var non_null: std.ArrayList(i64) = .empty;
@@ -906,10 +930,12 @@ pub const WINDOW_PERCENTILE_DISC = struct {
         if (try f.percentile.gt(.{ .int = 1 })) {
             return bind.fail("PERCENTILE_DISC: percentile value must be less than one", .{}, error.UnsupportedOperation);
         }
-        const values = try agg.relevantValues(alloc);
-        if (values.len == 0) return .null;
+        const relevant = try agg.relevantValues();
+        if (relevant.len == 0) return .null;
 
-        // Go sort.Slice: NULLs sort first, then ascending order.
+        // NULLs first, then ascending. Sorted through a copy: the frame's relevant set belongs
+        // to the aggregator and is shared across rows.
+        const values = try alloc.dupe(Value, relevant);
         std.mem.sort(Value, values, {}, discLessThan);
 
         const len: i64 = @intCast(values.len);
@@ -941,21 +967,29 @@ test "relevantValues honors ignore_nulls and distinct" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    var agg = WindowFuncAggregatedStatus{};
+    var agg = WindowFuncAggregatedStatus{ .cache_alloc = alloc };
     try agg.step(alloc, .{ .int = 1 });
     try agg.step(alloc, .null);
     try agg.step(alloc, .{ .int = 1 });
     try agg.step(alloc, .{ .int = 2 });
 
     // Default: everything, including the NULL and the duplicate.
-    try testing.expectEqual(@as(usize, 4), (try agg.relevantValues(alloc)).len);
+    try testing.expectEqual(@as(usize, 4), (try agg.relevantValues()).len);
 
-    agg.opt.ignore_nulls = true;
-    try testing.expectEqual(@as(usize, 3), (try agg.relevantValues(alloc)).len);
+    var opt = agg.opt;
+    opt.ignore_nulls = true;
+    agg.setOption(opt);
+    try testing.expectEqual(@as(usize, 3), (try agg.relevantValues()).len);
 
-    agg.opt.distinct = true;
+    opt.distinct = true;
+    agg.setOption(opt);
     // ignore_nulls + distinct -> {1, 2}
-    try testing.expectEqual(@as(usize, 2), (try agg.relevantValues(alloc)).len);
+    try testing.expectEqual(@as(usize, 2), (try agg.relevantValues()).len);
+
+    // DISTINCT alone keeps the NULL, as one group of its own.
+    opt.ignore_nulls = false;
+    agg.setOption(opt);
+    try testing.expectEqual(@as(usize, 3), (try agg.relevantValues()).len);
 }
 
 test "inverse removes the oldest matching scalar" {

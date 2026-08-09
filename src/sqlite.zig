@@ -592,6 +592,12 @@ pub fn resultNull(ctx: ?*c.sqlite3_context) void {
     c.sqlite3_result_null(ctx);
 }
 
+/// Returns an argument unchanged, storage class and bytes included. SQLite copies what it
+/// needs, so the value may belong to the caller's frame.
+pub fn resultValue(ctx: ?*c.sqlite3_context, v: ?*c.sqlite3_value) void {
+    c.sqlite3_result_value(ctx, v);
+}
+
 pub fn resultInt64(ctx: ?*c.sqlite3_context, v: i64) void {
     c.sqlite3_result_int64(ctx, v);
 }

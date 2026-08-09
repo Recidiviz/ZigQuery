@@ -52,12 +52,11 @@
                 .{true},
             },
         },
-        // The kinds codec_sortable.zig stores memcomparably, which lower to
-        // SQLite's own operators over the encoded bytes: each case asserts that
-        // byte order is value order. The analyzer folds most of these operands
-        // to literals, which carry the same bytes a column holds because
-        // LiteralFromValue delegates to EncodeValue. The table-backed case at
-        // the end of the group covers the round trip through storage.
+        // The kinds codec_sortable.zig stores memcomparably, which lower to SQLite's own
+        // operators over the encoded bytes: each case asserts that byte order is value order.
+        // The analyzer folds most of these operands to literals, which carry the same bytes a
+        // column holds because LiteralFromValue delegates to EncodeValue. The table-backed case
+        // at the end of the group covers the round trip through storage.
         .{
             .desc = "ordering over date columns",
             .sql = "SELECT lo < hi, hi < lo, lo = lo, lo BETWEEN lo AND hi FROM (SELECT DATE '1968-07-04' AS lo, DATE '2024-03-04' AS hi)",

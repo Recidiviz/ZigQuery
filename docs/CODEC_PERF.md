@@ -456,3 +456,120 @@ The four spec cases that existed all used non-NULL operands, so they never
 exercised the only input where the predicate differs from `x` itself. That is
 the general lesson of this section: each of these three bugs sat behind a test
 that passed because it tested the uninteresting half of the domain.
+
+## 9. Window functions: a per-row result was a per-partition allocation
+
+`xValue` produces a result per row, and `done()` allocated it from the Group's
+arena — which is released at `xFinal`, one partition later. Every row's working
+set was therefore retained for the length of the partition. §6 fixed this shape
+for the encode half and lists `window.xValue` in its table; the allocations
+*inside* `done()` were not covered by that.
+
+`WindowFuncAggregatedStatus.relevantValues` compounded it. It is a pure function
+of the buffered values and the parsed options, and it rebuilt its result — the
+filtered slice, and for DISTINCT a hash set plus a key per value — on every one
+of those per-row calls.
+
+Measured with `SELECT SUM(c) FROM (SELECT COUNT([DISTINCT] x) OVER () AS c FROM
+UNNEST(GENERATE_ARRAY(1, n)) AS x)`, `-Drelease=true`, two binaries built from
+the same tree with and without the change:
+
+| n | DISTINCT | plain | peak RSS, DISTINCT | peak RSS, plain |
+|---|---|---|---|---|
+| 1000 | 0.10s -> **0.01s** | 0.01s -> 0.01s | | |
+| 2000 | 0.36s -> **0.01s** | 0.04s -> **0.01s** | 670 -> **25 MB** | 147 -> **25 MB** |
+| 4000 | 1.49s -> **0.01s** | 0.15s -> **0.01s** | 2804 -> **26 MB** | 515 -> **26 MB** |
+| 8000 | 7.51s -> **0.02s** | 0.57s -> **0.01s** | 5527-7046 -> **29 MB** | 1983 -> **28 MB** |
+
+**Quote the plain column.** It reproduces to the byte — 1983 MB on four
+consecutive runs — because its allocation pattern is one slice per row into a
+bump allocator. The DISTINCT figure moves ±13% between runs, since a hash
+table's growth and rehash depend on allocation order and the machine is paging
+at 5-7 GB. The floor under both is ~22 MB, which is what `SELECT 1` costs.
+
+Two gigabytes for an 8000-row window with no DISTINCT in it is the number that
+frames the rest: this was never a DISTINCT problem. DISTINCT multiplied a
+constant that was already the wrong shape.
+
+The plain column is not merely reproducible, it is arithmetic. A `Value` is 32
+bytes (`Interval`'s seven i32s set the union's payload, per the note on
+`Range`), so a frame of n values is 32n bytes per `xValue` call and n calls
+retain 32n². At n = 8000 that is 2.048 GB against 1983 MB measured: the
+retention is not a component of the number, it is the whole number.
+
+Two changes, both in that shape:
+
+- **A second arena scoped to one `xValue`.** `done()` allocates from it and it
+  is reset per row. Sound because `produceImpl` hands the result to `setResult`,
+  which encodes it into the connection scratch before returning — nothing
+  `done()` allocates outlives the call. The buffered values keep the partition
+  arena, since `xStep` writes them and later rows read them.
+- **`relevantValues` holds its result** until `step`, `inverse` or `setOption`
+  moves what it was computed from. A frame that does not move between rows —
+  which for DISTINCT is every frame, since the analyzer rejects a window
+  `ORDER BY` or framing clause beside it — computes once per partition instead
+  of once per row.
+
+Both are linear now, and the sizes that motivated the work are no longer
+interesting: n = 500 000 runs in 0.57s and 372 MB, where n = 8000 previously
+took 7.67s and 5.2 GB.
+
+The invariant to protect is that the cached set is shared across the rows of a
+standing frame. `WINDOW_PERCENTILE_DISC` orders the frame to pick its answer and
+now sorts a copy. `test "a frame reaching forward is recomputed per row"`
+(`zigquery/functions/window/distinct`) pins the invalidation: a frame with a
+FOLLOWING bound is stepped between one row's value and the next, and its last
+row is the only one whose frame shrinks — which is what a stale set gets wrong.
+
+### 9.1 A group key is the stored value
+
+The dedup key was `Value.toString`, the formatted text. Deriving a key by
+decoding a value and re-rendering it is work the storage format already did: the
+encoding is canonical, one value to one byte string per kind, which is the same
+property `UNION DISTINCT` leans on to dedup without decoding
+(`transformer/scan_setop.zig`). So the aggregate key is now taken straight off
+`argv` — no decode, no re-encode — with a leading discriminator for the storage
+class and `-0.0` folded to `0.0`, which is the one thing bytes cannot answer for
+(`data-types.md#grouping-with-floating-point-types`).
+
+Taking the key from the arguments rather than from decoded values also moves the
+DISTINCT test in front of `decodeArgs`, so **a duplicate row is never decoded at
+all** — no blob dupe, no parse. Measured on 500 k rows whose 100 distinct values
+are ~120-byte strings:
+
+| | time | peak RSS |
+|---|---|---|
+| no DISTINCT (the floor: every row still decodes) | 0.27s | 201 MB |
+| `COUNT(DISTINCT ...)` before | 0.36s | 290 MB |
+| `COUNT(DISTINCT ...)` after | **0.28s** | **116 MB** |
+
+DISTINCT now costs about what not having it costs, and less memory than the
+floor, because the rows it rejects skip the decode the floor still pays. The
+map also borrows the key while probing and copies it only when the value is new,
+so a duplicate allocates nothing.
+
+Three answers were corrected on the way.
+
+A NULL in a window frame under DISTINCT raised `toString on null value` rather
+than grouping, so `MIN` and `SUM` with `DISTINCT ... OVER ()` failed outright on
+any frame containing one. NULL is now an ordinary key, which also retires the
+aggregate path's separate seen-NULL bit.
+
+`COUNT(DISTINCT x)` over `[0.0, -0.0]` answered 2 while `GROUP BY x` and
+`SELECT DISTINCT x` over the same values answered 1, those two going through
+SQLite's numeric comparison. All four spellings agree now, and one spec case
+asserts them together.
+
+And `zetasqlite_group_by` had the same shape of bug with teeth: it decoded every
+group key per row and re-rendered it, joining ARRAY and STRUCT elements with
+`"||"`. That is not injective, so `['a||b']` and `['a', 'b']` landed in one
+group — one row of `COUNT(*) = 2` where BigQuery gives two rows of 1
+(`data-types.md#group_with_arrays`). It now returns its argument untouched and
+lets SQLite group the stored bytes, which is both correct and free: SQLite
+supplies NULL-groups-with-NULL and `0.0`-groups-with-`-0.0` on its own, because
+it compares numerically rather than bitwise.
+
+The remaining bound: SQLite raises "DISTINCT is not supported for window
+functions" (`sqlite3WindowAttach`), so that dedup cannot be handed to it the way
+`UNION DISTINCT`'s is. The window path still keys on the decoded value, which
+after the cache runs once per standing frame rather than once per row.

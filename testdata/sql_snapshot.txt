@@ -19603,6 +19603,108 @@ FROM `finishers` AS `wrs32`
 ORDER BY `division__30` ASC, `finish_time__29` ASC
 ) AS `analytic_scan_31`;
 
+### zigquery/functions/window/distinct	distinct over a frame containing null
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+SELECT
+`m__5` AS `m`,  
+`s__6` AS `s`,  
+`c__7` AS `c`
+FROM (
+SELECT  
+`x__1`,    
+zetasqlite_window_min(`x__1`, zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `m__5`,    
+zetasqlite_window_sum(`x__1`, zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `s__6`,    
+zetasqlite_window_count(`x__1`, zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `c__7`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `x__1`    
+FROM zetasqlite_unnest(X'0e0401010000000000000000010200000000000000010100000000000000') AS `$array_5`
+) AS `array_scan_5`
+) AS `analytic_scan_4`;
+
+### zigquery/functions/window/distinct	signed zero is one group for every spelling of distinct
+SELECT
+`w__11` AS `w`,  
+`a__14` AS `a`,  
+`g__18` AS `g`,  
+`d__22` AS `d`
+FROM (
+SELECT  
+`x__1`,    
+`a__14`,    
+`g__18`,    
+`d__22`,    
+zetasqlite_window_count(`x__1`, zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `w__11`  
+FROM (
+SELECT    
+`$array_6`.`value` AS `x__1`,      
+(SELECT      
+`$agg1__13`      
+FROM (
+SELECT        
+zetasqlite_count(`$array_9`.`value`, zetasqlite_distinct()) AS `$agg1__13`        
+FROM zetasqlite_unnest(X'0e02020000000000000000020000000000000080') AS `$array_9`
+) AS `aggregate_scan_8`) AS `a__14`,      
+(SELECT      
+`$agg1__17`      
+FROM (
+SELECT        
+zetasqlite_count_star() AS `$agg1__17`        
+FROM (
+SELECT          
+`$array_14`.`value` AS `y__16`          
+FROM zetasqlite_unnest(X'0e02020000000000000000020000000000000080') AS `$array_14`          
+GROUP BY zetasqlite_group_by(`$array_14`.`value`)
+) AS `aggregate_scan_13`
+) AS `aggregate_scan_11`) AS `g__18`,      
+(SELECT      
+`$agg1__21`      
+FROM (
+SELECT        
+zetasqlite_count_star() AS `$agg1__21`        
+FROM (
+SELECT          
+`$array_18`.`value` AS `y__20`          
+FROM zetasqlite_unnest(X'0e02020000000000000000020000000000000080') AS `$array_18`          
+GROUP BY zetasqlite_group_by(`$array_18`.`value`)
+) AS `aggregate_scan_17`
+) AS `aggregate_scan_16`) AS `d__22`    
+FROM zetasqlite_unnest(X'0e02020000000000000000020000000000000080') AS `$array_6`
+) AS `project_scan_5`
+) AS `analytic_scan_4`;
+
+### zigquery/functions/window/distinct	a frame reaching forward is recomputed per row
+SELECT
+`x__1` AS `x`,  
+`a__3` AS `a`
+FROM (
+SELECT  
+`x__1`,    
+zetasqlite_window_array_agg(`x__1`) OVER (ORDER BY `x__1` ASC ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS `a__3`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `x__1`    
+FROM zetasqlite_unnest(X'0e03010100000000000000010200000000000000010300000000000000') AS `$array_5`
+) AS `array_scan_5`  
+ORDER BY `x__1` ASC
+) AS `analytic_scan_4`;
+
+### zigquery/functions/window/distinct	percentile_disc over a frame with duplicates
+SELECT
+`p__3` AS `p`
+FROM (
+SELECT  
+`x__1`,    
+zetasqlite_window_percentile_disc(`x__1`, 0.5, zetasqlite_ignore_nulls()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `p__3`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `x__1`    
+FROM zetasqlite_unnest(X'0e03010300000000000000010100000000000000010100000000000000') AS `$array_5`
+) AS `array_scan_5`
+) AS `analytic_scan_4`;
+
 ### zigquery/functions/window/first_value	window first_value
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -22586,6 +22688,64 @@ X'0e010f02046e616d6504056974656d33057072696365011e00000000000000' AS `items__7`,
 GROUP BY zetasqlite_group_by(`items__7`)
 ) AS `aggregate_scan_4`  
 ORDER BY `sum_total__9` DESC
+) AS `order_by_scan_3`;
+
+### zigquery/syntax/query/group_by	arrays group by element sequence, not by joined text
+SELECT
+`n__5` AS `n`,  
+`c__2` AS `c`
+FROM (
+SELECT  
+`n__5`,    
+`c__2`  
+FROM (
+SELECT    
+`arr__4`,      
+`c__2`,      
+zetasqlite_array_length(`arr__4`) AS `n__5`    
+FROM (
+SELECT      
+zetasqlite_get_struct_field(`$unnest1__1`, 0) AS `arr__4`,        
+zetasqlite_count_star() AS `c__2`      
+FROM (
+SELECT        
+`$array_7`.`value` AS `$unnest1__1`,          
+zetasqlite_array_length(zetasqlite_get_struct_field(`$array_7`.`value`, 0)) AS `n__3`        
+FROM zetasqlite_unnest(X'0e020f01036172720e010404617c7c620f01036172720e02040161040162') AS `$array_7`
+) AS `project_scan_6`      
+GROUP BY zetasqlite_group_by(zetasqlite_get_struct_field(`$unnest1__1`, 0))
+) AS `aggregate_scan_5`
+) AS `project_scan_4`  
+ORDER BY `n__5` ASC
+) AS `order_by_scan_3`;
+
+### zigquery/syntax/query/group_by	structs group by field values, not by joined text
+SELECT
+`k__5` AS `k`,  
+`c__2` AS `c`
+FROM (
+SELECT  
+`k__5`,    
+`c__2`  
+FROM (
+SELECT    
+`s__4`,      
+`c__2`,      
+zetasqlite_get_struct_field(`s__4`, 0) AS `k__5`    
+FROM (
+SELECT      
+zetasqlite_get_struct_field(`$unnest1__1`, 0) AS `s__4`,        
+zetasqlite_count_star() AS `c__2`      
+FROM (
+SELECT        
+`$array_7`.`value` AS `$unnest1__1`,          
+zetasqlite_get_struct_field(zetasqlite_get_struct_field(`$array_7`.`value`, 0), 0) AS `k__3`        
+FROM zetasqlite_unnest(X'0e020f0101730f02016b0404617c7c62016a04000f0101730f02016b040161016a040162') AS `$array_7`
+) AS `project_scan_6`      
+GROUP BY zetasqlite_group_by(zetasqlite_get_struct_field(`$unnest1__1`, 0))
+) AS `aggregate_scan_5`
+) AS `project_scan_4`  
+ORDER BY `k__5` ASC
 ) AS `order_by_scan_3`;
 
 ### zigquery/syntax/query/join	inner join with using

@@ -209,10 +209,19 @@ fn errorText(comptime name: []const u8, err: anyerror, buf: []u8) []const u8 {
     return std.fmt.bufPrint(buf, "zetasqlite_" ++ name ++ ": {s}", .{@errorName(err)}) catch name;
 }
 
-// ----------------------------------------------------------------------
-// zetasqlite_group_by: structs/arrays flatten to "elem||elem||..." (their
-// elements' ToString); scalars pass through as their native representation
-// (Go decoded.Interface()).
+// ---------------------------------------------------------------------- zetasqlite_group_by:
+// returns its argument untouched, so SQLite groups on the stored form.
+//
+// That is sound because the storage encoding is canonical: one value has one byte string, per
+// kind, which is the same property `UNION DISTINCT` already leans on
+// (transformer/scan_setop.zig). SQLite's own grouping then supplies the parts bytes cannot:
+// NULLs group together, and 0.0 groups with -0.0
+// (data-types.md#grouping-with-floating-point-types) because it compares numerically rather
+// than bitwise.
+//
+// Rendering a group key to text instead loses the injectivity grouping needs. An ARRAY joined
+// on "||" puts `['a||b']` and `['a', 'b']` in one group; data-types.md#group_with_arrays gives
+// them separate groups, one per distinct element sequence.
 // ----------------------------------------------------------------------
 
 fn groupByTramp(
@@ -220,79 +229,11 @@ fn groupByTramp(
     argc: c_int,
     argv: [*c]?*c.sqlite3_value,
 ) callconv(.c) void {
-    const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
-    _ = state.arena.reset(.retain_capacity);
-    const alloc = state.arena.allocator();
-    bind.clearDiagnostics();
-
     if (argc < 1) {
         sqlite.resultError(ctx, "zetasqlite_group_by: invalid argument num");
         return;
     }
-    groupByImpl(ctx, alloc, argv[0]) catch |err| {
-        var buf: [96]u8 = undefined;
-        sqlite.resultError(ctx, errorText("group_by", err, &buf));
-    };
-}
-
-fn groupByImpl(ctx: ?*c.sqlite3_context, alloc: std.mem.Allocator, arg: ?*c.sqlite3_value) !void {
-    const args = try decodeArgs(
-        alloc,
-        ctx,
-        0,
-        0,
-        @ptrCast(@constCast(&[_]?*c.sqlite3_value{arg})),
-        1,
-    );
-    const decoded = if (args[0] == .safe) args[0].safe.* else args[0];
-    switch (decoded) {
-        .null => sqlite.resultNull(ctx),
-        .array => |a| sqlite.resultText(ctx, try joinToString(alloc, a.values)),
-        .struct_ => |s| sqlite.resultText(ctx, try joinToString(alloc, s.values)),
-        // Scalars: Go decoded.Interface().
-        .int => |i| sqlite.resultInt64(ctx, i),
-        .bool => |b| sqlite.resultInt64(ctx, @intFromBool(b)),
-        .float => |f| sqlite.resultDouble(ctx, f),
-        .string => |s| sqlite.resultText(ctx, s),
-        .bytes => |b| sqlite.resultBlob(ctx, b),
-        // JSON group key: the raw JSON text (distinct raw strings group together).
-        .json => |s| sqlite.resultText(ctx, s),
-        .date => |days| {
-            var buf: [32]u8 = undefined;
-            sqlite.resultText(ctx, value_mod.formatDateDays(&buf, days));
-        },
-        // Go decoded.Interface(): timestamp => time.RFC3339, the others =>
-        // their ToApiString form.
-        .timestamp => |m| {
-            var buf: [40]u8 = undefined;
-            sqlite.resultText(ctx, value_mod.formatTimestampRfc3339(&buf, m));
-        },
-        .datetime => |m| {
-            var buf: [40]u8 = undefined;
-            sqlite.resultText(ctx, value_mod.formatDatetimeApi(&buf, m));
-        },
-        .time => |m| {
-            var buf: [24]u8 = undefined;
-            sqlite.resultText(ctx, value_mod.formatTimeString(&buf, m));
-        },
-        .interval => |iv| {
-            var buf: [96]u8 = undefined;
-            sqlite.resultText(ctx, value_mod.formatInterval(&buf, iv));
-        },
-        // RANGE group key: the canonical "[start, end)" text. RangeType
-        // overrides SupportsGroupingImpl to true, so GROUP BY over a range
-        // column is legal, and distinct ranges of one element kind render to
-        // distinct text. Two kinds could collide on "[UNBOUNDED, UNBOUNDED)",
-        // which cannot arise: a column carries one static element type.
-        .range => |r| {
-            var buf: [96]u8 = undefined;
-            sqlite.resultText(ctx, value_mod.formatRange(&buf, r));
-        },
-        // NUMERIC/BIGNUMERIC group key: the decimal rendering (distinct
-        // numeric values render to distinct text, so grouping is exact).
-        .numeric => |n| sqlite.resultText(ctx, try n.toText(alloc)),
-        .safe => unreachable,
-    }
+    sqlite.resultValue(ctx, argv[0]);
 }
 
 fn joinToString(alloc: std.mem.Allocator, values: []const Value) ![]u8 {
@@ -863,15 +804,12 @@ test "error() raises with its message; safe variant yields NULL" {
     try env.expectNullResult(try env.fmt("SELECT zetasqlite_safe_error({s})", .{try env.encStr("boom")}));
 }
 
-test "group_by flattens containers and passes scalars through" {
+test "group_by returns its argument untouched, so distinct values stay distinct" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    // Scalars: native passthrough (raw string, not re-encoded).
-    try testing.expectEqualStrings("x", try env.queryText(try env.fmt(
-        "SELECT zetasqlite_group_by({s})",
-        .{try env.encStr("x")},
-    )));
+    // Scalars keep their storage class, which is what lets SQLite group -0.0 with 0.0 and NULL
+    // with NULL.
     {
         var stmt = try env.db.prepare("SELECT zetasqlite_group_by(5)");
         defer stmt.finalize();
@@ -886,15 +824,23 @@ test "group_by flattens containers and passes scalars through" {
         try testing.expectEqual(sqlite.Stmt.ColumnType.null, stmt.columnType(0));
     }
 
-    // Arrays/structs join their elements' ToString with "||".
-    try testing.expectEqualStrings("a||b", try env.queryText(try env.fmt(
-        "SELECT zetasqlite_group_by(zetasqlite_make_array({s}, {s}))",
-        .{ try env.encStr("a"), try env.encStr("b") },
-    )));
-    try testing.expectEqualStrings("1||x", try env.queryText(try env.fmt(
-        "SELECT zetasqlite_group_by(zetasqlite_make_struct({s}, 1, {s}, {s}))",
-        .{ try env.encStr("k1"), try env.encStr("k2"), try env.encStr("x") },
-    )));
+    // A string is its stored blob, not its text.
+    const x = try env.encStr("x");
+    try env.expectInt(1, try env.fmt(
+        "SELECT zetasqlite_group_by({s}) = {s}",
+        .{ x, x },
+    ));
+
+    // Element sequences a "||" join would merge stay in separate groups: ['a||b'] against ['a',
+    // 'b'].
+    const ab = try env.encStr("a||b");
+    const a = try env.encStr("a");
+    const b = try env.encStr("b");
+    try env.expectInt(0, try env.fmt(
+        "SELECT zetasqlite_group_by(zetasqlite_make_array({s}))" ++
+            " = zetasqlite_group_by(zetasqlite_make_array({s}, {s}))",
+        .{ ab, a, b },
+    ));
 }
 
 test "encoded values order by memcmp, with no collation involved" {

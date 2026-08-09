@@ -1447,6 +1447,10 @@ zigquery/functions/utility/safe_prefix	a function with no implementation names i
 zigquery/functions/window/cume_dist	cume_dist
 zigquery/functions/window/dense_rank	window dense_rank
 zigquery/functions/window/dense_rank	window dense_rank with group
+zigquery/functions/window/distinct	distinct over a frame containing null
+zigquery/functions/window/distinct	signed zero is one group for every spelling of distinct
+zigquery/functions/window/distinct	a frame reaching forward is recomputed per row
+zigquery/functions/window/distinct	percentile_disc over a frame with duplicates
 zigquery/functions/window/first_value	window first_value
 zigquery/functions/window/lag	window lag
 zigquery/functions/window/lag	lag with option
@@ -1530,6 +1534,8 @@ zigquery/syntax/query/group_by	group by array values basic
 zigquery/syntax/query/group_by	group by array values with aggregation
 zigquery/syntax/query/group_by	group by nested struct with arrays
 zigquery/syntax/query/group_by	group by array of structs
+zigquery/syntax/query/group_by	arrays group by element sequence, not by joined text
+zigquery/syntax/query/group_by	structs group by field values, not by joined text
 zigquery/syntax/query/join	inner join with using
 zigquery/syntax/query/join	left join
 zigquery/syntax/query/join	right join

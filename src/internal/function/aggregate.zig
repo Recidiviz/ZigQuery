@@ -4,10 +4,10 @@
 //! - Every foundation aggregate from fn_aggregate.zig is registered as
 //!   zetasqlite_<name> (Go setupAggregateFuncMap; aggregates have no safe_
 //!   variants and window variants are a later milestone).
-//! - The generic Aggregator step logic is shared: decode args, strip the
-//!   option marker strings (aggregate_option.parseAggregateOptions), apply
-//!   IGNORE NULLS filtering and DISTINCT dedup (map keyed on the first
-//!   value's ToString, plus a seen-NULL bit), then hand off to the impl.
+//! - The generic Aggregator step logic is shared: reject the rows DISTINCT has already
+//!   taken, reading the arguments as SQLite stored them, then decode args, strip the option
+//!   markers (aggregate_option.parseAggregateOptions), apply IGNORE NULLS filtering, and
+//!   hand off to the impl.
 //! - Per-group state lives behind sqlite3_aggregate_context: the context
 //!   slot holds one pointer to a gpa-allocated Group carrying its own arena
 //!   (decoded values must survive until xFinal). xFinal may run without any
@@ -166,6 +166,52 @@ fn decodeArgs(
     return args;
 }
 
+/// The option kind an argument carries, or null for an ordinary value.
+fn markerKind(v: ?*c.sqlite3_value) ?agg_opt.Kind {
+    if (sqlite.valueType(v) != .blob) return null;
+    return agg_opt.rawMarkerKind(sqlite.valueBlob(v));
+}
+
+/// Appends a key equal for exactly the values DISTINCT puts in one group, taken from the
+/// argument as SQLite stored it.
+///
+/// The storage encoding is canonical — one value has one byte string, per kind — so two
+/// arguments can be compared without decoding either. The leading discriminator separates the
+/// storage classes on their own terms rather than resting on an argument having one static
+/// type.
+///
+/// Signed zero is the one value the stored bytes cannot answer for: 0.0 and -0.0 are one group
+/// (data-types.md#grouping-with-floating-point-types) and two bit patterns. NaN needs no arm,
+/// arriving as NULL.
+fn appendDistinctKey(
+    buf: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    v: ?*c.sqlite3_value,
+) !void {
+    switch (sqlite.valueType(v)) {
+        .null => try buf.append(alloc, 0),
+        .integer => {
+            try buf.append(alloc, 1);
+            var b: [8]u8 = undefined;
+            std.mem.writeInt(i64, &b, sqlite.valueInt64(v), .little);
+            try buf.appendSlice(alloc, &b);
+        },
+        .float => {
+            try buf.append(alloc, 2);
+            const f = sqlite.valueDouble(v);
+            var b: [8]u8 = undefined;
+            std.mem.writeInt(u64, &b, @bitCast(if (f == 0) @as(f64, 0) else f), .little);
+            try buf.appendSlice(alloc, &b);
+        },
+        .blob => {
+            try buf.append(alloc, 3);
+            try buf.appendSlice(alloc, sqlite.valueBlob(v));
+        },
+        // TEXT has no engine meaning since storage format 3.
+        .text => return error.CorruptData,
+    }
+}
+
 /// register.zig's, which this file's State is (`const State = register.State`),
 /// so the connection's one encode scratch buffer serves both.
 const setResult = register.setResult;
@@ -186,8 +232,11 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
         /// (zero-initialized by sqlite3_aggregate_context on first use).
         const Group = struct {
             arena: std.heap.ArenaAllocator,
+            /// Keyed by `appendDistinctKey`, which spells NULL as a key like any other value.
             distinct_map: std.StringHashMapUnmanaged(void) = .empty,
-            distinct_nil: bool = false,
+            /// Built per row and handed to the map as a borrowed slice; the map takes its own
+            /// copy only for a value it has not seen.
+            distinct_key: std.ArrayList(u8) = .empty,
             failed: bool = false,
             impl: Impl = .{},
         };
@@ -225,6 +274,9 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
         /// Go Aggregator.Step.
         fn step(group: *Group, argv: [*c]?*c.sqlite3_value, n: usize) !void {
             const alloc = group.arena.allocator();
+            // A row DISTINCT has seen before contributes nothing, and deciding that from the
+            // stored bytes means it never has to be decoded.
+            if (try seenBefore(group, argv, n)) return;
             const args = try decodeArgs(alloc, argv, n);
             const parsed = try agg_opt.parseAggregateOptions(alloc, args);
             var values = parsed.values;
@@ -241,25 +293,53 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 if (values.len == 0) return;
             }
 
-            if (opt.distinct) {
-                if (values.len < 1) {
-                    return bind.fail(
-                        "DISTINCT option required at least one argument",
-                        .{},
-                        error.UnsupportedOperation,
-                    );
-                }
-                if (values[0] == .null) {
-                    if (group.distinct_nil) return;
-                    group.distinct_nil = true;
-                } else {
-                    const key = try values[0].toString(alloc);
-                    const entry = try group.distinct_map.getOrPut(alloc, key);
-                    if (entry.found_existing) return;
-                }
+            if (opt.distinct and values.len < 1) {
+                return bind.fail(
+                    "DISTINCT option required at least one argument",
+                    .{},
+                    error.UnsupportedOperation,
+                );
             }
 
             try group.impl.step(alloc, values, opt);
+        }
+
+        /// Whether DISTINCT has already taken a row with this value, decided from the arguments
+        /// as SQLite stored them. Records the value when it has not.
+        ///
+        /// The value slot is picked the way the decoded path picks `values[0]`: the first
+        /// argument that is not an option marker, skipping NULLs under IGNORE NULLS. An
+        /// argument list with no value slot falls through to the decoded path, which owns the
+        /// diagnostics for it.
+        fn seenBefore(group: *Group, argv: [*c]?*c.sqlite3_value, n: usize) !bool {
+            var distinct = false;
+            var ignore_nulls = false;
+            var first: ?usize = null;
+            var first_non_null: ?usize = null;
+            for (0..n) |i| {
+                if (markerKind(argv[i])) |kind| {
+                    switch (kind) {
+                        .distinct => distinct = true,
+                        .ignore_nulls => ignore_nulls = true,
+                        else => {},
+                    }
+                    continue;
+                }
+                if (first == null) first = i;
+                if (first_non_null == null and sqlite.valueType(argv[i]) != .null) {
+                    first_non_null = i;
+                }
+            }
+            if (!distinct) return false;
+            const slot = (if (ignore_nulls) first_non_null else first) orelse return false;
+
+            const alloc = group.arena.allocator();
+            group.distinct_key.clearRetainingCapacity();
+            try appendDistinctKey(&group.distinct_key, alloc, argv[slot]);
+            const gop = try group.distinct_map.getOrPut(alloc, group.distinct_key.items);
+            if (gop.found_existing) return true;
+            gop.key_ptr.* = try alloc.dupe(u8, group.distinct_key.items);
+            return false;
         }
 
         fn xFinal(ctx: ?*c.sqlite3_context) callconv(.c) void {
