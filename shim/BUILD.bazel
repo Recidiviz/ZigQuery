@@ -40,6 +40,13 @@ SHIM_DEPS = [
 # The exported surface, kept in one place so the two link lines cannot drift.
 # Mach-O wants each name individually and prefixed with `_`; ELF reads the
 # same set out of shim.lds as a `GoogleSQL_*` glob.
+#
+# This list being closed is load-bearing for more than size. The server links
+# gRPC core (see the grpc dependency in build.zig), which vendors its own
+# abseil 20250512 and re2 2022-04-01, while this shim links abseil 20260107 and
+# re2 2025-08-12 (MODULE.bazel). Two versions of both libraries therefore exist
+# in one process, and what keeps them apart is exactly that nothing but these
+# C entry points is exported: the shim's copies are private to the dylib.
 SHIM_EXPORTS = [
     "GoogleSQL_AnalyzeNextStatement",
     "GoogleSQL_AnalyzeNextStatementParams",

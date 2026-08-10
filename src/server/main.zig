@@ -8,6 +8,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const bqserver = @import("bqserver");
 const http_server = bqserver.http_server;
+const grpc_server = bqserver.grpc_server;
 
 const default_host = "0.0.0.0";
 const default_port: u16 = 9050;
@@ -111,9 +112,24 @@ pub fn main(init: std.process.Init) !void {
     }, app.handler());
     defer server.deinit();
 
-    // The node and python test fixtures both gate readiness on this exact
-    // line (LogMessageWaitStrategy / Wait.forLogMessage), so it must match
-    // Go's cmd/bigquery-emulator/main.go byte for byte.
+    // The Storage API transport. Binds here and runs its completion queue on its own thread; see grpc/server.zig.
+    // Both binds happen before either readiness line below.
+    const grpc = grpc_server.Server.init(gpa, .{
+        .address = opts.host,
+        .port = opts.grpc_port,
+    }) catch |err| {
+        try err_out.print(
+            "gRPC server failed to bind {s}:{d}: {t}\n",
+            .{ opts.host, opts.grpc_port, err },
+        );
+        try err_out.flush();
+        std.process.exit(1);
+    };
+    defer grpc.deinit();
+    try grpc.start();
+
+    // The node and python test fixtures both gate readiness on these exact
+    // lines (LogMessageWaitStrategy / Wait.forLogMessage)
     var stdout_buf: [512]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);
     const out = &stdout_writer.interface;
@@ -121,9 +137,10 @@ pub fn main(init: std.process.Init) !void {
         "[bigquery-emulator] REST server listening at {s}:{d}\n",
         .{ opts.host, opts.port },
     );
+    // grpc.bound_port rather than opts.grpc_port: may be a kernel-chosen port when 0 is passed as opts.grpc_port
     try out.print(
         "[bigquery-emulator] gRPC server listening at {s}:{d}\n",
-        .{ opts.host, opts.grpc_port },
+        .{ opts.host, grpc.bound_port },
     );
     try out.flush();
 

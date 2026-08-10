@@ -302,6 +302,22 @@ wheels = [
 ]
 
 [[package]]
+name = "google-cloud-bigquery-storage"
+version = "2.40.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/01/1a/f723ceb6f5900790b4da7bd9ba432723fcfcdc048402f4122b6bc60a65a7/google_cloud_bigquery_storage-2.40.0.tar.gz", hash = "sha256:d0f201787e83fe997122ffbcfe7ef0c6bd07e7d1716e5bc1d0a7c0edae9dbf67", size = 311914, upload-time = "2026-08-06T06:24:10.413Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/69/48dc74b9bd665fb9932763c1e1347f66d9fbbc23adea4c7fd593181ecdf5/google_cloud_bigquery_storage-2.40.0-py3-none-any.whl", hash = "sha256:14ea9a6862a9b641dcf5fc3a2fb685d5c5b36a1c35591e1f525267ba50d6833e", size = 306933, upload-time = "2026-08-06T06:23:02.8Z" },
+]
+
+[[package]]
 name = "google-cloud-core"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -623,11 +639,13 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "google-cloud-bigquery" },
+    { name = "google-cloud-bigquery-storage" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "google-cloud-bigquery", specifier = ">=3.25" },
+    { name = "google-cloud-bigquery-storage", specifier = ">=2.25" },
     { name = "pyyaml", specifier = ">=6" },
 ]

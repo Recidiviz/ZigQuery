@@ -27,6 +27,10 @@ pub const source = @import("source.zig");
 pub const stats = @import("stats.zig");
 pub const Server = @import("server.zig").Server;
 pub const server = @import("server.zig");
+// The Storage Read/Write API transport.
+pub const grpc_c = @import("grpc/c.zig");
+pub const grpc_method = @import("grpc/method.zig");
+pub const grpc_server = @import("grpc/server.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

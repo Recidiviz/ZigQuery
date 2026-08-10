@@ -106,6 +106,38 @@ pub fn build(b: *std.Build) void {
     });
     sqlite.root_module.addIncludePath(sqlite_headers);
 
+    // gRPC core, for the Storage API transport
+    // Built once and shared by every consumer of serverModule, always at
+    // ReleaseFast whatever -Drelease says — the same deal SQLite gets above,
+    // and for a stronger reason: `serverModule` is instantiated twice (once for
+    // the real build, once at -ODebug for `coverage`), and an unpinned optimize
+    // would make the second instantiation a second from-source build of
+    // BoringSSL, abseil, upb, re2 and gRPC core. That build is ~2m50s on 14
+    // cores; paying it twice is not a rounding error.
+    //
+    //   link_mode = .static  the package defaults to .dynamic, which would put
+    //                        a second shared library next to the shim in the
+    //                        dist tarball with its own rpath problem. It also
+    //                        turns off the Darwin framework inheritance that
+    //                        puts -framework CoreFoundation on our link line.
+    //   pic       = true     the package couples pic to link_mode (defaulting
+    //                        it to `linkmode == .dynamic`), so .static silently
+    //                        turns it off. Needed to link the archive into a
+    //                        PIE on Linux.
+    //
+    // `target` is passed through rather than pinned, so -Dcpu=baseline reaches
+    // the vendored C/C++ too — see the arm64 SIGILL note in release.yml.
+    const grpc_dep = b.dependency("grpc", .{
+        .target = target,
+        .optimize = .ReleaseFast,
+        .link_mode = .static,
+        .pic = true,
+    });
+    const server_deps: ServerDeps = .{
+        .target = target,
+        .cgrpc = grpc_dep.module("cgrpc"),
+    };
+
     // The `coverage` step builds a second copy of the module tree at -ODebug,
     // so the wiring lives in engineModule/serverModule rather than inline.
     const deps: EngineDeps = .{
@@ -331,7 +363,7 @@ pub fn build(b: *std.Build) void {
     //
     // A separate module from the engine so `test` and `corpus` — the engine's
     // regression gates — are unaffected by server work.
-    const server_mod = serverModule(b, target, optimize, mod);
+    const server_mod = serverModule(b, server_deps, optimize, mod);
 
     const server_exe = b.addExecutable(.{
         .name = "bigquery-emulator",
@@ -376,6 +408,31 @@ pub fn build(b: *std.Build) void {
     b.step("insert-bench", "Profile a tabledata.insertAll request body")
         .dependOn(&run_insertbench.step);
 
+    // Round-trips a real gRPC call against the Storage Read transport.
+    //
+    // Not in `test-server`, and not a benchmark: gRPC's shutdown checks abort
+    // rather than fail, and a mis-driven completion queue hangs. Either would
+    // take down the gate CI runs on every PR. Like analyzer-threads, it carries
+    // positive controls and exits nonzero when they misbehave, so a broken
+    // build cannot quietly pass it.
+    const grpcsmoke_exe = b.addExecutable(.{
+        .name = "grpc-smoke",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/grpc_smoke.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "bqserver", .module = server_mod },
+                .{ .name = "zetasqlite", .module = mod },
+            },
+        }),
+    });
+    if (maybe_bazel) |bz| grpcsmoke_exe.step.dependOn(&bz.step);
+    const run_grpcsmoke = b.addRunArtifact(grpcsmoke_exe);
+    if (b.args) |args| run_grpcsmoke.addArgs(args);
+    b.step("grpc-smoke", "Round-trip a gRPC call against the transport skeleton")
+        .dependOn(&run_grpcsmoke.step);
+
     // ---- dist ----
     //
     // `install` writes all ten artifacts to zig-out/bin, eight of which are
@@ -404,7 +461,7 @@ pub fn build(b: *std.Build) void {
     // --include-path keeps the report to this repo's own sources; without it
     // the Zig std lib dominates and the percentage means nothing.
     const cov_mod = engineModule(b, deps, .Debug);
-    const cov_server_mod = serverModule(b, target, .Debug, cov_mod);
+    const cov_server_mod = serverModule(b, server_deps, .Debug, cov_mod);
     const cov_tests = b.addTest(.{ .name = "engine-tests", .root_module = cov_mod });
     const cov_server_tests = b.addTest(.{ .name = "server-tests", .root_module = cov_server_mod });
     if (maybe_bazel) |bz| {
@@ -585,17 +642,34 @@ fn engineModule(
     return mod;
 }
 
+/// Everything the server module needs beyond an optimize mode and an engine.
+const ServerDeps = struct {
+    target: std.Build.ResolvedTarget,
+    /// gRPC core's translate-c bindings, for the Storage Read API transport.
+    /// See the note at its construction: one instance, always ReleaseFast,
+    /// shared with the coverage tree.
+    cgrpc: *std.Build.Module,
+};
+
 fn serverModule(
     b: *std.Build,
-    target: std.Build.ResolvedTarget,
+    deps: ServerDeps,
     optimize: std.builtin.OptimizeMode,
     engine: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{
         .root_source_file = b.path("src/server/root.zig"),
-        .target = target,
+        .target = deps.target,
         .optimize = optimize,
         .link_libc = true,
-        .imports = &.{.{ .name = "zetasqlite", .module = engine }},
+        // No link_libcpp and no linkFramework here: the cgrpc module links
+        // libgrpc, whose root module sets link_libcpp, and Compile.make walks
+        // linked artifacts recursively — so `-framework CoreFoundation -lc++`
+        // reach the link line on their own. Setting them here would be a
+        // second, drifting copy of a fact the dependency already states.
+        .imports = &.{
+            .{ .name = "zetasqlite", .module = engine },
+            .{ .name = "cgrpc", .module = deps.cgrpc },
+        },
     });
 }

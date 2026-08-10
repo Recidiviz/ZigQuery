@@ -14,6 +14,11 @@ dependencies = [
     # rather than the `bq` CLI because the CLI pays ~1s of Python startup per
     # query, which dominates a run of a few hundred small queries.
     "google-cloud-bigquery>=3.25",
+    # tools/storage_probe.py: drives the Storage Read API against the emulator
+    # with the client library real callers use, which is a different stack from
+    # the gRPC core that harness/grpc_smoke.zig exercises — the two disagree
+    # about things like trailers-only responses.
+    "google-cloud-bigquery-storage>=2.25",
     # tools/spec_import.py: reads goccy/googlesqlite's YAML corpus.
     "pyyaml>=6",
 ]
