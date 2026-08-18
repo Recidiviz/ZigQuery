@@ -7,12 +7,13 @@
 //!   typed-struct encoding/json cannot distinguish absent from null and
 //!   rejects JSON numbers for string-typed fields. Decoding into
 //!   std.json.Value has both properties natively.
-//! - Jobs live in a process-local map for M1. Go persists them to the
-//!   `jobs` metadata table (metadata/repository.go); that arrives in M2.
 
 const std = @import("std");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
+const spec = zetasqlite.spec;
+const encoder = zetasqlite.encoder;
+const job_rows_vtab = zetasqlite.function.job_rows_vtab;
 const http_server = @import("../http/server.zig");
 const errors = @import("../error.zig");
 const response = @import("../internal/types/response.zig");
@@ -101,6 +102,14 @@ pub fn parseQueryRequest(
 
 /// A completed query, retained so jobs.get and getQueryResults can replay it.
 pub const Job = struct {
+    /// Owns everything below. See `JobStore`.
+    ///
+    /// Behind a pointer, not by value: an `ArenaAllocator`'s `allocator()`
+    /// captures the address of the arena it was taken from, so a copy made
+    /// before the allocations happen — which is what a struct literal does,
+    /// its fields evaluating in source order — records none of them and frees
+    /// nothing. A heap arena has one stable address and cannot go stale.
+    arena: *std.heap.ArenaAllocator,
     project_id: []const u8,
     job_id: []const u8,
     /// The rows and schema, kept rather than a finished body: getQueryResults
@@ -111,44 +120,25 @@ pub const Job = struct {
     resource: []const u8,
 };
 
-/// Process-local job store. Go writes these to the `jobs` metadata table with
-/// three columns (metadata / result / error); M2 replaces this.
+/// Process-local job store.
+///
+/// Every job owns an arena. The rows a job retains are storage-form values plus
+/// a deep copy of the column types they were produced under, and a type tree is
+/// not something to free a piece at a time — so each entry is allocated
+/// together and released together.
 pub const JobStore = struct {
     gpa: std.mem.Allocator,
     map: std.StringHashMapUnmanaged(Job) = .empty,
 
-    fn freeRows(s: *JobStore, rows: []const []const u8) void {
-        for (rows) |r| s.gpa.free(r);
-        s.gpa.free(rows);
-    }
-
-    fn dupeRows(s: *JobStore, rows: []const []const u8) ![]const []const u8 {
-        const out = try s.gpa.alloc([]const u8, rows.len);
-        var n: usize = 0;
-        errdefer {
-            for (out[0..n]) |r| s.gpa.free(r);
-            s.gpa.free(out);
-        }
-        while (n < rows.len) : (n += 1) out[n] = try s.gpa.dupe(u8, rows[n]);
-        return out;
-    }
-
-    fn freeEntry(s: *JobStore, j: *Job) void {
-        s.gpa.free(j.set.schema_json);
-        s.freeRows(j.set.rows);
-        if (j.set.rows_int64_ts) |r| s.freeRows(r);
-        s.gpa.free(j.resource);
-        s.gpa.free(j.project_id);
-        s.gpa.free(j.job_id);
-    }
-
     pub fn deinit(s: *JobStore) void {
         var it = s.map.iterator();
-        while (it.next()) |kv| {
-            s.gpa.free(kv.key_ptr.*);
-            s.freeEntry(kv.value_ptr);
-        }
+        while (it.next()) |kv| s.release(kv.value_ptr);
         s.map.deinit(s.gpa);
+    }
+
+    fn release(s: *JobStore, job: *Job) void {
+        job.arena.deinit();
+        s.gpa.destroy(job.arena);
     }
 
     pub fn put(
@@ -158,36 +148,61 @@ pub const JobStore = struct {
         set: ResultSet,
         resource: []const u8,
     ) !void {
-        const key = try s.gpa.dupe(u8, job_id);
-        errdefer s.gpa.free(key);
-        const gop = try s.map.getOrPut(s.gpa, key);
-        if (gop.found_existing) {
-            s.gpa.free(key);
-            s.freeEntry(gop.value_ptr);
+        const arena_ptr = try s.gpa.create(std.heap.ArenaAllocator);
+        arena_ptr.* = std.heap.ArenaAllocator.init(s.gpa);
+        errdefer {
+            arena_ptr.deinit();
+            s.gpa.destroy(arena_ptr);
         }
-        gop.value_ptr.* = .{
-            .project_id = try s.gpa.dupe(u8, project_id),
-            .job_id = try s.gpa.dupe(u8, job_id),
-            .set = .{
-                .schema_json = try s.gpa.dupe(u8, set.schema_json),
-                .rows = try s.dupeRows(set.rows),
-                .rows_int64_ts = if (set.rows_int64_ts) |r| try s.dupeRows(r) else null,
-                .total_rows = set.total_rows,
-            },
-            .resource = try s.gpa.dupe(u8, resource),
+        const arena = arena_ptr.allocator();
+
+        const job = Job{
+            .arena = arena_ptr,
+            .project_id = try arena.dupe(u8, project_id),
+            .job_id = try arena.dupe(u8, job_id),
+            .set = try set.cloneInto(arena),
+            .resource = try arena.dupe(u8, resource),
         };
+
+        // The key points into the job's own arena, so removing an entry and
+        // releasing its memory are one action rather than two that can disagree.
+        const gop = try s.map.getOrPut(s.gpa, job.job_id);
+        if (gop.found_existing) s.release(gop.value_ptr);
+        gop.key_ptr.* = job.job_id;
+        gop.value_ptr.* = job;
     }
 
     pub fn get(s: *JobStore, job_id: []const u8) ?Job {
         return s.map.get(job_id);
     }
+
+    /// What `job_rows_vtab` calls to find a job's rows, with `s` as its context.
+    ///
+    /// Storage form on both sides, so this hands over a view of what the job
+    /// already holds and copies nothing. A missing job is null, which the module
+    /// reads as an empty table.
+    pub fn lookupRows(ctx: *anyopaque, job_id: []const u8) ?job_rows_vtab.RowSet {
+        const s: *JobStore = @ptrCast(@alignCast(ctx));
+        const job = s.map.get(job_id) orelse return null;
+        return .{ .names = job.set.names, .cells = job.set.cells };
+    }
 };
 
 /// Go server/util.go randomID: 27 alphanumeric characters.
+///
+/// The first is a letter, where Go's may be a digit. A job id becomes a table
+/// id — the destination table's — and `grpc/read_service.isSafeIdentifier`
+/// requires a leading letter or underscore before it will quote a name into
+/// SQL, so a digit there made Storage reads of the destination fail with
+/// `MalformedTableName` for about one job in six. Narrowing the first character
+/// is the cheap end of that fix: job ids are opaque to clients, where relaxing
+/// the guard would weaken an injection check on a name the client supplies.
 pub fn randomId(arena: std.mem.Allocator, rng: *std.Random.DefaultPrng) ![]const u8 {
-    const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const alphabet = letters ++ "0123456789";
     const out = try arena.alloc(u8, 27);
-    for (out) |*c| c.* = alphabet[rng.random().uintLessThan(usize, alphabet.len)];
+    out[0] = letters[rng.random().uintLessThan(usize, letters.len)];
+    for (out[1..]) |*c| c.* = alphabet[rng.random().uintLessThan(usize, alphabet.len)];
     return out;
 }
 
@@ -220,42 +235,152 @@ pub fn wrapEngineError(arena: std.mem.Allocator, msg: []const u8) ![]const u8 {
 /// per-row JSON, so a later request can take a prefix of them without
 /// re-running anything. Go keeps the rows themselves and slices those; the
 /// difference is only where serialization happens.
+/// A query's result, kept in the form it was stored in rather than the form it
+/// is served in.
+///
+/// This used to hold the REST rendering — and a *second* full rendering
+/// whenever a top-level TIMESTAMP column existed, since `useInt64Timestamp`
+/// changes it. One copy of the storage-form values replaces both, and is also
+/// exactly what `job_rows_vtab` serves, so the destination table and
+/// `getQueryResults` read the same bytes instead of two renderings that could
+/// disagree. Rendering moves to request time, where the format options
+/// actually are.
 pub const ResultSet = struct {
     /// The `schema` object, `{"fields":[...]}`.
     schema_json: []const u8,
-    /// One `{"f":[...]}` per row, TIMESTAMP cells in the "sec.rem" form.
-    rows: []const []const u8,
-    /// The same rows under `useInt64Timestamp`, or null when no column
-    /// renders differently and the default rows can be served as-is.
-    rows_int64_ts: ?[]const []const u8 = null,
+    /// Output column names, in order. Held apart from `columns` because the
+    /// virtual table wants only these.
+    names: []const []const u8,
+    /// Column types, deep-copied: the originals live in the statement's arena
+    /// and die with it, and rendering a cell needs the declared type — an
+    /// integer is an INT64 or a DATE depending on it.
+    types: []const *spec.Type,
+    /// `total_rows * names.len` values, row-major.
+    cells: []const encoder.SqliteRepr,
     /// Reported in full even when a response carries fewer rows, matching Go.
     total_rows: usize,
+
+    fn cloneInto(set: ResultSet, arena: std.mem.Allocator) !ResultSet {
+        const names = try arena.alloc([]const u8, set.names.len);
+        for (set.names, names) |src, *dst| dst.* = try arena.dupe(u8, src);
+        const types = try arena.alloc(*spec.Type, set.types.len);
+        for (set.types, types) |src, *dst| dst.* = try spec.cloneType(arena, src);
+        const cells = try arena.alloc(encoder.SqliteRepr, set.cells.len);
+        for (set.cells, cells) |src, *dst| dst.* = switch (src) {
+            .null, .int, .float => src,
+            .blob => |b| .{ .blob = try arena.dupe(u8, b) },
+        };
+        return .{
+            .schema_json = try arena.dupe(u8, set.schema_json),
+            .names = names,
+            .types = types,
+            .cells = cells,
+            .total_rows = set.total_rows,
+        };
+    }
+
+    /// What one rendering pass needs, so it is derived once rather than per row.
+    pub const Render = struct {
+        set: ResultSet,
+        arena: std.mem.Allocator,
+        cols: []const driver.OutputColumn,
+        use_int64_timestamp: bool,
+
+        /// One row, decoded and rendered.
+        ///
+        /// `materializeRow` still runs even though `cellFrom` already applied
+        /// the declared type: a NULL ARRAY decodes to a null cell, and BigQuery
+        /// renders it as `[]`, which is what that pass is for.
+        pub fn row(r: Render, i: usize) ![]const driver.Cell {
+            const n = r.set.names.len;
+            const out = try r.arena.alloc(driver.Cell, n);
+            for (out, 0..) |*dst, col| {
+                dst.* = try driver.cellFrom(r.arena, r.set.cells[i * n + col], r.set.types[col]);
+            }
+            const materialized = try response.materializeRow(r.arena, out, r.cols);
+            if (!r.use_int64_timestamp) return materialized;
+            return response.formatInt64Timestamps(r.arena, materialized);
+        }
+    };
+
+    fn renderer(
+        set: ResultSet,
+        arena: std.mem.Allocator,
+        use_int64_timestamp: bool,
+    ) !Render {
+        return .{
+            .set = set,
+            .arena = arena,
+            .cols = try set.columns(arena),
+            .use_int64_timestamp = use_int64_timestamp,
+        };
+    }
+
+    /// The columns as the response helpers want them.
+    fn columns(set: ResultSet, arena: std.mem.Allocator) ![]const driver.OutputColumn {
+        const out = try arena.alloc(driver.OutputColumn, set.names.len);
+        for (out, set.names, set.types) |*dst, name, t| dst.* = .{ .name = name, .type = t };
+        return out;
+    }
 };
 
 /// Go's `maxResultsDefaultValue`: absent means "every row".
 pub const max_results_default: i64 = -1;
 
-/// Serializes a getQueryResults / jobs.query envelope from a ResultSet.
+/// Which slice of a stored ResultSet one response carries.
 ///
-/// `max_results` is accepted but deliberately NOT applied, so every response
-/// carries the whole result. Go truncates here (jobsGetQueryResultsHandler
-/// :1520-1528) and leans on two things we do not have: a `pageToken` for the
-/// remainder, and the BigQuery Storage Read API over gRPC. Truncating without
-/// either silently loses rows — the Python client sees a short page with no
-/// token, decides the read is complete (table.py:1924-1928), and stops. The
-/// parameter stays in the signature because honouring it is the right
-/// behaviour once paging and the Storage API exist.
+/// Truncating without a token silently loses rows: the Python client sees a
+/// short page with no `pageToken`, decides the read is complete
+/// (table.py:1924-1928), and stops. So the two travel together — a page that
+/// ends early always says where the next one starts, and that is what makes
+/// honouring `maxResults` safe at all.
+pub const Page = struct {
+    /// `maxResults`, or -1 for "every row".
+    max_results: i64 = max_results_default,
+    /// The row this page starts at, decoded from `pageToken`. Past the end is
+    /// an empty page rather than an error — the same answer as reading one row
+    /// past a finished iterator.
+    start: usize = 0,
+
+    /// The half-open row range this page covers, of `total`.
+    ///
+    /// A range rather than a slice because the rows are no longer rendered
+    /// until this is known — which is the point of rendering per request.
+    pub fn range(p: Page, total: usize) struct { first: usize, next: usize } {
+        const first = @min(p.start, total);
+        if (p.max_results < 0) return .{ .first = first, .next = total };
+        const take: usize = @intCast(p.max_results);
+        return .{ .first = first, .next = @min(total, first +| take) };
+    }
+};
+
+/// The token a client sends back to get the rest.
+///
+/// Real BigQuery's tokens are opaque; a row offset is the whole of what this
+/// server needs to resume, because the ResultSet it is paging over is retained
+/// whole by the job store.
+pub fn parsePageToken(token: ?[]const u8) usize {
+    const t = token orelse return 0;
+    return std.fmt.parseInt(usize, t, 10) catch 0;
+}
+
+/// Serializes a getQueryResults / jobs.query envelope from a ResultSet.
 pub fn writeResultSet(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
     project_id: []const u8,
     job_id: []const u8,
     set: ResultSet,
-    max_results: i64,
+    page: Page,
     use_int64_timestamp: bool,
 ) !void {
-    _ = max_results;
-    const selected = if (use_int64_timestamp) (set.rows_int64_ts orelse set.rows) else set.rows;
+    // Rendered here rather than at insert, and only for the rows this page
+    // carries: the format options belong to *this* request, and the job that
+    // ran the query could not know them.
+    const render = try set.renderer(arena, use_int64_timestamp);
+    const window = page.range(set.total_rows);
+    const first = window.first;
+    const next = window.next;
 
     try out.appendSlice(arena, "{\"jobReference\":{\"jobId\":");
     try errors.writeJsonString(arena, out, job_id);
@@ -264,13 +389,18 @@ pub fn writeResultSet(
     try out.appendSlice(arena, "},\"schema\":");
     try out.appendSlice(arena, set.schema_json);
     try out.appendSlice(arena, ",\"rows\":[");
-    for (selected, 0..) |row, i| {
-        if (i > 0) try out.append(arena, ',');
-        try out.appendSlice(arena, row);
+    for (first..next) |row| {
+        if (row != first) try out.append(arena, ',');
+        try response.writeRow(arena, out, try render.row(row));
     }
     try out.appendSlice(arena, "],\"totalRows\":\"");
+    // The full count even when this page is short, matching Go.
     try out.print(arena, "{d}", .{set.total_rows});
-    try out.appendSlice(arena, "\",\"jobComplete\":true}");
+    try out.appendSlice(arena, "\"");
+    if (next < set.total_rows) {
+        try out.print(arena, ",\"pageToken\":\"{d}\"", .{next});
+    }
+    try out.appendSlice(arena, ",\"jobComplete\":true}");
 }
 
 /// Runs a query and serializes the full jobs.query response.
@@ -320,9 +450,26 @@ pub fn runQueryFormatted(
     defer rows.deinit();
 
     const cols = rows.columnTypes();
-    var collected: std.ArrayList([]const driver.Cell) = .empty;
+    // Copied out of the statement, not borrowed from it. A column's name and
+    // type tree live in the statement's arena, and `defer rows.deinit()` above
+    // releases it before this function returns -- so a `ResultSet` that pointed
+    // at them would hand the job store freed memory to clone from, which is a
+    // segfault one call later rather than an error here.
+    const names = try arena.alloc([]const u8, cols.len);
+    const types = try arena.alloc(*spec.Type, cols.len);
+    for (cols, names, types) |col, *n, *t| {
+        n.* = try arena.dupe(u8, col.name);
+        t.* = try spec.cloneType(arena, col.type);
+    }
+
+    // Storage form, not the rendering. `nextRaw` hands back what SQLite holds,
+    // which is both what the destination table's virtual table serves and what
+    // a later render decodes from -- so there is one representation instead of
+    // the two this used to build whenever a TIMESTAMP column existed.
+    var cells: std.ArrayList(encoder.SqliteRepr) = .empty;
     var total_bytes: usize = 0;
-    while (rows.next() catch |err| {
+    var total_rows: usize = 0;
+    while (rows.nextRaw() catch |err| {
         // A failure partway through iteration still carries a message.
         if (err == error.OutOfMemory) return err;
         return .{
@@ -334,42 +481,36 @@ pub fn runQueryFormatted(
             .ok = false,
         };
     }) |row| {
-        const materialized = try response.materializeRow(arena, row, cols);
-        // Go accumulates len() of each rendered cell string as
-        // totalBytesProcessed/Billed (convertValueToCell).
-        total_bytes += response.renderedByteLen(arena, materialized) catch 0;
-        try collected.append(arena, materialized);
+        for (row) |v| try cells.append(arena, switch (v) {
+            .null => .null,
+            .int => |x| .{ .int = x },
+            .float => |x| .{ .float = x },
+            // Borrowed from SQLite's row buffer, which dies at the next step.
+            .blob => |b| .{ .blob = try arena.dupe(u8, b) },
+            // The engine's own invariant: no stored value is TEXT.
+            .text => return error.CorruptData,
+        });
+        total_rows += 1;
     }
 
     var schema_json: std.ArrayList(u8) = .empty;
     try schema_mod.writeSchema(arena, &schema_json, cols);
 
-    const rendered = try arena.alloc([]const u8, collected.items.len);
-    for (collected.items, 0..) |row, i| {
-        var buf: std.ArrayList(u8) = .empty;
-        try response.writeRow(arena, &buf, row);
-        rendered[i] = try buf.toOwnedSlice(arena);
-    }
-
-    // A second rendering is only worth building when a top-level TIMESTAMP
-    // column exists; otherwise the two are byte-identical.
-    var rendered_int64: ?[]const []const u8 = null;
-    if (response.hasInt64TimestampColumn(cols)) {
-        const alt = try arena.alloc([]const u8, collected.items.len);
-        for (collected.items, 0..) |row, i| {
-            var buf: std.ArrayList(u8) = .empty;
-            try response.writeRow(arena, &buf, try response.formatInt64Timestamps(arena, row));
-            alt[i] = try buf.toOwnedSlice(arena);
-        }
-        rendered_int64 = alt;
-    }
-
     const set = ResultSet{
         .schema_json = try schema_json.toOwnedSlice(arena),
-        .rows = rendered,
-        .rows_int64_ts = rendered_int64,
-        .total_rows = rendered.len,
+        .names = names,
+        .types = types,
+        .cells = try cells.toOwnedSlice(arena),
+        .total_rows = total_rows,
     };
+
+    // Go accumulates len() of each rendered cell string as
+    // totalBytesProcessed/Billed (convertValueToCell), so it has to be counted
+    // over the rendering rather than the storage form.
+    const counter = try set.renderer(arena, false);
+    for (0..total_rows) |row| {
+        total_bytes += response.renderedByteLen(arena, try counter.row(row)) catch 0;
+    }
 
     var out: std.ArrayList(u8) = .empty;
     try writeResultSet(
@@ -378,7 +519,9 @@ pub fn runQueryFormatted(
         project_id,
         job_id,
         set,
-        max_results_default,
+        // jobs.query ignores maxResults entirely, as Go's does -- the whole
+        // result, in one response, with no token.
+        .{},
         want_int64_timestamps,
     );
 
@@ -527,26 +670,58 @@ test "job store round-trips and replaces on duplicate id" {
     var store = JobStore{ .gpa = testing.allocator };
     defer store.deinit();
 
+    var int_t: spec.Type = .{ .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_INT64) };
+    var types = [_]*spec.Type{&int_t};
+    var names = [_][]const u8{"n"};
+
     try store.put("test", "job1", .{
         .schema_json = "{\"fields\":[]}",
-        .rows = &.{"{\"f\":[{\"v\":\"1\"}]}"},
+        .names = &names,
+        .types = &types,
+        .cells = &.{.{ .int = 1 }},
         .total_rows = 1,
     }, "{}");
-    try testing.expectEqualStrings("{\"f\":[{\"v\":\"1\"}]}", store.get("job1").?.set.rows[0]);
+    try testing.expectEqual(@as(i64, 1), store.get("job1").?.set.cells[0].int);
     try testing.expectEqualStrings("test", store.get("job1").?.project_id);
-    try testing.expectEqual(@as(?[]const []const u8, null), store.get("job1").?.set.rows_int64_ts);
+    // The store owns its copy: the caller's values may be a request arena's.
+    try testing.expectEqualStrings("n", store.get("job1").?.set.names[0]);
+    try testing.expect(store.get("job1").?.set.types[0] != &int_t);
 
     try store.put("test", "job1", .{
         .schema_json = "{\"fields\":[]}",
-        .rows = &.{"{\"f\":[{\"v\":\"2\"}]}"},
-        .rows_int64_ts = &.{"{\"f\":[{\"v\":\"3\"}]}"},
+        .names = &names,
+        .types = &types,
+        .cells = &.{.{ .int = 2 }},
         .total_rows = 1,
     }, "{}");
-    try testing.expectEqualStrings("{\"f\":[{\"v\":\"2\"}]}", store.get("job1").?.set.rows[0]);
-    try testing.expectEqualStrings("{\"f\":[{\"v\":\"3\"}]}", store.get("job1").?.set.rows_int64_ts.?[0]);
+    try testing.expectEqual(@as(i64, 2), store.get("job1").?.set.cells[0].int);
     try testing.expectEqual(@as(u32, 1), store.map.count());
+}
 
-    try testing.expectEqual(@as(?Job, null), store.get("missing"));
+test "the job-rows lookup hands the virtual table what the job holds" {
+    var store = JobStore{ .gpa = testing.allocator };
+    defer store.deinit();
+
+    var str_t: spec.Type = .{ .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_STRING) };
+    var types = [_]*spec.Type{&str_t};
+    var names = [_][]const u8{"s"};
+    try store.put("test", "job2", .{
+        .schema_json = "{\"fields\":[]}",
+        .names = &names,
+        .types = &types,
+        .cells = &.{ .{ .blob = "ab" }, .null },
+        .total_rows = 2,
+    }, "{}");
+
+    const rows = JobStore.lookupRows(&store, "job2").?;
+    try testing.expectEqual(@as(usize, 2), rows.rowCount());
+    try testing.expectEqualStrings("s", rows.names[0]);
+    try testing.expectEqualStrings("ab", rows.cells[0].blob);
+    // A job nobody has heard of is null, which the module reads as empty.
+    try testing.expectEqual(
+        @as(?job_rows_vtab.RowSet, null),
+        JobStore.lookupRows(&store, "nope"),
+    );
 }
 
 test "engine errors get Go's wrapping prefixes" {

@@ -10,4 +10,25 @@
 #
 # Lower it whenever you fix something. Raising it should be justified in the PR.
 # Refresh: zig build ephor -- --summary 2>&1 | grep TOTAL
-388
+#
+# 388 -> 409 when tools/gen_proto.zig started emitting encoders as well as
+# decoders, and a second .fdset added src/server/proto/storage.zig.
+#
+# Every new finding is in a generated file: 37 in src/proto/resolved_ast.zig
+# and 8 in src/server/proto/storage.zig, of which 25 are ZA301 (func-too-long)
+# inside an encode/encodeInto body — a message with forty fields encodes to a
+# function with forty `if`s. There is nothing to fix at a call site, and
+# splitting one message's encoder across several functions would help no reader.
+# The hand-written half of that change (the Writer in src/proto/wire.zig and the
+# round-trip tests) adds none: `zig build ephor` reports zero findings in
+# src/proto/wire.zig and src/server/proto/storage_test.zig.
+#
+# 409 -> 412 for a second SQLite virtual table
+# (src/internal/function/job_rows_vtab.zig). The three are the exact three
+# `info_schema_vtab.zig` already contributes, and for the same reasons: xConnect
+# and xFilter have signatures fixed by SQLite's C ABI, and the ZA102 is the
+# deliberate absence of an `errdefer` on the module context — create_module_v2
+# invokes the destructor itself on failure, so freeing there would be a double
+# free (unnest_vtab.register has exactly that bug). Everything else the new file
+# raised was fixed rather than absorbed.
+412

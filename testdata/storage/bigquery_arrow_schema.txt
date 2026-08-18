@@ -1,0 +1,38 @@
+c_req_int64: int64 not null
+c_int64: int64
+c_float64: double
+c_numeric: decimal128(38, 9)
+c_bignumeric: decimal256(76, 38)
+c_bool: bool
+c_string: string
+c_bytes: binary
+c_date: date32[day]
+c_datetime: timestamp[us]
+  -- field metadata --
+  ARROW:extension:name: 'google:sqlType:datetime'
+c_time: time64[us]
+c_timestamp: timestamp[us, tz=UTC]
+c_json: string
+  -- field metadata --
+  ARROW:extension:name: 'google:sqlType:json'
+c_geography: string
+  -- field metadata --
+  ARROW:extension:name: 'google:sqlType:geography'
+  ARROW:extension:metadata: '{"encoding": "WKT"}'
+c_interval: month_day_nano_interval
+  -- field metadata --
+  ARROW:extension:name: 'google:sqlType:interval'
+c_range_date: struct<start: date32[day], end: date32[day]>
+  child 0, start: date32[day]
+  child 1, end: date32[day]
+  -- field metadata --
+  google:sqlType: 'range'
+c_array: list<item: int64> not null
+  child 0, item: int64
+c_struct: struct<a: int64, b: string>
+  child 0, a: int64
+  child 1, b: string
+c_array_struct: list<item: struct<x: int64, y: string>> not null
+  child 0, item: struct<x: int64, y: string>
+      child 0, x: int64
+      child 1, y: string

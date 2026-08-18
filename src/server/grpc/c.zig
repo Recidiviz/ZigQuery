@@ -52,8 +52,11 @@ pub const OpType = enum(c.grpc_op_type) {
 /// client side of the smoke harness.
 pub const Status = enum(c.grpc_status_code) {
     ok = @intCast(c.GRPC_STATUS_OK),
-    unavailable = @intCast(c.GRPC_STATUS_UNAVAILABLE),
+    invalid_argument = @intCast(c.GRPC_STATUS_INVALID_ARGUMENT),
+    not_found = @intCast(c.GRPC_STATUS_NOT_FOUND),
     unimplemented = @intCast(c.GRPC_STATUS_UNIMPLEMENTED),
+    internal = @intCast(c.GRPC_STATUS_INTERNAL),
+    unavailable = @intCast(c.GRPC_STATUS_UNAVAILABLE),
     _,
 };
 
@@ -65,8 +68,7 @@ pub fn completion(ev: c.grpc_event) Completion {
     return .op_complete;
 }
 
-/// `gpr_inf_future` is a real function, not a macro — this only hides the
-/// clock-type cast.
+/// `gpr_inf_future` is a real function, not a macro — this only hides the clock-type cast.
 pub fn infFuture() c.gpr_timespec {
     return c.gpr_inf_future(c.GPR_CLOCK_REALTIME);
 }

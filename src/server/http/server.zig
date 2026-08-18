@@ -80,6 +80,18 @@ pub const HandlerFn = *const fn (ctx: *anyopaque, req: *const Request) anyerror!
 pub const Handler = struct {
     ctx: *anyopaque,
     func: HandlerFn,
+    /// Serializes calls to `func`.
+    ///
+    /// Owned by the handler, not by this server, because it does not guard
+    /// this transport — it guards the single engine connection behind `ctx`,
+    /// which the Storage Read API's gRPC server reaches through the same
+    /// `bqserver.Server` (see src/server/grpc/read_service.zig). A mutex per
+    /// transport would serialize each of them against itself and neither
+    /// against the other.
+    mutex: *std.Io.Mutex,
+    /// The `Io` the mutex is taken with. Only read under contention: an
+    /// uncontended lock and unlock are a compare-exchange and a swap.
+    io: std.Io,
 };
 
 /// Contention accounting for the single handler mutex.
@@ -103,14 +115,12 @@ pub const Server = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
     listener: std.Io.net.Server,
+    /// Carries the mutex that serializes dispatch. Connections are served on
+    /// their own threads (see `serve`), but the engine behind the handler is
+    /// single-threaded per Db and the server holds one. Accepting concurrently
+    /// while dispatching serially is what removes the deadlock without
+    /// requiring a connection pool.
     handler: Handler,
-    /// Serializes handler invocations.
-    ///
-    /// Connections are served on their own threads (see `serve`), but the
-    /// engine behind the handler is single-threaded per Db and the server
-    /// currently holds one. Accepting concurrently while dispatching serially
-    /// is what removes the deadlock without requiring a connection pool.
-    handler_mutex: std.Io.Mutex = .init,
 
     pub fn listen(
         gpa: std.mem.Allocator,
@@ -251,10 +261,10 @@ pub const Server = struct {
             }
             const t_arrive = std.Io.Clock.awake.now(s.io);
 
-            s.handler_mutex.lockUncancelable(s.io);
+            s.handler.mutex.lockUncancelable(s.handler.io);
             const t_locked = std.Io.Clock.awake.now(s.io);
             _ = stat_waiters_now.fetchSub(1, .monotonic);
-            defer s.handler_mutex.unlock(s.io);
+            defer s.handler.mutex.unlock(s.handler.io);
 
             const out = try s.handler.func(s.handler.ctx, &req);
             const t_done = std.Io.Clock.awake.now(s.io);

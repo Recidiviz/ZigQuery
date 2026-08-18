@@ -9,6 +9,7 @@ const builtin = @import("builtin");
 const bqserver = @import("bqserver");
 const http_server = bqserver.http_server;
 const grpc_server = bqserver.grpc_server;
+const grpc_read_service = bqserver.grpc_read_service;
 
 const default_host = "0.0.0.0";
 const default_port: u16 = 9050;
@@ -112,7 +113,8 @@ pub fn main(init: std.process.Init) !void {
     }, app.handler());
     defer server.deinit();
 
-    // The Storage API transport. Binds here and runs its completion queue on its own thread; see grpc/server.zig.
+    // The Storage API transport. Binds here and runs its completion queue on
+    // its own thread; see grpc/server.zig.
     // Both binds happen before either readiness line below.
     const grpc = grpc_server.Server.init(gpa, .{
         .address = opts.host,
@@ -126,6 +128,13 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
     defer grpc.deinit();
+
+    // The service is registered before `start`, so no call can arrive while
+    // `grpc.service` is still null and get a spurious UNIMPLEMENTED.
+    var read_service = grpc_read_service.Service.init(app);
+    defer read_service.deinit();
+    grpc.service = read_service.dispatch();
+
     try grpc.start();
 
     // The node and python test fixtures both gate readiness on these exact

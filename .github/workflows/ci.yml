@@ -150,9 +150,9 @@ jobs:
       # 0, so it cannot collide with anything else on the runner.
       - run: zig build grpc-smoke -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
 
-  # src/proto/resolved_ast.zig is generated from the committed
-  # proto/googlesql.fdset and is easy to forget when the submodule moves.
-  # gen-proto is a host tool that does not link the engine, so no shim.
+  # Both generated codecs come from committed .fdsets and are easy to forget
+  # when one of them moves. gen-proto is a host tool that does not link the
+  # engine, so no shim.
   gen-proto-drift:
     name: gen-proto drift
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
@@ -165,10 +165,12 @@ jobs:
       - run: zig build gen-proto
       - name: check for drift
         run: |
-          if ! git diff --exit-code -- src/proto/resolved_ast.zig; then
-            echo "::error::src/proto/resolved_ast.zig is stale — run 'zig build gen-proto'"
-            exit 1
-          fi
+          for f in src/proto/resolved_ast.zig src/server/proto/storage.zig; do
+            if ! git diff --exit-code -- "$f"; then
+              echo "::error::$f is stale — run 'zig build gen-proto'"
+              exit 1
+            fi
+          done
 
   # Cross-arch breakage is cheap to catch here and expensive to discover at
   # tag time. Push-only: it needs its own arm64 shim, which is a second cold

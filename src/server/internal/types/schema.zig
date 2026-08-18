@@ -53,6 +53,31 @@ pub fn writeField(
     name: []const u8,
     t: *const spec.Type,
 ) std.mem.Allocator.Error!void {
+    return writeFieldMode(arena, out, .{ .name = name, .type = t });
+}
+
+/// A field, with the mode a caller that knows it can supply.
+///
+/// A GoogleSQL type carries no nullability, so a schema derived from a query's
+/// output columns cannot say REQUIRED and never should. A schema derived from
+/// the catalog can: `ColumnSpec.is_not_null` is what `CREATE TABLE ... NOT
+/// NULL` left behind, and a DDL-created table's REQUIRED columns need it
+/// carried through to both the REST and the Storage APIs.
+pub const Field = struct {
+    name: []const u8,
+    type: *const spec.Type,
+    /// True only for a column the catalog declared NOT NULL. REPEATED wins over
+    /// it — an ARRAY is its own mode — which is why it is consulted after.
+    required: bool = false,
+};
+
+pub fn writeFieldMode(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    field: Field,
+) std.mem.Allocator.Error!void {
+    const name = field.name;
+    const t = field.type;
     // ARRAY<T> is not a type of its own on the wire: the element type is
     // hoisted and the field is marked REPEATED.
     const repeated = t.isArray();
@@ -74,6 +99,10 @@ pub fn writeField(
     if (repeated) {
         if (need_comma) try out.append(arena, ',');
         try out.appendSlice(arena, "\"mode\":\"REPEATED\"");
+        need_comma = true;
+    } else if (field.required) {
+        if (need_comma) try out.append(arena, ',');
+        try out.appendSlice(arena, "\"mode\":\"REQUIRED\"");
         need_comma = true;
     }
 
@@ -456,7 +485,14 @@ pub fn writeSchemaFromSpec(
     try out.appendSlice(arena, "{\"fields\":[");
     for (table_spec.columns, 0..) |col, i| {
         if (i > 0) try out.append(arena, ',');
-        try writeField(arena, out, col.name, col.type);
+        // The catalog is the only place NOT NULL survives -- a query's output
+        // columns cannot say it -- so this is where REQUIRED comes from for a
+        // table nobody created through tables.insert.
+        try writeFieldMode(arena, out, .{
+            .name = col.name,
+            .type = col.type,
+            .required = col.is_not_null,
+        });
     }
     try out.appendSlice(arena, "]}");
 }

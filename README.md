@@ -91,10 +91,20 @@ plus the shim in `lib/`. The binaries carry a second rpath
 wherever it is unpacked — plain `install` writes eight harness and benchmark
 binaries as well and only resolves the shim through its absolute build path.
 
+`zig build gen-proto` regenerates the requisite protobuf codecs
+— the engine's `src/proto/resolved_ast.zig` from `proto/googlesql.fdset`
+- the server's `src/server/proto/storage.zig` from `proto/bigquery_storage.fdset`
+
 `grpc-smoke` drives gRPC core in process. `uv run tools/storage_probe.py`
 (against a running emulator) drives the same service through
 `google-cloud-bigquery-storage` instead — a different client stack, and the two
 disagree about enough that both are worth keeping.
+
+`uv run tools/extreme_values.py` reads each type's boundary values back through
+*both* APIs and checks they agree — the cases come from the Recidiviz
+bigquery-emulator fork's `test/python/extreme_values_test.py`. Pointing it at
+`--endpoint=bigquery` checks the expectations themselves against the real
+service, which is where they came from.
 
 `grpc-smoke` is not in `test-server` on purpose. gRPC's shutdown checks *abort*
 rather than fail — destroying a server before its completion queue has drained

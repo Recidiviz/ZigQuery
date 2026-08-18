@@ -18,6 +18,37 @@ pub const NameWithType = struct {
     type: ?*Type = null,
 };
 
+/// A deep copy of `t` in `arena`, so it can outlive whatever produced it.
+///
+/// A statement's output column types live in that statement's arena and die
+/// with it, which is a problem for anything that wants to keep them —
+/// registering a `TableSpec` the catalog will hold by pointer, or retaining a
+/// result set to render later. Both of those want the whole tree, not the root:
+/// an ARRAY's element type and a STRUCT's fields are pointers into the same
+/// doomed arena.
+pub fn cloneType(arena: std.mem.Allocator, t: *const Type) std.mem.Allocator.Error!*Type {
+    const out = try arena.create(Type);
+    out.* = .{
+        .name = try arena.dupe(u8, t.name),
+        .kind = t.kind,
+        .signature_kind = t.signature_kind,
+        .element_type = if (t.element_type) |e| try cloneType(arena, e) else null,
+        .field_types = &.{},
+    };
+    if (t.field_types.len == 0) return out;
+    const fields = try arena.alloc(*NameWithType, t.field_types.len);
+    for (t.field_types, fields) |src, *dst| {
+        const f = try arena.create(NameWithType);
+        f.* = .{
+            .name = try arena.dupe(u8, src.name),
+            .type = if (src.type) |ft| try cloneType(arena, ft) else null,
+        };
+        dst.* = f;
+    }
+    out.field_types = fields;
+    return out;
+}
+
 /// Go spec.go Type. `kind` holds the engine TypeKind int (pb.TypeKind);
 /// `signature_kind` holds the SignatureArgumentKind int for templated
 /// function-argument types (0 otherwise, mirroring Go's zero value).

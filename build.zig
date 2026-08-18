@@ -1,5 +1,33 @@
 const std = @import("std");
 
+/// nanoarrow's C sources: the common core, the IPC reader/writer, and the
+/// flatcc runtime the IPC layer is generated against. `flatcc_generated.h` is
+/// checked into the release, so no flatcc compiler is needed at build time.
+const nanoarrow_sources = [_][]const u8{
+    "src/nanoarrow/common/array.c",
+    "src/nanoarrow/common/array_stream.c",
+    "src/nanoarrow/common/schema.c",
+    "src/nanoarrow/common/utils.c",
+    "src/nanoarrow/ipc/codecs.c",
+    "src/nanoarrow/ipc/decoder.c",
+    "src/nanoarrow/ipc/encoder.c",
+    "src/nanoarrow/ipc/reader.c",
+    "src/nanoarrow/ipc/writer.c",
+    "thirdparty/flatcc/src/runtime/builder.c",
+    "thirdparty/flatcc/src/runtime/emitter.c",
+    "thirdparty/flatcc/src/runtime/refmap.c",
+    "thirdparty/flatcc/src/runtime/verifier.c",
+};
+
+const nanoarrow_cflags = [_][]const u8{
+    // The vendor's warnings are the vendor's business, as with SQLite.
+    "-w",
+    // NANOARROW_IPC_WITH_ZSTD is deliberately absent, not set to 0: codecs.c
+    // gates on `#if defined(...)`, so defining it at all pulls in <zstd.h>.
+    // Without it the IPC layer still builds and simply refuses compressed
+    // batches on read; this server only writes, and writes uncompressed.
+};
+
 /// Compile-time options for the SQLite amalgamation.
 ///
 ///   USE_URI            `sqlite.zig` opens through `sqlite3_open`, and the
@@ -133,9 +161,74 @@ pub fn build(b: *std.Build) void {
         .link_mode = .static,
         .pic = true,
     });
+    // nanoarrow, for the Storage Read API's ARROW format. Arrow IPC is
+    // flatbuffers-framed columnar data; hand-rolling it would mean writing a
+    // flatbuffers encoder before writing a single record batch, and a format
+    // bug here surfaces as an unreadable batch inside somebody's client
+    // library.
+    //
+    // Pinned to ReleaseFast for the same reason SQLite and gRPC are:
+    // `serverModule` is instantiated twice, once at -ODebug for `coverage`, and
+    // an unpinned optimize would compile it twice.
+    //
+    // The config header is normally produced by CMake from
+    // nanoarrow_config.h.in. Generating it here rather than checking one in
+    // keeps the version in one place and keeps a vendored header out of `src/`,
+    // which `.paths` in build.zig.zon would otherwise ship.
+    const nanoarrow_dep = b.dependency("nanoarrow", .{});
+    const nanoarrow_config = b.addWriteFiles();
+    const nanoarrow_config_dir = nanoarrow_config.add("nanoarrow/nanoarrow_config.h",
+        \\#ifndef NANOARROW_CONFIG_H_INCLUDED
+        \\#define NANOARROW_CONFIG_H_INCLUDED
+        \\#define NANOARROW_VERSION_MAJOR 0
+        \\#define NANOARROW_VERSION_MINOR 9
+        \\#define NANOARROW_VERSION_PATCH 0
+        \\#define NANOARROW_VERSION "0.9.0"
+        \\#define NANOARROW_VERSION_INT                                        \
+        \\  (NANOARROW_VERSION_MAJOR * 10000 + NANOARROW_VERSION_MINOR * 100 + \
+        \\   NANOARROW_VERSION_PATCH)
+        \\#if !defined(NANOARROW_CXX_NAMESPACE)
+        \\#define NANOARROW_CXX_NAMESPACE nanoarrow
+        \\#endif
+        \\#define NANOARROW_CXX_NAMESPACE_BEGIN namespace NANOARROW_CXX_NAMESPACE {
+        \\#define NANOARROW_CXX_NAMESPACE_END }
+        \\#endif
+        \\
+    );
+    const nanoarrow = b.addLibrary(.{
+        .name = "nanoarrow",
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = .ReleaseFast,
+            .link_libc = true,
+        }),
+    });
+    nanoarrow.root_module.addCSourceFiles(.{
+        .root = nanoarrow_dep.path(""),
+        .files = &nanoarrow_sources,
+        .flags = &nanoarrow_cflags,
+    });
+    // Three roots: the library's own headers, the generated config beside them,
+    // and flatcc's runtime headers, which the IPC sources include directly.
+    nanoarrow.root_module.addIncludePath(nanoarrow_dep.path("src"));
+    nanoarrow.root_module.addIncludePath(nanoarrow_config_dir.dirname().dirname());
+    nanoarrow.root_module.addIncludePath(nanoarrow_dep.path("thirdparty/flatcc/include"));
+    // The narrow C surface Zig actually calls. It lives with the library rather
+    // than in the server module because it is the only thing that includes
+    // nanoarrow's own headers -- see the comment at the top of the .h.
+    nanoarrow.root_module.addCSourceFile(.{
+        .file = b.path("src/server/grpc/nanoarrow_shim.c"),
+        .flags = &.{"-std=c11"},
+    });
+    nanoarrow.root_module.addIncludePath(b.path("src/server/grpc"));
+
     const server_deps: ServerDeps = .{
         .target = target,
         .cgrpc = grpc_dep.module("cgrpc"),
+        .nanoarrow = nanoarrow,
+        // Only the shim header: Zig never sees nanoarrow's own.
+        .nanoarrow_headers = &.{b.path("src/server/grpc")},
     };
 
     // The `coverage` step builds a second copy of the module tree at -ODebug,
@@ -235,20 +328,54 @@ pub fn build(b: *std.Build) void {
             }},
         }),
     });
-    const run_gen_proto = b.addRunArtifact(gen_proto);
-    run_gen_proto.addFileArg(b.path("proto/googlesql.fdset"));
-    run_gen_proto.addArg(b.pathFromRoot("src/proto/resolved_ast.zig"));
-    run_gen_proto.has_side_effects = true;
+    const run_gen_ast_pb = b.addRunArtifact(gen_proto);
+    run_gen_ast_pb.addFileArg(b.path("proto/googlesql.fdset"));
+    run_gen_ast_pb.addArg(b.pathFromRoot("src/proto/resolved_ast.zig"));
+    // addFileArg resolves to an absolute path, which would put this machine's
+    // checkout directory in the generated header and fail gen-proto-drift on
+    // every other machine. The header gets the repo-relative label instead.
+    run_gen_ast_pb.addArg("--source=proto/googlesql.fdset");
+    run_gen_ast_pb.has_side_effects = true;
 
     // The generator emits structurally correct Zig and leaves layout to `zig
     // fmt`, so the committed file stays canonical and future diffs stay small.
     const fmt_gen_proto = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
     fmt_gen_proto.addArg(b.pathFromRoot("src/proto/resolved_ast.zig"));
     fmt_gen_proto.has_side_effects = true;
-    fmt_gen_proto.step.dependOn(&run_gen_proto.step);
+    fmt_gen_proto.step.dependOn(&run_gen_ast_pb.step);
 
-    b.step("gen-proto", "Regenerate src/proto/resolved_ast.zig from proto/googlesql.fdset")
-        .dependOn(&fmt_gen_proto.step);
+    // The same generator, second input: the BigQuery Storage Read API protos.
+    //
+    // A separate output file, not a second fdset folded into the one above.
+    // The generator is self-hosting — `pb` is the previous run's output — so a
+    // descriptor that produced non-compiling Zig would leave the engine's
+    // decoders unbuildable and the generator unable to rebuild them. Keeping
+    // the trees apart means a bad storage descriptor can only break the server.
+    //
+    // `--wire-import` because this output lands in the server module, which
+    // cannot reach src/proto/wire.zig by relative path: a file imported that way
+    // joins the importing module, and wire.zig already belongs to the engine's.
+    const run_gen_storage_pb = b.addRunArtifact(gen_proto);
+    run_gen_storage_pb.addFileArg(b.path("proto/bigquery_storage.fdset"));
+    run_gen_storage_pb.addArg(b.pathFromRoot("src/server/proto/storage.zig"));
+    run_gen_storage_pb.addArg("--source=proto/bigquery_storage.fdset");
+    run_gen_storage_pb.addArg("--wire-import=@import(\"zetasqlite\").wire");
+    run_gen_storage_pb.addArg(
+        "--desc=Plain-struct codecs for the BigQuery Storage Read API protos.",
+    );
+    run_gen_storage_pb.has_side_effects = true;
+
+    const fmt_gen_storage = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
+    fmt_gen_storage.addArg(b.pathFromRoot("src/server/proto/storage.zig"));
+    fmt_gen_storage.has_side_effects = true;
+    fmt_gen_storage.step.dependOn(&run_gen_storage_pb.step);
+
+    const gen_proto_step = b.step(
+        "gen-proto",
+        "Regenerate the generated protobuf codecs from the committed .fdsets",
+    );
+    gen_proto_step.dependOn(&fmt_gen_proto.step);
+    gen_proto_step.dependOn(&fmt_gen_storage.step);
 
     // Concurrency gating experiment: is the analyzer stack safe to drive from
     // several threads, one Db each? Not part of `test` — it is a deliberate
@@ -645,6 +772,11 @@ fn engineModule(
 /// Everything the server module needs beyond an optimize mode and an engine.
 const ServerDeps = struct {
     target: std.Build.ResolvedTarget,
+    /// Static libnanoarrow, for the ARROW data format. Built once at
+    /// ReleaseFast and shared with the coverage tree, like SQLite.
+    nanoarrow: *std.Build.Step.Compile,
+    /// Header roots for `arrow.zig`'s @cInclude.
+    nanoarrow_headers: []const std.Build.LazyPath,
     /// gRPC core's translate-c bindings, for the Storage Read API transport.
     /// See the note at its construction: one instance, always ReleaseFast,
     /// shared with the coverage tree.
@@ -657,7 +789,7 @@ fn serverModule(
     optimize: std.builtin.OptimizeMode,
     engine: *std.Build.Module,
 ) *std.Build.Module {
-    return b.createModule(.{
+    const mod = b.createModule(.{
         .root_source_file = b.path("src/server/root.zig"),
         .target = deps.target,
         .optimize = optimize,
@@ -672,4 +804,7 @@ fn serverModule(
             .{ .name = "cgrpc", .module = deps.cgrpc },
         },
     });
+    for (deps.nanoarrow_headers) |h| mod.addIncludePath(h);
+    mod.linkLibrary(deps.nanoarrow);
+    return mod;
 }

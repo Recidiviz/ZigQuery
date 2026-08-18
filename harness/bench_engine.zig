@@ -10,9 +10,16 @@
 //! forces a non-empty delta into each iteration, which is where the remaining
 //! per-statement costs actually live:
 //!   - Catalog.renderDelta -> catalogJsonForSpecs, then catalogAddTables into
-//!     the live handle; SimpleCatalog::AddTable does a linear name scan.
-//!   - the CREATE's own analyze + catalog registration, with linear scans in
-//!     Node.hasEntry/findSub.
+//!     the live handle. Both the lookup and the insert are hash operations now
+//!     (`SimpleCatalog::tables_` is an absl::flat_hash_map, and Node.hasEntry /
+//!     findSub gained hash sidecars), so this is O(delta) rather than the
+//!     linear scans an earlier version of this comment described.
+//!   - the CREATE's own analyze + catalog registration, and the per-table
+//!     fan-out that comes with a multi-part name: addTableToNode registers a
+//!     3-part path at 7 points and a 4-part one at 15, each carrying the full
+//!     column list.
+//!   - publishInfoSchemaSnapshot, which walks the *whole* catalog on every
+//!     statement whatever the delta
 //!   - defaultTransformConfig calls getenv on every transform.
 //!   - Catalog.funcMap rebuilds a StringHashMap of every function spec.
 //!

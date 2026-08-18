@@ -2650,6 +2650,21 @@ fn valueFromCell(alloc: std.mem.Allocator, cell: Cell) !value_mod.Value {
 
 /// Value -> Cell conversion per the output column type, mirroring Go
 /// rows.go castValueInternal + assignInterfaceValue for foundation kinds.
+/// A rendered `Cell` from a stored value and the type it was stored under.
+///
+/// The pair `Rows.next` applies internally, exposed for a caller that held raw
+/// values from `nextRaw` and wants to render them later — the decode reads the
+/// codec's own tag, but turning the result into a `Cell` needs the declared
+/// type, because that is what decides whether an integer is an INT64 or a DATE.
+pub fn cellFrom(
+    alloc: std.mem.Allocator,
+    repr: encoder.SqliteRepr,
+    typ: *const spec.Type,
+) !Cell {
+    const v = try encoder.DecodeValueBorrowing(alloc, repr);
+    return cellFromValue(alloc, v, typ);
+}
+
 fn cellFromValue(
     alloc: std.mem.Allocator,
     v: value_mod.Value,
@@ -2898,42 +2913,99 @@ pub const Rows = struct {
         return r.cols;
     }
 
-    /// Next row of decoded cells, or null when exhausted. Cells are valid
-    /// until deinit() (per-query arena).
-    pub fn next(r: *Rows) Error!?[]const Cell {
-        var stmt = r.stmt orelse return null;
-        const has_row = if (r.first_step_done) blk: {
+    /// Steps to the next row, or false when the result set is exhausted.
+    fn advance(r: *Rows) Error!bool {
+        var stmt = r.stmt orelse return false;
+        if (r.first_step_done) {
             r.first_step_done = false;
-            break :blk r.first_has_row;
-        } else stmt.step() catch {
+            return r.first_has_row;
+        }
+        return stmt.step() catch {
             // Mid-iteration failures carry modernc's wrapped text verbatim
             // (go-zetasqlite does not re-wrap the iteration path).
             r.db.setLastSqliteError();
             return error.ExecFailed;
         };
-        if (!has_row) return null;
+    }
+
+    /// One column of the current row, as the engine's own typed value.
+    ///
+    /// Safe to borrow from SQLite's column memory: every caller copies what it
+    /// keeps into the rows arena before the next step invalidates it.
+    fn decodeColumn(r: *Rows, alloc: std.mem.Allocator, ci: i32) Error!value_mod.Value {
+        var stmt = r.stmt.?;
+        const repr: encoder.SqliteRepr = switch (stmt.columnType(ci)) {
+            .integer => .{ .int = stmt.columnInt64(ci) },
+            .float => .{ .float = stmt.columnDouble(ci) },
+            .blob => .{ .blob = stmt.columnBlob(ci) },
+            .null => .null,
+            // A column here means something outside the engine wrote it.
+            // No engine value is TEXT.
+            .text => return r.db.failDecode(error.CorruptData),
+        };
+        return encoder.DecodeValueBorrowing(alloc, repr) catch |err|
+            return r.db.failDecode(err);
+    }
+
+    /// Next row of decoded cells, or null when exhausted. Cells are valid until deinit() (per-query arena).
+    pub fn next(r: *Rows) Error!?[]const Cell {
+        if (r.stmt == null) return null;
+        if (!try r.advance()) return null;
 
         const alloc = r.arena.allocator();
         const cells = try alloc.alloc(Cell, r.cols.len);
         for (r.cols, 0..) |col, i| {
+            const v = try r.decodeColumn(alloc, @intCast(i));
+            cells[i] = cellFromValue(alloc, v, col.type) catch |err|
+                return r.db.failDecode(err);
+        }
+        return cells;
+    }
+
+    /// Next row as the engine's own typed values, or null when exhausted.
+    /// Values are valid until `deinit`, and strings and bytes borrow from the per-query arena.
+    pub fn nextTyped(r: *Rows) Error!?[]const value_mod.Value {
+        if (r.stmt == null) return null;
+        if (!try r.advance()) return null;
+
+        const alloc = r.arena.allocator();
+        const out = try alloc.alloc(value_mod.Value, r.cols.len);
+        for (0..r.cols.len) |i| out[i] = try r.decodeColumn(alloc, @intCast(i));
+        return out;
+    }
+
+    /// Next row as SQLite's own column values, undecoded.
+    ///
+    /// `next` and `nextTyped` both pay a decode — stored bytes to `Value`, and
+    /// for `next` a second step to a rendered `Cell`. A caller that is only
+    /// going to hand these values straight back to SQLite pays that twice: once
+    /// decoding out, once encoding back in. Copying a query's result into a
+    /// table is exactly that shape, and both sides carry the same codec
+    /// encoding, so the bytes can move across untouched.
+    ///
+    /// Values borrow SQLite's row buffer and are valid only until the next
+    /// call — the same contract `RawRows.next` has. Binding them is safe
+    /// regardless, because every bind is SQLITE_TRANSIENT and copies.
+    pub fn nextRaw(r: *Rows) Error!?[]const Db.RawValue {
+        if (r.stmt == null) return null;
+        if (!try r.advance()) return null;
+
+        var stmt = r.stmt.?;
+        const out = try r.arena.allocator().alloc(Db.RawValue, r.cols.len);
+        for (out, 0..) |*dst, i| {
             const ci: i32 = @intCast(i);
-            const repr: encoder.SqliteRepr = switch (stmt.columnType(ci)) {
+            dst.* = switch (stmt.columnType(ci)) {
                 .integer => .{ .int = stmt.columnInt64(ci) },
                 .float => .{ .float = stmt.columnDouble(ci) },
                 .blob => .{ .blob = stmt.columnBlob(ci) },
                 .null => .null,
-                // A column here means something outside the engine wrote it.
-                // No engine value is TEXT.
+                // Same invariant `decodeColumn` asserts: no engine value is
+                // TEXT, so one here means something outside the engine wrote
+                // the column.
                 .text => return r.db.failDecode(error.CorruptData),
             };
-            // Safe to borrow: cellFromValue copies into the rows arena before
-            // the next step invalidates SQLite's column memory.
-            const value = encoder.DecodeValueBorrowing(alloc, repr) catch |err|
-                return r.db.failDecode(err);
-            cells[i] = cellFromValue(alloc, value, col.type) catch |err|
-                return r.db.failDecode(err);
         }
-        return cells;
+        return out;
     }
 
     pub fn deinit(r: *Rows) void {
@@ -3752,6 +3824,282 @@ test "INSERT ... SELECT copies rows" {
     defer rows.deinit();
     try testing.expectEqual(Cell{ .int = 11 }, (try rows.next()).?[0]);
     try testing.expectEqual(Cell{ .int = 12 }, (try rows.next()).?[0]);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "nextRaw hands back the stored bytes, and they bind straight back in" {
+    // The point of nextRaw is that a value can go from one statement to another
+    // without a decode and a re-encode, so the test that matters is the round
+    // trip: read raw, bind raw, and read the copy back decoded. If the two
+    // sides ever stop sharing an encoding this fails here rather than in a
+    // caller staring at a corrupt column.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        "CREATE TABLE raw_src (a INT64, b STRING, c FLOAT64, d BOOL); " ++
+            "INSERT INTO raw_src (a, b, c, d) VALUES (7, 'x', 1.5, TRUE), " ++
+            "(NULL, NULL, NULL, NULL); " ++
+            "CREATE TABLE raw_dst (a INT64, b STRING, c FLOAT64, d BOOL)",
+        &.{},
+        .{},
+    );
+
+    {
+        var rows = try db.query("SELECT a, b, c, d FROM raw_src ORDER BY a", &.{}, .{});
+        defer rows.deinit();
+        var args: [4]Db.RawArg = undefined;
+        var seen: usize = 0;
+        while (try rows.nextRaw()) |row| {
+            try testing.expectEqual(@as(usize, 4), row.len);
+            for (row, &args) |v, *arg| arg.* = .{ .value = v };
+            try db.rawExec("INSERT INTO `raw_dst` VALUES (?, ?, ?, ?)", &args);
+            seen += 1;
+        }
+        try testing.expectEqual(@as(usize, 2), seen);
+    }
+
+    // Decoded on the way out, so a wrong encoding shows as a wrong value.
+    var rows = try db.query("SELECT a, b, c, d FROM raw_dst ORDER BY a", &.{}, .{});
+    defer rows.deinit();
+    const nulls = (try rows.next()).?;
+    for (nulls) |cell| try testing.expectEqual(Cell.null, cell);
+    const row = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 7 }, row[0]);
+    try testing.expectEqualStrings("x", row[1].string);
+    try testing.expectEqual(Cell{ .float = 1.5 }, row[2]);
+    try testing.expectEqual(Cell{ .bool = true }, row[3]);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "a multi-row VALUES insert copies a table, nulls included" {
+    // One statement per many rows, which is what makes it worth doing at all --
+    // and a statement that silently wrote fewer rows than it was given would
+    // look exactly like a speedup, so the round trip is the check.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec(
+        "CREATE TABLE ba_src (a INT64, b STRING); " ++
+            "INSERT INTO ba_src (a, b) VALUES (1, 'x'), (2, NULL), (3, ''); " ++
+            "CREATE TABLE ba_dst (a INT64, b STRING)",
+        &.{},
+        .{},
+    );
+
+    var args: std.ArrayList(Db.RawArg) = .empty;
+    {
+        var rows = try db.query("SELECT a, b FROM ba_src ORDER BY a", &.{}, .{});
+        defer rows.deinit();
+        while (try rows.nextRaw()) |row| {
+            for (row) |v| try args.append(arena, .{
+                .value = switch (v) {
+                    // Copied: the row buffer dies at the next step, and every
+                    // value has to survive until the one statement runs.
+                    .blob => |b| .{ .blob = try arena.dupe(u8, b) },
+                    else => v,
+                },
+            });
+        }
+    }
+    try testing.expectEqual(@as(usize, 6), args.items.len);
+
+    try db.rawExec("INSERT INTO `ba_dst` VALUES (?,?),(?,?),(?,?)", args.items);
+
+    var rows = try db.query("SELECT a, b FROM ba_dst ORDER BY a", &.{}, .{});
+    defer rows.deinit();
+    const r1 = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 1 }, r1[0]);
+    try testing.expectEqualStrings("x", r1[1].string);
+    const r2 = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 2 }, r2[0]);
+    try testing.expectEqual(Cell.null, r2[1]);
+    const r3 = (try rows.next()).?;
+    try testing.expectEqualStrings("", r3[1].string);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+/// Backs the job-rows vtab in the test below: the server's role, minus a server.
+const JobRowsFixture = struct {
+    id: []const u8,
+    rows: function.job_rows_vtab.RowSet,
+
+    fn lookup(ctx: *anyopaque, job_id: []const u8) ?function.job_rows_vtab.RowSet {
+        const f: *JobRowsFixture = @ptrCast(@alignCast(ctx));
+        if (!std.mem.eql(u8, job_id, f.id)) return null;
+        return f.rows;
+    }
+};
+
+test "a job's results resolve as a virtual table under GoogleSQL" {
+    // The whole mechanism end to end, and the thing worth proving before any of
+    // it is wired into the server: a synthetic TableSpec makes the analyzer
+    // accept `p._anon.<job>`, a temp virtual table of the same canonical name
+    // makes SQLite resolve it, and the rows come back decoded -- with no
+    // transformer rewrite and nothing copied.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Real storage-form values, taken from a real query rather than invented.
+    try db.exec(
+        "CREATE TABLE jr_src (a INT64, b STRING); " ++
+            "INSERT INTO jr_src (a, b) VALUES (1, 'x'), (2, NULL)",
+        &.{},
+        .{},
+    );
+    var cells: std.ArrayList(encoder.SqliteRepr) = .empty;
+    {
+        var rows = try db.query("SELECT a, b FROM jr_src ORDER BY a", &.{}, .{});
+        defer rows.deinit();
+        while (try rows.nextRaw()) |row| {
+            for (row) |v| try cells.append(arena, switch (v) {
+                .null => .null,
+                .int => |x| .{ .int = x },
+                .float => |x| .{ .float = x },
+                .blob => |x| .{ .blob = try arena.dupe(u8, x) },
+                .text => return error.UnexpectedStorage,
+            });
+        }
+    }
+
+    const job_id = "jobabc";
+    var fixture: JobRowsFixture = .{
+        .id = job_id,
+        .rows = .{ .names = &.{ "a", "b" }, .cells = cells.items },
+    };
+    db.udf_state.job_rows = .{ .ctx = &fixture, .lookup = JobRowsFixture.lookup };
+    defer db.udf_state.job_rows = .{};
+
+    // The spec the analyzer resolves, memory-only: these rows are not SQLite's.
+    var int_t: spec.Type = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_INT64) };
+    var str_t: spec.Type = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRING) };
+    var col_a: spec.ColumnSpec = .{ .name = "a", .type = &int_t };
+    var col_b: spec.ColumnSpec = .{ .name = "b", .type = &str_t };
+    var columns = [_]*spec.ColumnSpec{ &col_a, &col_b };
+    var name_path = [_][]const u8{ "p", function.job_rows_vtab.anon_segment, job_id };
+    var table_spec: spec.TableSpec = .{ .name_path = &name_path, .columns = &columns };
+    {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        try g.catalog.addSyntheticTableSpec(&table_spec);
+    }
+
+    // And the SQLite object of the same canonical name, so a plain table
+    // reference finds it. In temp, so it is never written to sqlite_master.
+    const sqlite_name = try table_spec.tableName(arena);
+    // Raw, not `exec`: `CREATE VIRTUAL TABLE` is SQLite's own DDL and means
+    // nothing to the GoogleSQL analyzer, which answers AnalyzeFailed for it.
+    const create = try function.job_rows_vtab.createSql(arena, sqlite_name, job_id, &.{ "a", "b" });
+    try db.rawExec(create, &.{});
+
+    var rows = try db.query("SELECT a, b FROM `p`.`_anon`.`jobabc`", &.{}, .{});
+    defer rows.deinit();
+    const r1 = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 1 }, r1[0]);
+    try testing.expectEqualStrings("x", r1[1].string);
+    const r2 = (try rows.next()).?;
+    try testing.expectEqual(Cell{ .int = 2 }, r2[0]);
+    try testing.expectEqual(Cell.null, r2[1]);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "a view can be defined over a job's results table" {
+    // Two things could stop this and neither is obvious from the call site.
+    //
+    // SQLite refuses a virtual table inside a view when the schema is
+    // untrusted -- `eVtabRisk > (flags & SQLITE_TrustedSchema)` in
+    // sqlite3.c's selectExpander. A module opts out of that with
+    // `sqlite3_vtab_config(SQLITE_VTAB_INNOCUOUS)`, which this one does not,
+    // so the test stands guard over the default: `SQLITE_TRUSTED_SCHEMA` is not
+    // in `sqlite_cflags` and nothing calls `sqlite3_db_config`, so the flag is
+    // on and risk `Normal` is permitted. Turn either around and this fails with
+    // "unsafe use of virtual table" -- at which point INNOCUOUS is the fix.
+    //
+    // And the table is created in `temp`, which a view in `main` may not be
+    // able to see.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec(
+        "CREATE TABLE jv_src (a INT64); INSERT INTO jv_src (a) VALUES (1), (2)",
+        &.{},
+        .{},
+    );
+    var cells: std.ArrayList(encoder.SqliteRepr) = .empty;
+    {
+        var rows = try db.query("SELECT a FROM jv_src ORDER BY a", &.{}, .{});
+        defer rows.deinit();
+        while (try rows.nextRaw()) |row| try cells.append(arena, .{ .int = row[0].int });
+    }
+
+    var fixture: JobRowsFixture = .{
+        .id = "viewjob",
+        .rows = .{ .names = &.{"a"}, .cells = cells.items },
+    };
+    db.udf_state.job_rows = .{ .ctx = &fixture, .lookup = JobRowsFixture.lookup };
+    defer db.udf_state.job_rows = .{};
+
+    var int_t: spec.Type = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_INT64) };
+    var col_a: spec.ColumnSpec = .{ .name = "a", .type = &int_t };
+    var columns = [_]*spec.ColumnSpec{&col_a};
+    var name_path = [_][]const u8{ "p", function.job_rows_vtab.anon_segment, "viewjob" };
+    var table_spec: spec.TableSpec = .{ .name_path = &name_path, .columns = &columns };
+    {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        try g.catalog.addSyntheticTableSpec(&table_spec);
+    }
+    const sqlite_name = try table_spec.tableName(arena);
+    try db.rawExec(
+        try function.job_rows_vtab.createSql(arena, sqlite_name, "viewjob", &.{"a"}),
+        &.{},
+    );
+
+    try db.exec("CREATE VIEW jv AS SELECT a FROM `p`.`_anon`.`viewjob`", &.{}, .{});
+    var rows = try db.query("SELECT a FROM jv ORDER BY a", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(Cell{ .int = 1 }, (try rows.next()).?[0]);
+    try testing.expectEqual(Cell{ .int = 2 }, (try rows.next()).?[0]);
+    try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+}
+
+test "a job-rows table whose job is gone reads as empty, not an error" {
+    // What a caller sees once the rows are released: `lookup` returning null is
+    // an empty table, because a read of a job that has expired should come back
+    // with nothing rather than break the statement around it.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var int_t: spec.Type = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_INT64) };
+    var col_a: spec.ColumnSpec = .{ .name = "a", .type = &int_t };
+    var columns = [_]*spec.ColumnSpec{&col_a};
+    var name_path = [_][]const u8{ "p", function.job_rows_vtab.anon_segment, "goneid" };
+    var table_spec: spec.TableSpec = .{ .name_path = &name_path, .columns = &columns };
+    {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        try g.catalog.addSyntheticTableSpec(&table_spec);
+    }
+    const sqlite_name = try table_spec.tableName(arena);
+    try db.rawExec(
+        try function.job_rows_vtab.createSql(arena, sqlite_name, "goneid", &.{"a"}),
+        &.{},
+    );
+
+    var rows = try db.query("SELECT a FROM `p`.`_anon`.`goneid`", &.{}, .{});
+    defer rows.deinit();
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
 
@@ -5163,4 +5511,146 @@ test "allocStats reports lookaside activity" {
     const rate = default_stats.hitRate().?;
     try testing.expect(rate > 0.0);
     try testing.expect(rate <= 1.0);
+}
+
+// ---- nextTyped: the row path a binary encoder needs ----
+//
+// These assert the numbers, not the rendered text `next()` produces. That is
+// the whole point of the accessor: an Avro or Arrow encoder writing a
+// timestamp-micros long from "1767268800.0" would be parsing back out of a
+// string that this path already had the integer for.
+
+test "nextTyped hands back date and time kinds as integers, not API strings" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        \\SELECT TIMESTAMP '2026-01-01 12:00:00.000123+00' AS ts,
+        \\       DATE '2026-01-01' AS d,
+        \\       DATETIME '2026-01-01 12:00:00.000123' AS dt,
+        \\       TIME '12:00:00.000123' AS t
+    , &.{}, .{});
+    defer rows.deinit();
+
+    const row = (try rows.nextTyped()).?;
+    try testing.expectEqual(@as(usize, 4), row.len);
+
+    // Unix microseconds. `next()` would render this "1767268800.000123".
+    try testing.expectEqual(@as(i64, 1767268800_000123), row[0].timestamp);
+    // Days since the epoch, not "2026-01-01".
+    try testing.expectEqual(@as(i64, 20454), row[1].date);
+    // Civil microseconds since 1970-01-01T00:00:00, no zone.
+    try testing.expectEqual(@as(i64, 1767268800_000123), row[2].datetime);
+    // Microseconds since midnight.
+    try testing.expectEqual(@as(i64, 43200_000123), row[3].time);
+
+    try testing.expectEqual(@as(?[]const value_mod.Value, null), try rows.nextTyped());
+}
+
+test "nextTyped hands back NUMERIC as an unscaled integer and a scale" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        \\SELECT CAST('1.2345' AS NUMERIC) AS n,
+        \\       CAST('-0.000000001' AS NUMERIC) AS tiny,
+        \\       CAST('12345678901234567890.123456789' AS BIGNUMERIC) AS big
+    , &.{}, .{});
+    defer rows.deinit();
+
+    const row = (try rows.nextTyped()).?;
+
+    // NUMERIC is scale 9, so 1.2345 is 1234500000 unscaled. An Avro decimal
+    // writes exactly this integer as big-endian two's complement; going via
+    // `next()`'s "1.2345" would mean re-parsing decimal text.
+    try testing.expectEqual(@as(u32, 9), row[0].numeric.scale());
+    try testing.expectEqual(@as(i128, 1234500000), @as(i128, @intCast(row[0].numeric.unscaled)));
+
+    // The smallest representable NUMERIC, and negative: sign has to survive.
+    try testing.expectEqual(@as(i128, -1), @as(i128, @intCast(row[1].numeric.unscaled)));
+
+    // BIGNUMERIC keeps precision an f64 could not.
+    try testing.expect(row[2].numeric.unscaled != 0);
+    try testing.expectEqualStrings(
+        "12345678901234567890.123456789",
+        try row[2].numeric.toText(rows.arena.allocator()),
+    );
+}
+
+test "nextTyped hands back the foundation kinds unrendered" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query("SELECT 1, 1.5, 'a', true, NULL, b'xy'", &.{}, .{});
+    defer rows.deinit();
+
+    const row = (try rows.nextTyped()).?;
+    try testing.expectEqual(@as(i64, 1), row[0].int);
+    try testing.expectEqual(@as(f64, 1.5), row[1].float);
+    try testing.expectEqualStrings("a", row[2].string);
+    // BOOL is the one kind that does not describe itself: the memcomparable
+    // encoding stores it as an integer, so only the declared column type
+    // separates `true` from `1`. An encoder switching on the value alone
+    // writes this column as an int64 and the client reads garbage.
+    try testing.expectEqual(@as(i64, 1), row[3].int);
+    try testing.expectEqual(pb.TypeKind.TYPE_BOOL, rows.columnTypes()[3].type.typeKind());
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, rows.columnTypes()[0].type.typeKind());
+
+    try testing.expect(row[4] == .null);
+    // BYTES stay bytes. `next()` base64-encodes them for the REST envelope,
+    // which a binary encoder would have to undo.
+    try testing.expectEqualSlices(u8, "xy", row[5].bytes);
+}
+
+test "nextTyped keeps array and struct structure" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query(
+        "SELECT [1, 2, 3] AS arr, STRUCT(1 AS a, 'x' AS b) AS s",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    const row = (try rows.nextTyped()).?;
+    try testing.expectEqual(@as(usize, 3), row[0].array.values.len);
+    try testing.expectEqual(@as(i64, 2), row[0].array.values[1].int);
+    try testing.expectEqual(@as(usize, 2), row[1].struct_.values.len);
+    try testing.expectEqual(@as(i64, 1), row[1].struct_.values[0].int);
+    try testing.expectEqualStrings("x", row[1].struct_.values[1].string);
+}
+
+test "nextTyped walks every row and reports the same columns as next" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // Three rows, so the first-step dance in `advance` is exercised: query()
+    // already stepped once, and mishandling that drops or repeats row one.
+    var rows = try db.query(
+        "SELECT n FROM UNNEST([10, 20, 30]) AS n ORDER BY n",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+
+    try testing.expectEqual(@as(usize, 1), rows.columnTypes().len);
+    var seen: [3]i64 = undefined;
+    var i: usize = 0;
+    while (try rows.nextTyped()) |row| : (i += 1) {
+        try testing.expect(i < seen.len);
+        seen[i] = row[0].int;
+    }
+    try testing.expectEqual(@as(usize, 3), i);
+    try testing.expectEqualSlices(i64, &.{ 10, 20, 30 }, &seen);
+}
+
+test "nextTyped on a statement with no result set yields nothing" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var rows = try db.query("CREATE TABLE typed_t (a INT64)", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(usize, 0), rows.columnTypes().len);
+    try testing.expectEqual(@as(?[]const value_mod.Value, null), try rows.nextTyped());
 }

@@ -16,6 +16,7 @@
 const std = @import("std");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
+const job_rows_vtab = zetasqlite.function.job_rows_vtab;
 const errors = @import("../error.zig");
 const query_handler = @import("query.zig");
 const queryparam = @import("../internal/types/queryparam.zig");
@@ -69,7 +70,8 @@ pub fn writeJobResource(
     j: JobResource,
 ) !void {
     try out.appendSlice(arena, "{\"configuration\":{\"jobType\":\"QUERY\",\"query\":{\"destinationTable\":{\"datasetId\":");
-    try errors.writeJsonString(arena, out, try std.fmt.allocPrint(arena, "ds_{s}", .{j.job_id}));
+    // One hidden dataset for every anonymous result, not one per job.
+    try errors.writeJsonString(arena, out, job_rows_vtab.anon_segment);
     try out.appendSlice(arena, ",\"projectId\":");
     try errors.writeJsonString(arena, out, j.project_id);
     try out.appendSlice(arena, ",\"tableId\":");
@@ -188,7 +190,7 @@ test "job resource matches the Go emulator's shape" {
 
     // Captured from the running Go emulator, with the random id replaced.
     try testing.expectEqualStrings(
-        \\{"configuration":{"jobType":"QUERY","query":{"destinationTable":{"datasetId":"ds_JOBID","projectId":"test","tableId":"JOBID"},"priority":"INTERACTIVE","query":"SELECT 1 AS col","useLegacySql":false}},"jobReference":{"jobId":"JOBID","projectId":"test"},"kind":"bigquery#job","selfLink":"http://0.0.0.0:19050/bigquery/v2/projects/test/jobs/JOBID","statistics":{"creationTime":"1785011395","endTime":"1785011395","query":{"statementType":"SELECT","totalBytesBilled":"1","totalBytesProcessed":"1"},"startTime":"1785011395","totalBytesProcessed":"1"},"status":{"state":"DONE"}}
+        \\{"configuration":{"jobType":"QUERY","query":{"destinationTable":{"datasetId":"_anon","projectId":"test","tableId":"JOBID"},"priority":"INTERACTIVE","query":"SELECT 1 AS col","useLegacySql":false}},"jobReference":{"jobId":"JOBID","projectId":"test"},"kind":"bigquery#job","selfLink":"http://0.0.0.0:19050/bigquery/v2/projects/test/jobs/JOBID","statistics":{"creationTime":"1785011395","endTime":"1785011395","query":{"statementType":"SELECT","totalBytesBilled":"1","totalBytesProcessed":"1"},"startTime":"1785011395","totalBytesProcessed":"1"},"status":{"state":"DONE"}}
     ,
         out.items,
     );

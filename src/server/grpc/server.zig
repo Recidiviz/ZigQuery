@@ -1,34 +1,14 @@
 //! gRPC transport for the BigQuery Storage Read API.
 //!
-//! **Why the transport comes from C.** `http/server.zig:16-17` records the
-//! constraint: Zig 0.16 std has no HTTP/2, no HPACK and no TLS server. gRPC is
-//! HTTP/2 plus a framing over it, so the transport is gRPC's own core, driven
-//! through its completion-queue API. There is no grpc++, no protoc and no
-//! generated stub in this build — `grpc_server_request_call` hands back the
-//! method path as a slice, so a service is a switch over a string.
+//! The transport comes from C because Zig 0.16 std has no HTTP/2, no HPACK and
+//! no TLS server. gRPC is HTTP/2 plus a framing over it, so the transport is
+//! gRPC's own core. `grpc_server_request_call` hands back the method path; a
+//! service is a switch over a string.
 //!
-//! **Deliberately not on std.Io.** `grpc_completion_queue_next` blocks the OS
+//! It is deliberately not on `std.Io`: `grpc_completion_queue_next` blocks the
 //! thread it is called on. It therefore gets a plain `std.Thread`, the same
-//! choice `http/server.zig:161` makes for connections, rather than parking a
+//! choice `http/server.zig` makes for connections, rather than parking a
 //! `std.Io.Threaded` worker that no scheduler can account for.
-//!
-//! **Scope at S1: every method answers UNIMPLEMENTED.** No sessions, no
-//! protobuf, no engine access. Nothing here imports `server.zig` and nothing
-//! here takes a lock.
-//!
-//! Two things this stage does *not* decide, both due at S3 when `ReadRows`
-//! first touches the engine (see docs/STORAGE_READ_PLAN.md §2):
-//!
-//!   1. `handler_mutex` lives on `http_server.Server`, not on `bqserver.Server`,
-//!      so a gRPC path that reaches the engine must either hoist it or be
-//!      handed the HTTP server.
-//!   2. It is a `std.Io.Mutex` taken as `lockUncancelable(io)`, and whether
-//!      that may be taken from a raw `std.Thread` this file spawned is an open
-//!      question.
-//!
-//! When `ReadRows` does arrive it must materialize the full result and release
-//! the lock *before* writing any batch to the wire. Streaming while holding the
-//! engine lets one slow reader stall every REST request in the process.
 
 const std = @import("std");
 const c = @import("c.zig");
@@ -55,19 +35,65 @@ pub const Error = error{
     GrpcRequestCall,
 } || std.mem.Allocator.Error || std.Thread.SpawnError;
 
-/// One in-flight call. Its *address* is the completion tag for both batches it
-/// takes part in; `phase` says which one just finished. A call moves
-/// `awaiting_call -> awaiting_close` strictly sequentially, so one allocation
-/// is never ambiguous.
+/// How a failed call is reported to the caller.
+pub const Fault = struct {
+    status: c.Status,
+    /// Shown to whoever made the call, so it is prose, not an error name.
+    message: []const u8,
+};
+
+/// What a service does with one unary call: request bytes in, response bytes out,
+/// both borrowed from / allocated in the per-call arena.
+///
+/// Function pointers rather than a direct import so this file stays transport-only.
+pub const Dispatch = struct {
+    ctx: *anyopaque,
+    /// Returns the response messages, in order.
+    /// Null means "not this service's method", which the caller turns into UNIMPLEMENTED.
+    ///
+    /// Returns a slice rather than one message to support server-streaming;
+    /// a unary method returns one element and its wire behaviour is unchanged.
+    func: *const fn (
+        ctx: *anyopaque,
+        arena: std.mem.Allocator,
+        method: method_path.Method,
+        request: []const u8,
+    ) anyerror!?[]const []const u8,
+    /// Turns an error from `func` into a status and a message.
+    /// It belongs to the service, not here:
+    /// only the service knows whether one of its errors is the caller's fault or its own
+    fault: *const fn (ctx: *anyopaque, err: anyerror) Fault,
+};
+
+/// One in-flight call. Its address is the completion tag for every batch it
+/// takes part in; `phase` says which one just finished. A call only ever moves
+/// forwards through the phases, so one allocation is never ambiguous.
+///
+/// A unary call needs three round trips through the completion queue, not one:
+/// `grpc_server_request_call` hands back the method and metadata but not the
+/// payload — that is `grpc_server_request_registered_call`'s job — so the
+/// request body has to be asked for with its own RECV_MESSAGE batch before the
+/// service can be called.
 const Call = struct {
     server: *Server,
-    phase: enum { awaiting_call, awaiting_close },
+    phase: enum { awaiting_call, awaiting_request, awaiting_send, awaiting_close },
     call: ?*c.c.grpc_call,
     details: c.c.grpc_call_details,
     metadata: c.c.grpc_metadata_array,
     status_details: c.c.grpc_slice,
     cancelled: c_int,
     ops: [3]c.c.grpc_op,
+    /// The request payload, owned by gRPC until we destroy it. Null when the client sent no message
+    request: ?*c.c.grpc_byte_buffer,
+    /// The message currently in flight. One SEND_MESSAGE at a time:
+    /// gRPC core allows at most one per batch, and each must complete before the next starts.
+    /// Destroyed as its batch completes, before the next is created.
+    response: ?*c.c.grpc_byte_buffer,
+    /// The messages still to send, and how many have gone. Streaming fills many, a unary just one.
+    responses: []const []const u8,
+    sent: usize,
+    /// Per-call scratch space: the decoded request, the encoded response, and anything else
+    arena: std.heap.ArenaAllocator,
 
     fn create(s: *Server) !*Call {
         const self = try s.gpa.create(Call);
@@ -84,6 +110,11 @@ const Call = struct {
             .status_details = std.mem.zeroes(c.c.grpc_slice),
             .cancelled = 0,
             .ops = std.mem.zeroes([3]c.c.grpc_op),
+            .request = null,
+            .response = null,
+            .responses = &.{},
+            .sent = 0,
+            .arena = std.heap.ArenaAllocator.init(s.gpa),
         };
         c.c.grpc_call_details_init(&self.details);
         c.c.grpc_metadata_array_init(&self.metadata);
@@ -92,14 +123,141 @@ const Call = struct {
 
     fn destroy(self: *Call) void {
         const gpa = self.server.gpa;
+        if (self.request) |bb| c.c.grpc_byte_buffer_destroy(bb);
+        if (self.response) |bb| c.c.grpc_byte_buffer_destroy(bb);
         if (self.call) |call| c.c.grpc_call_unref(call);
         c.c.grpc_slice_unref(self.status_details);
         c.c.grpc_call_details_destroy(&self.details);
         c.c.grpc_metadata_array_destroy(&self.metadata);
+        self.arena.deinit();
         gpa.destroy(self);
     }
 
-    /// An UNIMPLEMENTED answer.
+    /// Asks for the request body. `grpc_server_request_call` did not deliver
+    /// it, so a unary method cannot be answered until this completes.
+    ///
+    /// SEND_INITIAL_METADATA rides along: it costs nothing extra here and it is
+    /// what a C-core client posting RECV_INITIAL_METADATA is waiting for.
+    fn recvRequest(self: *Call) void {
+        self.ops = std.mem.zeroes([3]c.c.grpc_op);
+        self.ops[0].op = @intFromEnum(c.OpType.send_initial_metadata);
+        self.ops[0].data.send_initial_metadata = .{
+            .count = 0,
+            .metadata = null,
+            .maybe_compression_level = .{ .is_set = 0, .level = 0 },
+        };
+        self.ops[1].op = @intFromEnum(c.OpType.recv_message);
+        self.ops[1].data.recv_message = .{ .recv_message = &self.request };
+
+        self.phase = .awaiting_request;
+        const err = c.c.grpc_call_start_batch(self.call, &self.ops, 2, self, null);
+        if (!c.callOk(err)) {
+            log.err("start_batch receiving a request failed: {d}", .{err});
+            self.destroy();
+        }
+    }
+
+    /// The request payload as a flat slice in the call arena.
+    ///
+    /// gRPC hands back a byte buffer whose slices may be non-contiguous, so
+    /// `readall` is what turns it into something a decoder can walk. An absent
+    /// buffer is an empty message, not an error: proto3 lets every field be
+    /// omitted, so a zero-byte request is legal.
+    fn requestBytes(self: *Call) ![]const u8 {
+        const bb = self.request orelse return "";
+        var reader: c.c.grpc_byte_buffer_reader = undefined;
+        if (c.c.grpc_byte_buffer_reader_init(&reader, bb) == 0) return error.BadRequestBuffer;
+        defer c.c.grpc_byte_buffer_reader_destroy(&reader);
+        const slice = c.c.grpc_byte_buffer_reader_readall(&reader);
+        defer c.c.grpc_slice_unref(slice);
+        return self.arena.allocator().dupe(u8, c.sliceBytes(&slice));
+    }
+
+    /// Sends the next queued message, or the closing status once they are all
+    /// gone.
+    ///
+    /// One message per batch: gRPC core permits at most one SEND_MESSAGE in a
+    /// batch and will not accept a second while one is outstanding, so a
+    /// streaming method is this function re-entered from the completion queue
+    /// once per message. Unary is the same path with one element.
+    fn sendNext(self: *Call) void {
+        // The buffer for the message that just went out. gRPC owns it until its
+        // batch completes, which is now, so this is the first moment it can go.
+        if (self.response) |bb| {
+            c.c.grpc_byte_buffer_destroy(bb);
+            self.response = null;
+        }
+        if (self.sent == self.responses.len) return self.finish();
+
+        const body = self.responses[self.sent];
+        self.sent += 1;
+
+        var payload = c.c.grpc_slice_from_copied_buffer(body.ptr, body.len);
+        defer c.c.grpc_slice_unref(payload);
+        self.response = c.c.grpc_raw_byte_buffer_create(&payload, 1);
+
+        self.ops = std.mem.zeroes([3]c.c.grpc_op);
+        // No SEND_INITIAL_METADATA: recvRequest already sent it, and sending it
+        // twice is a use-after-send error inside core.
+        self.ops[0].op = @intFromEnum(c.OpType.send_message);
+        self.ops[0].data.send_message = .{ .send_message = self.response };
+
+        self.phase = .awaiting_send;
+        const err = c.c.grpc_call_start_batch(self.call, &self.ops, 1, self, null);
+        if (!c.callOk(err)) {
+            log.err("start_batch sending message {d} failed: {d}", .{ self.sent, err });
+            self.destroy();
+        }
+    }
+
+    /// Closes a successful call once every message has been acknowledged.
+    fn finish(self: *Call) void {
+        self.ops = std.mem.zeroes([3]c.c.grpc_op);
+        self.ops[0].op = @intFromEnum(c.OpType.send_status_from_server);
+        self.ops[0].data.send_status_from_server = .{
+            .trailing_metadata_count = 0,
+            .trailing_metadata = null,
+            .status = @intFromEnum(c.Status.ok),
+            .status_details = null,
+        };
+        // What turns "the status is queued" into "the call is over", giving
+        // exactly one point at which this allocation may be freed.
+        self.ops[1].op = @intFromEnum(c.OpType.recv_close_on_server);
+        self.ops[1].data.recv_close_on_server = .{ .cancelled = &self.cancelled };
+
+        self.phase = .awaiting_close;
+        const err = c.c.grpc_call_start_batch(self.call, &self.ops, 2, self, null);
+        if (!c.callOk(err)) {
+            log.err("start_batch closing failed: {d}", .{err});
+            self.destroy();
+        }
+    }
+
+    /// Closes the call with a non-OK status. Initial metadata has already gone
+    /// out by the time anything can fail this way, so it is not resent.
+    fn fail(self: *Call, status: c.Status, message: []const u8) void {
+        self.status_details = c.c.grpc_slice_from_copied_buffer(message.ptr, message.len);
+
+        self.ops = std.mem.zeroes([3]c.c.grpc_op);
+        self.ops[0].op = @intFromEnum(c.OpType.send_status_from_server);
+        self.ops[0].data.send_status_from_server = .{
+            .trailing_metadata_count = 0,
+            .trailing_metadata = null,
+            .status = @intFromEnum(status),
+            .status_details = &self.status_details,
+        };
+        self.ops[1].op = @intFromEnum(c.OpType.recv_close_on_server);
+        self.ops[1].data.recv_close_on_server = .{ .cancelled = &self.cancelled };
+
+        self.phase = .awaiting_close;
+        const err = c.c.grpc_call_start_batch(self.call, &self.ops, 2, self, null);
+        if (!c.callOk(err)) {
+            log.err("start_batch failing a call failed: {d}", .{err});
+            self.destroy();
+        }
+    }
+
+    /// An UNIMPLEMENTED answer, sent as the first batch of the call.
     ///
     /// SEND_INITIAL_METADATA is sent even though the status alone would produce
     /// a Trailers-Only response. Measured, not assumed: with status as the only
@@ -107,14 +265,15 @@ const Call = struct {
     /// completes its batch and sits until its deadline. Sending empty initial
     /// metadata first costs one HEADERS frame and answers immediately.
     ///
-    /// No RECV_MESSAGE: the unregistered `grpc_server_request_call` never
-    /// delivers a payload, which is exactly why S1 needs no protobuf.
+    /// No RECV_MESSAGE: an unknown method's payload is never read, so there is
+    /// nothing to decode and nothing to wait for.
     fn rejectUnimplemented(self: *Call, path: []const u8) void {
         var buf: [256]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "Method not implemented: {s}", .{path}) catch
             "Method not implemented";
         self.status_details = c.c.grpc_slice_from_copied_buffer(msg.ptr, msg.len);
 
+        self.ops = std.mem.zeroes([3]c.c.grpc_op);
         self.ops[0].op = @intFromEnum(c.OpType.send_initial_metadata);
         self.ops[0].data.send_initial_metadata = .{
             .count = 0,
@@ -141,6 +300,52 @@ const Call = struct {
             self.destroy();
         }
     }
+
+    /// The request has arrived: hand it to the service and answer.
+    fn serve(self: *Call) void {
+        const path = c.sliceBytes(&self.details.method);
+        const m = method_path.parse(path) orelse {
+            self.fail(.unimplemented, "Malformed method path");
+            return;
+        };
+        const d = self.server.service orelse {
+            self.fail(.unimplemented, "No service is registered");
+            return;
+        };
+
+        const request = self.requestBytes() catch {
+            self.fail(.internal, "Could not read the request payload");
+            return;
+        };
+
+        const body = d.func(d.ctx, self.arena.allocator(), m, request) catch |err| {
+            self.failService(d, m, err);
+            return;
+        } orelse {
+            self.fail(.unimplemented, "Method not implemented");
+            return;
+        };
+        self.responses = body;
+        self.sendNext();
+    }
+
+    /// Reports an error the service returned, asking the service what it means.
+    fn failService(
+        self: *Call,
+        d: Dispatch,
+        m: method_path.Method,
+        err: anyerror,
+    ) void {
+        const f = d.fault(d.ctx, err);
+        // Logged at err only when it is ours: a caller sending a bad request is
+        // not a server fault and a log full of them reads like one.
+        if (f.status == .internal) {
+            log.err("{s}/{s} failed: {t}", .{ m.service, m.name, err });
+        } else {
+            log.debug("{s}/{s} -> {t}: {s}", .{ m.service, m.name, f.status, f.message });
+        }
+        self.fail(f.status, f.message);
+    }
 };
 
 pub const Server = struct {
@@ -158,6 +363,10 @@ pub const Server = struct {
     /// is the tag, so it can never alias a `Call` allocation; the byte itself
     /// is unused.
     shutdown_marker: u8 = 0,
+    /// The service calls are handed to. Null answers every method
+    /// UNIMPLEMENTED, which is what this transport did on its own before there
+    /// was a service to hand them to — and is still what `grpc-smoke` exercises.
+    service: ?Dispatch = null,
 
     /// Heap-allocated because `&shutdown_marker` is handed to C and must not
     /// move.
@@ -287,6 +496,13 @@ pub const Server = struct {
         const call: *Call = @ptrCast(@alignCast(tag));
         switch (call.phase) {
             .awaiting_call => s.onNewCall(call, ev.success != 0),
+            // success == 0 here means the client went away before sending a
+            // body; there is nobody left to answer.
+            .awaiting_request => if (ev.success != 0) call.serve() else call.destroy(),
+            // The one phase that repeats. success == 0 means the client went
+            // away mid-stream, or `stop` cancelled the call; either way there is
+            // nobody left to send the rest to.
+            .awaiting_send => if (ev.success != 0) call.sendNext() else call.destroy(),
             .awaiting_close => call.destroy(),
         }
     }
@@ -302,14 +518,15 @@ pub const Server = struct {
             log.err("cannot arm the next request_call: {t}", .{err});
 
         const path = c.sliceBytes(&call.details.method);
-        if (method_path.parse(path)) |m| {
-            log.debug("{s}/{s} -> UNIMPLEMENTED", .{ m.service, m.name });
-        } else {
-            log.debug("malformed method path {s} -> UNIMPLEMENTED", .{path});
+        if (s.service == null) {
+            log.debug("{s} -> UNIMPLEMENTED (no service)", .{path});
+            call.rejectUnimplemented(path);
+            return;
         }
-        // S3 grows a switch over `m` here. Until then every method is
-        // unimplemented, which is the honest answer.
-        call.rejectUnimplemented(path);
+        // Which method it is is the service's business; this only knows that a
+        // unary call needs its body fetched before anyone can answer it.
+        log.debug("{s}", .{path});
+        call.recvRequest();
     }
 };
 

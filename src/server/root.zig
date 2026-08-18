@@ -31,6 +31,13 @@ pub const server = @import("server.zig");
 pub const grpc_c = @import("grpc/c.zig");
 pub const grpc_method = @import("grpc/method.zig");
 pub const grpc_server = @import("grpc/server.zig");
+pub const grpc_read_service = @import("grpc/read_service.zig");
+pub const grpc_avro = @import("grpc/avro.zig");
+pub const grpc_arrow = @import("grpc/arrow.zig");
+pub const grpc_avro_test = @import("grpc/avro_test.zig");
+pub const grpc_arrow_test = @import("grpc/arrow_test.zig");
+pub const storage_pb = @import("proto/storage.zig");
+pub const storage_pb_test = @import("proto/storage_test.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

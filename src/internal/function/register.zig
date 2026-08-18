@@ -36,6 +36,11 @@ pub const State = struct {
     /// sqlite3_step, where taking the catalog lock would invert the ordering
     /// shared_catalog.zig requires.
     info_schema: info_schema_vtab.SharedState = .{},
+    /// Where a query job's result rows come from, for the virtual tables that
+    /// serve them. Filled in by the server, which owns the jobs; empty here
+    /// means every job table reads as empty, which is the right answer before
+    /// anything has wired itself up and while it is shutting down.
+    job_rows: job_rows_vtab.SharedState = .{},
 
     pub fn deinit(state: *State) void {
         const gpa = state.gpa;
@@ -80,6 +85,7 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
 
     try unnest_vtab.register(db, gpa);
     try info_schema_vtab.register(db, gpa, &state.info_schema);
+    try job_rows_vtab.register(db, gpa, &state.job_rows);
     try db.createScalarFunction("zetasqlite_group_by", -1, state, groupByTramp, true);
 
     // Aggregate UDFs + option marker functions (Go: aggregateFuncs plus the
@@ -96,6 +102,7 @@ const aggregate = @import("aggregate.zig");
 const window = @import("window.zig");
 const unnest_vtab = @import("unnest_vtab.zig");
 pub const info_schema_vtab = @import("info_schema_vtab.zig");
+pub const job_rows_vtab = @import("job_rows_vtab.zig");
 
 // ----------------------------------------------------------------------
 // Generic scalar trampoline (Go setupNormalFuncMap closure equivalent)

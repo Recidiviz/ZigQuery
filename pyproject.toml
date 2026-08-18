@@ -19,6 +19,16 @@ dependencies = [
     # the gRPC core that harness/grpc_smoke.zig exercises — the two disagree
     # about things like trailers-only responses.
     "google-cloud-bigquery-storage>=2.25",
+    # tools/avro_golden.py: the reference Avro encoder the emulator's own
+    # encoder is checked against. Round-tripping our encoder through our own
+    # decoder would prove nothing -- a wrong union branch index or decimal byte
+    # order decodes to a wrong value rather than an error.
+    "fastavro>=1.9",
+    # tools/storage_probe.py --format=ARROW: the reference Arrow implementation,
+    # for reading back what BigQuery sends and what this emulator produces. The
+    # same role fastavro plays for Avro -- decoding our own bytes with our own
+    # encoder would prove nothing.
+    "pyarrow>=14",
     # tools/spec_import.py: reads goccy/googlesqlite's YAML corpus.
     "pyyaml>=6",
 ]
