@@ -72,6 +72,8 @@ const Error = error{
     MalformedDescriptor,
     /// proto2 `group` fields have no representation here.
     UnsupportedGroup,
+    /// --roots named something the .fdset does not define.
+    UnknownRoot,
     UnknownType,
 } || std.mem.Allocator.Error;
 
@@ -255,6 +257,54 @@ fn isPackable(t: Ty) bool {
     };
 }
 
+/// google.protobuf.*Value: proto3 JSON renders these as the bare inner value,
+/// so they get a hand-shaped hook rather than the generic object one.
+const wrapper_types = std.StaticStringMap(void).initComptime(.{
+    .{".google.protobuf.DoubleValue"}, .{".google.protobuf.FloatValue"},
+    .{".google.protobuf.Int64Value"},  .{".google.protobuf.UInt64Value"},
+    .{".google.protobuf.Int32Value"},  .{".google.protobuf.UInt32Value"},
+    .{".google.protobuf.BoolValue"},   .{".google.protobuf.StringValue"},
+    .{".google.protobuf.BytesValue"},
+});
+
+/// Whatever JSON the client sent. These three carry arbitrary JSON by
+/// definition, and std.json.Value already is that, with its own codec.
+const json_value_types = std.StaticStringMap(void).initComptime(.{
+    .{".google.protobuf.Struct"},    .{".google.protobuf.Value"},
+    .{".google.protobuf.ListValue"},
+});
+
+/// The json_pb writer for a scalar, or null when std.json's own is right.
+fn jsonWriteFn(t: Ty) ?[]const u8 {
+    return switch (t) {
+        // 64-bit integers are JSON strings.
+        .TYPE_INT64, .TYPE_SINT64, .TYPE_SFIXED64 => "writeI64",
+        .TYPE_UINT64, .TYPE_FIXED64 => "writeU64",
+        .TYPE_BYTES => "writeBytes",
+        else => null,
+    };
+}
+
+/// The json_pb reader for a scalar, and whether it needs the allocator.
+fn jsonReadFn(t: Ty) Error![]const u8 {
+    return switch (t) {
+        .TYPE_DOUBLE => "asF64",
+        .TYPE_FLOAT => "asF32",
+        .TYPE_INT64, .TYPE_SINT64, .TYPE_SFIXED64 => "asI64",
+        .TYPE_UINT64, .TYPE_FIXED64 => "asU64",
+        .TYPE_INT32, .TYPE_SINT32, .TYPE_SFIXED32 => "asI32",
+        .TYPE_UINT32, .TYPE_FIXED32 => "asU32",
+        .TYPE_BOOL => "asBool",
+        .TYPE_STRING => "asString",
+        .TYPE_BYTES => "asBytes",
+        else => error.UnknownType,
+    };
+}
+
+fn jsonReadTakesAlloc(t: Ty) bool {
+    return t == .TYPE_STRING or t == .TYPE_BYTES;
+}
+
 const Msg = struct {
     fq: []const u8,
     desc: *pb.DescriptorProto,
@@ -277,6 +327,10 @@ const Gen = struct {
     /// Fully-qualified proto name -> flat Zig type name.
     names: std.StringHashMapUnmanaged([]const u8) = .empty,
     out: std.ArrayList(u8) = .empty,
+    /// JSON codecs only, no binary wire codecs. The REST messages never reach
+    /// the wire, and suppressing it keeps `google.protobuf.Struct` — which has
+    /// no useful Zig wire form here — out of the encoders.
+    json_only: bool = false,
 
     fn line(g: *Gen, comptime fmt: []const u8, args: anytype) Error!void {
         try g.out.print(g.a, fmt ++ "\n", args);
@@ -333,6 +387,54 @@ const Gen = struct {
         gop.value_ptr.* = e;
     }
 
+    // ---- prune ----
+
+    /// Restricts the output to the messages and enums reachable from `roots` by
+    /// field reference.
+    ///
+    /// `google/api/*`, `google/type/*` and descriptor.proto arrive through
+    /// `--include_imports` as option definitions: reachable as annotations,
+    /// never as a field's type, so a closure drops them without naming them.
+    /// A root that names nothing is an error, because the alternative is a typo
+    /// silently emitting an empty file.
+    fn prune(g: *Gen, roots: []const []const u8) Error!void {
+        var keep: std.StringHashMapUnmanaged(void) = .empty;
+        var stack: std.ArrayList([]const u8) = .empty;
+        for (roots) |r| {
+            const fq = if (r.len > 0 and r[0] == '.')
+                r
+            else
+                try std.fmt.allocPrint(g.a, ".{s}", .{r});
+            if (g.msgs.get(fq) == null and g.enums.get(fq) == null) return error.UnknownRoot;
+            try stack.append(g.a, fq);
+        }
+        while (stack.pop()) |fq| {
+            if ((try keep.getOrPut(g.a, fq)).found_existing) continue;
+            const m = g.msgs.get(fq) orelse continue;
+            for (m.desc.field) |f| {
+                const t = f.type orelse continue;
+                if (t != .TYPE_MESSAGE and t != .TYPE_ENUM) continue;
+                const tn = f.type_name orelse continue;
+                if (g.json_only and json_value_types.has(tn)) continue;
+                try stack.append(g.a, tn);
+            }
+        }
+        g.msg_keys = try g.retain(g.msg_keys, keep);
+        g.enum_keys = try g.retain(g.enum_keys, keep);
+    }
+
+    fn retain(
+        g: *Gen,
+        keys: std.ArrayList([]const u8),
+        keep: std.StringHashMapUnmanaged(void),
+    ) Error!std.ArrayList([]const u8) {
+        var out: std.ArrayList([]const u8) = .empty;
+        for (keys.items) |k| {
+            if (keep.contains(k)) try out.append(g.a, k);
+        }
+        return out;
+    }
+
     // ---- naming ----
 
     /// Maps fully-qualified proto names to flat Zig type names, qualifying with
@@ -384,6 +486,33 @@ const Gen = struct {
         return std.fmt.allocPrint(g.a, "{s}_{s}", .{ flat, base });
     }
 
+    /// protoc always sets json_name; it is the lowerCamelCase form unless the
+    /// .proto overrode it.
+    fn jsonName(g: *Gen, f: *pb.FieldDescriptorProto) Error![]const u8 {
+        _ = g;
+        return f.json_name orelse f.name orelse error.MalformedDescriptor;
+    }
+
+    /// The synthetic entry message behind a `map<K,V>` field, or null.
+    fn mapEntry(g: *Gen, f: *pb.FieldDescriptorProto) ?*pb.DescriptorProto {
+        if (f.label != .LABEL_REPEATED or f.type.? != .TYPE_MESSAGE) return null;
+        const m = g.msgs.get(f.type_name orelse return null) orelse return null;
+        const opts = m.desc.options orelse return null;
+        return if (opts.map_entry orelse false) m.desc else null;
+    }
+
+    fn isJsonValue(g: *Gen, f: *pb.FieldDescriptorProto) bool {
+        if (!g.json_only) return false;
+        const tn = f.type_name orelse return false;
+        return json_value_types.has(tn);
+    }
+
+    /// Message fields are arena pointers, except the ones carried as
+    /// std.json.Value.
+    fn isPtrField(g: *Gen, f: *pb.FieldDescriptorProto) bool {
+        return f.type.? == .TYPE_MESSAGE and !g.isJsonValue(f);
+    }
+
     fn typeName(g: *Gen, f: *pb.FieldDescriptorProto) Error![]const u8 {
         const tn = f.type_name orelse return error.MalformedDescriptor;
         return g.names.get(tn) orelse error.MalformedDescriptor;
@@ -391,6 +520,7 @@ const Gen = struct {
 
     fn fieldZigType(g: *Gen, f: *pb.FieldDescriptorProto) Error![]const u8 {
         const t = f.type orelse return error.MalformedDescriptor;
+        if (g.isJsonValue(f)) return "std.json.Value";
         return switch (t) {
             .TYPE_MESSAGE, .TYPE_ENUM => try g.typeName(f),
             .TYPE_GROUP => error.UnsupportedGroup,
@@ -457,7 +587,7 @@ const Gen = struct {
             try g.line("    pub const {s} = union(enum) {{", .{uname});
             for (oneofs[oi].items) |f| {
                 const t = try g.fieldZigType(f);
-                const ptr = f.type.? == .TYPE_MESSAGE;
+                const ptr = g.isPtrField(f);
                 try g.line("        {s}: {s}{s},", .{
                     try zid(g.a, f.name orelse return error.MalformedDescriptor),
                     if (ptr) "*" else "",
@@ -471,7 +601,7 @@ const Gen = struct {
         for (plain.items) |f| {
             const t = try g.fieldZigType(f);
             const fname = try zid(g.a, f.name orelse return error.MalformedDescriptor);
-            const is_msg = f.type.? == .TYPE_MESSAGE;
+            const is_msg = g.isPtrField(f);
             if (f.label == .LABEL_REPEATED) {
                 try g.line("    {s}: []{s}{s} = &.{{}},", .{ fname, if (is_msg) "*" else "", t });
             } else if (is_msg) {
@@ -489,6 +619,442 @@ const Gen = struct {
             });
         }
 
+        if (g.json_only) {
+            try g.genJsonEncode(zname, m.fq, d, plain.items, oneofs);
+            try g.genJsonDecode(zname, m.fq, d, oneofs);
+        } else {
+            try g.genWireCodecs(zname, d, plain.items, oneofs);
+        }
+
+        try g.line("}};", .{});
+        try g.line("", .{});
+    }
+
+    /// jsonStringify, over the same traversal genEncode uses.
+    ///
+    /// An absent field is omitted and an empty repeated field is omitted, which
+    /// is the mapping's default; presence is already explicit in the Zig type,
+    /// so nothing here needs a "print defaults" mode.
+    fn genJsonEncode(
+        g: *Gen,
+        zname: []const u8,
+        fq: []const u8,
+        d: *pb.DescriptorProto,
+        plain: []const *pb.FieldDescriptorProto,
+        oneofs: []std.ArrayList(*pb.FieldDescriptorProto),
+    ) Error!void {
+        try g.line("", .{});
+        // One param per line, as decodeReader and encodeInto already do: the
+        // flat signature passes the column limit for the longer nested names.
+        try g.line("    pub fn jsonStringify(", .{});
+        try g.line("        self: {s},", .{zname});
+        try g.line("        jw: anytype,", .{});
+        try g.line("    ) !void {{", .{});
+
+        if (wrapper_types.has(fq)) {
+            // The bare inner value, not an object around it.
+            try g.line("        if (self.value) |v| {{", .{});
+            try g.genJsonValue("            ", d.field[0], "v");
+            try g.line("        }} else {{", .{});
+            try g.line("            try jw.write(null);", .{});
+            try g.line("        }}", .{});
+            try g.line("    }}", .{});
+            return;
+        }
+
+        if (d.field.len == 0) try g.line("        _ = self;", .{});
+        try g.line("        try jw.beginObject();", .{});
+        for (plain) |f| try g.genJsonField(f);
+        for (d.oneof_decl, 0..) |decl, oi| {
+            if (oneofs[oi].items.len == 0) continue;
+            const dname = try zid(g.a, decl.name orelse return error.MalformedDescriptor);
+            try g.line("        if (self.{s}) |u| switch (u) {{", .{dname});
+            for (oneofs[oi].items) |f| {
+                const fname = try zid(g.a, f.name orelse return error.MalformedDescriptor);
+                try g.line("            .{s} => |v| {{", .{fname});
+                try g.line("                try jw.objectField(\"{s}\");", .{try g.jsonName(f)});
+                try g.genJsonValue("                ", f, "v");
+                try g.line("            }},", .{});
+            }
+            try g.line("        }};", .{});
+        }
+        try g.line("        try jw.endObject();", .{});
+        try g.line("    }}", .{});
+    }
+
+    fn genJsonField(g: *Gen, f: *pb.FieldDescriptorProto) Error!void {
+        const fname = try zid(g.a, f.name orelse return error.MalformedDescriptor);
+        const jname = try g.jsonName(f);
+        if (g.mapEntry(f)) |entry| return g.genJsonMap(fname, jname, entry);
+        if (f.label == .LABEL_REPEATED) {
+            try g.line("        if (self.{s}.len != 0) {{", .{fname});
+            try g.line("            try jw.objectField(\"{s}\");", .{jname});
+            try g.line("            try jw.beginArray();", .{});
+            try g.line("            for (self.{s}) |v| {{", .{fname});
+            try g.genJsonValue("                ", f, "v");
+            try g.line("            }}", .{});
+            try g.line("            try jw.endArray();", .{});
+            try g.line("        }}", .{});
+            return;
+        }
+        try g.line("        if (self.{s}) |v| {{", .{fname});
+        try g.line("            try jw.objectField(\"{s}\");", .{jname});
+        try g.genJsonValue("            ", f, "v");
+        try g.line("        }}", .{});
+    }
+
+    /// A `map<K,V>` is a JSON object, not the array of entry messages the
+    /// generated representation carries. A non-string key becomes its decimal
+    /// spelling, which is what the mapping says JSON object keys are.
+    fn genJsonMap(
+        g: *Gen,
+        fname: []const u8,
+        jname: []const u8,
+        entry: *pb.DescriptorProto,
+    ) Error!void {
+        if (entry.field.len < 2) return error.MalformedDescriptor;
+        const key = entry.field[0];
+        const value = entry.field[1];
+        try g.line("        if (self.{s}.len != 0) {{", .{fname});
+        try g.line("            try jw.objectField(\"{s}\");", .{jname});
+        try g.line("            try jw.beginObject();", .{});
+        try g.line("            for (self.{s}) |e| {{", .{fname});
+        if (key.type.? == .TYPE_STRING) {
+            try g.line("                try jw.objectField(e.key orelse \"\");", .{});
+        } else {
+            try g.line("                var kbuf: [24]u8 = undefined;", .{});
+            try g.line("                const k = std.fmt.bufPrint(", .{});
+            try g.line("                    &kbuf,", .{});
+            try g.line("                    \"{{d}}\",", .{});
+            try g.line("                    .{{e.key orelse 0}},", .{});
+            try g.line("                ) catch unreachable;", .{});
+            try g.line("                try jw.objectField(k);", .{});
+        }
+        try g.line("                if (e.value) |v| {{", .{});
+        try g.genJsonValue("                    ", value, "v");
+        try g.line("                }} else {{", .{});
+        try g.line("                    try jw.write(null);", .{});
+        try g.line("                }}", .{});
+        try g.line("            }}", .{});
+        try g.line("            try jw.endObject();", .{});
+        try g.line("        }}", .{});
+    }
+
+    /// One value of field `f`, already bound to `val`, at `pad` indent.
+    fn genJsonValue(
+        g: *Gen,
+        pad: []const u8,
+        f: *pb.FieldDescriptorProto,
+        val: []const u8,
+    ) Error!void {
+        const t = f.type orelse return error.MalformedDescriptor;
+        if (t == .TYPE_GROUP) return error.UnsupportedGroup;
+        // A message is behind an arena pointer; std.json dispatches the hook on
+        // the value, so it has to be dereferenced first.
+        const deref = if (g.isPtrField(f)) ".*" else "";
+        if (jsonWriteFn(t)) |fn_name| {
+            try g.line("{s}try json_pb.{s}(jw, {s});", .{ pad, fn_name, val });
+        } else {
+            try g.line("{s}try jw.write({s}{s});", .{ pad, val, deref });
+        }
+    }
+
+    /// jsonDecode, the mirror of jsonStringify.
+    ///
+    /// Not std.json's `jsonParseFromValue` hook: that signature carries
+    /// std.json.ParseOptions, which has nowhere to put the lax/strict mode. The
+    /// entry point is always a known type here, and nested messages are called
+    /// by name, so the hook buys nothing.
+    ///
+    /// An unknown key is skipped and an explicit null reads as absent, both of
+    /// which the mapping specifies.
+    fn genJsonDecode(
+        g: *Gen,
+        zname: []const u8,
+        fq: []const u8,
+        d: *pb.DescriptorProto,
+        oneofs: []std.ArrayList(*pb.FieldDescriptorProto),
+    ) Error!void {
+        _ = oneofs;
+        try g.genJsonFieldTable(d);
+        try g.line("", .{});
+        try g.line("    pub fn jsonDecode(", .{});
+        try g.line("        a: std.mem.Allocator,", .{});
+        try g.line("        src: std.json.Value,", .{});
+        try g.line("        o: json_pb.Options,", .{});
+        try g.line("    ) json_pb.Error!*{s} {{", .{zname});
+        try g.emitCall("        ", "const msg =", "try a.create", &.{zname});
+        try g.line("        msg.* = .{{}};", .{});
+
+        if (wrapper_types.has(fq)) {
+            try g.line("        const inner = json_pb.wrapperInner(src);", .{});
+            try g.line("        if (inner != .null) {{", .{});
+            try g.genJsonRead("            ", d.field[0], "msg.value =", "inner");
+            try g.line("        }}", .{});
+            try g.line("        return msg;", .{});
+            try g.line("    }}", .{});
+            return;
+        }
+
+        if (d.field.len == 0) {
+            try g.line("        _ = src;", .{});
+            try g.line("        _ = o;", .{});
+            try g.line("        return msg;", .{});
+            try g.line("    }}", .{});
+            return;
+        }
+
+        // A message whose every field is carried as std.json.Value reads the
+        // value straight through, touching neither the mode nor the arena.
+        var uses_options = false;
+        for (d.field) |f| {
+            if (!g.isJsonValue(f)) uses_options = true;
+        }
+        if (!uses_options) try g.line("        _ = o;", .{});
+
+        try g.line("        const obj = switch (src) {{", .{});
+        try g.line("            .object => |v| v,", .{});
+        try g.line("            .null => return msg,", .{});
+        try g.line("            else => return error.TypeMismatch,", .{});
+        try g.line("        }};", .{});
+        try g.line("        var it = obj.iterator();", .{});
+        try g.line("        while (it.next()) |e| {{", .{});
+        try g.line("            const v = e.value_ptr.*;", .{});
+        try g.line("            if (v == .null) continue;", .{});
+        try g.line("            switch (json_fields_.get(e.key_ptr.*) orelse continue) {{", .{});
+        for (d.field, 0..) |f, idx| try g.genJsonDecodeCase(d, f, idx);
+        try g.line("                else => {{}},", .{});
+        try g.line("            }}", .{});
+        try g.line("        }}", .{});
+        try g.line("        return msg;", .{});
+        try g.line("    }}", .{});
+    }
+
+    /// Both spellings the mapping requires a parser to accept, deduplicated
+    /// because json_name equals the proto name wherever a .proto overrode it.
+    fn genJsonFieldTable(g: *Gen, d: *pb.DescriptorProto) Error!void {
+        if (d.field.len == 0) return;
+        try g.line("", .{});
+        try g.line("    const json_fields_ = std.StaticStringMap(u16).initComptime(.{{", .{});
+        for (d.field, 0..) |f, idx| {
+            const name = f.name orelse return error.MalformedDescriptor;
+            const jname = try g.jsonName(f);
+            try g.line("        .{{ \"{s}\", {d} }},", .{ jname, idx });
+            if (!std.mem.eql(u8, jname, name)) {
+                try g.line("        .{{ \"{s}\", {d} }},", .{ name, idx });
+            }
+        }
+        try g.line("    }});", .{});
+    }
+
+    fn genJsonDecodeCase(
+        g: *Gen,
+        d: *pb.DescriptorProto,
+        f: *pb.FieldDescriptorProto,
+        idx: usize,
+    ) Error!void {
+        const fname = try zid(g.a, f.name orelse return error.MalformedDescriptor);
+        try g.line("                {d} => {{", .{idx});
+        defer_block: {
+            if (g.mapEntry(f)) |entry| {
+                try g.genJsonDecodeMap(fname, entry, try g.fieldZigType(f));
+                break :defer_block;
+            }
+            if (f.label == .LABEL_REPEATED) {
+                try g.genJsonDecodeRepeated(f, fname);
+                break :defer_block;
+            }
+            if (f.oneof_index) |oi| {
+                const decl = d.oneof_decl[@intCast(oi)];
+                const dname = try zid(g.a, decl.name orelse return error.MalformedDescriptor);
+                try g.genJsonRead("                    ", f, "const val_ =", "v");
+                const assign = try std.fmt.allocPrint(
+                    g.a,
+                    "                    msg.{s} = .{{ .{s} = val_ }};",
+                    .{ dname, fname },
+                );
+                if (assign.len <= max_cols) {
+                    try g.line("{s}", .{assign});
+                } else {
+                    try g.line("                    msg.{s} = .{{", .{dname});
+                    try g.line("                        .{s} = val_,", .{fname});
+                    try g.line("                    }};", .{});
+                }
+                break :defer_block;
+            }
+            try g.genJsonRead(
+                "                    ",
+                f,
+                try std.fmt.allocPrint(g.a, "msg.{s} =", .{fname}),
+                "v",
+            );
+        }
+        try g.line("                }},", .{});
+    }
+
+    fn genJsonDecodeRepeated(
+        g: *Gen,
+        f: *pb.FieldDescriptorProto,
+        fname: []const u8,
+    ) Error!void {
+        const elem = try g.fieldZigType(f);
+        const ptr = if (g.isPtrField(f)) "*" else "";
+        try g.line("                    const arr_ = try json_pb.asArray(a, v, o);", .{});
+        const elem_type = try std.fmt.allocPrint(g.a, "{s}{s}", .{ ptr, elem });
+        try g.emitCall(
+            "                    ",
+            "const items_ =",
+            "try a.alloc",
+            &.{ elem_type, "arr_.len" },
+        );
+        try g.line("                    for (arr_, 0..) |item_, i_| {{", .{});
+        try g.genJsonRead("                        ", f, "items_[i_] =", "item_");
+        try g.line("                    }}", .{});
+        try g.line("                    msg.{s} = items_;", .{fname});
+    }
+
+    fn genJsonDecodeMap(
+        g: *Gen,
+        fname: []const u8,
+        entry: *pb.DescriptorProto,
+        entry_type: []const u8,
+    ) Error!void {
+        if (entry.field.len < 2) return error.MalformedDescriptor;
+        const key = entry.field[0];
+        const value = entry.field[1];
+        try g.line("                    if (v != .object) return error.TypeMismatch;", .{});
+        try g.line("                    const items_ = try a.alloc(", .{});
+        try g.line("                        *{s},", .{entry_type});
+        try g.line("                        v.object.count(),", .{});
+        try g.line("                    );", .{});
+        try g.line("                    var mit_ = v.object.iterator();", .{});
+        try g.line("                    var i_: usize = 0;", .{});
+        try g.line("                    while (mit_.next()) |me_| : (i_ += 1) {{", .{});
+        try g.emitCall("                        ", "const en_ =", "try a.create", &.{entry_type});
+        try g.line("                        en_.* = .{{}};", .{});
+        if (key.type.? == .TYPE_STRING) {
+            try g.line("                        en_.key = me_.key_ptr.*;", .{});
+        } else {
+            const read = try jsonReadFn(key.type.?);
+            try g.line("                        en_.key = try json_pb.{s}(", .{read});
+            try g.line("                            .{{ .string = me_.key_ptr.* }},", .{});
+            try g.line("                            o,", .{});
+            try g.line("                        );", .{});
+        }
+        // A null value stays absent, the same rule the field loop applies. The
+        // message decoders answer a JSON null with an empty message, which
+        // would turn `{"k":null}` into `{"k":{}}` on the way back out.
+        try g.line("                        if (me_.value_ptr.* != .null) {{", .{});
+        try g.genJsonRead(
+            "                            ",
+            value,
+            "en_.value =",
+            "me_.value_ptr.*",
+        );
+        try g.line("                        }}", .{});
+        try g.line("                        items_[i_] = en_;", .{});
+        try g.line("                    }}", .{});
+        try g.line("                    msg.{s} = items_;", .{fname});
+    }
+
+    /// `{pad}{dest} {callee}(args...);`, one argument per line when the flat
+    /// form passes the column limit. Nested message names reach past it on
+    /// their own, so this is not an edge case.
+    fn emitCall(
+        g: *Gen,
+        pad: []const u8,
+        dest: []const u8,
+        callee: []const u8,
+        args: []const []const u8,
+    ) Error!void {
+        var flat: std.ArrayList(u8) = .empty;
+        try flat.appendSlice(g.a, pad);
+        if (dest.len > 0) {
+            try flat.appendSlice(g.a, dest);
+            try flat.append(g.a, ' ');
+        }
+        try flat.appendSlice(g.a, callee);
+        try flat.append(g.a, '(');
+        for (args, 0..) |arg, i| {
+            if (i > 0) try flat.appendSlice(g.a, ", ");
+            try flat.appendSlice(g.a, arg);
+        }
+        try flat.appendSlice(g.a, ");");
+        if (flat.items.len <= max_cols) {
+            try g.line("{s}", .{flat.items});
+            return;
+        }
+        if (dest.len == 0) {
+            try g.line("{s}{s}(", .{ pad, callee });
+            for (args) |arg| try g.line("{s}    {s},", .{ pad, arg });
+            try g.line("{s});", .{pad});
+            return;
+        }
+        // The header alone can pass the limit once a nested message name is
+        // both the destination and the callee.
+        if (pad.len + dest.len + 1 + callee.len + 1 <= max_cols) {
+            try g.line("{s}{s} {s}(", .{ pad, dest, callee });
+            for (args) |arg| try g.line("{s}    {s},", .{ pad, arg });
+            try g.line("{s});", .{pad});
+            return;
+        }
+        try g.line("{s}{s}", .{ pad, dest });
+        try g.line("{s}    {s}(", .{ pad, callee });
+        for (args) |arg| try g.line("{s}        {s},", .{ pad, arg });
+        try g.line("{s}    );", .{pad});
+    }
+
+    /// `dest` is a full left-hand side, e.g. "msg.kind =" or "items_[i_] =".
+    fn genJsonRead(
+        g: *Gen,
+        pad: []const u8,
+        f: *pb.FieldDescriptorProto,
+        dest: []const u8,
+        val: []const u8,
+    ) Error!void {
+        const t = f.type orelse return error.MalformedDescriptor;
+        if (t == .TYPE_GROUP) return error.UnsupportedGroup;
+        if (g.isJsonValue(f)) {
+            try g.line("{s}{s} {s};", .{ pad, dest, val });
+            return;
+        }
+        switch (t) {
+            .TYPE_MESSAGE => {
+                const callee = try std.fmt.allocPrint(
+                    g.a,
+                    "try {s}.jsonDecode",
+                    .{try g.typeName(f)},
+                );
+                try g.emitCall(pad, dest, callee, &.{ "a", val, "o" });
+            },
+            .TYPE_ENUM => try g.emitCall(
+                pad,
+                dest,
+                "try json_pb.asEnum",
+                &.{ try g.typeName(f), val, "o" },
+            ),
+            else => {
+                const callee = try std.fmt.allocPrint(
+                    g.a,
+                    "try json_pb.{s}",
+                    .{try jsonReadFn(t)},
+                );
+                const args: []const []const u8 = if (jsonReadTakesAlloc(t))
+                    &.{ "a", val, "o" }
+                else
+                    &.{ val, "o" };
+                try g.emitCall(pad, dest, callee, args);
+            },
+        }
+    }
+
+    fn genWireCodecs(
+        g: *Gen,
+        zname: []const u8,
+        d: *pb.DescriptorProto,
+        plain: []const *pb.FieldDescriptorProto,
+        oneofs: []std.ArrayList(*pb.FieldDescriptorProto),
+    ) Error!void {
         // decode() entry point and decodeReader().
         try g.line("", .{});
         // Params go one per line: message names reach 48 characters, so the
@@ -509,10 +1075,10 @@ const Gen = struct {
         try g.line("        a: std.mem.Allocator,", .{});
         try g.line("        r: *wire.Reader,", .{});
         try g.line("    ) wire.DecodeError!*{s} {{", .{zname});
-        try g.line("        const msg = try a.create({s});", .{zname});
+        try g.emitCall("        ", "const msg =", "try a.create", &.{zname});
         try g.line("        msg.* = .{{}};", .{});
 
-        for (plain.items) |f| {
+        for (plain) |f| {
             if (f.label != .LABEL_REPEATED) continue;
             const t = try g.fieldZigType(f);
             const ptr = if (f.type.? == .TYPE_MESSAGE) "*" else "";
@@ -538,7 +1104,7 @@ const Gen = struct {
         try g.line("            else => try r.skip(tag.wire),", .{});
         try g.line("        }};", .{});
 
-        for (plain.items) |f| {
+        for (plain) |f| {
             if (f.label != .LABEL_REPEATED) continue;
             const fname = try zid(g.a, f.name.?);
             const flat = "        msg. = try list_.toOwnedSlice(a);".len + fname.len + f.name.?.len;
@@ -552,10 +1118,7 @@ const Gen = struct {
         try g.line("        return msg;", .{});
         try g.line("    }}", .{});
 
-        try g.genEncode(zname, d, plain.items, oneofs);
-
-        try g.line("}};", .{});
-        try g.line("", .{});
+        try g.genEncode(zname, d, plain, oneofs);
     }
 
     /// encode() / encodeInto(), the mirror of decode() / decodeReader().
@@ -865,8 +1428,22 @@ pub fn main(init: std.process.Init) !void {
     // which would make the generated file differ per machine and break the
     // gen-proto-drift CI job. The caller passes the repo-relative label.
     var source: []const u8 = "proto/googlesql.fdset";
+    // Emitted instead of the wire import under --json-only.
+    var json_import: []const u8 = "@import(\"../json_pb.zig\")";
+    var json_only = false;
+    var roots: std.ArrayList([]const u8) = .empty;
     while (args.next()) |arg| {
-        if (flagValue(arg, "--wire-import")) |v| {
+        if (flagValue(arg, "--roots")) |v| {
+            var it = std.mem.splitScalar(u8, v, ',');
+            while (it.next()) |name| {
+                const trimmed = std.mem.trim(u8, name, " ");
+                if (trimmed.len > 0) try roots.append(arena, trimmed);
+            }
+        } else if (std.mem.eql(u8, arg, "--json-only")) {
+            json_only = true;
+        } else if (flagValue(arg, "--json-import")) |v| {
+            json_import = v;
+        } else if (flagValue(arg, "--wire-import")) |v| {
             wire_import = v;
         } else if (flagValue(arg, "--desc")) |v| {
             desc = v;
@@ -882,8 +1459,18 @@ pub fn main(init: std.process.Init) !void {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, fdset_path, arena, .limited(1 << 26));
     const fds = try pb.FileDescriptorSet.decode(arena, bytes);
 
-    var g: Gen = .{ .a = arena };
+    var g: Gen = .{ .a = arena, .json_only = json_only };
     try g.collect(fds);
+    // Before resolveNames, so the collision qualification reflects what is
+    // actually emitted rather than everything --include_imports dragged in.
+    if (roots.items.len > 0) g.prune(roots.items) catch |err| switch (err) {
+        error.UnknownRoot => {
+            try err_out.writeAll("--roots names a message this .fdset does not define\n");
+            try err_out.flush();
+            std.process.exit(2);
+        },
+        else => return err,
+    };
     try g.resolveNames();
 
     std.mem.sort([]const u8, g.msg_keys.items, {}, lessThan);
@@ -893,7 +1480,11 @@ pub fn main(init: std.process.Init) !void {
     try g.line("//! {s}", .{desc});
     try g.line("", .{});
     try g.line("const std = @import(\"std\");", .{});
-    try g.line("pub const wire = {s};", .{wire_import});
+    if (json_only) {
+        try g.line("const json_pb = {s};", .{json_import});
+    } else {
+        try g.line("pub const wire = {s};", .{wire_import});
+    }
     try g.line("", .{});
     for (g.enum_keys.items) |fq| try g.genEnum(g.enums.get(fq).?);
     for (g.msg_keys.items) |fq| try g.genMessage(g.msgs.get(fq).?);

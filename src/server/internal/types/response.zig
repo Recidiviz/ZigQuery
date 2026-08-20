@@ -25,75 +25,9 @@ const govalue = @import("govalue.zig");
 const schema = @import("schema.zig");
 const spec = zetasqlite.spec;
 const value_mod = zetasqlite.value;
-const errors = @import("../../error.zig");
-
-/// Writes one cell as `{"v":...}`.
-pub fn writeCell(
-    arena: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    cell: driver.Cell,
-) std.mem.Allocator.Error!void {
-    try out.appendSlice(arena, "{\"v\":");
-    try writeCellValue(arena, out, cell);
-    try out.append(arena, '}');
-}
-
-fn writeCellValue(
-    arena: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    cell: driver.Cell,
-) std.mem.Allocator.Error!void {
-    switch (cell) {
-        .null => try out.appendSlice(arena, "null"),
-        .int => |v| try errors.writeJsonString(arena, out, try govalue.formatInt(arena, v)),
-        .float => |v| try errors.writeJsonString(arena, out, try govalue.formatFloat(arena, v)),
-        .bool => |v| try errors.writeJsonString(arena, out, govalue.formatBool(v)),
-        // BYTES arrive already base64-encoded and NUMERIC as decimal text,
-        // both as .string from the driver — see driver.zig's Cell docs.
-        // `.json` is bind-only — the driver hands a JSON column back as
-        // `.string` — but it renders the same way if one ever arrives.
-        .string,
-        .bytes,
-        .json,
-        .date,
-        .timestamp,
-        .datetime,
-        .time,
-        .interval,
-        .range,
-        => |v| try errors.writeJsonString(arena, out, v),
-        .array => |items| {
-            try out.append(arena, '[');
-            for (items, 0..) |item, i| {
-                if (i > 0) try out.append(arena, ',');
-                try writeCell(arena, out, item);
-            }
-            try out.append(arena, ']');
-        },
-        .struct_ => |fields| {
-            try out.appendSlice(arena, "{\"f\":[");
-            for (fields, 0..) |f, i| {
-                if (i > 0) try out.append(arena, ',');
-                try writeCell(arena, out, f.value);
-            }
-            try out.appendSlice(arena, "]}");
-        },
-    }
-}
-
-/// Writes one row as `{"f":[...]}`.
-pub fn writeRow(
-    arena: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    row: []const driver.Cell,
-) !void {
-    try out.appendSlice(arena, "{\"f\":[");
-    for (row, 0..) |cell, i| {
-        if (i > 0) try out.append(arena, ',');
-        try writeCell(arena, out, cell);
-    }
-    try out.appendSlice(arena, "]}");
-}
+const bqpb = @import("../../proto/bigquery.zig");
+const tablerow = @import("tablerow.zig");
+const json_pb = @import("../../json_pb.zig");
 
 /// Coerces a NULL whose declared type is ARRAY into an empty array.
 ///
@@ -167,40 +101,72 @@ fn cellByteLen(arena: std.mem.Allocator, cell: driver.Cell) std.mem.Allocator.Er
     };
 }
 
-/// True when any output column is a bare top-level TIMESTAMP, i.e. when
-/// `useInt64Timestamp` would change the rendering at all.
-pub fn hasInt64TimestampColumn(cols: []const driver.OutputColumn) bool {
-    for (cols) |c| {
-        if (c.type.typeKind() == .TYPE_TIMESTAMP) return true;
-    }
-    return false;
-}
 
 /// Go internal/types.Format: under `formatOptions.useInt64Timestamp`, a
 /// TIMESTAMP cell is re-rendered as int64 microseconds instead of the
 /// "sec.microRemainder" form.
 ///
-/// Top level only. Go indexes `schema.Fields[colIdx]` per row cell and never
-/// recurses, so a TIMESTAMP nested in a STRUCT or an ARRAY keeps the float
-/// form — the asymmetry clients have to work around, reproduced rather than
-/// fixed. Matching on the cell tag gets the same set: the driver only yields
-/// `.timestamp` for a scalar column, never for one nested in a container.
+/// Every depth, not just the top level. google-cloud-bigquery asks for this
+/// format on every read and parses a TIMESTAMP cell with `int()`, so a cell
+/// left in the float-seconds form inside a STRUCT or an ARRAY raises
+/// ValueError on the client rather than producing a wrong value.
 pub fn formatInt64Timestamps(
     arena: std.mem.Allocator,
     row: []const driver.Cell,
 ) std.mem.Allocator.Error![]const driver.Cell {
     var converted: ?[]driver.Cell = null;
     for (row, 0..) |cell, i| {
-        if (cell != .timestamp) continue;
-        const micros = value_mod.parseTimestampApi(cell.timestamp) catch continue;
+        const replacement = try int64Timestamp(arena, cell) orelse continue;
         if (converted == null) {
             const dup = try arena.alloc(driver.Cell, row.len);
             @memcpy(dup, row);
             converted = dup;
         }
-        converted.?[i] = .{ .int = micros };
+        converted.?[i] = replacement;
     }
     return converted orelse row;
+}
+
+/// The cell re-rendered, or null when it carries no timestamp and the original
+/// can be shared. Copying only the containers that change keeps a row of
+/// ordinary columns allocation-free.
+fn int64Timestamp(
+    arena: std.mem.Allocator,
+    cell: driver.Cell,
+) std.mem.Allocator.Error!?driver.Cell {
+    switch (cell) {
+        .timestamp => |text| {
+            const micros = value_mod.parseTimestampApi(text) catch return null;
+            return .{ .int = micros };
+        },
+        .array => |items| {
+            var out: ?[]driver.Cell = null;
+            for (items, 0..) |item, i| {
+                const replacement = try int64Timestamp(arena, item) orelse continue;
+                if (out == null) {
+                    const dup = try arena.alloc(driver.Cell, items.len);
+                    @memcpy(dup, items);
+                    out = dup;
+                }
+                out.?[i] = replacement;
+            }
+            return if (out) |o| .{ .array = o } else null;
+        },
+        .struct_ => |fields| {
+            var out: ?[]driver.Cell.Field = null;
+            for (fields, 0..) |f, i| {
+                const replacement = try int64Timestamp(arena, f.value) orelse continue;
+                if (out == null) {
+                    const dup = try arena.alloc(driver.Cell.Field, fields.len);
+                    @memcpy(dup, fields);
+                    out = dup;
+                }
+                out.?[i].value = replacement;
+            }
+            return if (out) |o| .{ .struct_ = o } else null;
+        },
+        else => return null,
+    }
 }
 
 /// Applies coerceNullArrays across a whole row.
@@ -231,34 +197,45 @@ pub const QueryResponse = struct {
     total_rows: usize,
 };
 
-/// Serializes the jobs.query / getQueryResults envelope.
+/// The jobs.query / getQueryResults envelope.
 ///
-/// Key order follows Go's struct declaration order in
-/// internal/types/types.go: jobReference, schema, rows, totalRows,
-/// jobComplete.
+/// Spelled out rather than taken from `pb.QueryResponse`: the proto types
+/// `rows` as `repeated google.protobuf.Struct`, which carries no row shape and
+/// would cost a Value tree per cell. The parts that are real messages —
+/// `jobReference`, `schema` — are the generated ones.
+pub const Envelope = struct {
+    jobReference: bqpb.JobReference,
+    schema: *const bqpb.TableSchema,
+    rows: []const tablerow.TableRow,
+    /// A string on the wire.
+    totalRows: []const u8,
+    /// Absent unless this page is short of the total.
+    pageToken: ?[]const u8 = null,
+    jobComplete: bool = true,
+};
+
+/// `pageToken` is absent when null rather than present and null, which is what
+/// every optional on this envelope means.
+pub const envelope_options: std.json.Stringify.Options = .{
+    .emit_null_optional_fields = false,
+};
+
+/// Serializes the jobs.query / getQueryResults envelope.
 pub fn writeQueryResponse(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
     res: QueryResponse,
 ) !void {
-    try out.appendSlice(arena, "{\"jobReference\":{\"jobId\":");
-    try errors.writeJsonString(arena, out, res.job_id);
-    try out.appendSlice(arena, ",\"projectId\":");
-    try errors.writeJsonString(arena, out, res.project_id);
-    try out.appendSlice(arena, "},\"schema\":");
-    try schema.writeSchema(arena, out, res.cols);
+    const rows = try arena.alloc(tablerow.TableRow, res.rows.len);
+    for (res.rows, 0..) |row, i| rows[i] = .{ .cells = row };
 
-    try out.appendSlice(arena, ",\"rows\":[");
-    for (res.rows, 0..) |row, i| {
-        if (i > 0) try out.append(arena, ',');
-        try writeRow(arena, out, row);
-    }
-    try out.appendSlice(arena, "]");
-
-    // totalRows is a string on the wire.
-    try out.appendSlice(arena, ",\"totalRows\":\"");
-    try out.print(arena, "{d}", .{res.total_rows});
-    try out.appendSlice(arena, "\",\"jobComplete\":true}");
+    const body = try std.json.Stringify.valueAlloc(arena, Envelope{
+        .jobReference = .{ .project_id = res.project_id, .job_id = res.job_id },
+        .schema = try schema.pbSchema(arena, res.cols),
+        .rows = rows,
+        .totalRows = try std.fmt.allocPrint(arena, "{d}", .{res.total_rows}),
+    }, envelope_options);
+    try out.appendSlice(arena, body);
 }
 
 const testing = std.testing;
@@ -293,7 +270,9 @@ fn responseOf(arena: std.mem.Allocator, sql: []const u8) ![]const u8 {
 fn expectGolden(sql: []const u8, expected: []const u8) !void {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    try testing.expectEqualStrings(expected, try responseOf(arena_state.allocator(), sql));
+    // Compared by value: a TableFieldSchema's keys follow the proto's field
+    // order, which is not the order Go's struct declaration produced.
+    try json_pb.expectJsonEqual(expected, try responseOf(arena_state.allocator(), sql));
 }
 
 test "scalar int matches the Go emulator byte for byte" {
@@ -373,4 +352,102 @@ test "NUMERIC and BIGNUMERIC keep decimal text" {
     try expectGolden("SELECT CAST('1.2345' AS NUMERIC) AS n, CAST(1 AS BIGNUMERIC) AS bn",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"n","type":"NUMERIC"},{"name":"bn","type":"BIGNUMERIC"}]},"rows":[{"f":[{"v":"1.2345"},{"v":"1"}]}],"totalRows":"1","jobComplete":true}
     );
+}
+
+test "useInt64Timestamp reaches a TIMESTAMP inside a STRUCT" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The python client asks for this format on every read and parses a
+    // TIMESTAMP cell with int(), so a float-seconds cell nested in a record is
+    // a ValueError on the client rather than a wrong value.
+    var fields = [_]driver.Cell.Field{
+        .{ .name = "ts", .value = .{ .timestamp = "1768003200.0" } },
+    };
+    const row = try formatInt64Timestamps(arena, &.{.{ .struct_ = &fields }});
+    try testing.expectEqual(@as(i64, 1768003200000000), row[0].struct_[0].value.int);
+}
+
+test "useInt64Timestamp reaches a TIMESTAMP inside an ARRAY<STRUCT>" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The shape entity resolution's entry_source_map has: a repeated record
+    // whose fields include a timestamp.
+    var fields = [_]driver.Cell.Field{
+        .{ .name = "ts", .value = .{ .timestamp = "1768003200.0" } },
+    };
+    var items = [_]driver.Cell{.{ .struct_ = &fields }};
+    const row = try formatInt64Timestamps(arena, &.{.{ .array = &items }});
+    try testing.expectEqual(
+        @as(i64, 1768003200000000),
+        row[0].array[0].struct_[0].value.int,
+    );
+}
+
+test "useInt64Timestamp reaches a TIMESTAMP inside a bare ARRAY" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The text is Go's `sec.microRemainder`, so the part after the dot is a
+    // count of microseconds rather than a decimal fraction: ".5" is 5µs.
+    var items = [_]driver.Cell{
+        .{ .timestamp = "1768003200.0" },
+        .{ .timestamp = "1768003200.5" },
+        .{ .timestamp = "1768003200.500000" },
+    };
+    const row = try formatInt64Timestamps(arena, &.{.{ .array = &items }});
+    try testing.expectEqual(@as(i64, 1768003200000000), row[0].array[0].int);
+    try testing.expectEqual(@as(i64, 1768003200000005), row[0].array[1].int);
+    try testing.expectEqual(@as(i64, 1768003200500000), row[0].array[2].int);
+}
+
+test "a TIMESTAMP nested two containers deep is still converted" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var inner = [_]driver.Cell.Field{
+        .{ .name = "ts", .value = .{ .timestamp = "1768003200.0" } },
+    };
+    var mid = [_]driver.Cell{.{ .struct_ = &inner }};
+    var outer = [_]driver.Cell.Field{
+        .{ .name = "rows", .value = .{ .array = &mid } },
+    };
+    const row = try formatInt64Timestamps(arena, &.{.{ .struct_ = &outer }});
+    try testing.expectEqual(
+        @as(i64, 1768003200000000),
+        row[0].struct_[0].value.array[0].struct_[0].value.int,
+    );
+}
+
+test "cells that are not timestamps are left alone" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var fields = [_]driver.Cell.Field{
+        .{ .name = "d", .value = .{ .date = "2026-01-10" } },
+        .{ .name = "s", .value = .{ .string = "1768003200.0" } },
+        .{ .name = "n", .value = .null },
+    };
+    const row = try formatInt64Timestamps(arena, &.{ .{ .struct_ = &fields }, .{ .int = 7 } });
+    try testing.expectEqualStrings("2026-01-10", row[0].struct_[0].value.date);
+    // A string that merely looks like a timestamp is a string.
+    try testing.expectEqualStrings("1768003200.0", row[0].struct_[1].value.string);
+    try testing.expectEqual(driver.Cell.null, row[0].struct_[2].value);
+    try testing.expectEqual(@as(i64, 7), row[1].int);
+}
+
+test "a row with no timestamp anywhere is returned unchanged" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const original: []const driver.Cell = &.{ .{ .int = 1 }, .{ .string = "x" } };
+    const row = try formatInt64Timestamps(arena, original);
+    try testing.expectEqual(original.ptr, row.ptr);
 }

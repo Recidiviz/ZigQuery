@@ -31,4 +31,28 @@
 # invokes the destructor itself on failure, so freeing there would be a double
 # free (unnest_vtab.register has exactly that bug). Everything else the new file
 # raised was fixed rather than absorbed.
-412
+#
+# 412 -> 502 for the BigQuery v2 REST codecs (src/server/proto/bigquery.zig),
+# in two steps.
+#
+# 412 -> 431 landed the query path: 40 messages, JSON codecs only. 431 -> 502
+# added `Job` to --roots for jobs.insert and jobs.get, which takes the closure
+# from 40 messages to 166 — `JobConfiguration` covers load, extract and copy
+# jobs this emulator never runs, and `JobStatistics2.MlStatistics` reaches 51
+# `Model_*` messages of BQML training metadata through two fields.
+#
+# All ninety-two are in the generated file and are the same three checks the
+# encoders already raise: ZA301 func-too-long, ZA304 too-many-branches and
+# ZA302 nesting. A jsonStringify is one `if` per field and a jsonDecode is one
+# switch case per field. Splitting one message's codec across several functions
+# would help no reader, and there is no call site to change.
+#
+# Eleven ZA701 remain and cannot be wrapped: the identifier alone passes the
+# limit, e.g.
+# `Model_ClusteringMetrics_Cluster_FeatureValue_CategoricalValue_CategoryCount`
+# at nesting depth. Everywhere a line *can* be split, the emitters split it.
+#
+# The hand-written half adds none: `zig build ephor` reports zero findings in
+# src/server/json_pb.zig, src/server/debug_stats.zig, tools/gen_proto.zig,
+# src/server/internal/types/tablerow.zig and src/server/proto/bigquery_test.zig.
+502

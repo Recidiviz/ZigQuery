@@ -412,12 +412,36 @@ pub fn build(b: *std.Build) void {
     fmt_gen_storage.has_side_effects = true;
     fmt_gen_storage.step.dependOn(&run_gen_storage_pb.step);
 
+    // The REST surface. JSON codecs only — these messages never reach the
+    // binary wire — and pruned to what the implemented RPCs reference, which
+    // leaves out the option definitions --include_imports drags along.
+    const run_gen_bq_pb = b.addRunArtifact(gen_proto);
+    run_gen_bq_pb.addFileArg(b.path("proto/bigquery_v2.fdset"));
+    run_gen_bq_pb.addArg(b.pathFromRoot("src/server/proto/bigquery.zig"));
+    run_gen_bq_pb.addArg("--source=proto/bigquery_v2.fdset");
+    run_gen_bq_pb.addArg("--json-only");
+    // Roots, not the whole .fdset: the closure is what the implemented RPCs
+    // reference. `Job` is the expensive one — JobConfiguration covers load,
+    // extract and copy jobs this emulator never runs — and takes the closure
+    // from 40 messages to 166.
+    run_gen_bq_pb.addArg("--roots=google.cloud.bigquery.v2.PostQueryRequest,google.cloud.bigquery.v2.QueryResponse,google.cloud.bigquery.v2.GetQueryResultsRequest,google.cloud.bigquery.v2.GetQueryResultsResponse,google.cloud.bigquery.v2.ErrorProto,google.cloud.bigquery.v2.InsertJobRequest,google.cloud.bigquery.v2.GetJobRequest,google.cloud.bigquery.v2.Job");
+    run_gen_bq_pb.addArg(
+        "--desc=Plain-struct JSON codecs for the BigQuery v2 REST surface.",
+    );
+    run_gen_bq_pb.has_side_effects = true;
+
+    const fmt_gen_bq = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
+    fmt_gen_bq.addArg(b.pathFromRoot("src/server/proto/bigquery.zig"));
+    fmt_gen_bq.has_side_effects = true;
+    fmt_gen_bq.step.dependOn(&run_gen_bq_pb.step);
+
     const gen_proto_step = b.step(
         "gen-proto",
         "Regenerate the generated protobuf codecs from the committed .fdsets",
     );
     gen_proto_step.dependOn(&fmt_gen_proto.step);
     gen_proto_step.dependOn(&fmt_gen_storage.step);
+    gen_proto_step.dependOn(&fmt_gen_bq.step);
 
     // Concurrency gating experiment: is the analyzer stack safe to drive from
     // several threads, one Db each? Not part of `test` — it is a deliberate

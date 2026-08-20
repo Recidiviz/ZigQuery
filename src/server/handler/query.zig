@@ -14,11 +14,13 @@ const driver = zetasqlite.driver;
 const spec = zetasqlite.spec;
 const encoder = zetasqlite.encoder;
 const job_rows_vtab = zetasqlite.function.job_rows_vtab;
-const http_server = @import("../http/server.zig");
 const errors = @import("../error.zig");
 const response = @import("../internal/types/response.zig");
+const tablerow = @import("../internal/types/tablerow.zig");
+const json_pb = @import("../json_pb.zig");
 const schema_mod = @import("../internal/types/schema.zig");
 const queryparam = @import("../internal/types/queryparam.zig");
+const pb = @import("../proto/bigquery.zig");
 
 pub const Error = error{
     /// Body was not an object, or `query` was missing / not a string.
@@ -46,58 +48,70 @@ pub const QueryRequest = struct {
     use_int64_timestamp: bool = false,
 };
 
-/// Go strconv.ParseBool, which is what parseQueryValueAsBool applies to a
-/// query-string value. The Python BigQuery client sends `True`.
-pub fn parseGoBool(s: []const u8) bool {
-    return std.mem.eql(u8, s, "1") or std.mem.eql(u8, s, "t") or
-        std.mem.eql(u8, s, "T") or std.mem.eql(u8, s, "true") or
-        std.mem.eql(u8, s, "TRUE") or std.mem.eql(u8, s, "True");
+/// Reads a jobs.query request: the body, the query string, and the project id
+/// the path bound.
+///
+/// `google.api.http` puts the body under `query_request`
+/// (job.proto JobService.Query), so the two merge into one PostQueryRequest.
+pub fn parseRequest(
+    arena: std.mem.Allocator,
+    body: []const u8,
+    query: []const u8,
+) Error!QueryRequest {
+    const parsed = json_pb.parseBody(arena, body) catch return error.InvalidRequest;
+    const merged = json_pb.requestValue(arena, .{
+        .body = parsed,
+        .body_field = "queryRequest",
+        .query = query,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidRequest,
+    };
+    const post = pb.PostQueryRequest.jsonDecode(arena, merged, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidRequest,
+    };
+
+    const q = post.query_request orelse return error.InvalidRequest;
+    var req = QueryRequest{ .query = q.query orelse return error.InvalidRequest };
+    req.dry_run = q.dry_run orelse false;
+    if (q.max_results) |m| req.max_results = if (m.value) |n| @intCast(n) else null;
+    // handler.go:2420-2424: the body's formatOptions OR the query string's. The
+    // query string cannot reach the nested request through the http binding, so
+    // it is read on its own.
+    req.use_int64_timestamp = int64Timestamp(q.format_options) or
+        int64TimestampFromQuery(arena, query);
+    req.params = try queryparam.parseTyped(arena, q.query_parameters);
+    return req;
 }
 
-/// Parses a jobs.query body out of a std.json.Value tree.
-pub fn parseQueryRequest(
-    arena: std.mem.Allocator,
-    root: std.json.Value,
-) Error!QueryRequest {
-    if (root != .object) return error.InvalidRequest;
-    const obj = root.object;
+fn int64Timestamp(opts: ?*const pb.DataFormatOptions) bool {
+    const o = opts orelse return false;
+    return o.use_int64_timestamp orelse false;
+}
 
-    const q = obj.get("query") orelse return error.InvalidRequest;
-    if (q != .string) return error.InvalidRequest;
+/// `formatOptions.useInt64Timestamp` as a query-string parameter, which the
+/// dotted key nests back into a DataFormatOptions.
+pub fn int64TimestampFromQuery(arena: std.mem.Allocator, query: []const u8) bool {
+    const merged = json_pb.requestValue(arena, .{ .query = query }) catch return false;
+    const q = pb.QueryRequest.jsonDecode(arena, merged, .{}) catch return false;
+    return int64Timestamp(q.format_options);
+}
 
-    var req = QueryRequest{ .query = q.string };
-
-    if (obj.get("dryRun")) |v| {
-        req.dry_run = switch (v) {
-            .bool => |b| b,
-            // Clients that stringify booleans, which the Go handler tolerates.
-            .string => |s| std.mem.eql(u8, s, "true"),
-            else => false,
-        };
-    }
-    if (obj.get("maxResults")) |v| {
-        req.max_results = switch (v) {
-            .integer => |n| n,
-            .string => |s| std.fmt.parseInt(i64, s, 10) catch null,
-            .float => |f| @as(i64, @intFromFloat(f)),
-            else => null,
-        };
-    }
-    if (obj.get("formatOptions")) |fo| {
-        if (fo == .object) {
-            if (fo.object.get("useInt64Timestamp")) |v| {
-                req.use_int64_timestamp = switch (v) {
-                    .bool => |b| b,
-                    .string => |s| parseGoBool(s),
-                    else => false,
-                };
-            }
-        }
-    }
-    if (obj.get("queryParameters")) |qp| {
-        req.params = try queryparam.parse(arena, qp);
-    }
-    return req;
+/// `maxResults` and `pageToken` from a getQueryResults query string.
+/// handler.go:1497-1498 takes both from the query string only.
+pub fn parseResultsPage(arena: std.mem.Allocator, query: []const u8) Page {
+    const merged = json_pb.requestValue(arena, .{ .query = query }) catch return .{};
+    const r = pb.GetQueryResultsRequest.jsonDecode(arena, merged, .{}) catch return .{};
+    return .{
+        // Go's -1 default means "every row"; a value ParseInt rejects lands
+        // here too, because the decoder leaves the field absent.
+        .max_results = if (r.max_results) |m|
+            (if (m.value) |n| @as(i64, @intCast(n)) else max_results_default)
+        else
+            max_results_default,
+        .start = parsePageToken(r.page_token),
+    };
 }
 
 /// A completed query, retained so jobs.get and getQueryResults can replay it.
@@ -246,8 +260,6 @@ pub fn wrapEngineError(arena: std.mem.Allocator, msg: []const u8) ![]const u8 {
 /// disagree. Rendering moves to request time, where the format options
 /// actually are.
 pub const ResultSet = struct {
-    /// The `schema` object, `{"fields":[...]}`.
-    schema_json: []const u8,
     /// Output column names, in order. Held apart from `columns` because the
     /// virtual table wants only these.
     names: []const []const u8,
@@ -271,7 +283,6 @@ pub const ResultSet = struct {
             .blob => |b| .{ .blob = try arena.dupe(u8, b) },
         };
         return .{
-            .schema_json = try arena.dupe(u8, set.schema_json),
             .names = names,
             .types = types,
             .cells = cells,
@@ -382,25 +393,21 @@ pub fn writeResultSet(
     const first = window.first;
     const next = window.next;
 
-    try out.appendSlice(arena, "{\"jobReference\":{\"jobId\":");
-    try errors.writeJsonString(arena, out, job_id);
-    try out.appendSlice(arena, ",\"projectId\":");
-    try errors.writeJsonString(arena, out, project_id);
-    try out.appendSlice(arena, "},\"schema\":");
-    try out.appendSlice(arena, set.schema_json);
-    try out.appendSlice(arena, ",\"rows\":[");
-    for (first..next) |row| {
-        if (row != first) try out.append(arena, ',');
-        try response.writeRow(arena, out, try render.row(row));
-    }
-    try out.appendSlice(arena, "],\"totalRows\":\"");
-    // The full count even when this page is short, matching Go.
-    try out.print(arena, "{d}", .{set.total_rows});
-    try out.appendSlice(arena, "\"");
-    if (next < set.total_rows) {
-        try out.print(arena, ",\"pageToken\":\"{d}\"", .{next});
-    }
-    try out.appendSlice(arena, ",\"jobComplete\":true}");
+    const rows = try arena.alloc(tablerow.TableRow, next - first);
+    for (first..next) |row| rows[row - first] = .{ .cells = try render.row(row) };
+
+    const body = try std.json.Stringify.valueAlloc(arena, response.Envelope{
+        .jobReference = .{ .project_id = project_id, .job_id = job_id },
+        .schema = try schema_mod.pbSchema(arena, render.cols),
+        .rows = rows,
+        // The full count even when this page is short, matching Go.
+        .totalRows = try std.fmt.allocPrint(arena, "{d}", .{set.total_rows}),
+        .pageToken = if (next < set.total_rows)
+            try std.fmt.allocPrint(arena, "{d}", .{next})
+        else
+            null,
+    }, response.envelope_options);
+    try out.appendSlice(arena, body);
 }
 
 /// Runs a query and serializes the full jobs.query response.
@@ -493,11 +500,7 @@ pub fn runQueryFormatted(
         total_rows += 1;
     }
 
-    var schema_json: std.ArrayList(u8) = .empty;
-    try schema_mod.writeSchema(arena, &schema_json, cols);
-
     const set = ResultSet{
-        .schema_json = try schema_json.toOwnedSlice(arena),
         .names = names,
         .types = types,
         .cells = try cells.toOwnedSlice(arena),
@@ -540,14 +543,9 @@ test "parses the body shape the Go client sends" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const v = try std.json.parseFromSliceLeaky(
-        std.json.Value,
-        arena,
+    const req = try parseRequest(arena,
         \\{"query":"SELECT 1","useLegacySql":false,"maxResults":10}
-    ,
-        .{},
-    );
-    const req = try parseQueryRequest(arena, v);
+    , "");
     try testing.expectEqualStrings("SELECT 1", req.query);
     try testing.expectEqual(false, req.dry_run);
     try testing.expectEqual(@as(?i64, 10), req.max_results);
@@ -565,8 +563,7 @@ test "accepts maxResults as a JSON number or a string" {
         ,
         \\{"query":"SELECT 1","maxResults":25}
     }) |body| {
-        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-        try testing.expectEqual(@as(?i64, 25), (try parseQueryRequest(arena, v)).max_results);
+        try testing.expectEqual(@as(?i64, 25), (try parseRequest(arena, body, "")).max_results);
     }
 }
 
@@ -580,20 +577,30 @@ test "dryRun accepts both a bool and a stringified bool" {
         ,
         \\{"query":"SELECT 1","dryRun":"true"}
     }) |body| {
-        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-        try testing.expectEqual(true, (try parseQueryRequest(arena, v)).dry_run);
+        try testing.expectEqual(true, (try parseRequest(arena, body, "")).dry_run);
     }
 }
 
-test "a missing or non-string query is rejected" {
+test "a missing query, or a body that is not an object, is rejected" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    for ([_][]const u8{ "{}", "[]", "\"x\"", "{\"query\":123}" }) |body| {
-        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-        try testing.expectError(error.InvalidRequest, parseQueryRequest(arena, v));
+    for ([_][]const u8{ "{}", "[]", "\"x\"" }) |body| {
+        try testing.expectError(error.InvalidRequest, parseRequest(arena, body, ""));
     }
+}
+
+test "a number where query is declared a string is taken as its text" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Go tolerates this too — flexible_rpc_marshalling.go exists because typed
+    // encoding/json would not. The SQL then fails analysis, which is a better
+    // message than "query is required".
+    const req = try parseRequest(arena, "{\"query\":123}", "");
+    try testing.expectEqualStrings("123", req.query);
 }
 
 test "queryParameters reach the request" {
@@ -601,12 +608,11 @@ test "queryParameters reach the request" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+    const req = try parseRequest(arena,
         \\{"query":"SELECT @a","queryParameters":[
         \\  {"name":"a","parameterType":{"type":"STRING"},
         \\   "parameterValue":{"value":"x"}}]}
-    , .{});
-    const req = try parseQueryRequest(arena, v);
+    , "");
     try testing.expectEqual(@as(usize, 1), req.params.len);
     try testing.expectEqualStrings("a", req.params[0].name.?);
     try testing.expectEqualStrings("x", req.params[0].value.string);
@@ -617,10 +623,9 @@ test "a body with no queryParameters has none" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+    try testing.expectEqual(@as(usize, 0), (try parseRequest(arena,
         \\{"query":"SELECT 1"}
-    , .{});
-    try testing.expectEqual(@as(usize, 0), (try parseQueryRequest(arena, v)).params.len);
+    , "")).params.len);
 }
 
 test "runQuery produces the Go emulator's response bytes" {
@@ -633,7 +638,9 @@ test "runQuery produces the Go emulator's response bytes" {
 
     const res = try runQuery(arena, db, "test", "<JOBID>", "SELECT 1 AS i");
     try testing.expect(res.ok);
-    try testing.expectEqualStrings(
+    // Compared by value: jobReference and TableFieldSchema put their keys in
+    // proto field order, which is not the order Go's structs declared them in.
+    try json_pb.expectJsonEqual(
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"i","type":"INTEGER"}]},"rows":[{"f":[{"v":"1"}]}],"totalRows":"1","jobComplete":true}
     ,
         res.body,
@@ -675,7 +682,6 @@ test "job store round-trips and replaces on duplicate id" {
     var names = [_][]const u8{"n"};
 
     try store.put("test", "job1", .{
-        .schema_json = "{\"fields\":[]}",
         .names = &names,
         .types = &types,
         .cells = &.{.{ .int = 1 }},
@@ -688,7 +694,6 @@ test "job store round-trips and replaces on duplicate id" {
     try testing.expect(store.get("job1").?.set.types[0] != &int_t);
 
     try store.put("test", "job1", .{
-        .schema_json = "{\"fields\":[]}",
         .names = &names,
         .types = &types,
         .cells = &.{.{ .int = 2 }},
@@ -706,7 +711,6 @@ test "the job-rows lookup hands the virtual table what the job holds" {
     var types = [_]*spec.Type{&str_t};
     var names = [_][]const u8{"s"};
     try store.put("test", "job2", .{
-        .schema_json = "{\"fields\":[]}",
         .names = &names,
         .types = &types,
         .cells = &.{ .{ .blob = "ab" }, .null },
@@ -739,4 +743,76 @@ test "engine errors get Go's wrapping prefixes" {
         "failed to parse statements: failed to parse statement: Syntax error: Unexpected end of statement",
         try wrapEngineError(arena, "Syntax error: Unexpected end of statement [at 1:11]"),
     );
+}
+
+test "a hand-written body is accepted where the mapping is strict" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // maxResults is a UInt32Value, so a quoted decimal is an extension; dryRun
+    // is a bool, so "True" and 1 are too; dry_run is the original proto name,
+    // which the mapping does require a parser to accept.
+    const req = try parseRequest(arena,
+        \\{"query":"SELECT 1","maxResults":"10","dryRun":"True","bogusKey":1}
+    , "");
+    try testing.expectEqual(@as(?i64, 10), req.max_results);
+    try testing.expectEqual(true, req.dry_run);
+
+    const snake = try parseRequest(arena,
+        \\{"query":"SELECT 1","dry_run":true}
+    , "");
+    try testing.expectEqual(true, snake.dry_run);
+
+    for ([_][]const u8{ "1", "0" }) |n| {
+        const body = try std.fmt.allocPrint(arena, "{{\"query\":\"q\",\"dryRun\":{s}}}", .{n});
+        try testing.expectEqual(n[0] == '1', (try parseRequest(arena, body, "")).dry_run);
+    }
+}
+
+test "useInt64Timestamp is the body's flag OR the query string's" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const plain =
+        \\{"query":"SELECT 1"}
+    ;
+    const in_body =
+        \\{"query":"SELECT 1","formatOptions":{"useInt64Timestamp":true}}
+    ;
+    try testing.expectEqual(false, (try parseRequest(arena, plain, "")).use_int64_timestamp);
+    try testing.expectEqual(true, (try parseRequest(arena, in_body, "")).use_int64_timestamp);
+    // The dotted query key nests back into a DataFormatOptions. "True" is in
+    // Go's ParseBool set, which the Python client sends.
+    try testing.expectEqual(true, (try parseRequest(
+        arena,
+        plain,
+        "formatOptions.useInt64Timestamp=True",
+    )).use_int64_timestamp);
+    try testing.expectEqual(true, (try parseRequest(
+        arena,
+        in_body,
+        "formatOptions.useInt64Timestamp=false",
+    )).use_int64_timestamp);
+}
+
+test "a getQueryResults page comes off the query string" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = parseResultsPage(arena, "maxResults=2&pageToken=4");
+    try testing.expectEqual(@as(i64, 2), p.max_results);
+    try testing.expectEqual(@as(usize, 4), p.start);
+
+    // Absent, and unreadable, both mean "every row" from the top.
+    for ([_][]const u8{ "", "maxResults=abc" }) |q| {
+        const d = parseResultsPage(arena, q);
+        try testing.expectEqual(max_results_default, d.max_results);
+        try testing.expectEqual(@as(usize, 0), d.start);
+    }
+
+    // The Python client's completeness probe.
+    try testing.expectEqual(@as(i64, 0), parseResultsPage(arena, "maxResults=0").max_results);
 }

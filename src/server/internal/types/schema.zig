@@ -18,6 +18,7 @@ const zetasqlite = @import("zetasqlite");
 const spec = zetasqlite.spec;
 const pb = zetasqlite.pb;
 const errors = @import("../../error.zig");
+const bqpb = @import("../../proto/bigquery.zig");
 
 /// Legacy BigQuery type name for a leaf kind. STRUCT/ARRAY are handled by the
 /// caller, which unwraps them into `fields` / `mode`.
@@ -114,6 +115,54 @@ pub fn writeFieldMode(
     try errors.writeJsonString(arena, out, legacyTypeName(elem.typeKind()));
 
     try out.append(arena, '}');
+}
+
+/// The same field as a generated TableFieldSchema.
+///
+/// `mode` is absent rather than "NULLABLE": a GoogleSQL type carries no
+/// nullability, and REPEATED is what an ARRAY becomes once its element type is
+/// hoisted.
+pub fn pbField(
+    arena: std.mem.Allocator,
+    field: Field,
+) std.mem.Allocator.Error!*bqpb.TableFieldSchema {
+    const t = field.type;
+    const repeated = t.isArray();
+    const elem: *const spec.Type = if (repeated) (t.element_type orelse t) else t;
+
+    const out = try arena.create(bqpb.TableFieldSchema);
+    out.* = .{
+        .name = field.name,
+        .type = legacyTypeName(elem.typeKind()),
+        .mode = if (repeated) "REPEATED" else if (field.required) "REQUIRED" else null,
+    };
+    if (elem.isStruct()) out.fields = try pbFields(arena, elem);
+    return out;
+}
+
+fn pbFields(
+    arena: std.mem.Allocator,
+    elem: *const spec.Type,
+) std.mem.Allocator.Error![]*bqpb.TableFieldSchema {
+    const subs = try arena.alloc(*bqpb.TableFieldSchema, elem.field_types.len);
+    for (elem.field_types, 0..) |f, i| {
+        subs[i] = try pbField(arena, .{ .name = f.name, .type = f.type orelse elem });
+    }
+    return subs;
+}
+
+/// A query's output columns as a TableSchema.
+pub fn pbSchema(
+    arena: std.mem.Allocator,
+    cols: []const zetasqlite.driver.OutputColumn,
+) std.mem.Allocator.Error!*bqpb.TableSchema {
+    const fields = try arena.alloc(*bqpb.TableFieldSchema, cols.len);
+    for (cols, 0..) |col, i| {
+        fields[i] = try pbField(arena, .{ .name = col.name, .type = col.type });
+    }
+    const out = try arena.create(bqpb.TableSchema);
+    out.* = .{ .fields = fields };
+    return out;
 }
 
 /// Emits the `schema` object: {"fields":[...]}.

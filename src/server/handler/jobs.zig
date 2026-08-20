@@ -17,20 +17,29 @@ const std = @import("std");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
 const job_rows_vtab = zetasqlite.function.job_rows_vtab;
-const errors = @import("../error.zig");
-const query_handler = @import("query.zig");
 const queryparam = @import("../internal/types/queryparam.zig");
+const json_pb = @import("../json_pb.zig");
+const pb = @import("../proto/bigquery.zig");
 
-/// Pulls `configuration.query.query` out of a jobs.insert body.
-pub fn queryFromJobConfig(root: std.json.Value) ?[]const u8 {
-    if (root != .object) return null;
-    const cfg = root.object.get("configuration") orelse return null;
-    if (cfg != .object) return null;
-    const q = cfg.object.get("query") orelse return null;
-    if (q != .object) return null;
-    const sql = q.object.get("query") orelse return null;
-    if (sql != .string) return null;
-    return sql.string;
+/// Decodes a jobs.insert body. `google.api.http` names the body `job`
+/// (job.proto JobService.InsertJob), so the resource is the whole body.
+pub fn parseInsert(arena: std.mem.Allocator, body: []const u8) !*pb.Job {
+    const parsed = json_pb.parseBody(arena, body) catch return error.InvalidRequest;
+    return pb.Job.jsonDecode(arena, parsed, .{}) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.InvalidRequest,
+    };
+}
+
+fn queryConfig(job: *const pb.Job) ?*const pb.JobConfigurationQuery {
+    const cfg = job.configuration orelse return null;
+    return cfg.query;
+}
+
+/// `configuration.query.query`.
+pub fn queryFromJobConfig(job: *const pb.Job) ?[]const u8 {
+    const q = queryConfig(job) orelse return null;
+    return q.query;
 }
 
 /// `configuration.query.queryParameters`, reshaped for the driver.
@@ -39,15 +48,10 @@ pub fn queryFromJobConfig(root: std.json.Value) ?[]const u8 {
 /// read — the driver decides named vs positional from the SQL text.
 pub fn parametersFromJobConfig(
     arena: std.mem.Allocator,
-    root: std.json.Value,
+    job: *const pb.Job,
 ) queryparam.Error![]const driver.Param {
-    if (root != .object) return &.{};
-    const cfg = root.object.get("configuration") orelse return &.{};
-    if (cfg != .object) return &.{};
-    const q = cfg.object.get("query") orelse return &.{};
-    if (q != .object) return &.{};
-    const params = q.object.get("queryParameters") orelse return &.{};
-    return queryparam.parse(arena, params);
+    const q = queryConfig(job) orelse return &.{};
+    return queryparam.parseTyped(arena, q.query_parameters);
 }
 
 pub const JobResource = struct {
@@ -69,43 +73,49 @@ pub fn writeJobResource(
     out: *std.ArrayList(u8),
     j: JobResource,
 ) !void {
-    try out.appendSlice(arena, "{\"configuration\":{\"jobType\":\"QUERY\",\"query\":{\"destinationTable\":{\"datasetId\":");
     // One hidden dataset for every anonymous result, not one per job.
-    try errors.writeJsonString(arena, out, job_rows_vtab.anon_segment);
-    try out.appendSlice(arena, ",\"projectId\":");
-    try errors.writeJsonString(arena, out, j.project_id);
-    try out.appendSlice(arena, ",\"tableId\":");
-    try errors.writeJsonString(arena, out, j.job_id);
-    try out.appendSlice(arena, "},\"priority\":\"INTERACTIVE\",\"query\":");
-    try errors.writeJsonString(arena, out, j.sql);
-    try out.appendSlice(arena, ",\"useLegacySql\":false}},\"jobReference\":{\"jobId\":");
-    try errors.writeJsonString(arena, out, j.job_id);
-    try out.appendSlice(arena, ",\"projectId\":");
-    try errors.writeJsonString(arena, out, j.project_id);
-    try out.appendSlice(arena, "},\"kind\":\"bigquery#job\",\"selfLink\":");
-    try errors.writeJsonString(arena, out, try std.fmt.allocPrint(
-        arena,
-        "http://{s}/bigquery/v2/projects/{s}/jobs/{s}",
-        .{ j.endpoint, j.project_id, j.job_id },
-    ));
+    var dest = pb.TableReference{
+        .project_id = j.project_id,
+        .dataset_id = job_rows_vtab.anon_segment,
+        .table_id = j.job_id,
+    };
+    var use_legacy = pb.BoolValue{ .value = false };
+    var cfg_query = pb.JobConfigurationQuery{
+        .query = j.sql,
+        .destination_table = &dest,
+        .priority = "INTERACTIVE",
+        .use_legacy_sql = &use_legacy,
+    };
+    var cfg = pb.JobConfiguration{ .job_type = "QUERY", .query = &cfg_query };
+    var job_ref = pb.JobReference{ .project_id = j.project_id, .job_id = j.job_id };
+    var bytes = pb.Int64Value{ .value = @intCast(j.total_bytes) };
+    var stats_query = pb.JobStatistics2{
+        .total_bytes_processed = &bytes,
+        .total_bytes_billed = &bytes,
+        .statement_type = j.statement_type,
+    };
+    var stats = pb.JobStatistics{
+        .creation_time = j.unix_seconds,
+        .start_time = j.unix_seconds,
+        .end_time = j.unix_seconds,
+        .total_bytes_processed = &bytes,
+        .query = &stats_query,
+    };
+    var status = pb.JobStatus{ .state = "DONE" };
 
-    const ts = try std.fmt.allocPrint(arena, "{d}", .{j.unix_seconds});
-    const bytes = try std.fmt.allocPrint(arena, "{d}", .{j.total_bytes});
-    try out.appendSlice(arena, ",\"statistics\":{\"creationTime\":");
-    try errors.writeJsonString(arena, out, ts);
-    try out.appendSlice(arena, ",\"endTime\":");
-    try errors.writeJsonString(arena, out, ts);
-    try out.appendSlice(arena, ",\"query\":{\"statementType\":");
-    try errors.writeJsonString(arena, out, j.statement_type);
-    try out.appendSlice(arena, ",\"totalBytesBilled\":");
-    try errors.writeJsonString(arena, out, bytes);
-    try out.appendSlice(arena, ",\"totalBytesProcessed\":");
-    try errors.writeJsonString(arena, out, bytes);
-    try out.appendSlice(arena, "},\"startTime\":");
-    try errors.writeJsonString(arena, out, ts);
-    try out.appendSlice(arena, ",\"totalBytesProcessed\":");
-    try errors.writeJsonString(arena, out, bytes);
-    try out.appendSlice(arena, "},\"status\":{\"state\":\"DONE\"}}");
+    const job = pb.Job{
+        .kind = "bigquery#job",
+        .self_link = try std.fmt.allocPrint(
+            arena,
+            "http://{s}/bigquery/v2/projects/{s}/jobs/{s}",
+            .{ j.endpoint, j.project_id, j.job_id },
+        ),
+        .configuration = &cfg,
+        .job_reference = &job_ref,
+        .statistics = &stats,
+        .status = &status,
+    };
+    try out.appendSlice(arena, try std.json.Stringify.valueAlloc(arena, job, .{}));
 }
 
 const testing = std.testing;
@@ -115,9 +125,9 @@ test "extracts the SQL from a client's jobs.insert body" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+    const v = try parseInsert(arena,
         \\{"configuration":{"query":{"query":"SELECT 1 AS col","useLegacySql":false}}}
-    , .{});
+    );
     try testing.expectEqualStrings("SELECT 1 AS col", queryFromJobConfig(v).?);
 }
 
@@ -134,8 +144,8 @@ test "a body without a query configuration yields null" {
         ,
         \\{"configuration":{"query":{}}}
     }) |body| {
-        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-        try testing.expectEqual(@as(?[]const u8, null), queryFromJobConfig(v));
+        const j = try parseInsert(arena, body);
+        try testing.expectEqual(@as(?[]const u8, null), queryFromJobConfig(j));
     }
 }
 
@@ -144,12 +154,12 @@ test "extracts queryParameters from a jobs.insert body" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+    const v = try parseInsert(arena,
         \\{"configuration":{"query":{"query":"SELECT @a","useLegacySql":false,
         \\  "parameterMode":"NAMED","queryParameters":[
         \\    {"name":"a","parameterType":{"type":"STRING"},
         \\     "parameterValue":{"value":"x"}}]}}}
-    , .{});
+    );
     const params = try parametersFromJobConfig(arena, v);
     try testing.expectEqual(@as(usize, 1), params.len);
     try testing.expectEqualStrings("a", params[0].name.?);
@@ -168,8 +178,8 @@ test "a job with no queryParameters yields none" {
         ,
         \\{"configuration":{"copy":{}}}
     }) |body| {
-        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-        try testing.expectEqual(@as(usize, 0), (try parametersFromJobConfig(arena, v)).len);
+        const j = try parseInsert(arena, body);
+        try testing.expectEqual(@as(usize, 0), (try parametersFromJobConfig(arena, j)).len);
     }
 }
 
@@ -189,11 +199,11 @@ test "job resource matches the Go emulator's shape" {
     });
 
     // Captured from the running Go emulator, with the random id replaced.
-    try testing.expectEqualStrings(
+    // Compared by value: the resource's keys follow the proto's field order,
+    // not the alphabetical order google-api-go-client's structs produced.
+    try json_pb.expectJsonEqual(
         \\{"configuration":{"jobType":"QUERY","query":{"destinationTable":{"datasetId":"_anon","projectId":"test","tableId":"JOBID"},"priority":"INTERACTIVE","query":"SELECT 1 AS col","useLegacySql":false}},"jobReference":{"jobId":"JOBID","projectId":"test"},"kind":"bigquery#job","selfLink":"http://0.0.0.0:19050/bigquery/v2/projects/test/jobs/JOBID","statistics":{"creationTime":"1785011395","endTime":"1785011395","query":{"statementType":"SELECT","totalBytesBilled":"1","totalBytesProcessed":"1"},"startTime":"1785011395","totalBytesProcessed":"1"},"status":{"state":"DONE"}}
-    ,
-        out.items,
-    );
+    , out.items);
 }
 
 test "the job resource parses and reports DONE" {
@@ -231,24 +241,14 @@ pub const Destination = struct {
 };
 
 /// `configuration.query.destinationTable`, when present.
-pub fn destinationFromJobConfig(root: std.json.Value) ?Destination {
-    if (root != .object) return null;
-    const cfg = root.object.get("configuration") orelse return null;
-    if (cfg != .object) return null;
-    const q = cfg.object.get("query") orelse return null;
-    if (q != .object) return null;
-    const dst = q.object.get("destinationTable") orelse return null;
-    if (dst != .object) return null;
-
-    const p = strOf(dst, "projectId") orelse return null;
-    const d = strOf(dst, "datasetId") orelse return null;
-    const t = strOf(dst, "tableId") orelse return null;
-
+pub fn destinationFromJobConfig(job: *const pb.Job) ?Destination {
+    const q = queryConfig(job) orelse return null;
+    const dst = q.destination_table orelse return null;
     return .{
-        .project_id = p,
-        .dataset_id = d,
-        .table_id = t,
-        .write_disposition = strOf(q, "writeDisposition") orelse "WRITE_EMPTY",
+        .project_id = dst.project_id orelse return null,
+        .dataset_id = dst.dataset_id orelse return null,
+        .table_id = dst.table_id orelse return null,
+        .write_disposition = q.write_disposition orelse "WRITE_EMPTY",
     };
 }
 
@@ -297,11 +297,11 @@ test "reads a destination table and write disposition" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+    const v = try parseInsert(arena,
         \\{"configuration":{"query":{"query":"SELECT 1",
         \\  "destinationTable":{"projectId":"p","datasetId":"d","tableId":"t"},
         \\  "writeDisposition":"WRITE_TRUNCATE"}}}
-    , .{});
+    );
     const dst = destinationFromJobConfig(v).?;
     try testing.expectEqualStrings("p", dst.project_id);
     try testing.expectEqualStrings("d", dst.dataset_id);
@@ -314,9 +314,9 @@ test "a query job without a destination has none" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+    const v = try parseInsert(arena,
         \\{"configuration":{"query":{"query":"SELECT 1"}}}
-    , .{});
+    );
     try testing.expectEqual(@as(?Destination, null), destinationFromJobConfig(v));
 }
 

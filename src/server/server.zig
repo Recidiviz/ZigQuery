@@ -24,6 +24,7 @@ const driver = zetasqlite.driver;
 const http_server = @import("http/server.zig");
 const router = @import("router.zig");
 const errors = @import("error.zig");
+const json_pb = @import("json_pb.zig");
 const storage_mod = @import("storage.zig");
 const query_handler = @import("handler/query.zig");
 const discovery = @import("discovery.zig");
@@ -36,6 +37,7 @@ const contentdata = @import("internal/contentdata/repository.zig");
 const phase = zetasqlite.phase;
 const schema_mod = @import("internal/types/schema.zig");
 const stats_mod = @import("stats.zig");
+const debug_stats = @import("debug_stats.zig");
 const source_mod = @import("source.zig");
 
 /// Microsecond wall clock via libc, since std.time's timestamp helpers are
@@ -310,15 +312,7 @@ pub const Server = struct {
     ) !http_server.Response {
         const arena = req.arena;
 
-        const parsed = std.json.parseFromSliceLeaky(
-            std.json.Value,
-            arena,
-            req.body,
-            .{},
-        ) catch {
-            return badRequest(arena, "failed to decode request body");
-        };
-        const q = query_handler.parseQueryRequest(arena, parsed) catch |err| switch (err) {
+        const q = query_handler.parseRequest(arena, req.body, req.query) catch |err| switch (err) {
             error.OutOfMemory => return err,
             error.InvalidParameter,
             error.InvalidBase64Value,
@@ -327,8 +321,7 @@ pub const Server = struct {
         };
 
         const job_id = try query_handler.randomId(arena, &s.rng);
-        // handler.go:2420-2424: the body's formatOptions OR the query string's.
-        const int64_ts = q.use_int64_timestamp or useInt64TimestampParam(req);
+        const int64_ts = q.use_int64_timestamp;
         const res = try query_handler.runQueryFormatted(
             arena,
             s.db,
@@ -354,167 +347,162 @@ pub const Server = struct {
     /// the Docker image.
     fn handleDebugStats(s: *Server, req: *const http_server.Request) !http_server.Response {
         const arena = req.arena;
-        var out: std.ArrayList(u8) = .empty;
-        try out.appendSlice(arena, "{\"uptimeSeconds\":");
-        try out.print(arena, "{d}", .{
-            @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000) - @divFloor(s.started_ms, 1000),
-        });
-        const reqs = http_server.stat_requests.load(.monotonic);
-        const wait_ms = @as(f64, @floatFromInt(http_server.stat_wait_ns.load(.monotonic))) / 1e6;
         const handle_ns = http_server.stat_handle_ns.load(.monotonic);
         const handle_ms = @as(f64, @floatFromInt(handle_ns)) / 1e6;
-        try out.print(arena, ",\"contention\":{{\"requests\":{d},\"totalWaitMs\":{d:.1}," ++
-            "\"totalHandleMs\":{d:.1},\"meanWaitMs\":{d:.3}," ++
-            "\"meanHandleMs\":{d:.3},\"waitFraction\":{d:.3}," ++
-            "\"maxWaiters\":{d},\"waitersNow\":{d}}}", .{
-            reqs,
-            wait_ms,
-            handle_ms,
-            if (reqs == 0) 0 else wait_ms / @as(f64, @floatFromInt(reqs)),
-            if (reqs == 0) 0 else handle_ms / @as(f64, @floatFromInt(reqs)),
-            if (wait_ms + handle_ms == 0) 0 else wait_ms / (wait_ms + handle_ms),
-            http_server.stat_waiters_max.load(.monotonic),
-            http_server.stat_waiters_now.load(.monotonic),
-        });
-        // Where engine time goes. `analysisFraction` is the number that
-        // decides whether running analysis concurrently is worth anything:
-        // wall time under N parallel analyzers is bounded by (1-f) + f/N, and
-        // SQLite on an in-memory database cannot overlap at all (see
-        // storage.zig). Measured against total handle time, so the remainder
-        // is HTTP, JSON and glue.
-        const ms = struct {
-            fn of(ns: u64) f64 {
-                return @as(f64, @floatFromInt(ns)) / 1e6;
-            }
-        }.of;
-        const analyze_ms = ms(phase.totalNs(.analyze));
-        const transform_ms = ms(phase.totalNs(.transform));
-        const sqlite_ms = ms(phase.sqliteTotalNs());
-        try out.print(arena, ",\"phases\":{{\"analyzeMs\":{d:.1},\"analyzeCount\":{d}," ++
-            "\"transformMs\":{d:.1},\"transformCount\":{d}," ++
-            "\"sqliteMs\":{d:.1}," ++
-            "\"sqlite\":{{" ++
-            "\"prepareMs\":{d:.1},\"prepareCount\":{d}," ++
-            "\"stepMs\":{d:.1},\"stepCount\":{d}," ++
-            "\"execMs\":{d:.1},\"execCount\":{d}," ++
-            "\"engineMs\":{d:.1},\"catalogMs\":{d:.1},\"metadataMs\":{d:.1}," ++
-            "\"catalogPrepareMs\":{d:.1},\"catalogPrepareCount\":{d}," ++
-            "\"catalogStepMs\":{d:.1}}}," ++
-            "\"preparedSqlBytes\":{d},\"codecMs\":{d:.1},\"codecCount\":{d},", .{
-            analyze_ms,
-            phase.count(.analyze),
-            transform_ms,
-            phase.count(.transform),
-            sqlite_ms,
-            ms(phase.totalNs(.sqlite_prepare)),
-            phase.count(.sqlite_prepare),
-            ms(phase.totalNs(.sqlite_step)),
-            phase.count(.sqlite_step),
-            ms(phase.totalNs(.sqlite_exec)),
-            phase.count(.sqlite_exec),
-            ms(phase.sqliteTotalNsFrom(.engine)),
-            ms(phase.sqliteTotalNsFrom(.catalog)),
-            ms(phase.sqliteTotalNsFrom(.metadata)),
-            ms(phase.totalNsFrom(.sqlite_prepare, .catalog)),
-            phase.countFrom(.sqlite_prepare, .catalog),
-            ms(phase.totalNsFrom(.sqlite_step, .catalog)),
-            phase.preparedBytes(),
-            ms(phase.codecTotalNs()),
-            phase.codecCount(),
-        });
-        // Split from the print above only because Zig caps a format call at 32
-        // arguments. `codec.*` partitions `codecMs`.
-        try out.print(arena, "\"codec\":{{\"timersEnabled\":{},\"encodeMs\":{d:.1},\"encodeCount\":{d}," ++
-            "\"decodeMs\":{d:.1},\"decodeCount\":{d}," ++
-            "\"literalMs\":{d:.1},\"literalCount\":{d}}}," ++
-            "\"analysisFraction\":{d:.3},\"sqliteFraction\":{d:.3}}}", .{
-            // Zeros below mean "not instrumented" when this is false, not
-            // "no codec work happened". See -Dcodec-timers.
-            phase.codec_timers_enabled,
-            ms(phase.totalNs(.codec_encode)),
-            phase.count(.codec_encode),
-            ms(phase.totalNs(.codec_decode)),
-            phase.count(.codec_decode),
-            ms(phase.totalNs(.codec_literal)),
-            phase.count(.codec_literal),
-            if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
-            if (handle_ms == 0) 0 else sqlite_ms / handle_ms,
-        });
-        // SQLite's own allocator accounting.
-        //
-        // `lookaside.hitRate` is the number that matters. Lookaside is a
-        // per-connection pool of small fixed-size slots serving the many
-        // short-lived allocations sqlite3_prepare_v2 makes for parse-tree and
-        // VDBE structures — the phase measured at 22% of handle time. A rate
-        // near 1.0 means allocation is already off the critical path; a rate
-        // near 0 with `missFull` high means the pool is exhausted.
-        //
-        // Exhausted is not the same as costly: on the view graph the rate was
-        // driven from 0.0000 to 0.9676 with no effect on prepare time outside
-        // the noise floor (Options.lookaside records the table). These are
-        // reported so that stays a measurement rather than a belief, in either
-        // direction.
-        const alloc = s.db.allocStats();
-        try out.print(arena, ",\"sqliteAlloc\":{{" ++
-            "\"memoryUsedBytes\":{d},\"memoryUsedPeakBytes\":{d}," ++
-            "\"mallocsOutstanding\":{d},\"mallocsOutstandingPeak\":{d}," ++
-            "\"largestAllocBytes\":{d}," ++
-            "\"schemaBytes\":{d},\"stmtBytes\":{d},\"pagerCacheBytes\":{d}," ++
-            "\"lookaside\":{{\"hit\":{d},\"missSize\":{d},\"missFull\":{d}," ++
-            "\"hitRate\":{d:.4},\"slotsInUse\":{d},\"slotsPeak\":{d}}}}}", .{
-            alloc.memory_used.current,
-            alloc.memory_used.highwater,
-            alloc.malloc_count.current,
-            alloc.malloc_count.highwater,
-            alloc.malloc_size_max,
-            alloc.schema_used,
-            alloc.stmt_used,
-            alloc.cache_used,
-            alloc.lookaside_hit,
-            alloc.lookaside_miss_size,
-            alloc.lookaside_miss_full,
-            alloc.hitRate() orelse 0.0,
-            alloc.lookaside_used.current,
-            alloc.lookaside_used.highwater,
-        });
-        try out.appendSlice(arena, ",\"routes\":[");
 
-        var first = true;
+        const snap = debug_stats.Snapshot{
+            .uptimeSeconds = @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000) -
+                @divFloor(s.started_ms, 1000),
+            .contention = contentionSnapshot(handle_ms),
+            .phases = phaseSnapshot(handle_ms),
+            .sqliteAlloc = allocSnapshot(s.db.allocStats()),
+            .routes = try routeSnapshot(s, arena),
+            .slowQueries = try slowQuerySnapshot(s, arena),
+        };
+        return .{ .body = try std.json.Stringify.valueAlloc(arena, snap, .{}) };
+    }
+
+    fn contentionSnapshot(handle_ms: f64) debug_stats.Contention {
+        const reqs = http_server.stat_requests.load(.monotonic);
+        const per = @as(f64, @floatFromInt(if (reqs == 0) 1 else reqs));
+        const wait_ms = @as(f64, @floatFromInt(http_server.stat_wait_ns.load(.monotonic))) / 1e6;
+        const busy = wait_ms + handle_ms;
+        return .{
+            .requests = reqs,
+            .totalWaitMs = .{ .v = wait_ms },
+            .totalHandleMs = .{ .v = handle_ms },
+            .meanWaitMs = .{ .v = if (reqs == 0) 0 else wait_ms / per },
+            .meanHandleMs = .{ .v = if (reqs == 0) 0 else handle_ms / per },
+            .waitFraction = .{ .v = if (busy == 0) 0 else wait_ms / busy },
+            .maxWaiters = http_server.stat_waiters_max.load(.monotonic),
+            .waitersNow = http_server.stat_waiters_now.load(.monotonic),
+        };
+    }
+
+    /// `analysisFraction` is what decides whether running analysis concurrently
+    /// is worth anything: wall time under N parallel analyzers is bounded by
+    /// (1-f) + f/N, and SQLite on an in-memory database cannot overlap at all
+    /// (see storage.zig). Measured against total handle time, so the remainder
+    /// is HTTP, JSON and glue.
+    fn phaseSnapshot(handle_ms: f64) debug_stats.Phases {
+        const ms1 = debug_stats.Ms1;
+        const analyze_ms = @as(f64, @floatFromInt(phase.totalNs(.analyze))) / 1e6;
+        const transform_ms = @as(f64, @floatFromInt(phase.totalNs(.transform))) / 1e6;
+        const sqlite_ms = @as(f64, @floatFromInt(phase.sqliteTotalNs())) / 1e6;
+        return .{
+            .analyzeMs = .{ .v = analyze_ms },
+            .analyzeCount = phase.count(.analyze),
+            .transformMs = .{ .v = transform_ms },
+            .transformCount = phase.count(.transform),
+            .sqliteMs = .{ .v = sqlite_ms },
+            .sqlite = .{
+                .prepareMs = debug_stats.msFromNs(phase.totalNs(.sqlite_prepare), ms1),
+                .prepareCount = phase.count(.sqlite_prepare),
+                .stepMs = debug_stats.msFromNs(phase.totalNs(.sqlite_step), ms1),
+                .stepCount = phase.count(.sqlite_step),
+                .execMs = debug_stats.msFromNs(phase.totalNs(.sqlite_exec), ms1),
+                .execCount = phase.count(.sqlite_exec),
+                .engineMs = debug_stats.msFromNs(phase.sqliteTotalNsFrom(.engine), ms1),
+                .catalogMs = debug_stats.msFromNs(phase.sqliteTotalNsFrom(.catalog), ms1),
+                .metadataMs = debug_stats.msFromNs(phase.sqliteTotalNsFrom(.metadata), ms1),
+                .catalogPrepareMs = debug_stats.msFromNs(
+                    phase.totalNsFrom(.sqlite_prepare, .catalog),
+                    ms1,
+                ),
+                .catalogPrepareCount = phase.countFrom(.sqlite_prepare, .catalog),
+                .catalogStepMs = debug_stats.msFromNs(
+                    phase.totalNsFrom(.sqlite_step, .catalog),
+                    ms1,
+                ),
+            },
+            .preparedSqlBytes = phase.preparedBytes(),
+            .codecMs = debug_stats.msFromNs(phase.codecTotalNs(), ms1),
+            .codecCount = phase.codecCount(),
+            .codec = .{
+                .timersEnabled = phase.codec_timers_enabled,
+                .encodeMs = debug_stats.msFromNs(phase.totalNs(.codec_encode), ms1),
+                .encodeCount = phase.count(.codec_encode),
+                .decodeMs = debug_stats.msFromNs(phase.totalNs(.codec_decode), ms1),
+                .decodeCount = phase.count(.codec_decode),
+                .literalMs = debug_stats.msFromNs(phase.totalNs(.codec_literal), ms1),
+                .literalCount = phase.count(.codec_literal),
+            },
+            .analysisFraction = .{
+                .v = if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
+            },
+            .sqliteFraction = .{ .v = if (handle_ms == 0) 0 else sqlite_ms / handle_ms },
+        };
+    }
+
+    /// SQLite's own allocator accounting. `lookaside.hitRate` is the number that
+    /// matters: lookaside is a per-connection pool of small fixed-size slots
+    /// serving the many short-lived allocations sqlite3_prepare_v2 makes.
+    ///
+    /// Exhausted is not the same as costly. On the view graph the rate was
+    /// driven from 0.0000 to 0.9676 with no effect on prepare time outside the
+    /// noise floor (Options.lookaside records the table). These are reported so
+    /// that stays a measurement rather than a belief, in either direction.
+    fn allocSnapshot(alloc: driver.AllocStats) debug_stats.SqliteAlloc {
+        return .{
+            .memoryUsedBytes = alloc.memory_used.current,
+            .memoryUsedPeakBytes = alloc.memory_used.highwater,
+            .mallocsOutstanding = alloc.malloc_count.current,
+            .mallocsOutstandingPeak = alloc.malloc_count.highwater,
+            .largestAllocBytes = alloc.malloc_size_max,
+            .schemaBytes = alloc.schema_used,
+            .stmtBytes = alloc.stmt_used,
+            .pagerCacheBytes = alloc.cache_used,
+            .lookaside = lookasideSnapshot(alloc),
+        };
+    }
+
+    fn lookasideSnapshot(alloc: driver.AllocStats) debug_stats.Lookaside {
+        return .{
+            .hit = alloc.lookaside_hit,
+            .missSize = alloc.lookaside_miss_size,
+            .missFull = alloc.lookaside_miss_full,
+            .hitRate = .{ .v = alloc.hitRate() orelse 0.0 },
+            .slotsInUse = alloc.lookaside_used.current,
+            .slotsPeak = alloc.lookaside_used.highwater,
+        };
+    }
+
+    fn routeSnapshot(s: *Server, arena: std.mem.Allocator) ![]const debug_stats.Route {
+        var routes: std.ArrayList(debug_stats.Route) = .empty;
         var it = s.route_stats.iterator();
         while (it.next()) |entry| {
-            const st = entry.value;
-            if (st.count == 0) continue;
-            if (!first) try out.append(arena, ',');
-            first = false;
-            try out.appendSlice(arena, "{\"route\":\"");
-            try out.appendSlice(arena, @tagName(entry.key));
-            try out.appendSlice(arena, "\",");
-            try out.print(arena, "\"count\":{d},\"meanMs\":{d:.3},\"minMs\":{d:.3}," ++
-                "\"p50Ms\":{d:.3},\"p90Ms\":{d:.3},\"p99Ms\":{d:.3},\"maxMs\":{d:.3}," ++
-                "\"totalMs\":{d:.1}", .{
-                st.count,
-                st.meanUs() / 1000.0,
-                @as(f64, @floatFromInt(st.min_us)) / 1000.0,
-                @as(f64, @floatFromInt(st.percentileUs(0.50))) / 1000.0,
-                @as(f64, @floatFromInt(st.percentileUs(0.90))) / 1000.0,
-                @as(f64, @floatFromInt(st.percentileUs(0.99))) / 1000.0,
-                @as(f64, @floatFromInt(st.max_us)) / 1000.0,
-                @as(f64, @floatFromInt(st.total_us)) / 1000.0,
-            });
-            try out.append(arena, '}');
+            if (entry.value.count == 0) continue;
+            try routes.append(arena, routeEntry(@tagName(entry.key), entry.value));
         }
-        try out.appendSlice(arena, "],\"slowQueries\":[");
+        return routes.items;
+    }
+
+    fn routeEntry(name: []const u8, st: *const stats_mod.RouteStats) debug_stats.Route {
+        const ms1 = debug_stats.Ms1;
+        const ms3 = debug_stats.Ms3;
+        return .{
+            .route = name,
+            .count = st.count,
+            .meanMs = .{ .v = st.meanUs() / 1000.0 },
+            .minMs = debug_stats.msFromUs(st.min_us, ms3),
+            .p50Ms = debug_stats.msFromUs(st.percentileUs(0.50), ms3),
+            .p90Ms = debug_stats.msFromUs(st.percentileUs(0.90), ms3),
+            .p99Ms = debug_stats.msFromUs(st.percentileUs(0.99), ms3),
+            .maxMs = debug_stats.msFromUs(st.max_us, ms3),
+            .totalMs = debug_stats.msFromUs(st.total_us, ms1),
+        };
+    }
+
+    fn slowQuerySnapshot(s: *Server, arena: std.mem.Allocator) ![]const debug_stats.SlowQuery {
+        var slow: std.ArrayList(debug_stats.SlowQuery) = .empty;
         var slow_buf: [16]*const @TypeOf(s.slow_queries).Entry = undefined;
-        for (s.slow_queries.sorted(&slow_buf), 0..) |e, i| {
-            if (i > 0) try out.append(arena, ',');
-            try out.print(arena, "{{\"ms\":{d:.3},\"sql\":", .{
-                @as(f64, @floatFromInt(e.us)) / 1000.0,
+        for (s.slow_queries.sorted(&slow_buf)) |e| {
+            try slow.append(arena, .{
+                .ms = debug_stats.msFromUs(e.us, debug_stats.Ms3),
+                .sql = e.sql(),
             });
-            try errors.writeJsonString(arena, &out, e.sql());
-            try out.append(arena, '}');
         }
-        try out.appendSlice(arena, "]}");
-        return .{ .body = out.items };
+        return slow.items;
     }
 
     // ---- datasets ----
@@ -1014,13 +1002,13 @@ pub const Server = struct {
     ) !http_server.Response {
         const arena = req.arena;
 
-        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch {
+        const job = jobs_handler.parseInsert(arena, req.body) catch {
             return badRequest(arena, "failed to decode request body");
         };
-        const sql = jobs_handler.queryFromJobConfig(parsed) orelse {
+        const sql = jobs_handler.queryFromJobConfig(job) orelse {
             return badRequest(arena, "configuration.query.query is required");
         };
-        const params = jobs_handler.parametersFromJobConfig(arena, parsed) catch |err| switch (err) {
+        const params = jobs_handler.parametersFromJobConfig(arena, job) catch |err| switch (err) {
             error.OutOfMemory => return err,
             error.InvalidParameter,
             error.InvalidBase64Value,
@@ -1037,12 +1025,12 @@ pub const Server = struct {
         // being forced on. Both renderings still land in the stored ResultSet,
         // because the flag that decides between them rides on the later
         // getQueryResults call, long after this request's arena is gone.
-        const int64_ts = useInt64TimestampParam(req);
+        const int64_ts = query_handler.int64TimestampFromQuery(arena, req.query);
 
         // A query job may carry a destination table: this is how view
         // materialization writes results. Run the DDL form instead of the
         // bare SELECT, then record the resulting table's metadata.
-        const res = if (jobs_handler.destinationFromJobConfig(parsed)) |dst| blk: {
+        const res = if (jobs_handler.destinationFromJobConfig(job)) |dst| blk: {
             s.materializeInto(arena, dst, sql, params) catch |err| switch (err) {
                 error.MaterializeFailed => return .{
                     .status = .bad_request,
@@ -1321,29 +1309,12 @@ pub const Server = struct {
             project_id,
             job_id,
             job.set,
-            .{
-                .max_results = maxResultsParam(req),
-                .start = query_handler.parsePageToken(req.queryParam("pageToken")),
-            },
-            useInt64TimestampParam(req),
+            query_handler.parseResultsPage(arena, req.query),
+            query_handler.int64TimestampFromQuery(arena, req.query),
         );
         return .{ .body = out.items };
     }
 };
-
-/// `formatOptions.useInt64Timestamp` from the query string
-/// (handler.go isFormatOptionsUseInt64Timestamp).
-/// `maxResults` from the query string, defaulting to Go's -1 ("every row").
-/// A value Go's ParseInt rejects also falls back to the default.
-fn maxResultsParam(req: *const http_server.Request) i64 {
-    const v = req.queryParam("maxResults") orelse return query_handler.max_results_default;
-    return std.fmt.parseInt(i64, v, 10) catch query_handler.max_results_default;
-}
-
-fn useInt64TimestampParam(req: *const http_server.Request) bool {
-    const v = req.queryParam("formatOptions.useInt64Timestamp") orelse return false;
-    return query_handler.parseGoBool(v);
-}
 
 fn tableIdOf(v: std.json.Value) ?[]const u8 {
     if (v != .object) return null;
@@ -2412,4 +2383,82 @@ test "insertAll rejects a malformed body with 400" {
     );
     try testing.expectEqual(std.http.Status.bad_request, res.status);
     try testing.expect(std.mem.indexOf(u8, res.body, "\"reason\":\"invalid\"") != null);
+}
+
+test "useInt64Timestamp reaches TIMESTAMPs nested in a STRUCT or ARRAY" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    // google-cloud-bigquery asks for this format on every read and parses a
+    // TIMESTAMP cell with int(). A cell still carrying the float-seconds form
+    // is a ValueError on the client, not a wrong value, so the three shapes
+    // below have to agree.
+    const cases = [_]struct { sql: []const u8, want: []const u8 }{
+        .{
+            .sql = "SELECT TIMESTAMP '2026-01-10 00:00:00+00' AS ts",
+            .want =
+            \\[{"f":[{"v":"1768003200000000"}]}]
+            ,
+        },
+        .{
+            .sql = "SELECT STRUCT(TIMESTAMP '2026-01-10 00:00:00+00' AS ts) AS s",
+            .want =
+            \\[{"f":[{"v":{"f":[{"v":"1768003200000000"}]}}]}]
+            ,
+        },
+        .{
+            .sql = "SELECT [STRUCT(TIMESTAMP '2026-01-10 00:00:00+00' AS ts)] AS arr",
+            .want =
+            \\[{"f":[{"v":[{"v":{"f":[{"v":"1768003200000000"}]}}]}]}]
+            ,
+        },
+    };
+
+    for (cases) |case| {
+        const body = try std.fmt.allocPrint(
+            arena,
+            "{{\"configuration\":{{\"query\":{{\"query\":{f}}}}}}}",
+            .{std.json.fmt(case.sql, .{})},
+        );
+        const job = try requestQuery(s, arena, .POST, "/projects/test/jobs", "", body);
+        const job_id = try jobIdOf(arena, job.body);
+        const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+        const got = try requestQuery(
+            s,
+            arena,
+            .GET,
+            path,
+            "formatOptions.useInt64Timestamp=true",
+            "",
+        );
+        const rows = try std.json.parseFromSliceLeaky(std.json.Value, arena, got.body, .{});
+        const actual = try std.json.Stringify.valueAlloc(arena, rows.object.get("rows").?, .{});
+        try json_pb.expectJsonEqual(case.want, actual);
+    }
+}
+
+test "without useInt64Timestamp every TIMESTAMP keeps the float-seconds form" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const body =
+        \\{"configuration":{"query":{"query":"SELECT STRUCT(TIMESTAMP '2026-01-10 00:00:00+00' AS ts) AS s"}}}
+    ;
+    const job = try requestQuery(s, arena, .POST, "/projects/test/jobs", "", body);
+    const job_id = try jobIdOf(arena, job.body);
+    const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+    const got = try requestQuery(s, arena, .GET, path, "", "");
+    const rows = try std.json.parseFromSliceLeaky(std.json.Value, arena, got.body, .{});
+    const actual = try std.json.Stringify.valueAlloc(arena, rows.object.get("rows").?, .{});
+    try json_pb.expectJsonEqual(
+        \\[{"f":[{"v":{"f":[{"v":"1768003200.0"}]}}]}]
+    , actual);
 }

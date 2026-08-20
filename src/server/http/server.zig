@@ -17,6 +17,13 @@
 //! the BigQuery REST clients speak cleartext HTTP/1.1 to an emulator.
 
 const std = @import("std");
+
+/// The 500 a failed handler answers with, spelled out rather than built: this
+/// path runs after something already went wrong, so it must not allocate.
+/// `error.zig` has a test pinning it to what `errors.body` produces.
+pub const internal_error_body =
+    \\{"error":{"errors":[{"reason":"internalError","location":"","debugInfo":"","message":"internal error"}],"code":500,"message":"internal error"}}
+;
 const http = std.http;
 
 /// Request head buffer. `std.http.Server` sets max_head_len to the length of
@@ -217,9 +224,7 @@ pub const Server = struct {
                     request.head.target,
                     err,
                 });
-                request.respond(
-                    \\{"error":{"errors":[{"reason":"internalError","location":"","debugInfo":"","message":"internal error"}],"code":500,"message":"internal error"}}
-                , .{
+                request.respond(internal_error_body, .{
                     .status = .internal_server_error,
                     .extra_headers = &.{
                         .{ .name = "content-type", .value = "application/json; charset=UTF-8" },

@@ -9,10 +9,13 @@
 pub const http_server = @import("http/server.zig");
 pub const router = @import("router.zig");
 pub const errors = @import("error.zig");
+pub const json_pb = @import("json_pb.zig");
+pub const debug_stats = @import("debug_stats.zig");
 pub const govalue = @import("internal/types/govalue.zig");
 pub const schema = @import("internal/types/schema.zig");
 pub const rowvalue = @import("internal/types/rowvalue.zig");
 pub const queryparam = @import("internal/types/queryparam.zig");
+pub const tablerow = @import("internal/types/tablerow.zig");
 pub const response = @import("internal/types/response.zig");
 pub const storage = @import("storage.zig");
 pub const discovery = @import("discovery.zig");
@@ -36,6 +39,8 @@ pub const grpc_avro = @import("grpc/avro.zig");
 pub const grpc_arrow = @import("grpc/arrow.zig");
 pub const grpc_avro_test = @import("grpc/avro_test.zig");
 pub const grpc_arrow_test = @import("grpc/arrow_test.zig");
+pub const bigquery_pb = @import("proto/bigquery.zig");
+pub const bigquery_pb_test = @import("proto/bigquery_test.zig");
 pub const storage_pb = @import("proto/storage.zig");
 pub const storage_pb_test = @import("proto/storage_test.zig");
 
