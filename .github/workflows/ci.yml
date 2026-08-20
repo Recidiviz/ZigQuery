@@ -189,4 +189,7 @@ jobs:
       - uses: ./.github/actions/zig
         with:
           version: ${{ env.ZIG_VERSION }}
-      - run: zig build dist -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
+      - run: >-
+          zig build dist -Drelease=true
+          -Dshim-dylib=${{ steps.shim.outputs.path }}
+          -Dshim-static-obj=${{ steps.shim.outputs.static-path }}

@@ -1,7 +1,9 @@
 name: googlesql shim
 description: >
-  Restore libgooglesql_shim for the current platform from cache, building it
-  with bazel only on a miss. Outputs a repo-root-relative path for -Dshim-dylib.
+  Restore the googlesql shim's two build outputs for the current platform
+  from cache, building both with bazel only on a miss: the dynamic library
+  (for -Dshim-dylib, the dev/test/harness path) and the statically-linkable
+  relocatable object (for -Dshim-static-obj, what exe/server_exe use).
 
 inputs:
   platform:
@@ -10,8 +12,11 @@ inputs:
 
 outputs:
   path:
-    description: Repo-root-relative path to the shim, for -Dshim-dylib
+    description: Repo-root-relative path to the shim dylib, for -Dshim-dylib
     value: ${{ steps.vars.outputs.path }}
+  static-path:
+    description: Repo-root-relative path to the static object, for -Dshim-static-obj
+    value: ${{ steps.vars.outputs.static-path }}
   key:
     description: The content-addressed cache key that was used
     value: ${{ steps.vars.outputs.key }}
@@ -32,20 +37,27 @@ runs:
       run: |
         set -euo pipefail
         case "${{ inputs.platform }}" in
-          darwin-*) lib=libgooglesql_shim.dylib ;;
-          *)        lib=libgooglesql_shim.so ;;
+          darwin-*) lib=libgooglesql_shim.dylib
+                    static_target=libgooglesql_shim_static_macos ;;
+          *)        lib=libgooglesql_shim.so
+                    static_target=libgooglesql_shim_static_linux ;;
         esac
+        static_lib="$static_target.o"
         if command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum "$@"; }
         else sha() { shasum -a 256 "$@"; }; fi
 
         key=$( { git rev-parse "HEAD:third_party/googlesql"
                  sha shim/analyzer_shim.cc shim/shim.lds shim/BUILD.bazel \
+                     shim/shim_exports_macos.list \
                      MODULE.bazel MODULE.bazel.lock .bazelrc .bazelversion
                  echo "${{ inputs.platform }}"
                } | sha | cut -c1-32 )
 
         echo "lib=$lib"                                   >> "$GITHUB_OUTPUT"
+        echo "static_target=$static_target"                >> "$GITHUB_OUTPUT"
+        echo "static_lib=$static_lib"                      >> "$GITHUB_OUTPUT"
         echo "path=dist/shim/$lib"                        >> "$GITHUB_OUTPUT"
+        echo "static-path=dist/shim/$static_lib"           >> "$GITHUB_OUTPUT"
         echo "key=shim-${{ inputs.platform }}-$key"       >> "$GITHUB_OUTPUT"
 
     - id: restore
@@ -123,18 +135,24 @@ runs:
           fi
         fi
         bazel version
+        # Both outputs share SHIM_SRCS/SHIM_DEPS's compile actions, so one
+        # invocation building both is a modest increment over building
+        # either alone, not a second from-source build.
         bazel build -c opt \
           --jobs="$jobs" --local_resources=cpu="$jobs" \
-          "//shim:${{ steps.vars.outputs.lib }}"
+          "//shim:${{ steps.vars.outputs.lib }}" \
+          "//shim:${{ steps.vars.outputs.static_target }}"
 
         mkdir -p dist/shim
         cp -f "bazel-bin/shim/${{ steps.vars.outputs.lib }}" dist/shim/
+        cp -f "bazel-bin/shim/${{ steps.vars.outputs.static_lib }}" dist/shim/
         # bazel-bin outputs are read-only; the cache save needs to be able to
-        # re-read and later overwrite this.
-        chmod u+w "dist/shim/${{ steps.vars.outputs.lib }}"
+        # re-read and later overwrite these.
+        chmod u+w "dist/shim/${{ steps.vars.outputs.lib }}" \
+                  "dist/shim/${{ steps.vars.outputs.static_lib }}"
 
     - shell: bash
       run: |
         set -euo pipefail
-        ls -l "${{ steps.vars.outputs.path }}"
-        echo "shim: ${{ steps.vars.outputs.path }} (cache-hit=${{ steps.restore.outputs.cache-hit }})" >> "$GITHUB_STEP_SUMMARY"
+        ls -l "${{ steps.vars.outputs.path }}" "${{ steps.vars.outputs.static-path }}"
+        echo "shim: ${{ steps.vars.outputs.path }}, ${{ steps.vars.outputs.static-path }} (cache-hit=${{ steps.restore.outputs.cache-hit }})" >> "$GITHUB_STEP_SUMMARY"

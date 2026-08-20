@@ -33,6 +33,10 @@ build:linux --copt=-ffunction-sections --copt=-fdata-sections
 common --enable_platform_specific_config
 build --cxxopt=-std=c++20 --host_cxxopt=-std=c++20 --config=clang
 
+# cc_static_library (//shim:shim_archive) merges the shim's transitive
+# closure into one archive for the statically-linked Zig build.
+build --experimental_cc_static_library
+
 # The shim reaches into googlesql internals that are restricted to its
 # `googlesql_implementation` package group (resolved_ast + proto cc_protos).
 # Turning the check off here is what lets third_party/googlesql stay a pristine

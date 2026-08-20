@@ -115,9 +115,9 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      # `dist` installs only the two products plus the shim into lib/, which
-      # is exactly the shipped tree — `install` would drag in eight harness
-      # and benchmark binaries.
+      # `dist` installs only the two products, statically linked against the
+      # shim, which is exactly the shipped tree — `install` would drag in
+      # eight harness and benchmark binaries.
       #
       # -Dcpu=baseline is what makes the artifact redistributable. Zig's
       # default target is `native`, which bakes in the *builder's*
@@ -133,6 +133,7 @@ jobs:
         run: |
           zig build dist -Drelease=true -Dcpu=baseline \
             -Dshim-dylib=${{ steps.shim.outputs.path }} \
+            -Dshim-static-obj=${{ steps.shim.outputs.static-path }} \
             --prefix "$PWD/stage"
 
       - name: package
@@ -152,16 +153,17 @@ jobs:
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      # The point of this step is the rpath. A binary that only resolves the
-      # shim through the absolute bazel-bin entry works perfectly in the build
-      # tree and fails the moment a user unpacks it, so prove it here by
-      # running from a directory that has no relationship to the checkout.
+      # The shim is statically linked, so the tarball should need nothing
+      # beyond bin/ — prove it by running from a directory that has no
+      # relationship to the checkout and asserting no lib/ was even shipped.
       - name: smoke test the tarball
         run: |
           set -euo pipefail
           work=$(mktemp -d)
           tar -C "$work" -xzf "${{ steps.pkg.outputs.name }}.tar.gz"
           cd "$work"
+          [ ! -d lib ]
+          echo "no lib/ shipped, as expected for a statically-linked build"
           echo "--- CLI ---"
           ./bin/zetasqlite-zig "SELECT 1 AS n, 'ok' AS s"
           echo "--- server ---"
