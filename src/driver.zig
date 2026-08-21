@@ -636,6 +636,21 @@ pub const Db = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// Tells the GoogleSQL catalog that `project.dataset` exists, so
+    /// `<project>.INFORMATION_SCHEMA.SCHEMATA` reports it even before it holds
+    /// a table. Idempotent. The metadata store gets the same news through its
+    /// own `addDataset`; this is the SQL-analysis side's copy of it — see
+    /// `Catalog.ensureDataset`.
+    pub fn ensureDataset(
+        db: *Db,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) error{OutOfMemory}!void {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        try g.catalog.ensureDataset(&.{ project_id, dataset_id }, "");
+    }
+
     /// Snapshots the live table specs for the INFORMATION_SCHEMA vtabs.
     ///
     /// The TEMP overlay is deliberately not merged in: those views report
@@ -644,6 +659,8 @@ pub const Db = struct {
         var g = db.lockCatalog();
         defer g.unlock();
         db.udf_state.info_schema.info_schema = g.catalog.liveTableSpecs(arena) catch
+            return error.OutOfMemory;
+        db.udf_state.info_schema.datasets = g.catalog.liveDatasets(arena) catch
             return error.OutOfMemory;
     }
 
@@ -2926,6 +2943,7 @@ pub const Rows = struct {
         // so it must not outlive it. Every statement republishes, so an empty
         // slice between queries is correct rather than merely safe.
         r.db.udf_state.info_schema.info_schema = &.{};
+        r.db.udf_state.info_schema.datasets = &.{};
         // Drop temp tables created by this query (Go Cleanup) before the
         // arena (which backs the name strings) is released.
         if (r.temp_tables.len > 0) {

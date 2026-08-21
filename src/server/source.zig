@@ -84,6 +84,7 @@ pub fn loadJson(
             var ds_meta: std.ArrayList(u8) = .empty;
             try datasets_handler.writeDataset(arena, &ds_meta, project_id, dataset_id, true);
             try repo.addDataset(project_id, dataset_id, ds_meta.items);
+            try db.ensureDataset(project_id, dataset_id);
             stats.datasets += 1;
 
             const tables = arrayField(ds, "tables") orelse continue;

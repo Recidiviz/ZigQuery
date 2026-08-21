@@ -123,6 +123,7 @@ pub const Server = struct {
             var meta: std.ArrayList(u8) = .empty;
             try datasets_handler.writeDataset(arena, &meta, s.project, dataset_id, true);
             try s.repo.addDataset(s.project, dataset_id, meta.items);
+            try s.db.ensureDataset(s.project, dataset_id);
         }
 
         for (opts.data_from_json) |path| {
@@ -501,6 +502,7 @@ pub const Server = struct {
         var meta: std.ArrayList(u8) = .empty;
         try datasets_handler.writeDataset(arena, &meta, project_id, dataset_id, true);
         try s.repo.addDataset(project_id, dataset_id, meta.items);
+        try s.db.ensureDataset(project_id, dataset_id);
 
         return .{ .body = meta.items };
     }
@@ -578,6 +580,7 @@ pub const Server = struct {
         }
 
         try s.repo.addDataset(project_id, dataset_id, out.items);
+        try s.db.ensureDataset(project_id, dataset_id);
         return .{ .body = out.items };
     }
 
@@ -1155,6 +1158,7 @@ pub const Server = struct {
                 true,
             );
             try s.repo.addDataset(dst.project_id, dst.dataset_id, ds_meta.items);
+            try s.db.ensureDataset(dst.project_id, dst.dataset_id);
         }
         try s.repo.addTable(dst.project_id, dst.dataset_id, dst.table_id, meta.items);
     }
