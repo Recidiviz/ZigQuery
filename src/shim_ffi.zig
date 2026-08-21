@@ -1,7 +1,8 @@
 //! FFI over the RE2 + ICU surface added to the GoogleSQL analyzer shim
-//! (googlesql repo: zig/analyzer_shim.cc). Go's REGEXP_* functions use the
-//! RE2-syntax `regexp` package and NORMALIZE/case-mapping use ICU-equivalent
-//! Unicode tables; both libraries are already linked into the shim dylib.
+//! (shim/analyzer_shim.cc). Go's REGEXP_* functions use the RE2-syntax
+//! `regexp` package, NORMALIZE/case-mapping use ICU-equivalent Unicode
+//! tables, and named-timezone offset resolution uses ICU's bundled IANA
+//! tzdata; all three are already linked into the shim dylib.
 
 const std = @import("std");
 
@@ -48,9 +49,17 @@ extern fn GoogleSQL_CaseMap(
     out_len: *c_int,
 ) c_int;
 
+extern fn GoogleSQL_TimeZoneOffsetSeconds(
+    zone: [*]const u8,
+    zonelen: c_int,
+    date_millis: i64,
+    out_offset_seconds: *i32,
+    out_err: *?[*:0]u8,
+) c_int;
+
 extern fn GoogleSQL_Free(p: ?*anyopaque) void;
 
-pub const Error = error{ RegexpCompile, Normalize, OutOfMemory };
+pub const Error = error{ RegexpCompile, Normalize, InvalidTimeZone, OutOfMemory };
 
 /// One flat match: offsets are [wholeStart, wholeEnd, g1Start, g1End, ...]
 /// as absolute byte offsets into the subject; a non-participating group is
@@ -201,6 +210,24 @@ pub fn caseMap(alloc: std.mem.Allocator, upper: bool, in: []const u8) Error![]u8
     defer if (out) |p| GoogleSQL_Free(p);
     const src = (out orelse return error.Normalize)[0..@intCast(out_len)];
     return alloc.dupe(u8, src);
+}
+
+/// Offset (seconds east of UTC, raw+DST) for `zone` at `date_millis` (a UTC
+/// instant, milliseconds since epoch), resolved against ICU's IANA tzdata.
+/// `zone` is an IANA/Olson ID ("America/Chicago") or an ICU custom ID.
+pub fn timeZoneOffsetSeconds(zone: []const u8, date_millis: i64) Error!i32 {
+    var out_offset: i32 = 0;
+    var out_err: ?[*:0]u8 = null;
+    const rc = GoogleSQL_TimeZoneOffsetSeconds(
+        emptySafe(zone),
+        @intCast(zone.len),
+        date_millis,
+        &out_offset,
+        &out_err,
+    );
+    if (out_err) |e| GoogleSQL_Free(e);
+    if (rc != 0) return error.InvalidTimeZone;
+    return out_offset;
 }
 
 /// A [*]const u8 that is safe to pass for a zero-length slice (whose .ptr may

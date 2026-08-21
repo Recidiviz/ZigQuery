@@ -292,6 +292,23 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_codec.addArgs(args);
     b.step("codec-bench", "Value codec cost with real rows").dependOn(&run_codec.step);
 
+    // Per-row cost of named-timezone resolution (zoneOffsetSeconds): the
+    // ICU-tzdata A/B point against the fixed hand-rolled DST rules it replaced.
+    const tzbench_exe = b.addExecutable(.{
+        .name = "tz-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/tz_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+        }),
+    });
+    if (maybe_bazel) |bz| tzbench_exe.step.dependOn(&bz.step);
+    b.installArtifact(tzbench_exe);
+    const run_tzbench = b.addRunArtifact(tzbench_exe);
+    if (b.args) |args| run_tzbench.addArgs(args);
+    b.step("tz-bench", "Per-row cost of named-timezone resolution").dependOn(&run_tzbench.step);
+
     // Per-query cost vs catalog size: the baseline the server's caching work
     // has to beat.
     const bench_exe = b.addExecutable(.{

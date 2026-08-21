@@ -9,7 +9,7 @@
 const std = @import("std");
 const bind = @import("bind.zig");
 const value_mod = bind.value_mod;
-const re = @import("../../regexp_ffi.zig");
+const re = @import("../../shim_ffi.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;
