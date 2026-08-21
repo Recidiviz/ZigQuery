@@ -1019,17 +1019,19 @@ pub const Server = struct {
                 else => return err,
             };
             try s.recordMaterializedTable(arena, dst);
-            // Materialization returns no rows of its own.
+            // The job's own result mirrors the query's SELECT output, the same
+            // rows just written to the destination table — not the table's
+            // full contents, which for WRITE_APPEND can hold more than this
+            // query contributed. Re-running `sql` is safe: both DDL forms
+            // above wrap it rather than consume it, so its placeholders are
+            // still there for `params` to fill again (see materializeInto).
             break :blk try query_handler.runQueryFormatted(
                 arena,
                 s.db,
                 project_id,
                 job_id,
-                try std.fmt.allocPrint(arena, "SELECT * FROM `{s}.{s}.{s}` LIMIT 0", .{
-                    dst.project_id, dst.dataset_id, dst.table_id,
-                }),
-                // The probe is generated and has no placeholders of its own.
-                &.{},
+                sql,
+                params,
                 int64_ts,
             );
         } else try query_handler.runQueryFormatted(
