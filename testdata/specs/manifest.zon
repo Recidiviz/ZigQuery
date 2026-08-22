@@ -57,6 +57,7 @@
         .{ .path = "bigquery/functions/utility/generate_uuid.zon", .dialect = .bigquery, .cases = 2 },
         .{ .path = "bigquery/functions/utility/typeof.zon", .dialect = .bigquery, .cases = 4 },
         .{ .path = "bigquery/functions/vector/vector_index_statistics.zon", .dialect = .bigquery, .cases = 1 },
+        .{ .path = "googlesql/compliance/logical_functions.zon", .dialect = .googlesql, .cases = 59 },
         .{ .path = "googlesql/functions/aggregate/any_value.zon", .dialect = .googlesql, .cases = 8 },
         .{ .path = "googlesql/functions/aggregate/approximate/approx_count_distinct.zon", .dialect = .googlesql, .cases = 1 },
         .{ .path = "googlesql/functions/aggregate/approximate/approx_quantiles.zon", .dialect = .googlesql, .cases = 1 },
