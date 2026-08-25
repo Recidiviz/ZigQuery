@@ -152,15 +152,17 @@ pub fn isNull(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return Value{ .bool = args[0] == .null };
 }
 
+// IS TRUE / IS FALSE are null-safe: unlike a plain comparison, NULL never propagates through them.
+// `NULL IS TRUE` and `NULL IS FALSE` are both false, not NULL.
 pub fn isTrue(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    if (bind.existsNull(args)) return null_v;
+    if (args[0] == .null) return Value{ .bool = false };
     return Value{ .bool = try args[0].toBool() };
 }
 
 pub fn isFalse(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    if (bind.existsNull(args)) return null_v;
+    if (args[0] == .null) return Value{ .bool = false };
     return Value{ .bool = !try args[0].toBool() };
 }
 
