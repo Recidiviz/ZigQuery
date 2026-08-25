@@ -569,6 +569,16 @@ pub fn rand(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return Value{ .float = randomGenerator().float(f64) };
 }
 
+/// Not reachable from GoogleSQL surface syntax — a constant-folded NaN Value needs a SQL token to
+/// embed in generated text. SQLite has none: 1e400/-1e400 parse straight to +-Inf, but every
+/// arithmetic operator and math function nulls out a non-finite result.
+pub fn nanLiteral(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    _ = alloc;
+    if (args.len != 0)
+        return bind.fail("NAN_LITERAL: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    return Value{ .float = std.math.nan(f64) };
+}
+
 fn isNanValue(v: Value) bool {
     return v == .float and std.math.isNan(v.float);
 }
