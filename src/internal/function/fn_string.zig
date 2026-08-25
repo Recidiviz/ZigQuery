@@ -548,6 +548,16 @@ pub fn repeat(alloc: std.mem.Allocator, args: []const Value) Error!Value {
             const v = try args[0].toBytes(alloc);
             if (n < 0)
                 return bind.fail("REPEAT: negative repetitions", .{}, error.UnsupportedOperation);
+            // BigQuery caps REPEAT's output at 1 MiB (string_functions.md#repeat).
+            const count: u64 = @intCast(n);
+            const repeat_max_output_bytes: u64 = 1 << 20;
+            if (count != 0 and v.len > repeat_max_output_bytes / count) {
+                return bind.fail(
+                    "REPEAT: output exceeds max allowed output size of 1MB",
+                    .{},
+                    error.UnsupportedOperation,
+                );
+            }
             const out = try alloc.alloc(u8, v.len * @as(usize, @intCast(n)));
             var k: usize = 0;
             while (k < @as(usize, @intCast(n))) : (k += 1) @memcpy(out[k * v.len ..][0..v.len], v);
