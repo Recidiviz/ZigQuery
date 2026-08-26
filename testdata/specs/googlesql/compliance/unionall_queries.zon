@@ -1,0 +1,517 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/unionall_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/unionall_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(true as bool) as bool_val, cast(0.1 as double) as double_val,
+            \\       cast(1 as int64) as int64_val, cast("1" as string) as str_val UNION ALL
+            \\  SELECT 2, false, 0.2, 2, "2"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table2 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(true as bool) as bool_val, cast(0.3 as double) as double_val,
+            \\       cast(3 as int64) as int64_val, cast("3" as string) as str_val UNION ALL
+            \\  SELECT 2, false, 0.4, 4, "4"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table3 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(true as bool) as bool_val, cast(0.5 as double) as double_val,
+            \\       cast(5 as int64) as int64_val, cast("5" as string) as str_val UNION ALL
+            \\  SELECT 2, false, 0.6, 6, "6"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# 14 columns of nulls.
+            \\CREATE TABLE TableAllNull AS
+            \\SELECT cast(1 as int64) as primary_key, cast(null as bool) as bool_val,
+            \\       cast(NULL as int32) as int32_val, cast(NULL as int64) as int64_val,
+            \\       cast(NULL as uint32) as uint32_val, cast(NULL as uint64) as uint64_val,
+            \\       cast(NULL as float) as float_val, cast(NULL as double) as double_val,
+            \\       cast(NULL as string) as str_val, CAST(NULL as bytes) as bytes_val,
+            \\       CAST(NULL as date) as date_val,
+            \\       CAST(NULL as TIMESTAMP) as timestamp_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# TableDataTypes contains a column for each primitive data type.
+            \\# This means no enums, structs and arrays.
+            \\# Each column has 2 rows of data.
+            \\CREATE TABLE TableDataTypes AS
+            \\SELECT cast(1 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-1 as int32) as int32_val, cast(-1 as int64) as int64_val,
+            \\       cast(1 as uint32) as uint32_val, cast(1 as uint64) as uint64_val,
+            \\       cast(0.1 as float) as float_val, cast(0.1 as double) as double_val,
+            \\       cast("1" as string) as str_val, CAST("a" as bytes) as bytes_val,
+            \\       CAST('2014-01-17' as date) as date_val,
+            \\       TIMESTAMP '2014-01-17 00:00:01.098000 UTC' as
+            \\           timestamp_val
+            \\UNION ALL
+            \\SELECT cast(2 as int64) as primary_key, cast(false as bool) as bool_val,
+            \\       cast(-2 as int32) as int32_val, cast(-2 as int64) as int64_val,
+            \\       cast(2 as uint32) as uint32_val, cast(2 as uint64) as uint64_val,
+            \\       cast(0.2 as float) as float_val, cast(0.2 as double) as double_val,
+            \\       cast("2" as string) as str_val, CAST("b" as bytes) as bytes_val,
+            \\       CAST('2014-01-17' as date),
+            \\       TIMESTAMP '2014-01-17 00:00:02.098000 UTC' as
+            \\           timestamp_val
+            ,
+        },
+        .{
+            .desc = "unionall_constants_simple",
+            .sql =
+            \\# UNION ALL over simple constants
+            \\SELECT 1 AS ColA UNION ALL SELECT 2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "unionall_constants_3_inputs",
+            .sql =
+            \\# 3 inputs
+            \\SELECT 1 AS ColA UNION ALL SELECT 2 UNION ALL SELECT 3
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "unionall_datatype_bool",
+            .sql =
+            \\# UNION All over two Tables.
+            \\# SELECT bool column only. Result is unordered.
+            \\SELECT bool_val FROM Table1 UNION ALL SELECT bool_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{false},
+                .{true},
+                .{false},
+                .{true},
+            },
+        },
+        .{
+            .desc = "unionall_datatype_double",
+            .sql =
+            \\# SELECT double column only
+            \\SELECT double_val FROM Table1 UNION ALL SELECT double_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{0.2},
+                .{0.1},
+                .{0.4},
+                .{0.3},
+            },
+        },
+        .{
+            .desc = "unionall_datatype_int64",
+            .sql =
+            \\# SELECT int64 column only.
+            \\SELECT int64_val FROM Table1 UNION ALL SELECT int64_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{1},
+                .{4},
+                .{3},
+            },
+        },
+        .{
+            .desc = "unionall_datatype_string",
+            .sql =
+            \\# SELECT string column only.
+            \\SELECT str_val FROM Table1 UNION ALL SELECT str_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"2"},
+                .{"1"},
+                .{"4"},
+                .{"3"},
+            },
+        },
+        .{
+            .desc = "unionall_datatype_struct",
+            .sql =
+            \\# SELECT struct column
+            \\SELECT (SELECT t FROM (SELECT 3 a, 5 b) t).b
+            \\UNION ALL
+            \\SELECT (SELECT t FROM (SELECT 3 a, 5 b) t).a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{5},
+                .{3},
+            },
+        },
+        .{
+            .desc = "unionall_multiple_columns",
+            .sql =
+            \\# SELECT all columns.
+            \\SELECT bool_val, double_val, int64_val, str_val FROM Table1
+            \\UNION ALL
+            \\SELECT bool_val, double_val, int64_val, str_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, 0.2, 2, "2" },
+                .{ true, 0.1, 1, "1" },
+                .{ false, 0.4, 4, "4" },
+                .{ true, 0.3, 3, "3" },
+            },
+        },
+        .{
+            .desc = "unionall_filters",
+            .sql =
+            \\# UNION ALL over filters.
+            \\SELECT int64_val FROM Table1 WHERE int64_val = 1
+            \\UNION ALL SELECT int64_val FROM Table1 WHERE int64_val = 2
+            \\UNION ALL SELECT int64_val FROM Table1 WHERE int64_val = 3
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "unionall_over_unionall",
+            .sql =
+            \\# UNION ALL over UNION ALL
+            \\SELECT a FROM (SELECT 10 a UNION ALL SELECT 20 a) UNION ALL
+            \\    SELECT int64_val FROM (SELECT int64_val FROM Table1 UNION ALL
+            \\                           SELECT int64_val FROM Table2)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{20},
+                .{10},
+                .{1},
+                .{3},
+                .{2},
+                .{4},
+            },
+        },
+        .{
+            .desc = "unionall_multiple_columns_multiple_tables",
+            .sql =
+            \\# SELECT all columns from multiple Tables with repeated Tables.
+            \\SELECT bool_val, double_val, int64_val, str_val
+            \\FROM Table1
+            \\      UNION ALL SELECT bool_val, double_val, int64_val, str_val FROM Table2
+            \\      UNION ALL SELECT bool_val, double_val, int64_val, str_val FROM Table3
+            \\      UNION ALL SELECT bool_val, double_val, int64_val, str_val FROM Table2
+            \\      UNION ALL SELECT bool_val, double_val, int64_val, str_val FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, 0.2, 2, "2" },
+                .{ true, 0.1, 1, "1" },
+                .{ false, 0.4, 4, "4" },
+                .{ true, 0.3, 3, "3" },
+                .{ false, 0.6, 6, "6" },
+                .{ true, 0.5, 5, "5" },
+                .{ false, 0.4, 4, "4" },
+                .{ true, 0.3, 3, "3" },
+                .{ false, 0.2, 2, "2" },
+                .{ true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "unionall_nulls_struct",
+            .sql =
+            \\# UNION ALL over NULL and non-NULL struct values
+            \\SELECT NULL
+            \\UNION ALL
+            \\SELECT (SELECT t FROM (SELECT 3 a, 5 b) t).a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{3},
+            },
+        },
+        .{
+            .desc = "unionall_nulls_simple_datatypes",
+            .sql =
+            \\# UNION ALL over NULL and non-NULL values
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val, date_val,
+            \\       timestamp_val
+            \\       FROM TableDataTypes
+            \\UNION ALL
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val, date_val,
+            \\       timestamp_val
+            \\       FROM TableAllNull
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, -2, -2, 2, 2, 0.2, 0.2, "2", "\x62", "2014-01-17", "2014-01-17 00:00:02.098+00" },
+                .{ true, -1, -1, 1, 1, 0.1, 0.1, "1", "\x61", "2014-01-17", "2014-01-17 00:00:01.098+00" },
+                .{ null, null, null, null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "unionall_implicit_coercion_int32",
+            .sql =
+            \\# Implicit coercion of int32; int32 -> int64 and int32 -> double
+            \\SELECT double_val, int64_val FROM Table1
+            \\UNION ALL
+            \\SELECT int32_val, int64_val FROM TableDataTypes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 0.2, 2 },
+                .{ 0.1, 1 },
+                .{ -1, -1 },
+                .{ -2, -2 },
+            },
+        },
+        .{
+            .desc = "unionall_implicit_coercion_int64",
+            .sql =
+            \\# Implict coercion of int64 to double
+            \\SELECT int64_val as double_val FROM TableDataTypes
+            \\UNION ALL
+            \\SELECT double_val FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{-1},
+                .{-2},
+                .{0.2},
+                .{0.1},
+            },
+        },
+        .{
+            .desc = "unionall_implicit_coercion_uint32",
+            .sql =
+            \\# Implict coercion of uint32; uint32 -> uint64, uint32 -> int64 and uint32 -> double
+            \\SELECT uint32_val as uint64_val,
+            \\       uint32_val as int64_val,
+            \\       uint32_val as double_val FROM TableDataTypes
+            \\UNION ALL
+            \\SELECT uint64_val, int64_val, double_val FROM TableDataTypes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1, 1 },
+                .{ 2, 2, 2 },
+                .{ 2, -2, 0.2 },
+                .{ 1, -1, 0.1 },
+            },
+        },
+        .{
+            .desc = "unionall_implicit_coercion_uint64",
+            .sql =
+            \\# Implicit coercion of uint64 to double
+            \\SELECT uint64_val as double_val FROM TableDataTypes
+            \\UNION ALL
+            \\SELECT double_val FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+                .{0.2},
+                .{0.1},
+            },
+        },
+        .{
+            .desc = "unionall_implicit_coercion_float",
+            .sql =
+            \\# Implicit coercion of float to double
+            \\SELECT (SUM(double_val) >= 0.6) as compare_gte FROM
+            \\(SELECT double_val FROM Table1
+            \\UNION ALL
+            \\SELECT float_val FROM TableDataTypes)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "unionall_literal_coercion_string",
+            .sql =
+            \\# Literal coercion from string to timestamp types and date
+            \\SELECT date_val,
+            \\       timestamp_val
+            \\       FROM TableDataTypes
+            \\UNION ALL
+            \\SELECT "2015-01-17",
+            \\       "2015-01-17 00:00:00.123456 UTC"
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "2014-01-17", "2014-01-17 00:00:02.098+00" },
+                .{ "2014-01-17", "2014-01-17 00:00:01.098+00" },
+                .{ "2015-01-17", "2015-01-17 00:00:00.123456+00" },
+            },
+        },
+        .{
+            .desc = "unionall_diff_name",
+            .sql =
+            \\# UNION ALL over columns with different names. First one wins.
+            \\SELECT int64_val AS x, int64_val as y FROM TableDataTypes
+            \\UNION ALL
+            \\SELECT int64_val AS a, int64_val as b FROM TableDataTypes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, -2 },
+                .{ -1, -1 },
+                .{ -2, -2 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "unionall_unnamed_and_named",
+            .sql =
+            \\# UNION ALL unnamed and named columns
+            \\SELECT (17+1) UNION ALL SELECT int64_val AS x FROM TableDataTypes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{18},
+                .{-2},
+                .{-1},
+            },
+        },
+        .{
+            .desc = "unionall_named_and_unnamed",
+            .sql =
+            \\# UNION ALL unnamed and named columns
+            \\SELECT int64_val AS x FROM TableDataTypes UNION ALL SELECT (17+1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{-2},
+                .{-1},
+                .{18},
+            },
+        },
+        .{
+            .desc = "unionall_computed_columns",
+            .sql =
+            \\# UNION ALL over computed values
+            \\SELECT (1+2) UNION ALL SELECT (3+4)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{3},
+                .{7},
+            },
+        },
+        .{
+            .desc = "unionall_duplicate_column_names",
+            .sql =
+            \\# UNION ALL with duplicate column names
+            \\SELECT int64_val AS x, int32_val AS x FROM TableDataTypes
+            \\UNION ALL
+            \\SELECT 17, 43
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, -2 },
+                .{ -1, -1 },
+                .{ 17, 43 },
+            },
+        },
+        .{
+            .desc = "union_all_corresponding_parenthesized_multiple_operands",
+            .sql =
+            \\SELECT int64_val, bool_val
+            \\FROM Table1
+            \\UNION ALL CORRESPONDING
+            \\(
+            \\  SELECT bool_val, int64_val, str_val
+            \\  FROM Table2
+            \\  UNION ALL CORRESPONDING
+            \\  SELECT bool_val, str_val, int64_val
+            \\  FROM Table1
+            \\)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, false },
+                .{ 1, true },
+                .{ 3, true },
+                .{ 1, true },
+                .{ 4, false },
+                .{ 2, false },
+            },
+        },
+        .{
+            .desc = "union_all_corresponding_multiple_operands",
+            .sql =
+            \\SELECT int64_val, bool_val
+            \\FROM Table1
+            \\UNION ALL CORRESPONDING
+            \\SELECT bool_val, int64_val, str_val
+            \\FROM Table2
+            \\UNION ALL CORRESPONDING
+            \\SELECT bool_val, str_val, int64_val
+            \\FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, false },
+                .{ 1, true },
+                .{ 4, false },
+                .{ 3, true },
+                .{ 2, false },
+                .{ 1, true },
+            },
+        },
+        .{
+            .desc = "union_all_corresponding_type_coercion",
+            .sql =
+            \\SELECT int64_val AS col1, bool_val AS col2, double_val AS col3
+            \\FROM Table1
+            \\UNION ALL CORRESPONDING
+            \\SELECT int64_val AS col3, int64_val AS col1, bool_val AS col2
+            \\FROM Table2
+            \\UNION ALL CORRESPONDING
+            \\SELECT int64_val AS col1, bool_val AS col2, int64_val AS col3
+            \\FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, false, 0.2 },
+                .{ 1, true, 0.1 },
+                .{ 3, true, 3 },
+                .{ 4, false, 4 },
+                .{ 1, true, 1 },
+                .{ 2, false, 2 },
+            },
+        },
+    },
+}

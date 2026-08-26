@@ -1,0 +1,278 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_cume_dist",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_cume_dist.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestTable AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as bool) as bool_val,
+            \\       cast(null as int64) as int64_val,
+            \\       cast(null as int32) as int32_val,
+            \\       cast(null as string) as str_val UNION ALL
+            \\  SELECT 2,  true,  null, null,  null  UNION ALL
+            \\  SELECT 3,  false, 1,    1,     "A"   UNION ALL
+            \\  SELECT 4,  true,  1,    2,     "A"   UNION ALL
+            \\  SELECT 5,  false, 1,    3,     "aA"   UNION ALL
+            \\  SELECT 6,  true,  2,    2,     "Aa"   UNION ALL
+            \\  SELECT 7,  false, 1,    1,     'a'   UNION ALL
+            \\  SELECT 8,  true,  2,    1,     "a"   UNION ALL
+            \\  SELECT 9,  false, 2,    3,     "b"   UNION ALL
+            \\  SELECT 10, true,  2,    1,     "B"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableDateTimeBytes AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as date) as date_val,
+            \\       cast(null as timestamp) as timestamp_val,
+            \\       cast(null as bytes) as bytes_val UNION ALL
+            \\SELECT 2,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("1" as bytes) UNION ALL
+            \\SELECT 3,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("2" as bytes) UNION ALL
+            \\SELECT 4,
+            \\       cast('2015-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("1" as bytes) UNION ALL
+            \\SELECT 5,
+            \\       cast('2015-01-01' as date),
+            \\       TIMESTAMP '2013-01-01 00:00:01.011011 UTC',
+            \\       cast("2" as bytes) UNION ALL
+            \\SELECT 6,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2015-01-01 00:00:01.011011 UTC',
+            \\       cast("5" as bytes)
+            ,
+        },
+        .{
+            .desc = "cume_dist_int64",
+            .sql =
+            \\SELECT bool_val, int64_val,
+            \\       CUME_DIST() OVER (PARTITION BY bool_val ORDER BY int64_val)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ false, 1, 0.75 },
+                .{ false, 1, 0.75 },
+                .{ false, 1, 0.75 },
+                .{ false, 2, 1 },
+                .{ true, null, 0.2 },
+                .{ true, 1, 0.4 },
+                .{ true, 2, 1 },
+                .{ true, 2, 1 },
+                .{ true, 2, 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_bool",
+            .sql =
+            \\SELECT bool_val, CUME_DIST() OVER (ORDER BY bool_val)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0.1 },
+                .{ false, 0.5 },
+                .{ false, 0.5 },
+                .{ false, 0.5 },
+                .{ false, 0.5 },
+                .{ true, 1 },
+                .{ true, 1 },
+                .{ true, 1 },
+                .{ true, 1 },
+                .{ true, 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_str_int64",
+            .sql =
+            \\SELECT str_val, int64_val,
+            \\       CUME_DIST() OVER (ORDER BY str_val, int64_val DESC)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, 0.2 },
+                .{ null, null, 0.2 },
+                .{ "A", 1, 0.4 },
+                .{ "A", 1, 0.4 },
+                .{ "Aa", 2, 0.5 },
+                .{ "B", 2, 0.6 },
+                .{ "a", 2, 0.7 },
+                .{ "a", 1, 0.8 },
+                .{ "aA", 1, 0.9 },
+                .{ "b", 2, 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_collate",
+            .unsupported_in_bigquery = "\"COLLATE is not supported\" in ORDER BY (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT str_val, int64_val,
+            \\       CUME_DIST() OVER (ORDER BY str_val COLLATE "en_US", int64_val DESC)
+            \\FROM TestTable
+            \\ORDER BY str_val COLLATE "en_US"
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, 0.2 },
+                .{ null, null, 0.2 },
+                .{ "a", 1, 0.4 },
+                .{ "a", 2, 0.3 },
+                .{ "A", 1, 0.6 },
+                .{ "A", 1, 0.6 },
+                .{ "aA", 1, 0.7 },
+                .{ "Aa", 2, 0.8 },
+                .{ "b", 2, 0.9 },
+                .{ "B", 2, 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_int32_uint64",
+            .sql =
+            \\SELECT int32_val, cast(int64_val as uint64),
+            \\       CUME_DIST() OVER (ORDER BY int32_val, cast(int64_val as uint64) ASC)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, 0.2 },
+                .{ null, null, 0.2 },
+                .{ 1, 1, 0.4 },
+                .{ 1, 1, 0.4 },
+                .{ 1, 2, 0.6 },
+                .{ 1, 2, 0.6 },
+                .{ 2, 1, 0.7 },
+                .{ 2, 2, 0.8 },
+                .{ 3, 1, 0.9 },
+                .{ 3, 2, 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_uint32_int64",
+            .sql =
+            \\SELECT cast(int32_val as uint32), int64_val,
+            \\       CUME_DIST() OVER (ORDER BY cast(int32_val as uint32), int64_val)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, 0.2 },
+                .{ null, null, 0.2 },
+                .{ 1, 1, 0.4 },
+                .{ 1, 1, 0.4 },
+                .{ 1, 2, 0.6 },
+                .{ 1, 2, 0.6 },
+                .{ 2, 1, 0.7 },
+                .{ 2, 2, 0.8 },
+                .{ 3, 1, 0.9 },
+                .{ 3, 2, 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_double",
+            .sql =
+            \\SELECT double_val, CUME_DIST() OVER (ORDER BY double_val)
+            \\FROM (SELECT CAST(0 AS DOUBLE) as double_val UNION ALL
+            \\      SELECT CAST(1 AS DOUBLE)               UNION ALL
+            \\      SELECT CAST(null AS DOUBLE)            UNION ALL
+            \\      SELECT CAST(null AS DOUBLE)            UNION ALL
+            \\      SELECT CAST("NaN" AS DOUBLE)           UNION ALL
+            \\      SELECT CAST("inf" AS DOUBLE)           UNION ALL
+            \\      SELECT CAST("inf" AS DOUBLE)           UNION ALL
+            \\      SELECT CAST("NaN" AS DOUBLE)           UNION ALL
+            \\      SELECT CAST("-inf" AS DOUBLE)          UNION ALL
+            \\      SELECT CAST("-inf" AS DOUBLE))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0.2 },
+                .{ null, 0.2 },
+                .{ nan, 0.4 },
+                .{ nan, 0.4 },
+                .{ -inf, 0.6 },
+                .{ -inf, 0.6 },
+                .{ 0, 0.7 },
+                .{ 1, 0.8 },
+                .{ inf, 1 },
+                .{ inf, 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_float",
+            .sql =
+            \\SELECT float_val, CUME_DIST() OVER (ORDER BY float_val)
+            \\FROM (SELECT CAST(0 AS FLOAT) as float_val  UNION ALL
+            \\      SELECT CAST(1 AS FLOAT)               UNION ALL
+            \\      SELECT CAST(null AS FLOAT)            UNION ALL
+            \\      SELECT CAST(null AS FLOAT)            UNION ALL
+            \\      SELECT CAST("NaN" AS FLOAT)           UNION ALL
+            \\      SELECT CAST("inf" AS FLOAT)           UNION ALL
+            \\      SELECT CAST("inf" AS FLOAT)           UNION ALL
+            \\      SELECT CAST("NaN" AS FLOAT)           UNION ALL
+            \\      SELECT CAST("-inf" AS FLOAT)          UNION ALL
+            \\      SELECT CAST("-inf" AS FLOAT))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0.2 },
+                .{ null, 0.2 },
+                .{ nan, 0.4 },
+                .{ nan, 0.4 },
+                .{ -inf, 0.6 },
+                .{ -inf, 0.6 },
+                .{ 0, 0.7 },
+                .{ 1, 0.8 },
+                .{ inf, 1 },
+                .{ inf, 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_date_timestamp",
+            .sql =
+            \\SELECT date_val, timestamp_val,
+            \\       CUME_DIST() OVER (ORDER BY date_val, timestamp_val)
+            \\FROM TableDateTimeBytes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, 0.16666666666666666 },
+                .{ "2014-01-01", "2014-01-01 00:00:01.011011+00", 0.5 },
+                .{ "2014-01-01", "2014-01-01 00:00:01.011011+00", 0.5 },
+                .{ "2014-01-01", "2015-01-01 00:00:01.011011+00", 0.66666666666666663 },
+                .{ "2015-01-01", "2013-01-01 00:00:01.011011+00", 0.83333333333333337 },
+                .{ "2015-01-01", "2014-01-01 00:00:01.011011+00", 1 },
+            },
+        },
+        .{
+            .desc = "cume_dist_bytes",
+            .sql =
+            \\SELECT bytes_val,
+            \\       CUME_DIST() OVER (ORDER BY bytes_val)
+            \\FROM TableDateTimeBytes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0.16666666666666666 },
+                .{ "\x31", 0.5 },
+                .{ "\x31", 0.5 },
+                .{ "\x32", 0.83333333333333337 },
+                .{ "\x32", 0.83333333333333337 },
+                .{ "\x35", 1 },
+            },
+        },
+    },
+}

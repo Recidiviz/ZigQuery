@@ -1,0 +1,472 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/safe_function",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/safe_function.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# This file has tests for SAFE function calls, with one of each call type.
+            \\# This tests the mechanism of SAFE function calls.  Error-handling for
+            \\# individual functions are tested separately, mostly in code-based tests.
+            \\CREATE TABLE input AS
+            \\\-- Summing `value` will overflow if we add three of them together.
+            \\select offset, key, cast(pow(2,63)/2.5 as int64) as value
+            \\from unnest([1,1,2,2,2,3,3,3,3,4]) key with offset
+            ,
+        },
+        .{
+            .desc = "safe_scalar_func",
+            .sql =
+            \\select value, safe.parse_date("%Y-%m-%d", value),
+            \\              safe.parse_date("%Y-%m-%d", value) IS NULL
+            \\from unnest(["2003-02-04", "", "xxx", "2004-05-06"]) value
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "", null, true },
+                .{ "2004-05-06", "2004-05-06", false },
+                .{ "2003-02-04", "2003-02-04", false },
+                .{ "xxx", null, true },
+            },
+        },
+        .{
+            .desc = "safe_agg_func_group_by",
+            .sql =
+            \\select key, count(*), safe.sum(value)
+            \\from input
+            \\group by key
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2, 7378697629483821056 },
+                .{ 2, 3, null },
+                .{ 3, 4, null },
+                .{ 4, 1, 3689348814741910528 },
+            },
+        },
+        .{
+            .desc = "safe_sum_double_overflow",
+            .unsupported_in_bigquery = "\"SAFE is unsupported with aggregate function sum\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\select safe.sum(value)
+            \\from (SELECT 1.7e+308 AS value UNION ALL SELECT 1.7e+308)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_agg_func_no_group_by",
+            .sql =
+            \\select safe.sum(value)
+            \\from input
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_analytic_agg_func",
+            .sql =
+            \\select key, offset,
+            \\       safe.sum(value) over (partition by key order by offset),
+            \\       safe.sum(value) over (partition by key order by offset) IS NULL
+            \\from input
+            \\order by key, offset
+            ,
+            .rows = .{
+                .{ 1, 0, 3689348814741910528, false },
+                .{ 1, 1, 7378697629483821056, false },
+                .{ 2, 2, 3689348814741910528, false },
+                .{ 2, 3, 7378697629483821056, false },
+                .{ 2, 4, null, true },
+                .{ 3, 5, 3689348814741910528, false },
+                .{ 3, 6, 7378697629483821056, false },
+                .{ 3, 7, null, true },
+                .{ 3, 8, null, true },
+                .{ 4, 9, 3689348814741910528, false },
+            },
+        },
+        .{
+            .desc = "safe_analytic_non_agg_func",
+            .sql =
+            \\# We don't actually have any non-aggregate analytic functions that can return
+            \\# runtime errors (other than case like the one below for NTILE where we
+            \\# validate a constant argument).
+            \\# We'll still test that SAFE makes it through without failing.
+            \\select key, offset, safe.rank() over (partition by key order by offset)
+            \\from input
+            \\order by key, offset
+            ,
+            .rows = .{
+                .{ 1, 0, 1 },
+                .{ 1, 1, 2 },
+                .{ 2, 2, 1 },
+                .{ 2, 3, 2 },
+                .{ 2, 4, 3 },
+                .{ 3, 5, 1 },
+                .{ 3, 6, 2 },
+                .{ 3, 7, 3 },
+                .{ 3, 8, 4 },
+                .{ 4, 9, 1 },
+            },
+        },
+        .{
+            .desc = "safe_concat",
+            .sql = "SELECT SAFE.CONCAT('a', 'b')",
+            .rows = .{
+                .{"ab"},
+            },
+        },
+        .{
+            .desc = "safe_scalar_arg_error",
+            .sql =
+            \\select safe.concat(cast(1 / (offset - offset) as string))
+            \\from input
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_agg_arg_error",
+            .sql =
+            \\select safe.sum(1 / (offset - offset))
+            \\from input
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_ascii",
+            .sql = "select safe.ascii(\"\\xFF\")",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_regexp_contains",
+            .sql = "select safe.regexp_contains(\"abc\", \"(\")",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_regexp_instr",
+            .sql = "select safe.regexp_instr(\"abc\", \"(a)(b)\")",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_left",
+            .sql = "select safe.left(\"apple\", -1)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_right",
+            .sql = "select safe.right(\"apple\", -1)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_translate",
+            .sql = "select safe.translate(\"apple\", \"aa\", \"bc\")",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_instr",
+            .sql = "select safe.instr(\"apple\", \"pl\", 0, 1)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_analytic_arg_error",
+            .sql =
+            \\select
+            \\     safe.sum(value / (offset-offset)) over (partition by key order by offset)
+            \\from input
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_parse_numeric",
+            .sql = "SELECT safe.parse_numeric(' - 1 2.34 '), safe.parse_numeric('1e100'), safe.parse_numeric('abc')",
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "safe_parse_bignumeric",
+            .sql = "SELECT safe.parse_bignumeric(' - 1 2.34 '), safe.parse_bignumeric('1e100'), safe.parse_bignumeric('abc')",
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "json_safe_string_resolve_to_null",
+            .sql = "SELECT safe.string(JSON '4325')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_safe_string",
+            .sql = "SELECT safe.string(JSON '\"json_string\"')",
+            .rows = .{
+                .{"json_string"},
+            },
+        },
+        .{
+            .desc = "json_safe_bool_resolve_to_null",
+            .sql = "SELECT safe.bool(JSON '4326')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_safe_bool",
+            .sql = "SELECT safe.bool(JSON 'true')",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "json_int64_resolve_to_null",
+            .sql = "SELECT safe.int64(JSON '\"not_a_number\"')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_safe_int64",
+            .sql = "SELECT safe.int64(JSON '133')",
+            .rows = .{
+                .{133},
+            },
+        },
+        .{
+            .desc = "json_safe_double_fail_resolve_to_null",
+            .unsupported_in_bigquery = "JSON conversion function is FLOAT64, not DOUBLE (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT safe.double(JSON '18446744073709551615', wide_number_mode=>'exact')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_safe_double",
+            .sql = "SELECT safe.double(JSON '-1.1')",
+            .rows = .{
+                .{-1.1},
+            },
+        },
+        .{
+            .desc = "csc_safe_zero_resolve_to_null",
+            .sql = "SELECT safe.csc(0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "csc_safe_double",
+            .sql = "SELECT safe.csc(1)",
+            .rows = .{
+                .{1.1883951057781212},
+            },
+        },
+        .{
+            .desc = "sec_safe_double",
+            .sql = "SELECT safe.sec(0)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "cot_safe_zero_resolve_to_null",
+            .sql = "SELECT safe.cot(0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cot_safe_double",
+            .sql = "SELECT safe.cot(1)",
+            .rows = .{
+                .{0.64209261593433065},
+            },
+        },
+        .{
+            .desc = "csch_safe_zero_resolve_to_null",
+            .sql = "SELECT safe.csch(0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "csch_safe_double",
+            .sql = "SELECT safe.csch(1)",
+            .rows = .{
+                .{0.85091812823932156},
+            },
+        },
+        .{
+            .desc = "sech_safe_double",
+            .sql = "SELECT safe.sech(0)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "coth_safe_zero_resolve_to_null",
+            .sql = "SELECT safe.coth(0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "coth_safe_double",
+            .sql = "SELECT safe.coth(1)",
+            .rows = .{
+                .{1.3130352854993315},
+            },
+        },
+        .{
+            .desc = "safe_array_transform_with_no_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_TRANSFORM\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_TRANSFORM([-1, 0, 10], e -> e*2)",
+            .rows = .{
+                .{.{ -2, 0, 20 }},
+            },
+        },
+        .{
+            .desc = "safe_array_filter_with_no_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FILTER\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_FILTER([-1, 0, 10], e -> e > 0)",
+            .rows = .{
+                .{.{10}},
+            },
+        },
+        .{
+            .desc = "safe_array_includes_with_no_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES([-1, 0, 10], 0)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "safe_array_includes_lambda_with_no_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES([-1, 0, 10], e -> e > 0)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "safe_array_includes_all_with_no_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES_ALL\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES_ALL([-1, 0, 10], [1, 0])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "safe_array_includes_any_with_no_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES_ANY\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES_ANY([-1, 0, 10], [1, 0])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "safe_array_filter_transform_with_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_TRANSFORM\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_TRANSFORM([-1, 0, 10], e -> 1/e)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_array_filter_with_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FILTER\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_FILTER([-1, 0, 10], e -> 1/e > 0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_array_includes_lambda_with_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES([-1, 0, 10], e -> 1/e > 0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_array_transform_does_not_catch_arg_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_TRANSFORM\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_TRANSFORM([-1, 1/0, 10], e -> e*2)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_array_filter_does_not_catch_arg_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FILTER\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_FILTER([-1, 1/0, 10], e -> e > 0)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_array_includes_does_not_catch_arg_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES([-1, 1/0, 10], 0)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_array_includes_lambda_does_not_catch_arg_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES([-1, 1/0, 10], e -> e > 0)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_array_includes_all_does_not_catch_arg_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES_ALL\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES_ALL([-1, 1/0, 10], [1.0, 0])",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_array_includes_any_does_not_catch_arg_errors",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES_ANY\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES_ANY([-1, 1/0, 10], [1.0, 0])",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_array_filter_transform_with_error_absorbed_in_lambda",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_TRANSFORM\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_TRANSFORM([-1, 0, 10], e -> SAFE_DIVIDE(1, e))",
+            .rows = .{
+                .{.{ -1, null, 0.1 }},
+            },
+        },
+        .{
+            .desc = "safe_array_filter_with_error_absorbed_in_lambda",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FILTER\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_FILTER([-1, 0, 10], e -> SAFE_DIVIDE(1, e) > 0)",
+            .rows = .{
+                .{.{10}},
+            },
+        },
+        .{
+            .desc = "safe_array_includes_lambda_with_error_absorbed_in_lambda",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_INCLUDES\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.ARRAY_INCLUDES([-1, 0, 10], e -> SAFE_DIVIDE(1, e) > 0)",
+            .rows = .{
+                .{true},
+            },
+        },
+    },
+}

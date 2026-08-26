@@ -1,0 +1,482 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/bytes",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/bytes.test",
+    .cases = .{
+        .{
+            .desc = "basic",
+            .sql =
+            \\# The tests in this file are *in addition* to the tests in
+            \\# 'functions_testlib.cc', though there might be some overlap.
+            \\SELECT b"abc"
+            ,
+            .rows = .{
+                .{"\x61\x62\x63"},
+            },
+        },
+        .{
+            .desc = "octal_1",
+            .sql =
+            \\# Test octals.
+            \\SELECT b"\123"
+            ,
+            .rows = .{
+                .{"\x53"},
+            },
+        },
+        .{
+            .desc = "octal_3",
+            .sql = "SELECT b\"\\1234\"",
+            .rows = .{
+                .{"\x53\x34"},
+            },
+        },
+        .{
+            .desc = "octal_4",
+            .sql = "SELECT b\"123\\1234\", b\"123\\123\"",
+            .rows = .{
+                .{ "\x31\x32\x33\x53\x34", "\x31\x32\x33\x53" },
+            },
+        },
+        .{
+            .desc = "hex_1",
+            .sql =
+            \\# Test hex
+            \\SELECT b"\x41"
+            ,
+            .rows = .{
+                .{"\x41"},
+            },
+        },
+        .{
+            .desc = "hex_2",
+            .sql = "SELECT b\"\\x41B\"",
+            .rows = .{
+                .{"\x41\x42"},
+            },
+        },
+        .{
+            .desc = "hex_4",
+            .sql = "SELECT b\"\\x4167\"",
+            .rows = .{
+                .{"\x41\x36\x37"},
+            },
+        },
+        .{
+            .desc = "hex_5",
+            .sql = "SELECT b\"\\X41\"",
+            .rows = .{
+                .{"\x41"},
+            },
+        },
+        .{
+            .desc = "hex_6",
+            .sql = "SELECT b\"\\X41B\"",
+            .rows = .{
+                .{"\x41\x42"},
+            },
+        },
+        .{
+            .desc = "hex_8",
+            .sql = "SELECT b\"\\X4167\"",
+            .rows = .{
+                .{"\x41\x36\x37"},
+            },
+        },
+        .{
+            .desc = "utf8_2",
+            .sql =
+            \\# Unicode can be unescaped in strings.
+            \\SELECT b"€", b"\xe2\x82\xac"
+            ,
+            .rows = .{
+                .{ "\xe2\x82\xac", "\xe2\x82\xac" },
+            },
+        },
+        .{
+            .desc = "to_bytes_to_string_1",
+            .sql =
+            \\# Test that STRING -> BYTES casting might not preserve the byte length.
+            \\SELECT LENGTH(b"\xEE"), LENGTH(CAST("\xEE" AS BYTES))
+            ,
+            .rows = .{
+                .{ 1, 2 },
+            },
+        },
+        .{
+            .desc = "to_bytes_to_string_2",
+            .sql = "SELECT LENGTH(b\"\\xE2\\x82\\xAC\"), LENGTH(CAST(b\"\\xE2\\x82\\xAC\" AS STRING))",
+            .rows = .{
+                .{ 3, 1 },
+            },
+        },
+        .{
+            .desc = "to_bytes_to_string_3",
+            .sql = "SELECT BYTE_LENGTH(b\"\\xE2\\x82\\xAC\"), CHAR_LENGTH(CAST(b\"\\xE2\\x82\\xAC\" AS STRING)), LENGTH(b\"\\xE2\\x82\\xAC\")",
+            .rows = .{
+                .{ 3, 1, 3 },
+            },
+        },
+        .{
+            .desc = "comparison_case_sensitivity_1",
+            .sql = "SELECT b\"CaSe_SenSITive\" = b\"case_sensitive\", b\"case_sensitive\" = b\"case_sensitive\"",
+            .rows = .{
+                .{ false, true },
+            },
+        },
+        .{
+            .desc = "comparison_case_sensitivity_2",
+            .sql = "SELECT b\"ab\" <= b\"Ab\", b\"ab\" < b\"Ab\", b\"ab\" >= b\"Ab\", b\"ab\" > b\"Ab\", b\"ab\" = b\"Ab\", b\"ab\" != b\"Ab\", b\"\\xE2\\x82\\xAC\" = b\"€\", b\"\\xE2\\x82\\xAC\" != CAST(\"\\xE2\\x82\\xAC\" AS BYTES), b\"\\xE2\\x82\\xAC\" = b\"\\xe2\\x82\\xac\"",
+            .rows = .{
+                .{ false, false, true, true, false, true, true, true, true },
+            },
+        },
+        .{
+            .desc = "comparison_case_sensitivity_3",
+            .sql = "SELECT b\"ab\" <= b\"aB\", b\"ab\" < b\"aB\", b\"ab\" >= b\"aB\", b\"ab\" > b\"aB\", b\"ab\" = b\"aB\", b\"ab\" != b\"aB\"",
+            .rows = .{
+                .{ false, false, true, true, false, true },
+            },
+        },
+        .{
+            .desc = "comparison_case_sensitivity_4",
+            .sql = "SELECT b\"abc\" <= b\"aBc\", b\"abc\" < b\"aBc\", b\"abc\" >= b\"aBc\", b\"abc\" > b\"aBc\", b\"abc\" = b\"aBc\", b\"abc\" != b\"aBc\"",
+            .rows = .{
+                .{ false, false, true, true, false, true },
+            },
+        },
+        .{
+            .desc = "comparison_1",
+            .sql = "SELECT b\"\" = b\"\", b\"\" != b\"\",  b\"\" < b\"\", b\"\" <= b\"\", b\"\" > b\"\", b\"\" >= b\"\"",
+            .rows = .{
+                .{ true, false, false, true, false, true },
+            },
+        },
+        .{
+            .desc = "comparison_3",
+            .sql = "SELECT b\"\" IS NULL, b\"\" IS NOT NULL, b\"abc\" IS NULL, b\"abc\" IS NOT NULL",
+            .rows = .{
+                .{ false, true, false, true },
+            },
+        },
+        .{
+            .desc = "function_concat",
+            .sql = "SELECT CONCAT(b\"a\", b\"b\", b\"c\")",
+            .rows = .{
+                .{"\x61\x62\x63"},
+            },
+        },
+        .{
+            .desc = "concat_operator",
+            .sql = "SELECT b\"a\" || b\"b\" || b\"c\"",
+            .rows = .{
+                .{"\x61\x62\x63"},
+            },
+        },
+        .{
+            .desc = "function_strpos",
+            .sql = "SELECT STRPOS(b\"\\xE2\\x82\\xAC\", b\"\\x82\")",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "function_instr",
+            .sql = "SELECT INSTR(b\"\\xE2\\x82\\xAC\", b\"\\x82\"), INSTR(b\"\\xE2\\x82\\x82\", b\"\\x82\", 1, 2), INSTR(b\"\\xE2\\x82\\x82\", b\"\\x82\", -1)",
+            .rows = .{
+                .{ 2, 3, 3 },
+            },
+        },
+        .{
+            .desc = "function_lower",
+            .sql = "SELECT LOWER(b\"\\xE2\\x82\\xAC\"), LOWER(b\"\\xe2\\x82\\xac\"), LOWER(b\"A\\123\")",
+            .rows = .{
+                .{ "\xe2\x82\xac", "\xe2\x82\xac", "\x61\x73" },
+            },
+        },
+        .{
+            .desc = "function_upper",
+            .sql = "SELECT UPPER(b\"\\xE2\\x82\\xAC\"), UPPER(b\"\\xe2\\x82\\xac\"), UPPER(b\"a\\123\")",
+            .rows = .{
+                .{ "\xe2\x82\xac", "\xe2\x82\xac", "\x41\x53" },
+            },
+        },
+        .{
+            .desc = "function_lcase",
+            .unsupported_in_bigquery = "bq: Function not found: LCASE. Only LOWER exists (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT LCASE(b\"\\xE2\\x82\\xAC\"), LCASE(b\"\\xe2\\x82\\xac\"), LCASE(b\"A\\123\")",
+            .rows = .{
+                .{ "\xe2\x82\xac", "\xe2\x82\xac", "\x61\x73" },
+            },
+        },
+        .{
+            .desc = "function_ucase",
+            .unsupported_in_bigquery = "bq: Function not found: UCASE. Only UPPER exists (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT UCASE(b\"\\xE2\\x82\\xAC\"), UCASE(b\"\\xe2\\x82\\xac\"), UCASE(b\"a\\123\")",
+            .rows = .{
+                .{ "\xe2\x82\xac", "\xe2\x82\xac", "\x41\x53" },
+            },
+        },
+        .{
+            .desc = "function_length",
+            .sql = "SELECT LENGTH(b\"AbCdE\"), LENGTH(b\"a\\123\"), LENGTH(b\"\\xE2\\x82\\xAC\"), LENGTH(b\"€\")",
+            .rows = .{
+                .{ 5, 2, 3, 3 },
+            },
+        },
+        .{
+            .desc = "function_byte_length",
+            .sql = "SELECT BYTE_LENGTH(b\"AbCdE\"), BYTE_LENGTH(b\"a\\123\"), BYTE_LENGTH(b\"\\xE2\\x82\\xAC\"), BYTE_LENGTH(b\"€\")",
+            .rows = .{
+                .{ 5, 2, 3, 3 },
+            },
+        },
+        .{
+            .desc = "function_octet_length",
+            .sql = "SELECT OCTET_LENGTH(b\"AbCdE\"), OCTET_LENGTH(b\"a\\123\"), OCTET_LENGTH(b\"\\xE2\\x82\\xAC\"), OCTET_LENGTH(b\"€\")",
+            .rows = .{
+                .{ 5, 2, 3, 3 },
+            },
+        },
+        .{
+            .desc = "function_ascii",
+            .sql = "SELECT ASCII(b\"\"), ASCII(b\"a\"), ASCII(b\"\\x41\")",
+            .rows = .{
+                .{ 0, 97, 65 },
+            },
+        },
+        .{
+            .desc = "function_starts_with",
+            .sql = "SELECT STARTS_WITH(b\"\", b\"\"), STARTS_WITH(b\"\", b\"a\"), STARTS_WITH(NULL, b\"abc\"), STARTS_WITH(b\"\\xE2\\x82\\xAC\", b\"\\xe2\")",
+            .rows = .{
+                .{ true, false, null, true },
+            },
+        },
+        .{
+            .desc = "function_ends_with",
+            .sql = "SELECT ENDS_WITH(b\"\", b\"\"), ENDS_WITH(b\"\", b\"a\"), ENDS_WITH(NULL, b\"abc\"), ENDS_WITH(b\"\\xE2\\x82\\xAC\", b\"\\xac\")",
+            .rows = .{
+                .{ true, false, null, true },
+            },
+        },
+        .{
+            .desc = "function_substr_error",
+            .sql = "SELECT SUBSTR(b\"abc\", 1, -3)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "function_substr",
+            .sql = "SELECT SUBSTR(b\"abc\", 1), SUBSTR(b\"abc\", 1, 1), SUBSTR(b\"\\xE2\\x82\\xAC\", 2, 1), SUBSTR(b\"abc\", 0, 1), SUBSTR(b\"abc\", -3, 5)",
+            .rows = .{
+                .{ "\x61\x62\x63", "\x61", "\x82", "\x61", "\x61\x62\x63" },
+            },
+        },
+        .{
+            .desc = "function_substring_error",
+            .sql = "SELECT SUBSTRING(b\"abc\", 1, -3)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "function_substring",
+            .sql = "SELECT SUBSTRING(b\"abc\", 1), SUBSTRING(b\"abc\", 1, 1), SUBSTRING(b\"\\xE2\\x82\\xAC\", 2, 1), SUBSTRING(b\"abc\", 0, 1), SUBSTRING(b\"abc\", -3, 5), SUBSTRING(CAST(\"€\" AS BYTES), 1, 1), SUBSTRING(b\"€\", 1, 1)",
+            .rows = .{
+                .{ "\x61\x62\x63", "\x61", "\x82", "\x61", "\x61\x62\x63", "\xe2", "\xe2" },
+            },
+        },
+        .{
+            .desc = "function_trim",
+            .sql = "SELECT TRIM(b\" a b \", NULL), TRIM(b\" a b \", b\"\"), TRIM(NULL, b\" \"), TRIM(b\" \\xE2\\x82\\xAC \", b\" \\xac\")",
+            .rows = .{
+                .{ null, "\x20\x61\x20\x62\x20", null, "\xe2\x82" },
+            },
+        },
+        .{
+            .desc = "function_ltrim",
+            .sql = "SELECT LTRIM(b\" a b \", NULL), LTRIM(b\" a b \", b\"\"), LTRIM(NULL, b\" \"), LTRIM(b\" \\xE2\\x82\\xAC \", b\" \\xe2\")",
+            .rows = .{
+                .{ null, "\x20\x61\x20\x62\x20", null, "\x82\xac\x20" },
+            },
+        },
+        .{
+            .desc = "function_rtrim",
+            .sql = "SELECT RTRIM(b\" a b \", NULL), RTRIM(b\" a b \", b\"\"), RTRIM(NULL, b\" \"), RTRIM(b\" \\xE2\\x82\\xAC \", b\" \\xac\")",
+            .rows = .{
+                .{ null, "\x20\x61\x20\x62\x20", null, "\x20\xe2\x82" },
+            },
+        },
+        .{
+            .desc = "function_left_error",
+            .sql = "SELECT LEFT(b\"abc\", -2)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "function_left",
+            .sql = "SELECT LEFT(b\"abc\", 1), LEFT(b\"abc\", 5), LEFT(b\"\\xE2\\x82\\xAC\", 2)",
+            .rows = .{
+                .{ "\x61", "\x61\x62\x63", "\xe2\x82" },
+            },
+        },
+        .{
+            .desc = "function_right_error",
+            .sql = "SELECT RIGHT(b\"abc\", -2)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "function_right",
+            .sql = "SELECT RIGHT(b\"abc\", 1), RIGHT(b\"abc\", 5), RIGHT(b\"\\xE2\\x82\\xAC\", 2)",
+            .rows = .{
+                .{ "\x63", "\x61\x62\x63", "\x82\xac" },
+            },
+        },
+        .{
+            .desc = "function_replace",
+            .sql = "SELECT REPLACE(b\"\\xE2\\x82\\xAC\", b\"\\xac\", b\"\\xFF\"), REPLACE(b\"abc\", b\"a\", b\"xyz\"), REPLACE(b\"abc\", b\"abc\", b\"x\")",
+            .rows = .{
+                .{ "\xe2\x82\xff", "\x78\x79\x7a\x62\x63", "\x78" },
+            },
+        },
+        .{
+            .desc = "function_translate",
+            .sql = "SELECT TRANSLATE(b\"ab\\xFE\", b\"a\\xFE\", b\"x\\x01\"), TRANSLATE(b\"abcabc\", b\"ab\", b\"\\tд\")",
+            .rows = .{
+                .{ "\x78\x62\x01", "\x09\xd0\x63\x09\xd0\x63" },
+            },
+        },
+        .{
+            .desc = "function_regexp_match",
+            .unsupported_in_bigquery = "bq: Function not found: REGEXP_MATCH. BigQuery has REGEXP_CONTAINS instead (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT REGEXP_MATCH(b\"abc\", b\"\"), REGEXP_MATCH(b\"abc\", NULL), REGEXP_MATCH(b\"abc\", b\"a.c\"), REGEXP_MATCH(NULL, b\"[^efg]\")",
+            .rows = .{
+                .{ false, null, true, null },
+            },
+        },
+        .{
+            .desc = "function_regexp_match_1",
+            .unsupported_in_bigquery = "bq: Function not found: REGEXP_MATCH. BigQuery has REGEXP_CONTAINS instead (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT REGEXP_MATCH(b\"abc\", b\"[a|d]b?\"), REGEXP_MATCH(b\"xE2\\x82\\xAC\", b\"xE2.\\xAC\"), REGEXP_MATCH(b\"abc\", b\".\"),  REGEXP_MATCH(b\"abc\", b\".*\")",
+            .rows = .{
+                .{ false, true, false, true },
+            },
+        },
+        .{
+            .desc = "function_regexp_extract",
+            .sql = "SELECT REGEXP_EXTRACT(b\"abcabc\", b\"\"), REGEXP_EXTRACT(b\"abcabc\", NULL), REGEXP_EXTRACT(b\"abcabc\", b\"a.c\")",
+            .rows = .{
+                .{ "", null, "\x61\x62\x63" },
+            },
+        },
+        .{
+            .desc = "function_regexp_extract_1",
+            .sql = "SELECT REGEXP_EXTRACT(NULL, b\"[^efg]\"), REGEXP_EXTRACT(b\"abcabc\", b\"[a|d]b?\"), REGEXP_EXTRACT(b\"abcabc\", b\"%#ab\")",
+            .rows = .{
+                .{ null, "\x61\x62", null },
+            },
+        },
+        .{
+            .desc = "function_regexp_instr",
+            .sql =
+            \\SELECT REGEXP_INSTR(b"abcabc", b"a(b)c", 2, 1, 1),
+            \\       REGEXP_INSTR(b"щцфщфф", b"щ(.).", 1, 2),
+            \\       REGEXP_INSTR(b"-2020-jack-class1", b"", 2),
+            \\       REGEXP_INSTR(b"abcdef", b"ac.*e.")
+            ,
+            .rows = .{
+                .{ 6, 9, 0, 0 },
+            },
+        },
+        .{
+            .desc = "function_regexp_extract_all",
+            .sql =
+            \\SELECT REGEXP_EXTRACT_ALL(b"abcabc", NULL),
+            \\       REGEXP_EXTRACT_ALL(NULL, b"[^efg]"),
+            \\       REGEXP_EXTRACT_ALL(b"abc", b""),
+            \\       REGEXP_EXTRACT_ALL(b"abcabc", b"a.c"),
+            \\       REGEXP_EXTRACT_ALL(b"abcabc", b"[a|d]b?"),
+            \\       REGEXP_EXTRACT_ALL(b"abcabc", b"%#ab"),
+            \\       REGEXP_EXTRACT_ALL(b"banana", b"ana"),
+            \\       REGEXP_EXTRACT_ALL(b"banana", b"a(n)a")
+            ,
+            .rows = .{
+                .{ null, null, .{ "", "", "" }, .{ "\x61\x62\x63", "\x61\x62\x63" }, .{ "\x61\x62", "\x61\x62" }, .{}, .{"\x61\x6e\x61"}, .{"\x6e"} },
+            },
+        },
+        .{
+            .desc = "function_regexp_extract_all_correlated",
+            .sql =
+            \\SELECT arr, extracted, off
+            \\FROM (
+            \\  SELECT REGEXP_EXTRACT_ALL(input, b"[^ ]+") AS arr
+            \\  FROM UNNEST([b"foo bar baz",
+            \\               b"",
+            \\               b"abcdef ghi"]) AS input
+            \\) t, UNNEST(t.arr) AS extracted WITH OFFSET off
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ "\x66\x6f\x6f", "\x62\x61\x72", "\x62\x61\x7a" }, "\x62\x61\x72", 1 },
+                .{ .{ "\x66\x6f\x6f", "\x62\x61\x72", "\x62\x61\x7a" }, "\x66\x6f\x6f", 0 },
+                .{ .{ "\x66\x6f\x6f", "\x62\x61\x72", "\x62\x61\x7a" }, "\x62\x61\x7a", 2 },
+                .{ .{ "\x61\x62\x63\x64\x65\x66", "\x67\x68\x69" }, "\x67\x68\x69", 1 },
+                .{ .{ "\x61\x62\x63\x64\x65\x66", "\x67\x68\x69" }, "\x61\x62\x63\x64\x65\x66", 0 },
+            },
+        },
+        .{
+            .desc = "function_regex_replace",
+            .sql = "SELECT REGEXP_REPLACE(b\"abcabc\", b\"\", b\"xyz\"), REGEXP_REPLACE(b\"abcabc\", NULL, b\"xyz\"), REGEXP_REPLACE(b\"abcabc\", b\"a.c\", b\"xyz\")",
+            .rows = .{
+                .{ "\x78\x79\x7a\x61\x78\x79\x7a\x62\x78\x79\x7a\x63\x78\x79\x7a\x61\x78\x79\x7a\x62\x78\x79\x7a\x63\x78\x79\x7a", null, "\x78\x79\x7a\x78\x79\x7a" },
+            },
+        },
+        .{
+            .desc = "function_regex_replace_1",
+            .sql = "SELECT REGEXP_REPLACE(NULL, b\"[^efg]\", b\"xyz\"), REGEXP_REPLACE(b\"abcabc\", b\"[a|d]b?\", b\"xyz\")",
+            .rows = .{
+                .{ null, "\x78\x79\x7a\x63\x78\x79\x7a\x63" },
+            },
+        },
+        .{
+            .desc = "split_nulls",
+            .sql = "select split(cast(null as bytes), b\",\"), split(b\"x\", cast(null as bytes)), split(cast(null as bytes), cast(null as bytes))",
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "split_custom_delimiter",
+            .sql = "select split(b\"192.0.0.1\", b\".\"), split(b\"ab\\000c\\000\", b\"\\000\")",
+            .rows = .{
+                .{ .{ "\x31\x39\x32", "\x30", "\x30", "\x31" }, .{ "\x61\x62", "\x63", "" } },
+            },
+        },
+        .{
+            .desc = "split_empty_delimiter",
+            .sql = "select split(b\"\", b\"\"), split(b\"\\000\\002\", b\"\")",
+            .rows = .{
+                .{ .{""}, .{ "\x00", "\x02" } },
+            },
+        },
+        .{
+            .desc = "split_empty_input",
+            .sql = "select split(b\"\", b\"foo\")",
+            .rows = .{
+                .{.{""}},
+            },
+        },
+        .{
+            .desc = "split_multibyte_delimiter",
+            .sql = "select split(b\"aaaaa\", b\"aa\"), split(b\"ab\", b\"abc\"), split(b\"x\\001\\002y\\001\\002z\", b\"\\001\\002\")",
+            .rows = .{
+                .{ .{ "", "", "\x61" }, .{"\x61\x62"}, .{ "\x78", "\x79", "\x7a" } },
+            },
+        },
+        .{
+            .desc = "string_literal_to_bytes_coercion",
+            .sql = "SELECT BIT_COUNT('aaa')",
+            .rows = .{
+                .{9},
+            },
+        },
+    },
+}

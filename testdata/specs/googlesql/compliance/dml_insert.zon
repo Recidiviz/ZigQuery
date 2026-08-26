@@ -1,0 +1,217 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_insert",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_insert.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as int64) as value
+            \\UNION ALL
+            \\SELECT 2, 20
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table2 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as int64) as int64_value,
+            \\       cast(100 as int64) as other_int64_value
+            \\UNION ALL
+            \\SELECT 2, 20, 200
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table3 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as int32) as int32_value,
+            \\       cast(100 as int64) as int64_value
+            \\UNION ALL
+            \\SELECT 2, 20, 200
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table4 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as uint32) as uint32_value,
+            \\       cast(100 as int64) as int64_value
+            \\UNION ALL
+            \\SELECT 2, 20, 200
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableDistincts AS
+            \\SELECT
+            \\  1 as distinct_1,
+            \\  1 as distinct_2,
+            \\  1 as distinct_3,
+            \\  1 as distinct_4
+            ,
+        },
+        .{
+            .desc = "insert_null_primary_key_no_null_pk",
+            .sql = "INSERT Table1 (primary_key, value) VALUES (NULL, 1)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_null_primary_key_query_no_null_pk",
+            .sql = "INSERT Table1 (primary_key, value) SELECT NULL, 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_with_failed_assignment_coercion_to_int32",
+            .sql =
+            \\# An insertion that passes the analyzer due to assignment coercion, but the cast
+            \\# fails at runtime.
+            \\INSERT Table3 (primary_key, int32_value) VALUES (3, CAST(1 AS INT64) << 60)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_with_failed_assignment_coercion_to_uint32",
+            .sql =
+            \\# Same as above, but from UINT64 -> UINT32
+            \\INSERT Table4 (primary_key, uint32_value) VALUES (3, CAST(1 AS UINT64) << 60)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_ignore_no_primary_key",
+            .sql =
+            \\# It is an error to use a non-default insert mode on a table with no primary
+            \\# key. Engines that require primary keys can skip this test by overriding
+            \\# TestDriver::SkipTestsWithPrimaryKeyMode().
+            \\INSERT IGNORE Table1 (primary_key, value) VALUES (30, 31)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_replace_no_primary_key",
+            .sql = "INSERT REPLACE Table1 (primary_key, value) VALUES (30, 31)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_update_no_primary_key",
+            .sql = "INSERT UPDATE Table1 (primary_key, value) VALUES (30, 31)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "assert_rows_modified_failure",
+            .sql =
+            \\INSERT Table1 (primary_key, value) VALUES (3, 30)
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "assert_rows_modified_query_failure",
+            .sql =
+            \\INSERT Table1 (primary_key, value) SELECT 3, 30
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_duplicate_row_error",
+            .sql =
+            \\# Engines that do not support primary keys can skip this test by overriding
+            \\# TestDriver::SkipTestsWithPrimaryKeyMode().
+            \\INSERT Table1 (primary_key, value) VALUES (1, 100)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_duplicate_new_row_error",
+            .sql = "INSERT Table1 (primary_key, value) VALUES (3, 100), (3, 200)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_duplicate_new_null_row_error",
+            .sql =
+            \\# Some engines allow inserting a NULL primary key. Others can just mark this as
+            \\# a known error.
+            \\INSERT Table1 (primary_key, value) VALUES (NULL, 100), (NULL, 200)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_two_new_rows_with_same_new_primary_key",
+            .sql = "INSERT Table1 (primary_key, value) VALUES (3, 30), (3, 40)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_ignore_assert_rows_modified_failure",
+            .sql =
+            \\INSERT IGNORE Table1 (primary_key, value) VALUES (1, 100)
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_ignore_assert_rows_modified_query_failure",
+            .sql =
+            \\INSERT IGNORE Table1 (primary_key, value) SELECT 1, 100
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_ignore_two_new_rows_with_null_primary_key_no_null_pk",
+            .sql = "INSERT IGNORE Table1 (primary_key, value) VALUES (NULL, 100), (NULL, 200)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_replace_assert_rows_modified_failure",
+            .sql =
+            \\INSERT REPLACE Table1 (primary_key, value) VALUES (1, 100)
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_replace_assert_rows_modified_query_failure",
+            .sql =
+            \\INSERT REPLACE Table1 (primary_key, value) SELECT 1, 100
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_replace_two_new_rows_with_null_primary_key_no_null_pk",
+            .sql = "INSERT REPLACE Table1 (primary_key, value) VALUES (NULL, 100), (NULL, 200)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_update_assert_rows_modified_failure",
+            .sql =
+            \\INSERT UPDATE Table1 (primary_key, value) VALUES (1, 100)
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_update_assert_rows_modified_query_failure",
+            .sql =
+            \\INSERT UPDATE Table1 (primary_key, value) SELECT 1, 100
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_update_two_new_rows_with_null_primary_key_no_null_pk",
+            .sql = "INSERT UPDATE Table1 (primary_key, value) VALUES (NULL, 100), (NULL, 200)",
+            .expect_error_any = true,
+        },
+    },
+}

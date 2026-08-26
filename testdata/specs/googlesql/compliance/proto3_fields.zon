@@ -1,0 +1,818 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/proto3_fields",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/proto3_fields.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table0 AS
+            \\select 0 key
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE MessageWithNulls AS
+            \\SELECT 1 key, cast("" as googlesql_test.Proto3MessageWithNulls) as value
+            \\union all
+            \\SELECT 2 key, """i1: 5 i2: 5"""
+            \\union all
+            \\SELECT 3, NULL
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableWithNulls AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(null as int64) as int64_val UNION ALL
+            \\  SELECT 2,  null UNION ALL
+            \\  SELECT 3, null UNION ALL
+            \\  SELECT 4, null UNION ALL
+            \\  SELECT 5, 4 UNION ALL
+            \\  SELECT 6, 5 UNION ALL
+            \\  SELECT 7, 6
+            ,
+        },
+        .{
+            .desc = "select_small_proto",
+            .sql = "select key, value from Table1 where key=1",
+            .rows = .{
+                .{ 1, "{}" },
+            },
+        },
+        .{
+            .desc = "select_null_proto",
+            .sql = "select key, value from Table1 where key=2",
+            .rows = .{
+                .{ 2, null },
+            },
+        },
+        .{
+            .desc = "empty_message_field",
+            .sql =
+            \\select value.empty_message from Table1
+            \\where key in (1,2,4) order by key
+            ,
+            .rows = .{
+                .{null},
+                .{null},
+                .{"{}"},
+            },
+        },
+        .{
+            .desc = "scalar_fields",
+            .sql =
+            \\# Note that we're getting proto defaults for some of these columns.
+            \\select key,
+            \\       value.int32_val,
+            \\       value.uint32_val,
+            \\       value.int64_val,
+            \\       value.uint64_val,
+            \\       value.string_val,
+            \\       value.float_val,
+            \\       value.double_val,
+            \\       value.bytes_val,
+            \\       value.bool_val
+            \\from Table1 order by key
+            ,
+            .rows = .{
+                .{ 1, 0, 0, 0, 0, "", 0, 0, "", false },
+                .{ 2, null, null, null, null, null, null, null, null, null },
+                .{ 3, 6, 0, 0, 0, "", 0, 0, "", true },
+                .{ 4, 12, 12, 12, 12, "sss", 12.5, 12.5, "\x62\x62\x62", true },
+            },
+        },
+        .{
+            .desc = "has_scalar_fields",
+            .sql =
+            \\select key,
+            \\       value.has_int32_val,
+            \\       value.has_uint32_val,
+            \\       value.has_int64_val,
+            \\       value.has_uint64_val,
+            \\       value.has_string_val,
+            \\       value.has_float_val,
+            \\       value.has_double_val,
+            \\       value.has_bytes_val,
+            \\       value.has_bool_val
+            \\from Table1 order by key
+            ,
+            .rows = .{
+                .{ 1, false, false, false, false, false, false, false, false, false },
+                .{ 2, null, null, null, null, null, null, null, null, null },
+                .{ 3, true, false, false, false, false, false, false, false, true },
+                .{ 4, true, true, true, true, true, true, true, true, true },
+            },
+        },
+        .{
+            .desc = "repeated_scalar_fields",
+            .sql =
+            \\select key,
+            \\       value.repeated_int32_val,
+            \\       value.repeated_uint32_val,
+            \\       value.repeated_int64_val,
+            \\       value.repeated_uint64_val,
+            \\       value.repeated_string_val,
+            \\       value.repeated_float_val,
+            \\       value.repeated_double_val,
+            \\       value.repeated_bytes_val,
+            \\       value.repeated_bool_val
+            \\from Table1 order by key
+            ,
+            .rows = .{
+                .{ 1, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} },
+                .{ 2, null, null, null, null, null, null, null, null, null },
+                .{ 3, .{}, .{ 7, 8, 9 }, .{}, .{}, .{}, .{}, .{}, .{}, .{} },
+                .{ 4, .{13}, .{13}, .{13}, .{13}, .{"sss"}, .{13.5}, .{13.5}, .{"\x62\x62\x62"}, .{true} },
+            },
+        },
+        .{
+            .desc = "has_repeated_scalar_fields",
+            .sql =
+            \\select key,
+            \\       value.has_repeated_int32_val
+            \\from Table1 order by key
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "scalar_fields_encoded",
+            .sql =
+            \\select key,
+            \\       value.fixed32_val,
+            \\       value.fixed64_val,
+            \\       value.sfixed32_val,
+            \\       value.sfixed64_val,
+            \\       value.sint32_val,
+            \\       value.sint64_val
+            \\from Table1 order by key
+            ,
+            .rows = .{
+                .{ 1, 0, 0, 0, 0, 0, 0 },
+                .{ 2, null, null, null, null, null, null },
+                .{ 3, 0, 0, 0, 0, 0, 0 },
+                .{ 4, 12, 12, 12, 12, 12, 12 },
+            },
+        },
+        .{
+            .desc = "has_scalar_fields_encoded",
+            .sql =
+            \\select key,
+            \\       value.has_fixed32_val,
+            \\       value.has_fixed64_val,
+            \\       value.has_sfixed32_val,
+            \\       value.has_sfixed64_val,
+            \\       value.has_sint32_val,
+            \\       value.has_sint64_val
+            \\from Table1 order by key
+            ,
+            .rows = .{
+                .{ 1, false, false, false, false, false, false },
+                .{ 2, null, null, null, null, null, null },
+                .{ 3, false, false, false, false, false, false },
+                .{ 4, true, true, true, true, true, true },
+            },
+        },
+        .{
+            .desc = "repeated_scalar_fields_encoded",
+            .sql =
+            \\select key,
+            \\       value.repeated_fixed32_val,
+            \\       value.repeated_fixed64_val,
+            \\       value.repeated_sfixed32_val,
+            \\       value.repeated_sfixed64_val,
+            \\       value.repeated_sint32_val,
+            \\       value.repeated_sint64_val
+            \\from Table1 where key!=3 order by key
+            ,
+            .rows = .{
+                .{ 1, .{}, .{}, .{}, .{}, .{}, .{} },
+                .{ 2, null, null, null, null, null, null },
+                .{ 4, .{13}, .{13}, .{13}, .{13}, .{13}, .{13} },
+            },
+        },
+        .{
+            .desc = "enum_fields",
+            .sql =
+            \\select key, value.test_enum
+            \\from Table1
+            \\where key in (1,2,4) order by key
+            ,
+            .rows = .{
+                .{ 1, "ENUM0" },
+                .{ 2, null },
+                .{ 4, "ENUM1" },
+            },
+        },
+        .{
+            .desc = "repeated_enum_fields",
+            .sql =
+            \\select key, value.repeated_test_enum
+            \\from Table1 where key in (1,2,4) order by key
+            ,
+            .rows = .{
+                .{ 1, .{} },
+                .{ 2, null },
+                .{ 4, .{ "ENUM0", "ENUM1", "ENUM2", "ENUM2", "ENUM2", "ENUM2147483647" } },
+            },
+        },
+        .{
+            .desc = "repeated_enum_fields2",
+            .sql =
+            \\select key, e
+            \\from Table1 t, t.value.repeated_test_enum e
+            \\where key in (1,2,4)
+            \\order by 1,2
+            ,
+            .rows = .{
+                .{ 4, "ENUM0" },
+                .{ 4, "ENUM1" },
+                .{ 4, "ENUM2" },
+                .{ 4, "ENUM2" },
+                .{ 4, "ENUM2" },
+                .{ 4, "ENUM2147483647" },
+            },
+        },
+        .{
+            .desc = "repeated_enum_fields2_from_table_name_array_path",
+            .sql =
+            \\select e
+            \\from Table1.value.repeated_test_enum e
+            \\order by 1
+            ,
+            .rows = .{
+                .{"ENUM0"},
+                .{"ENUM1"},
+                .{"ENUM2"},
+                .{"ENUM2"},
+                .{"ENUM2"},
+                .{"ENUM2147483647"},
+            },
+        },
+        .{
+            .desc = "insert_bad_proto_enum_int_value",
+            .sql =
+            \\select as googlesql_test.Proto3KitchenSink
+            \\  coalesce(1234) as test_enum  # non-const enum value
+            ,
+            .rows = .{
+                .{"test_enum: 1234"},
+            },
+        },
+        .{
+            .desc = "insert_bad_proto_enum_string_value",
+            .sql =
+            \\select as googlesql_test.Proto3KitchenSink
+            \\  coalesce("bad enum string") as test_enum  # non-const enum value
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "string_cast_invalid_proto_enum_field_value",
+            .sql = "SELECT CAST(\"test_enum: 7\" AS googlesql_test.Proto3KitchenSink) AS pb",
+            .rows = .{
+                .{.{"test_enum: 7"}},
+            },
+        },
+        .{
+            .desc = "bytes_cast_invalid_proto_enum_field_value",
+            .sql = "SELECT CAST(b\"\\x90\\x03\\x07\" AS googlesql_test.Proto3KitchenSink) AS pb",
+            .rows = .{
+                .{.{"test_enum: 7"}},
+            },
+        },
+        .{
+            .desc = "roundtrip_string_cast_invalid_proto_enum_field_value",
+            .sql = "SELECT CAST(CAST(\"test_enum: 7\" AS googlesql_test.Proto3KitchenSink) AS STRING) AS s",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "back_to_proto_through_bytes_cast_invalid_proto_enum_field_value",
+            .sql = "SELECT CAST(CAST(CAST(\"test_enum: 7\" AS googlesql_test.Proto3KitchenSink) AS BYTES) as googlesql_test.Proto3KitchenSink) AS pb",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "nested_proto_field",
+            .sql =
+            \\select key, value.nested_value
+            \\from Table1 where key in (1,2,4) order by key
+            ,
+            .rows = .{
+                .{ 1, null },
+                .{ 2, null },
+                .{ 4, .{"nested_int64: 14 nested_repeated_int64: 15 nested_repeated_int64: 15"} },
+            },
+        },
+        .{
+            .desc = "nested_repeated_proto_field",
+            .sql =
+            \\select key, value.nested_repeated_value
+            \\from Table1 where key in (1,2,4) order by key
+            ,
+            .rows = .{
+                .{ 1, .{} },
+                .{ 2, null },
+                .{ 4, .{ .{"nested_int64: 16"}, "{}", .{"nested_repeated_int64: 17 nested_repeated_int64: 17"} } },
+            },
+        },
+        .{
+            .desc = "nested_repeated_proto_field2",
+            .sql =
+            \\select key, nrv, nrv.nested_int64, nrv.nested_repeated_int64
+            \\from Table1 t, t.value.nested_repeated_value nrv
+            \\where key in (1,2,4)
+            \\order by key
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 4, .{"nested_int64: 16"}, 16, .{} },
+                .{ 4, "{}", 0, .{} },
+                .{ 4, .{"nested_repeated_int64: 17 nested_repeated_int64: 17"}, 0, .{ 17, 17 } },
+            },
+        },
+        .{
+            .desc = "nested_repeated_proto_field2_from_table_name_array_path",
+            .sql =
+            \\select nrv, nrv.nested_int64, nrv.nested_repeated_int64
+            \\from Table1.value.nested_repeated_value nrv
+            \\order by 2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "{}", 0, .{} },
+                .{ .{"nested_repeated_int64: 17 nested_repeated_int64: 17"}, 0, .{ 17, 17 } },
+                .{ .{"nested_int64: 16"}, 16, .{} },
+            },
+        },
+        .{
+            .desc = "nested_repeated_proto_field2_left",
+            .sql =
+            \\select key, nrv, nrv.nested_int64, nrv.nested_repeated_int64
+            \\from Table1 t LEFT JOIN t.value.nested_repeated_value nrv
+            \\where key in (1,2,4)
+            \\order by key
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null, null },
+                .{ 2, null, null, null },
+                .{ 4, .{"nested_int64: 16"}, 16, .{} },
+                .{ 4, .{"nested_repeated_int64: 17 nested_repeated_int64: 17"}, 0, .{ 17, 17 } },
+                .{ 4, "{}", 0, .{} },
+            },
+        },
+        .{
+            .desc = "twice_nested_repeated_proto_field",
+            .sql =
+            \\select key, nrv.nested_int64, i
+            \\from Table1 t, t.value.nested_repeated_value nrv, nrv.nested_repeated_int64 i
+            \\where key in (1,2,4)
+            \\order by 1,2,3
+            ,
+            .rows = .{
+                .{ 4, 0, 17 },
+                .{ 4, 0, 17 },
+            },
+        },
+        .{
+            .desc = "twice_nested_repeated_proto_field_from_table_name_array_path",
+            .sql =
+            \\select nrv.nested_int64, i
+            \\from Table1.value.nested_repeated_value nrv, nrv.nested_repeated_int64 i
+            \\order by 1,2
+            ,
+            .rows = .{
+                .{ 0, 17 },
+                .{ 0, 17 },
+            },
+        },
+        .{
+            .desc = "twice_nested_repeated_proto_field_left",
+            .sql =
+            \\select key, nrv.nested_int64, i
+            \\from Table1 t
+            \\  LEFT JOIN t.value.nested_repeated_value nrv
+            \\  LEFT JOIN nrv.nested_repeated_int64 i
+            \\where key in (1,2,4)
+            \\order by 1,2,3
+            ,
+            .rows = .{
+                .{ 1, null, null },
+                .{ 2, null, null },
+                .{ 4, 0, null },
+                .{ 4, 0, 17 },
+                .{ 4, 0, 17 },
+                .{ 4, 16, null },
+            },
+        },
+        .{
+            .desc = "nested_holder2",
+            .sql =
+            \\select key, off1, off2, f.int32_val1, f.int32_val2, f.str_value
+            \\from Table1 t
+            \\     LEFT JOIN t.value.repeated_holder h with offset off1
+            \\     LEFT JOIN h.repeated_field f with offset off2
+            \\where key in (1,2,4)
+            \\order by 1,2,3
+            ,
+            .rows = .{
+                .{ 1, null, null, null, null, null },
+                .{ 2, null, null, null, null, null },
+                .{ 4, 0, null, null, null, null },
+                .{ 4, 1, 0, 18, 0, .{} },
+                .{ 4, 1, 1, 19, 0, .{ "abc", "def" } },
+            },
+        },
+        .{
+            .desc = "date_decimal_field",
+            .sql =
+            \\# TODO Figure out how to make dates work in the proto value without
+            \\# breaking too many other things.
+            \\# [name=date_field]
+            \\# select key, value.date, value.has_date
+            \\# from Table1 where key != 3 order by 1
+            \\# --
+            \\# ==
+            \\#
+            \\# [name=date64_field]
+            \\# select key, value.date64, value.has_date64
+            \\# from Table1 where key != 3 order by 1
+            \\# --
+            \\# ==
+            \\select key, value.date_decimal, value.has_date_decimal
+            \\from Table1 where key != 3 order by 1
+            ,
+            .rows = .{
+                .{ 1, null, false },
+                .{ 2, null, null },
+                .{ 4, "2011-02-15", true },
+            },
+        },
+        .{
+            .desc = "timestamp_seconds_field",
+            .sql =
+            \\select key, value.timestamp_seconds, value.has_timestamp_seconds
+            \\from Table1 where key != 3 order by 1
+            ,
+            .rows = .{
+                .{ 1, "1970-01-01 00:00:00+00", false },
+                .{ 2, null, null },
+                .{ 4, "2014-08-26 22:14:08+00", true },
+            },
+        },
+        .{
+            .desc = "timestamp_millis_field",
+            .sql =
+            \\select key, value.timestamp_millis, value.has_timestamp_millis
+            \\from Table1 where key != 3 order by 1
+            ,
+            .rows = .{
+                .{ 1, "1970-01-01 00:00:00+00", false },
+                .{ 2, null, null },
+                .{ 4, "2014-08-26 22:14:08.111+00", true },
+            },
+        },
+        .{
+            .desc = "timestamp_micros_field",
+            .sql =
+            \\select key, value.timestamp_micros, value.has_timestamp_micros
+            \\from Table1 where key != 3 order by 1
+            ,
+            .rows = .{
+                .{ 1, "1970-01-01 00:00:00+00", false },
+                .{ 2, null, null },
+                .{ 4, "2014-08-26 22:14:08.111222+00", true },
+            },
+        },
+        .{
+            .desc = "timestamp_uint64_field",
+            .sql =
+            \\select key, value.timestamp_uint64, value.has_timestamp_uint64
+            \\from Table1 where key != 3 order by 1
+            ,
+            .rows = .{
+                .{ 1, "1970-01-01 00:00:00+00", false },
+                .{ 2, null, null },
+                .{ 4, "2014-08-07 17:15:00.000007+00", true },
+            },
+        },
+        .{
+            .desc = "read_grandchild_with_missing_parent",
+            .sql =
+            \\select key, value.has_nested_value, value.nested_value.nested_int64
+            \\from Table1 order by key
+            ,
+            .rows = .{
+                .{ 1, false, null },
+                .{ 2, null, null },
+                .{ 3, true, 10 },
+                .{ 4, true, 14 },
+            },
+        },
+        .{
+            .desc = "has_grandchild_with_missing_parent",
+            .sql =
+            \\select key, value.has_nested_value, value.nested_value.has_nested_int64
+            \\from Table1 order by key
+            ,
+            .rows = .{
+                .{ 1, false, null },
+                .{ 2, null, null },
+                .{ 3, true, true },
+                .{ 4, true, true },
+            },
+        },
+        .{
+            .desc = "grandchild_is_null_with_missing_parent",
+            .sql =
+            \\select key, value is null, value.nested_value is null, value.nested_value.nested_int64 is null
+            \\from Table1 order by key
+            ,
+            .rows = .{
+                .{ 1, false, true, true },
+                .{ 2, true, true, true },
+                .{ 3, false, false, false },
+                .{ 4, false, false, false },
+            },
+        },
+        .{
+            .desc = "read_field_from_null",
+            .sql =
+            \\select value.nested_int64, value.has_nested_int64, value.nested_int64 is null
+            \\from (select cast(NULL as googlesql_test.Proto3KitchenSink.Nested) value)
+            ,
+            .rows = .{
+                .{ null, null, true },
+            },
+        },
+        .{
+            .desc = "construct_proto_with_null_field_and_extract",
+            .sql =
+            \\select p.int32_val1, p.int32_val2
+            \\from
+            \\  (select 1 r, NEW googlesql_test.Proto3TestExtraPB(1 as int32_val1) p
+            \\   union all
+            \\   select 2, NEW googlesql_test.Proto3TestExtraPB(null as int32_val1))
+            \\order by r
+            ,
+            .rows = .{
+                .{ 1, 0 },
+                .{ 0, 0 },
+            },
+        },
+        .{
+            .desc = "proto_default_if_null_optional",
+            .sql =
+            \\select value.int32_val, proto_default_if_null(value.int32_val)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0 },
+                .{ 12, 12 },
+                .{ 0, 0 },
+                .{ 6, 6 },
+            },
+        },
+        .{
+            .desc = "proto_default_if_null_repeated",
+            .sql =
+            \\select value.repeated_int32_val, proto_default_if_null(value.repeated_int32_val)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, .{} },
+                .{ .{13}, .{13} },
+                .{ .{}, .{} },
+                .{ .{}, .{} },
+            },
+        },
+        .{
+            .desc = "proto_default_if_null_annotated_field",
+            .sql =
+            \\select value.date, proto_default_if_null(value.date)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, "1970-01-01" },
+                .{ "1970-01-08", "1970-01-08" },
+                .{ "1970-01-01", "1970-01-01" },
+                .{ "1970-01-01", "1970-01-01" },
+            },
+        },
+        .{
+            .desc = "proto_default_if_null_annotated_field_with_default",
+            .sql =
+            \\select value.date_default, proto_default_if_null(value.date_default)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, "1970-01-01" },
+                .{ "1970-01-14", "1970-01-14" },
+                .{ "1970-01-01", "1970-01-01" },
+                .{ "1970-01-01", "1970-01-01" },
+            },
+        },
+        .{
+            .desc = "proto_default_if_null_proto_table",
+            .sql =
+            \\select proto_default_if_null(float_val)
+            \\from (select as googlesql_test.Proto3KitchenSink
+            \\      5 int32_val, NULL float_val)
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "extract_field_optional",
+            .sql =
+            \\select extract(field(int32_val) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{12},
+                .{0},
+                .{6},
+            },
+        },
+        .{
+            .desc = "extract_field_repeated",
+            .sql =
+            \\select extract(field(repeated_int32_val) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{.{13}},
+                .{.{}},
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "extract_field_nested_message",
+            .sql =
+            \\select extract(field(nested_value) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{.{"nested_int64: 14 nested_repeated_int64: 15 nested_repeated_int64: 15"}},
+                .{null},
+                .{.{"nested_int64: 10 nested_repeated_int64: 11 nested_repeated_int64: 12"}},
+            },
+        },
+        .{
+            .desc = "extract_has_field_optional",
+            .sql =
+            \\select extract(has(int32_val) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{true},
+                .{false},
+                .{true},
+            },
+        },
+        .{
+            .desc = "extract_has_field_nested_message",
+            .sql =
+            \\select extract(has(nested_value) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{true},
+                .{false},
+                .{true},
+            },
+        },
+        .{
+            .desc = "extract_raw_optional_primitive",
+            .sql =
+            \\select extract(raw(int64_val) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{12},
+                .{0},
+                .{0},
+            },
+        },
+        .{
+            .desc = "extract_raw_field_date",
+            .sql =
+            \\select extract(raw(date) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{7},
+                .{0},
+                .{0},
+            },
+        },
+        .{
+            .desc = "extract_raw_field_date_decimal",
+            .sql =
+            \\select extract(raw(date_decimal) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{20110215},
+                .{0},
+                .{0},
+            },
+        },
+        .{
+            .desc = "extract_raw_field_timestamp",
+            .sql =
+            \\select extract(raw(timestamp_micros) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{1409091248111222},
+                .{0},
+                .{0},
+            },
+        },
+        .{
+            .desc = "extract_raw_field_primitive",
+            .sql =
+            \\select extract(raw(int32_val) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{12},
+                .{0},
+                .{6},
+            },
+        },
+        .{
+            .desc = "extract_raw_field_repeated_primitive",
+            .sql =
+            \\select extract(raw(repeated_int32_val) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{.{13}},
+                .{.{}},
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "extract_raw_field_repeated_date",
+            .sql =
+            \\select extract(raw(repeated_date) from value)
+            \\from Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{.{}},
+                .{.{}},
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "proto_default_if_null_in_both_select_and_group_by",
+            .sql =
+            \\SELECT
+            \\  PROTO_DEFAULT_IF_NULL(value.int32_val)
+            \\FROM Table1
+            \\GROUP BY PROTO_DEFAULT_IF_NULL(value.int32_val)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{0},
+                .{6},
+                .{12},
+            },
+        },
+    },
+}

@@ -1,0 +1,23 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/authorization_functions",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/authorization_functions.test",
+    .cases = .{
+        .{
+            .desc = "session_user_not_null",
+            .sql = "SELECT SESSION_USER() IS NOT NULL",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "session_user_not_empty",
+            .sql = "SELECT LENGTH(SESSION_USER()) > 0",
+            .rows = .{
+                .{true},
+            },
+        },
+    },
+}

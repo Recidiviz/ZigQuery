@@ -1,0 +1,740 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/array_aggregation",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/array_aggregation.test",
+    .cases = .{
+        .{
+            .desc = "array_agg_RANGE_date_with_limit",
+            .sql =
+            \\SELECT ARRAY_AGG(elem ORDER BY elem LIMIT 3) FROM (
+            \\  SELECT CAST(NULL AS RANGE<DATE>) AS elem UNION ALL
+            \\  SELECT RANGE<DATE> '[2020-01-01, 2020-12-31)' UNION ALL
+            \\  SELECT RANGE<DATE> '[UNBOUNDED, 2020-12-31)' UNION ALL
+            \\  SELECT RANGE<DATE> '[2020-01-01, UNBOUNDED)' UNION ALL
+            \\  SELECT RANGE<DATE> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .rows = .{
+                .{.{ null, "[NULL, 2020-12-31)", "[NULL, NULL)" }},
+            },
+        },
+        .{
+            .desc = "array_agg_RANGE_datetime_with_limit",
+            .sql =
+            \\SELECT ARRAY_AGG(elem ORDER BY elem LIMIT 3) FROM (
+            \\  SELECT CAST(NULL AS RANGE<DATETIME>) AS elem UNION ALL
+            \\  SELECT RANGE<DATETIME> '[2020-01-01 12:00:00, 2020-12-31 14:00:00)' AS elem UNION ALL
+            \\  SELECT RANGE<DATETIME> '[UNBOUNDED, 2020-12-31 14:00:00)' UNION ALL
+            \\  SELECT RANGE<DATETIME> '[2020-01-01 12:00:00, UNBOUNDED)' UNION ALL
+            \\  SELECT RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .rows = .{
+                .{.{ null, "[NULL, 2020-12-31 14:00:00)", "[NULL, NULL)" }},
+            },
+        },
+        .{
+            .desc = "array_agg_RANGE_timestamp_with_limit",
+            .sql =
+            \\SELECT ARRAY_AGG(elem ORDER BY elem LIMIT 3) FROM (
+            \\  SELECT CAST(NULL AS RANGE<TIMESTAMP>) AS elem UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[2020-01-01 12:00:00+02, 2020-12-31 14:00:00+08)' AS elem UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[UNBOUNDED, 2020-12-31 14:00:00+08)' UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[2020-01-01 12:00:00+02, UNBOUNDED)' UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .rows = .{
+                .{.{ null, "[NULL, 2020-12-31 06:00:00+00)", "[NULL, NULL)" }},
+            },
+        },
+        .{
+            .desc = "array_agg_with_just_null",
+            .sql =
+            \\SELECT ARRAY_AGG(elem) FROM (
+            \\  SELECT NULL AS elem
+            \\)
+            ,
+            .rows = .{
+                .{.{null}},
+            },
+        },
+        .{
+            .desc = "array_agg_produces_null_for_no_rows",
+            .sql =
+            \\SELECT ARRAY_AGG(elem) FROM (
+            \\  SELECT * FROM (SELECT 1 AS elem)
+            \\  WHERE false
+            \\)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_agg_of_subquery_with_order_by",
+            .sql =
+            \\SELECT ARRAY_AGG((SELECT AS STRUCT a AS element) ORDER BY a) b
+            \\FROM (
+            \\  SELECT 1 AS a UNION ALL
+            \\  SELECT 2 UNION ALL
+            \\  SELECT 3)
+            ,
+            .rows = .{
+                .{.{ .{1}, .{2}, .{3} }},
+            },
+        },
+        .{
+            .desc = "array_agg_of_empty_input",
+            .sql =
+            \\SELECT ARRAY_AGG(a) b FROM
+            \\  (SELECT 1 AS a UNION ALL SELECT 2 UNION ALL SELECT 3)
+            \\WHERE false
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_agg_in_expression",
+            .sql =
+            \\SELECT ARRAY_LENGTH(ARRAY_AGG(a)) FROM
+            \\(SELECT 1 AS a UNION ALL SELECT 2 UNION ALL SELECT 3)
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "array_agg_with_direct_offset_access",
+            .sql =
+            \\SELECT ARRAY_AGG(a)[OFFSET(1)] BETWEEN 1 AND 3 FROM
+            \\  (SELECT 1 AS a UNION ALL SELECT 2 UNION ALL SELECT 3)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_agg_distinct_same",
+            .sql =
+            \\SELECT ARRAY_AGG(DISTINCT a) b FROM
+            \\  (SELECT 1 AS a UNION ALL SELECT 1 UNION ALL SELECT 1)
+            ,
+            .rows = .{
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "array_agg_distinct_all_null",
+            .sql =
+            \\SELECT ARRAY_AGG(DISTINCT a) b FROM (
+            \\  SELECT NULL AS a UNION ALL SELECT NULL AS a)
+            ,
+            .rows = .{
+                .{.{null}},
+            },
+        },
+        .{
+            .desc = "array_agg_distinct_empty_input",
+            .sql =
+            \\SELECT ARRAY_AGG(DISTINCT a) b FROM
+            \\  (SELECT * FROM (SELECT true AS a) WHERE false)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_subquery_simple",
+            .sql =
+            \\# ARRAY type subquery in SELECT
+            \\SELECT ARRAY(SELECT 1) FROM UNNEST([1, 2, 3])
+            ,
+            .unordered = true,
+            .rows = .{
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "array_subquery_simple_null",
+            .sql = "SELECT ARRAY(SELECT NULL) FROM UNNEST([1, 2, 3])",
+            .unordered = true,
+            .rows = .{
+                .{.{null}},
+                .{.{null}},
+                .{.{null}},
+            },
+        },
+        .{
+            .desc = "array_subquery_correlated",
+            .sql = "SELECT ARRAY(SELECT a) FROM UNNEST([1, 2, 3]) a",
+            .unordered = true,
+            .rows = .{
+                .{.{2}},
+                .{.{1}},
+                .{.{3}},
+            },
+        },
+        .{
+            .desc = "array_subquery_preserves_null_singleton",
+            .sql = "SELECT ARRAY(SELECT b FROM UNNEST([NULL]) b) FROM UNNEST([1, 2, 3])",
+            .unordered = true,
+            .rows = .{
+                .{.{null}},
+                .{.{null}},
+                .{.{null}},
+            },
+        },
+        .{
+            .desc = "array_subquery_produces_empty_for_no_rows",
+            .sql = "SELECT ARRAY(SELECT b FROM UNNEST(ARRAY<INT64>[]) b) FROM UNNEST([1, 2, 3])",
+            .unordered = true,
+            .rows = .{
+                .{.{}},
+                .{.{}},
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "array_subquery_in_scalar_context",
+            .sql =
+            \\# ARRAY type subquery in scalar context (non SELECT list)
+            \\SELECT ARRAY_LENGTH(ARRAY(SELECT 1))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_subquery_in_if_condition_1",
+            .sql = "SELECT IF(ARRAY_LENGTH(ARRAY(SELECT 1)) = 0, \"empty\", \"has elements\")",
+            .rows = .{
+                .{"has elements"},
+            },
+        },
+        .{
+            .desc = "array_subquery_in_if_condition_2",
+            .sql =
+            \\SELECT IF(ARRAY_LENGTH(ARRAY(SELECT 1 FROM (SELECT 1) WHERE false)) = 0,
+            \\          "empty", "has elements")
+            ,
+            .rows = .{
+                .{"empty"},
+            },
+        },
+        .{
+            .desc = "array_subquery_in_if_case_1",
+            .sql =
+            \\SELECT IF(1 = 1,
+            \\          ARRAY_LENGTH(ARRAY(SELECT 1)),
+            \\          ARRAY_LENGTH(ARRAY(SELECT 1 UNION ALL SELECT 2)))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_subquery_in_if_case_2",
+            .sql =
+            \\SELECT IF(1 = 2,
+            \\          ARRAY_LENGTH(ARRAY(SELECT 1)),
+            \\          ARRAY_LENGTH(ARRAY(SELECT 1 UNION ALL SELECT 2)))
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_subquery_with_direct_offset_access",
+            .sql = "SELECT ARRAY(SELECT 1 UNION ALL SELECT 1)[OFFSET(1)]",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_subquery_from_simple",
+            .sql =
+            \\# ARRAY type sub-query in FROM clause
+            \\SELECT a
+            \\FROM UNNEST(ARRAY(SELECT a FROM UNNEST(["a", "b", "c"]) a)) a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"a"},
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "array_subquery_from_correlated",
+            .sql =
+            \\SELECT a, b
+            \\FROM UNNEST([1, 2, 3]) a,
+            \\     UNNEST(ARRAY(SELECT a+1 FROM UNNEST([1, 2, 3]))) b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 1, 2 },
+                .{ 1, 2 },
+                .{ 1, 2 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+            },
+        },
+        .{
+            .desc = "array_subquery_from_correlated_twice",
+            .sql =
+            \\SELECT a, b, c
+            \\FROM UNNEST([1, 2, 3]) a,
+            \\     UNNEST(ARRAY(SELECT a+1 FROM UNNEST(["a", "b", "c"]))) b,
+            \\     UNNEST(ARRAY(SELECT b+1 FROM UNNEST(["d", "e", "f"]))) c
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 3, 4 },
+                .{ 2, 3, 4 },
+                .{ 2, 3, 4 },
+                .{ 1, 2, 3 },
+                .{ 1, 2, 3 },
+                .{ 1, 2, 3 },
+                .{ 1, 2, 3 },
+                .{ 1, 2, 3 },
+                .{ 1, 2, 3 },
+                .{ 3, 4, 5 },
+                .{ 3, 4, 5 },
+                .{ 3, 4, 5 },
+                .{ 2, 3, 4 },
+                .{ 2, 3, 4 },
+                .{ 2, 3, 4 },
+                .{ 2, 3, 4 },
+                .{ 2, 3, 4 },
+                .{ 2, 3, 4 },
+                .{ 1, 2, 3 },
+                .{ 1, 2, 3 },
+                .{ 1, 2, 3 },
+                .{ 3, 4, 5 },
+                .{ 3, 4, 5 },
+                .{ 3, 4, 5 },
+                .{ 3, 4, 5 },
+                .{ 3, 4, 5 },
+                .{ 3, 4, 5 },
+            },
+        },
+        .{
+            .desc = "array_subquery_in_join",
+            .sql =
+            \\SELECT a, b
+            \\FROM UNNEST([1, 2, 3]) a
+            \\  JOIN UNNEST(ARRAY(SELECT b FROM UNNEST([3, 2, 1]) b)) b
+            \\    ON a = b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2 },
+                .{ 1, 1 },
+                .{ 3, 3 },
+            },
+        },
+        .{
+            .desc = "array_subquery_with_grouping",
+            .sql =
+            \\SELECT a
+            \\FROM UNNEST(ARRAY(SELECT COUNT(*) FROM UNNEST([3, 2, 1]) a)) a
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "array_concat_agg_no_input",
+            .sql =
+            \\# ARRAY_CONCAT_AGG queries
+            \\SELECT ARRAY_CONCAT_AGG(x)
+            \\FROM (SELECT x FROM (SELECT [1] x) foo where 1 = 2) bar
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_concat_agg_all_nulls",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x)
+            \\FROM (SELECT CAST(NULL as ARRAY<INT64>) x UNION ALL SELECT NULL)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_concat_agg_empty",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x)
+            \\FROM (SELECT [] x) foo
+            ,
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "array_concat_agg_empty_empty",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x)
+            \\FROM (SELECT [] x UNION ALL SELECT [] x) foo
+            ,
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "array_concat_agg_with_null",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x)
+            \\FROM (SELECT ARRAY<INT64>[1, 2] x UNION ALL SELECT NULL x) foo
+            ,
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_agg_simple",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x)
+            \\FROM (SELECT [1, 2] x) foo
+            ,
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_agg_simple_with_limit",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x LIMIT 1)
+            \\FROM (SELECT [1] x) foo
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_concat_agg_simple_with_expression_limit",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x LIMIT MOD(1, 2))
+            \\FROM (SELECT [1] x) foo
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_concat_agg_range_date_with_limit",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x LIMIT 2) FROM (
+            \\    SELECT [CAST(NULL AS RANGE<DATE>), RANGE<DATE> '[2020-01-01, 2020-12-31)', RANGE<DATE> '[2020-01-01, UNBOUNDED)'] x UNION ALL
+            \\    SELECT [RANGE<DATE> '[UNBOUNDED, 2020-12-31)', RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'] UNION ALL
+            \\    SELECT [CAST(NULL AS RANGE<DATE>), RANGE<DATE> '[2020-01-01, 2020-12-31)', RANGE<DATE> '[2020-01-01, UNBOUNDED)'])
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_concat_agg_range_datetime_with_limit",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x LIMIT 2) FROM (
+            \\    SELECT [CAST(NULL AS RANGE<DATETIME>), RANGE<DATETIME> '[2020-01-01 12:00:00, 2020-12-31 14:00:00)', RANGE<DATETIME> '[2020-01-01 12:00:00, UNBOUNDED)'] x UNION ALL
+            \\    SELECT [RANGE<DATETIME> '[UNBOUNDED, 2020-12-31 14:00:00)', RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'] UNION ALL
+            \\    SELECT [CAST(NULL AS RANGE<DATETIME>), RANGE<DATETIME> '[2020-01-01 12:00:00, 2020-12-31 14:00:00)', RANGE<DATETIME> '[2020-01-01 12:00:00, UNBOUNDED)'])
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_concat_agg_range_timestamp_with_limit",
+            .sql =
+            \\SELECT ARRAY_CONCAT_AGG(x LIMIT 2) FROM (
+            \\    SELECT [CAST(NULL AS RANGE<TIMESTAMP>), RANGE<TIMESTAMP> '[2020-01-01 12:00:00+02, 2020-12-31 14:00:00+08)', RANGE<TIMESTAMP> '[2020-01-01 12:00:00+02, UNBOUNDED)'] x UNION ALL
+            \\    SELECT [RANGE<TIMESTAMP> '[UNBOUNDED, 2020-12-31 14:00:00+08)', RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)'] UNION ALL
+            \\    SELECT [CAST(NULL AS RANGE<TIMESTAMP>), RANGE<TIMESTAMP> '[2020-01-01 12:00:00+02, 2020-12-31 14:00:00+08)', RANGE<TIMESTAMP> '[2020-01-01 12:00:00+02, UNBOUNDED)'])
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_agg_BOOL_respect_nulls_2",
+            .sql =
+            \\# This test is added because some engines disallow arrays with null elements
+            \\# in operation/stage outputs. We can still test a query which transiently
+            \\# stores arrays with null elements.
+            \\SELECT
+            \\  WITH(
+            \\   x AS ARRAY_AGG(x RESPECT NULLS ORDER BY x),
+            \\   STRUCT(ARRAY_LENGTH(x) AS arr_len, x[OFFSET(0)] AS idx0, x[OFFSET(1)] AS idx1)
+            \\  ).*
+            \\FROM UNNEST([true, NULL]) AS x
+            ,
+            .rows = .{
+                .{ 2, null, true },
+            },
+        },
+        .{
+            .desc = "array_agg_INT64_respect_nulls_2",
+            .sql =
+            \\SELECT
+            \\  WITH(
+            \\   x AS ARRAY_AGG(x RESPECT NULLS ORDER BY x),
+            \\   STRUCT(ARRAY_LENGTH(x) AS arr_len, x[OFFSET(0)] AS idx0, x[OFFSET(1)] AS idx1)
+            \\  ).*
+            \\FROM UNNEST([3, NULL]) AS x
+            ,
+            .rows = .{
+                .{ 2, null, 3 },
+            },
+        },
+        .{
+            .desc = "array_agg_STRING_ignore_nulls",
+            .sql =
+            \\# When all values to aggregate are NULL, then the result is a NULL
+            \\# array.
+            \\SELECT ARRAY_AGG(elem IGNORE NULLS)
+            \\FROM (SELECT CAST(NULL AS STRING) AS elem
+            \\      UNION ALL
+            \\      SELECT NULL)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_agg_STRING_respect_nulls_2",
+            .sql =
+            \\SELECT
+            \\  WITH(
+            \\   x AS ARRAY_AGG(x RESPECT NULLS ORDER BY x),
+            \\   STRUCT(ARRAY_LENGTH(x) AS arr_len, x[OFFSET(0)] AS idx0, x[OFFSET(1)] AS idx1)
+            \\  ).*
+            \\FROM UNNEST(["ab", NULL]) AS x
+            ,
+            .rows = .{
+                .{ 2, null, "ab" },
+            },
+        },
+        .{
+            .desc = "array_agg_STRUCT_respect_nulls_2",
+            .sql =
+            \\SELECT
+            \\  WITH(
+            \\   x AS ARRAY_AGG(x RESPECT NULLS ORDER BY x.a),
+            \\   STRUCT(ARRAY_LENGTH(x) AS arr_len, x[OFFSET(0)] AS idx0, x[OFFSET(1)] AS idx1)
+            \\  ).*
+            \\FROM UNNEST([STRUCT<a INT64, b STRING>(1, "a"), NULL]) AS x
+            ,
+            .rows = .{
+                .{ 2, null, .{ 1, "a" } },
+            },
+        },
+        .{
+            .desc = "array_agg_DOUBLE_ignore_nulls_order_by_asc_limit",
+            .sql =
+            \\# Note that the LIMIT applies to the non-NULL aggregated values.
+            \\SELECT ARRAY_AGG(elem IGNORE NULLS ORDER BY elem ASC LIMIT 3)
+            \\FROM (SELECT CAST(null AS DOUBLE) as elem
+            \\      UNION ALL
+            \\      SELECT null
+            \\      UNION ALL
+            \\      SELECT null
+            \\      UNION ALL
+            \\      SELECT 0.0
+            \\      UNION ALL
+            \\      SELECT null
+            \\      UNION ALL
+            \\      SELECT 0
+            \\      UNION ALL
+            \\      SELECT 4
+            \\      UNION ALL
+            \\      SELECT -1
+            \\      UNION ALL
+            \\      SELECT null)
+            ,
+            .rows = .{
+                .{.{ -1, 0, 0 }},
+            },
+        },
+        .{
+            .desc = "array_agg_DOUBLE_ignore_nulls_order_by_desc_limit",
+            .sql =
+            \\# Note that the LIMIT applies to the non-NULL aggregated values.
+            \\SELECT ARRAY_AGG(elem IGNORE NULLS ORDER BY elem DESC LIMIT 3)
+            \\FROM (SELECT CAST(null AS DOUBLE) as elem
+            \\      UNION ALL
+            \\      SELECT null
+            \\      UNION ALL
+            \\      SELECT null
+            \\      UNION ALL
+            \\      SELECT 0.0
+            \\      UNION ALL
+            \\      SELECT null
+            \\      UNION ALL
+            \\      SELECT 0
+            \\      UNION ALL
+            \\      SELECT 4
+            \\      UNION ALL
+            \\      SELECT -1
+            \\      UNION ALL
+            \\      SELECT null)
+            ,
+            .rows = .{
+                .{.{ 4, 0, 0 }},
+            },
+        },
+        .{
+            .desc = "array_agg_RANGE_date_respect_nulls_2",
+            .sql =
+            \\SELECT
+            \\  WITH(
+            \\   x AS ARRAY_AGG(x RESPECT NULLS ORDER BY x),
+            \\   STRUCT(ARRAY_LENGTH(x) AS arr_len, x[OFFSET(0)] AS idx0, x[OFFSET(1)] AS idx1)
+            \\  ).*
+            \\FROM UNNEST([RANGE<DATE> '[2020-01-01, 2020-12-31)', NULL]) AS x
+            ,
+            .rows = .{
+                .{ 2, null, "[2020-01-01, 2020-12-31)" },
+            },
+        },
+        .{
+            .desc = "array_agg_RANGE_datetime_respect_nulls_2",
+            .sql =
+            \\SELECT
+            \\  WITH(
+            \\   x AS ARRAY_AGG(x RESPECT NULLS ORDER BY x),
+            \\   STRUCT(ARRAY_LENGTH(x) AS arr_len, x[OFFSET(0)] AS idx0, x[OFFSET(1)] AS idx1)
+            \\  ).*
+            \\FROM UNNEST([RANGE<DATETIME> '[2020-01-01 00:00:00, 2020-12-31 00:00:00)', NULL]) AS x
+            ,
+            .rows = .{
+                .{ 2, null, "[2020-01-01 00:00:00, 2020-12-31 00:00:00)" },
+            },
+        },
+        .{
+            .desc = "array_agg_RANGE_timestamp_respect_nulls_2",
+            .sql =
+            \\SELECT
+            \\  WITH(
+            \\   x AS ARRAY_AGG(x RESPECT NULLS ORDER BY x),
+            \\   STRUCT(ARRAY_LENGTH(x) AS arr_len, x[OFFSET(0)] AS idx0, x[OFFSET(1)] AS idx1)
+            \\  ).*
+            \\FROM UNNEST([RANGE<TIMESTAMP> '[2020-01-01 08:00:00+00, 2020-12-31 08:00:00+00)', NULL]) AS x
+            ,
+            .rows = .{
+                .{ 2, null, "[2020-01-01 08:00:00+00, 2020-12-31 08:00:00+00)" },
+            },
+        },
+        .{
+            .desc = "array_agg_distinct_subquery_with_limit",
+            .sql =
+            \\select array_agg(distinct (x in (select y from unnest([1,2,3]) as y)) limit 123)
+            \\from unnest([1,2,3]) as x
+            ,
+            .rows = .{
+                .{.{true}},
+            },
+        },
+        .{
+            .desc = "array_agg_distinct_subquery_with_limit_and_order_by",
+            .sql =
+            \\select array_agg(distinct array_includes([1,2,3], x) order by array_includes([1,2,3], x) limit 123)
+            \\from unnest([1,2,3]) as x
+            ,
+            .rows = .{
+                .{.{true}},
+            },
+        },
+        .{
+            .desc = "array_agg_distinct_subquery_with_order_by_two_vars",
+            .sql =
+            \\select array_agg(distinct x+y order by x+y)
+            \\from unnest([1,2,3]) as x, unnest([5,6,7]) as y
+            ,
+            .rows = .{
+                .{.{ 6, 7, 8, 9, 10 }},
+            },
+        },
+        .{
+            .desc = "array_agg_with_correlated_column_and_limit",
+            .sql =
+            \\select w from
+            \\unnest([1,2,3]) as w
+            \\where ((select array_agg(w ignore nulls limit 100) from (select 1)) is not null)
+            \\order by w
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "array_agg_with_correlated_column_and_limit_and_order_by",
+            .sql =
+            \\select w from
+            \\unnest([1,2,3]) as w
+            \\where ((select array_agg(w ignore nulls order by w limit 100) from (select 1)) is not null)
+            \\order by w
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "array_agg_with_constants_and_limit",
+            .sql = "select array_agg(1 limit 100) from (select 1)",
+            .rows = .{
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "array_agg_nested_array",
+            .unsupported_in_bigquery = "\"nested arrays are not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(arr1) AS arr_agg,
+            \\FROM (
+            \\  SELECT [[1,2], [3,4]] AS arr1,
+            \\         [[5,6], [7,8]] AS arr2,
+            \\         [[1.0, 2.0], [3.0, 4.0]] AS arr3,
+            \\)
+            ,
+            .rows = .{
+                .{.{.{ .{ 1, 2 }, .{ 3, 4 } }}},
+            },
+        },
+        .{
+            .desc = "array_agg_nested_array_with_order_by",
+            .unsupported_in_bigquery = "\"nested arrays are not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(arr1 ORDER BY arr1[OFFSET(0)][OFFSET(0)]) AS arr_agg,
+            \\  ARRAY_CONCAT_AGG(arr1 ORDER BY arr1[OFFSET(0)][OFFSET(0)]) AS arr_concat_agg,
+            \\FROM (
+            \\  SELECT [[1,2], [3,4]] AS arr1,
+            \\         [[5,6], [7,8]] AS arr2,
+            \\         [[1.0, 2.0], [3.0, 4.0]] AS arr3,
+            \\)
+            ,
+            .rows = .{
+                .{ .{.{ .{ 1, 2 }, .{ 3, 4 } }}, .{ .{ 1, 2 }, .{ 3, 4 } } },
+            },
+        },
+        .{
+            .desc = "nested_array_with_multi_level_aggregation_and_order_by",
+            .unsupported_in_bigquery = "\"nested arrays are not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(array_concat_agg([arr1, arr2]) GROUP BY arr2[OFFSET(0)][OFFSET(0)] ORDER BY MIN(arr1[OFFSET(0)][OFFSET(0)])) AS multilevel_agg
+            \\FROM (
+            \\  SELECT [[1,2], [3,4]] AS arr1,
+            \\         [[5,6], [7,8]] AS arr2,
+            \\)
+            ,
+            .rows = .{
+                .{.{.{ .{ .{ 1, 2 }, .{ 3, 4 } }, .{ .{ 5, 6 }, .{ 7, 8 } } }}},
+            },
+        },
+    },
+}

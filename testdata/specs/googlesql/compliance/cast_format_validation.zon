@@ -1,0 +1,153 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/cast_format_validation",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/cast_format_validation.test",
+    .cases = .{
+        .{
+            .desc = "cast_string_to_bytes_format_invalid_literal",
+            .sql = "select cast('1' as bytes format 'abc')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_string_to_bytes_format_invalid_literal",
+            .sql = "select safe_cast('1' as bytes format 'abc')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_timestamp_format_invalid_literal_with_timezone",
+            .sql = "select cast('1' as timestamp format 'abc' at time zone 'UTC')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_string_to_timestamp_format_invalid_literal_with_timezone",
+            .sql = "select safe_cast('1' as timestamp format 'abc' at time zone 'UTC')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_date_to_string_format_invalid_literal_hh",
+            .sql = "select cast(date'1234-05-06' as string format 'HH')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_date_to_string_format_invalid_literal_hh",
+            .sql = "select safe_cast(date'1234-05-06' as string format 'HH')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_datetime_to_string_format_invalid_literal_tzh",
+            .sql = "select cast(datetime '1234-05-06 07:08:09' as string format 'TZH')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_datetime_to_string_format_invalid_literal_tzh",
+            .sql = "select safe_cast(datetime '1234-05-06 07:08:09' as string format 'TZH')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_time_to_string_format_invalid_literal_mm",
+            .sql = "select cast(time '07:08:09' as string format 'MM')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_time_to_string_format_invalid_literal_mm",
+            .sql = "select safe_cast(time '07:08:09' as string format 'MM')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_timestamp_to_string_format_invalid_literal",
+            .sql = "select cast(timestamp '1234-05-06 07:08:09-10' as string format 'a')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_timestamp_to_string_format_invalid_literal",
+            .sql = "select safe_cast(timestamp '1234-05-06 07:08:09-10' as string format 'a')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_date_format_invalid_literal",
+            .sql = "select cast('1234' as date format 'hh24')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_string_to_date_format_invalid_literal",
+            .sql = "select safe_cast('1234' as date format 'hh24')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_datetime_format_invalid_literal",
+            .sql = "select cast('1234' as datetime format 'tzh')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_string_to_datetime_format_invalid_literal",
+            .sql = "select safe_cast('1234' as datetime format 'tzh')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_time_format_invalid_literal",
+            .sql = "select cast('1234' as time format 'yyyy')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_string_to_time_format_invalid_literal",
+            .sql = "select safe_cast('1234' as time format 'yyyy')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_timestamp_format_invalid_literal",
+            .sql = "select cast('1234' as timestamp format 'a')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_string_to_timestamp_format_invalid_literal",
+            .sql = "select safe_cast('1234' as timestamp format 'a')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_timestamp_format_invalid_timezone",
+            .sql = "select cast('1234' as timestamp format 'yyyy' at time zone 'abc')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_string_to_timestamp_format_invalid_timezone",
+            .sql = "select safe_cast('1234' as timestamp format 'yyyy' at time zone 'abc')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_invalid_numeric_format",
+            .sql = "select cast(cast(1.23 as int32) as STRING format ',99')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_invalid_numeric_format",
+            .sql = "select safe_cast(cast(1.23 as int32) as STRING format ',99')",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

@@ -1,0 +1,413 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/proto_constructor",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/proto_constructor.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableWithNulls AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(null as int64) as int64_val UNION ALL
+            \\  SELECT 2,  null UNION ALL
+            \\  SELECT 3, null UNION ALL
+            \\  SELECT 4, null UNION ALL
+            \\  SELECT 5, 4 UNION ALL
+            \\  SELECT 6, 5 UNION ALL
+            \\  SELECT 7, 6
+            ,
+        },
+        .{
+            .desc = "valid",
+            .sql = "SELECT NEW googlesql_test.KitchenSinkPB(5 AS int64_key_1, 6 AS int64_key_2)",
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6"}},
+            },
+        },
+        .{
+            .desc = "null_required_field",
+            .sql = "SELECT NEW googlesql_test.KitchenSinkPB(NULL AS int64_key_1, 5 AS int64_key_2)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_optional_field",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    1 AS int64_key_1,
+            \\    2 AS int64_key_2,
+            \\    NULL AS int32_val)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2"}},
+            },
+        },
+        .{
+            .desc = "null_extension",
+            .sql =
+            \\SELECT NEW googlesql_test.TestExtraPB(
+            \\    NULL AS
+            \\    (googlesql_test.TestExtraPBExtensionHolder.test_extra_proto_extension))
+            ,
+            .rows = .{
+                .{"{}"},
+            },
+        },
+        .{
+            .desc = "null_extension_runtime",
+            .sql =
+            \\SELECT NEW googlesql_test.TestExtraPB(
+            \\    COALESCE(CAST(NULL AS googlesql_test.TestExtraPBExtensionHolder))
+            \\    AS (googlesql_test.TestExtraPBExtensionHolder.test_extra_proto_extension))
+            ,
+            .rows = .{
+                .{"{}"},
+            },
+        },
+        .{
+            .desc = "extension_failed_implicit_narrowing_cast",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    1 AS int64_key_1,
+            \\    2 AS int64_key_2,
+            \\    COALESCE(0x1234567890ABCDEF) AS (googlesql_test.int32_top_level_extension))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "extension_invalid_value",
+            .sql =
+            \\SELECT NEW googlesql_test.TestExtraPB(
+            \\    COALESCE('garbage_string') AS
+            \\    (googlesql_test.TestExtraPBExtensionHolder.test_extra_proto_extension))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "missing_required",
+            .sql = "SELECT NEW googlesql_test.KitchenSinkPB(5 AS int64_key_1)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_required",
+            .sql = "SELECT NEW googlesql_test.KitchenSinkPB(5 AS int64_key_1, NULL AS int64_key_2)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_optional",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    5 AS int64_key_1, 6 AS int64_key_2,
+            \\    NULL AS int32_val)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6"}},
+            },
+        },
+        .{
+            .desc = "null_repeated",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    5 AS int64_key_1, 6 AS int64_key_2,
+            \\    NULL AS repeated_int32_val)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6"}},
+            },
+        },
+        .{
+            .desc = "null_packed_repeated",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    5 AS int64_key_1, 6 AS int64_key_2,
+            \\    NULL AS repeated_int32_packed)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6"}},
+            },
+        },
+        .{
+            .desc = "null_within_repeated",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    5 AS int64_key_1, 6 AS int64_key_2,
+            \\    ARRAY<INT32>[7, 8, NULL, 9] AS repeated_int32_val)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_within_packed_repeated",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    5 AS int64_key_1, 6 AS int64_key_2,
+            \\    ARRAY<INT32>[7, 8, NULL, 9] AS repeated_int32_packed)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_from_array_subquery_within_repeated",
+            .sql =
+            \\select NEW googlesql_test.KitchenSinkPB(
+            \\    1 as int64_key_1, 2 as int64_key_2,
+            \\    ARRAY(select NULL) as repeated_int64_val)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_from_array_subquery_of_table_within_repeated",
+            .sql =
+            \\select NEW googlesql_test.KitchenSinkPB(
+            \\    1 as int64_key_1, 2 as int64_key_2,
+            \\    ARRAY(select int64_val from TableWithNulls) as repeated_int64_val)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_from_array_agg_subquery_within_repeated",
+            .sql =
+            \\select NEW googlesql_test.KitchenSinkPB(
+            \\    1 as int64_key_1, 2 as int64_key_2,
+            \\    (select ARRAY_AGG(val) from UNNEST([1, NULL]) val) as repeated_int64_val)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_message_field",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\  5 AS int64_key_1,
+            \\  6 AS int64_key_2,
+            \\  NULL AS nested_value)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6"}},
+            },
+        },
+        .{
+            .desc = "null_repeated_message_field",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\  5 AS int64_key_1,
+            \\  6 AS int64_key_2,
+            \\  NULL AS nested_repeated_value)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6"}},
+            },
+        },
+        .{
+            .desc = "null_within_repeated_message_field",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\  5 AS int64_key_1,
+            \\  6 AS int64_key_2,
+            \\  [
+            \\    NEW googlesql_test.KitchenSinkPB.Nested(100 AS nested_int64),
+            \\    NULL,
+            \\    NEW googlesql_test.KitchenSinkPB.Nested(300 AS nested_int64)
+            \\  ] AS nested_repeated_value)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_required_group_subfield",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\  5 AS int64_key_1,
+            \\  6 AS int64_key_2,
+            \\  NEW googlesql_test.KitchenSinkPB.OptionalGroup(
+            \\    NULL AS int64_val)
+            \\  AS optional_group)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "null_group_field",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\  5 AS int64_key_1,
+            \\  6 AS int64_key_2,
+            \\  NULL AS optional_group)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6"}},
+            },
+        },
+        .{
+            .desc = "null_within_nested_repeated_group",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\  5 AS int64_key_1,
+            \\  6 AS int64_key_2,
+            \\  NEW googlesql_test.KitchenSinkPB.OptionalGroup(
+            \\    10 AS int64_val,
+            \\    [
+            \\      NEW googlesql_test.KitchenSinkPB.OptionalGroup.OptionalGroupNested(
+            \\        100 AS int64_val),
+            \\      NULL,
+            \\      NEW googlesql_test.KitchenSinkPB.OptionalGroup.OptionalGroupNested(
+            \\        300 AS int64_val)
+            \\    ] AS OptionalGroupNested)
+            \\  AS optional_group)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "int_coercion",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    5 AS int64_key_1, CAST(6 AS INT32) AS int64_key_2)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6"}},
+            },
+        },
+        .{
+            .desc = "enum_coercion",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    5 AS int64_key_1, 6 AS int64_key_2,
+            \\    'TESTENUM0' AS test_enum)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 5 int64_key_2: 6 test_enum: TESTENUM0"}},
+            },
+        },
+        .{
+            .desc = "invalid_enum",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    5 AS int64_key_1, 6 AS int64_key_2,
+            \\    'NO_SUCH_ENUM' AS test_enum)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "date_timestamp_format_negative",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    1 AS int64_key_1,
+            \\    2 AS int64_key_2,
+            \\    ts AS timestamp_micros,
+            \\    ts AS timestamp_millis,
+            \\    ts AS timestamp_seconds,
+            \\    d AS date_default,
+            \\    d AS date_decimal)
+            \\FROM (SELECT TIMESTAMP "1890-08-03 01:33:11.634390+00" as ts,
+            \\             DATE "1890-08-03" as d)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 timestamp_seconds: -2506026409 timestamp_millis: -2506026408366 timestamp_micros: -2506026408365610 date_decimal: 18900803 date_default: -29005"}},
+            },
+        },
+        .{
+            .desc = "date_timestamp_format_positive",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    1 AS int64_key_1,
+            \\    2 AS int64_key_2,
+            \\    ts AS timestamp_micros,
+            \\    ts AS timestamp_millis,
+            \\    ts AS timestamp_seconds,
+            \\    d AS date_default,
+            \\    d AS date_decimal)
+            \\FROM (SELECT TIMESTAMP "2049-05-30 22:26:48.36561+00:00" as ts,
+            \\             DATE "2049-05-30" as d)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 timestamp_seconds: 2506026408 timestamp_millis: 2506026408365 timestamp_micros: 2506026408365610 date_decimal: 20490530 date_default: 29004"}},
+            },
+        },
+        .{
+            .desc = "date_timestamp_format_negative_round",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    1 AS int64_key_1,
+            \\    2 AS int64_key_2,
+            \\    ts AS timestamp_micros,
+            \\    ts AS timestamp_millis,
+            \\    ts AS timestamp_seconds,
+            \\    d AS date_default,
+            \\    d AS date_decimal)
+            \\FROM (SELECT TIMESTAMP "1890-10-11 19:33:20+00:00" as ts,
+            \\             DATE "1890-10-11" as d)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 timestamp_seconds: -2500000000 timestamp_millis: -2500000000000 timestamp_micros: -2500000000000000 date_decimal: 18901011 date_default: -28936"}},
+            },
+        },
+        .{
+            .desc = "date_timestamp_format_positive_round",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    1 AS int64_key_1,
+            \\    2 AS int64_key_2,
+            \\    ts AS timestamp_micros,
+            \\    ts AS timestamp_millis,
+            \\    ts AS timestamp_seconds,
+            \\    d AS date_default,
+            \\    d AS date_decimal)
+            \\FROM (SELECT TIMESTAMP "2049-03-22 04:26:40+00:00" as ts,
+            \\             DATE "2049-03-22" as d)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 timestamp_seconds: 2500000000 timestamp_millis: 2500000000000 timestamp_micros: 2500000000000000 date_decimal: 20490322 date_default: 28935"}},
+            },
+        },
+        .{
+            .desc = "date_timestamp_format_zero",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    1 AS int64_key_1,
+            \\    2 AS int64_key_2,
+            \\    ts AS timestamp_micros,
+            \\    ts AS timestamp_millis,
+            \\    ts AS timestamp_seconds,
+            \\    d AS date_default,
+            \\    d AS date_decimal)
+            \\FROM (SELECT TIMESTAMP "1970-01-01 00:00:00+00:00" as ts,
+            \\             DATE "1970-01-01" as d)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 timestamp_seconds: 0 timestamp_millis: 0 timestamp_micros: 0 date_decimal: 19700101 date_default: 0"}},
+            },
+        },
+        .{
+            .desc = "date_timestamp_format_minus_one",
+            .sql =
+            \\SELECT NEW googlesql_test.KitchenSinkPB(
+            \\    1 AS int64_key_1,
+            \\    2 AS int64_key_2,
+            \\    ts AS timestamp_micros,
+            \\    ts AS timestamp_millis,
+            \\    ts AS timestamp_seconds,
+            \\    d AS date_default,
+            \\    d AS date_decimal)
+            \\FROM (SELECT TIMESTAMP "1969-12-31 23:59:59.999999+00:00" as ts,
+            \\             DATE "1969-12-31" as d)
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 timestamp_seconds: -1 timestamp_millis: -1 timestamp_micros: -1 date_decimal: 19691231 date_default: -1"}},
+            },
+        },
+        .{
+            .desc = "map_entry_key_null",
+            .sql =
+            \\SELECT NEW googlesql_test.MessageWithMapField(
+            \\  [NEW googlesql_test.MessageWithMapField.StringInt32MapEntry(CAST(NULL AS STRING) AS key, 123 AS value)] AS string_int32_map
+            \\) as pb
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "map_entry_value_null",
+            .sql =
+            \\SELECT NEW googlesql_test.MessageWithMapField(
+            \\  [NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("foo" AS key, CAST(NULL AS INT32) AS value)] AS string_int32_map
+            \\) as pb
+            ,
+            .expect_error_any = true,
+        },
+    },
+}

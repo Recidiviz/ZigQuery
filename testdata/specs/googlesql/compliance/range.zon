@@ -1,0 +1,216 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/range",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/range.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE date_ranges AS
+            \\SELECT 1 AS id, "a" AS name, RANGE<DATE> '[2014-01-01, 2015-01-01)' AS date_range_val
+            \\UNION ALL SELECT 2, "a", RANGE<DATE> '[2014-01-01, UNBOUNDED)'
+            \\UNION ALL SELECT 3, "a", RANGE<DATE> '[UNBOUNDED, 2015-01-01)'
+            \\UNION ALL SELECT 4, "b", RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 5, "b", RANGE<DATE> '[2014-01-01, UNBOUNDED)'
+            \\UNION ALL SELECT 6, "b", RANGE<DATE> '[UNBOUNDED, 2015-01-01)'
+            \\UNION ALL SELECT 7, "c", RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 8, "c", RANGE<DATE> '[UNBOUNDED, 2015-01-01)'
+            \\UNION ALL SELECT 9, "c", RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 10, "d", RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE datetime_ranges AS
+            \\SELECT 1 AS id, "a" AS name, RANGE<DATETIME> '[2016-01-01 12:00:00, 2017-01-01 12:00:00)' AS datetime_range_val
+            \\UNION ALL SELECT 2, "a", RANGE<DATETIME> '[2016-01-01 12:00:00, UNBOUNDED)'
+            \\UNION ALL SELECT 3, "a", RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)'
+            \\UNION ALL SELECT 4, "b", RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 5, "b", RANGE<DATETIME> '[2016-01-01 12:00:00, UNBOUNDED)'
+            \\UNION ALL SELECT 6, "b", RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)'
+            \\UNION ALL SELECT 7, "c", RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 8, "c", RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)'
+            \\UNION ALL SELECT 9, "c", RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 10, "d", RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE timestamp_ranges AS
+            \\SELECT 1 AS id, "a" AS name, RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, 2019-01-01 12:00:00+08)' AS timestamp_range_val
+            \\UNION ALL SELECT 2, "a",  RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 3, "a", RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 4, "b", RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 5, "b", RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, UNBOUNDED)'
+            \\UNION ALL SELECT 6, "b", RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, UNBOUNDED)'
+            \\UNION ALL SELECT 7, "c", RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 8, "c", RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 9, "c", RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 10, "d", RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "group_by_single_date_range",
+            .sql =
+            \\SELECT date_range_val, COUNT(id)
+            \\FROM date_ranges
+            \\GROUP BY date_range_val
+            \\ORDER BY COUNT(id) DESC
+            ,
+            .rows = .{
+                .{ "[NULL, NULL)", 4 },
+                .{ "[NULL, 2015-01-01)", 3 },
+                .{ "[2014-01-01, NULL)", 2 },
+                .{ "[2014-01-01, 2015-01-01)", 1 },
+            },
+        },
+        .{
+            .desc = "group_by_single_datetime_range",
+            .sql =
+            \\SELECT datetime_range_val, COUNT(id)
+            \\FROM datetime_ranges
+            \\GROUP BY datetime_range_val
+            \\ORDER BY COUNT(id) DESC
+            ,
+            .rows = .{
+                .{ "[NULL, NULL)", 4 },
+                .{ "[NULL, 2017-01-01 12:00:00)", 3 },
+                .{ "[2016-01-01 12:00:00, NULL)", 2 },
+                .{ "[2016-01-01 12:00:00, 2017-01-01 12:00:00)", 1 },
+            },
+        },
+        .{
+            .desc = "group_by_single_timestamp_range",
+            .sql =
+            \\SELECT timestamp_range_val, COUNT(id)
+            \\FROM timestamp_ranges
+            \\GROUP BY timestamp_range_val
+            \\ORDER BY COUNT(id) DESC
+            ,
+            .rows = .{
+                .{ "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", 4 },
+                .{ "[NULL, 2019-01-01 04:00:00+00)", 3 },
+                .{ "[2018-10-01 04:00:00+00, NULL)", 2 },
+                .{ "[NULL, NULL)", 1 },
+            },
+        },
+        .{
+            .desc = "group_by_single_date_range_and_non_range",
+            .sql =
+            \\SELECT date_range_val, name, COUNT(id)
+            \\FROM date_ranges
+            \\GROUP BY date_range_val, name
+            \\ORDER BY COUNT(id) DESC
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "[NULL, NULL)", "c", 2 },
+                .{ "[NULL, 2015-01-01)", "b", 1 },
+                .{ "[NULL, NULL)", "b", 1 },
+                .{ "[NULL, NULL)", "d", 1 },
+                .{ "[2014-01-01, NULL)", "a", 1 },
+                .{ "[NULL, 2015-01-01)", "a", 1 },
+                .{ "[NULL, 2015-01-01)", "c", 1 },
+                .{ "[2014-01-01, 2015-01-01)", "a", 1 },
+                .{ "[2014-01-01, NULL)", "b", 1 },
+            },
+        },
+        .{
+            .desc = "group_by_single_datetime_range_and_non_range",
+            .sql =
+            \\SELECT datetime_range_val, name, COUNT(id)
+            \\FROM datetime_ranges
+            \\GROUP BY datetime_range_val, name
+            \\ORDER BY COUNT(id) DESC
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "[NULL, NULL)", "c", 2 },
+                .{ "[NULL, 2017-01-01 12:00:00)", "b", 1 },
+                .{ "[NULL, NULL)", "b", 1 },
+                .{ "[NULL, NULL)", "d", 1 },
+                .{ "[2016-01-01 12:00:00, NULL)", "a", 1 },
+                .{ "[NULL, 2017-01-01 12:00:00)", "a", 1 },
+                .{ "[NULL, 2017-01-01 12:00:00)", "c", 1 },
+                .{ "[2016-01-01 12:00:00, 2017-01-01 12:00:00)", "a", 1 },
+                .{ "[2016-01-01 12:00:00, NULL)", "b", 1 },
+            },
+        },
+        .{
+            .desc = "group_by_single_timestamp_range_and_non_range",
+            .sql =
+            \\SELECT timestamp_range_val, name, COUNT(id)
+            \\FROM timestamp_ranges
+            \\GROUP BY timestamp_range_val, name
+            \\ORDER BY COUNT(id) DESC
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "[NULL, 2019-01-01 04:00:00+00)", "c", 3 },
+                .{ "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", "a", 3 },
+                .{ "[2018-10-01 04:00:00+00, NULL)", "b", 2 },
+                .{ "[NULL, NULL)", "d", 1 },
+                .{ "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", "b", 1 },
+            },
+        },
+        .{
+            .desc = "group_by_multiple_ranges",
+            .sql =
+            \\SELECT date_range_val, timestamp_range_val, COUNT(id)
+            \\FROM date_ranges FULL JOIN timestamp_ranges USING (id, name)
+            \\GROUP BY date_range_val, timestamp_range_val
+            \\ORDER BY COUNT(id) DESC
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "[NULL, NULL)", "[NULL, 2019-01-01 04:00:00+00)", 2 },
+                .{ "[NULL, 2015-01-01)", "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", 1 },
+                .{ "[NULL, NULL)", "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", 1 },
+                .{ "[2014-01-01, NULL)", "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", 1 },
+                .{ "[NULL, 2015-01-01)", "[NULL, 2019-01-01 04:00:00+00)", 1 },
+                .{ "[NULL, 2015-01-01)", "[2018-10-01 04:00:00+00, NULL)", 1 },
+                .{ "[NULL, NULL)", "[NULL, NULL)", 1 },
+                .{ "[2014-01-01, 2015-01-01)", "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", 1 },
+                .{ "[2014-01-01, NULL)", "[2018-10-01 04:00:00+00, NULL)", 1 },
+            },
+        },
+        .{
+            .desc = "group_by_multiple_ranges_and_non_range",
+            .sql =
+            \\SELECT date_range_val, timestamp_range_val, name, COUNT(id)
+            \\FROM date_ranges FULL JOIN timestamp_ranges USING (id, name)
+            \\GROUP BY date_range_val, timestamp_range_val, name
+            \\ORDER BY COUNT(id) DESC
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "[NULL, NULL)", "[NULL, 2019-01-01 04:00:00+00)", "c", 2 },
+                .{ "[NULL, 2015-01-01)", "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", "a", 1 },
+                .{ "[NULL, NULL)", "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", "b", 1 },
+                .{ "[2014-01-01, NULL)", "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", "a", 1 },
+                .{ "[NULL, 2015-01-01)", "[NULL, 2019-01-01 04:00:00+00)", "c", 1 },
+                .{ "[NULL, 2015-01-01)", "[2018-10-01 04:00:00+00, NULL)", "b", 1 },
+                .{ "[NULL, NULL)", "[NULL, NULL)", "d", 1 },
+                .{ "[2014-01-01, 2015-01-01)", "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", "a", 1 },
+                .{ "[2014-01-01, NULL)", "[2018-10-01 04:00:00+00, NULL)", "b", 1 },
+            },
+        },
+        .{
+            .desc = "range_literal_with_picoseconds",
+            .unsupported_in_bigquery = "picosecond-precision TIMESTAMP literals error \"Invalid TIMESTAMP literal\" (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\SELECT
+            \\  RANGE<TIMESTAMP> '[UNBOUNDED, 2020-12-31 12:00:00.123456789123+08)',
+            \\  RANGE<TIMESTAMP> '[2020-10-01 12:00:00.123456789123+08, UNBOUNDED)',
+            \\  RANGE<TIMESTAMP> '[2020-10-01 12:00:00.123456789123+08, 2020-12-31 12:00:00.123456789123+08)'
+            ,
+            .rows = .{
+                .{ "[NULL, 2020-12-31 04:00:00.123456789123+00)", "[2020-10-01 04:00:00.123456789123+00, NULL)", "[2020-10-01 04:00:00.123456789123+00, 2020-12-31 04:00:00.123456789123+00)" },
+            },
+        },
+    },
+}

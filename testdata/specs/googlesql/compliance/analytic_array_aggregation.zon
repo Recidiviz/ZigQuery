@@ -1,0 +1,28 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_array_aggregation",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_array_aggregation.test",
+    .cases = .{
+        .{
+            .desc = "array_agg_with_null_UINT64_analytic",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  ARRAY_AGG(elem)
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING),
+            \\  ARRAY_AGG(elem)
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING),
+            \\  ARRAY_AGG(elem)
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW),
+            \\  ARRAY_AGG(elem)
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),
+            \\  ARRAY_AGG(elem)
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM UNNEST(ARRAY<UINT64>[8589934592, 1, null, null, 0]) elem
+            ,
+            .nondeterministic = true,
+        },
+    },
+}

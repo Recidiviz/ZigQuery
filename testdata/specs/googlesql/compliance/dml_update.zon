@@ -1,0 +1,425 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_update",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_update.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Tests for UPDATE that do not involve structs, protos, or JSON (which have
+            \\# their own files).
+            \\CREATE TABLE TableInt64Values AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as int64) as value1,
+            \\       cast(100 as int64) as value2,
+            \\       cast(1000 as int64) as value3
+            \\UNION ALL
+            \\SELECT 2, 20, 200, 2000
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Used for testing joins with TableInt64Values.
+            \\CREATE TABLE TableInt64Values2 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(100 as int64) as value1,
+            \\       cast(1000 as int64) as value2,
+            \\       cast(1000 as int64) as value3
+            \\UNION ALL
+            \\SELECT 2, 200, 2000, 1000
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Used for testing a self-join.
+            \\CREATE Table TableNonTrivialInt64PrimaryKeys AS
+            \\SELECT cast(1 as int64) as primary_key, cast(101 as int64) value
+            \\UNION ALL
+            \\SELECT 2, 102
+            \\UNION ALL
+            \\SELECT 3, 103
+            \\UNION ALL
+            \\SELECT 4, 104
+            \\UNION ALL
+            \\SELECT 5, 105
+            \\UNION ALL
+            \\SELECT 6, 106
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Use a new table in case some engines don't support array-valued primary keys,
+            \\# so we can't combine this table with some other table that may be used by
+            \\# compliance tests that have nothing to do with array-valued primary keys.
+            \\#
+            \\# We must annotate this [prepare_database] statement with
+            \\# [required_features=GROUP_BY_ARRAY] in order to pass the compliace test
+            \\# framework's validation that the first column can be thought of as a primary
+            \\# key. As a result, the table will only be created for drivers that support
+            \\# GROUP_BY_ARRAY, and it will only be visible to tests that require
+            \\# that feature.
+            \\CREATE TABLE TableArrayKey AS
+            \\SELECT cast([1, 2, 3] as ARRAY<INT64>) as primary_key,
+            \\       cast(100 as int64) as int64_value
+            \\UNION ALL
+            \\SELECT [10, 11, 12], 200
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Use a new table because some engines don't support 32-bit types.
+            \\CREATE TABLE TableInt32Value AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as int32) as int32_value
+            \\UNION ALL
+            \\SELECT 2, 20
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Use a new table because some engines don't support unsigned types.
+            \\CREATE TABLE TableUInt32Value AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as uint32) as uint32_value
+            \\UNION ALL
+            \\SELECT 2, 20
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Use a new table because some engines don't support arrays.
+            \\CREATE TABLE TableArrayValue AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       ARRAY<INT64>[11, 12, 13] as array_value,
+            \\       ARRAY<INT64>[111, 112, 112] as array_value2
+            \\UNION ALL
+            \\SELECT 2, [21, 22, 23], [221, 222, 223]
+            \\UNION ALL
+            \\SELECT 3, NULL, NULL
+            ,
+        },
+        .{
+            .desc = "assert_rows_modified_failure",
+            .sql =
+            \\UPDATE TableInt64Values SET value1 = 5 WHERE True
+            \\ASSERT_ROWS_MODIFIED 0
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_assert_rows_modified_no_pk_update",
+            .sql =
+            \\UPDATE TableInt64Values SET primary_key = 100 WHERE primary_key = 1
+            \\ASSERT_ROWS_MODIFIED 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_no_pk_update",
+            .sql = "UPDATE TableInt64Values SET primary_key = 100 WHERE primary_key = 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_null_no_null_pks",
+            .sql = "UPDATE TableInt64Values SET primary_key = NULL WHERE primary_key = 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_null_no_pk_update",
+            .sql = "UPDATE TableInt64Values SET primary_key = NULL WHERE primary_key = 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_default_no_null_pks",
+            .sql = "UPDATE TableInt64Values SET primary_key = DEFAULT WHERE primary_key = 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_default_no_pk_update",
+            .sql = "UPDATE TableInt64Values SET primary_key = DEFAULT WHERE primary_key = 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_to_itself_no_pk_update",
+            .sql = "UPDATE TableInt64Values SET primary_key = primary_key WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_to_another_row",
+            .sql =
+            \\# Setting one row's primary key equal to a previously existing row's primary key
+            \\# is an error.
+            \\#
+            \\# Engines that do not support primary keys can skip this test by overriding
+            \\# TestDriver::SkipTestsWithPrimaryKeyMode().
+            \\UPDATE TableInt64Values SET primary_key = 2 WHERE primary_key = 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_to_another_row_no_pk_update",
+            .sql = "UPDATE TableInt64Values SET primary_key = 2 WHERE primary_key = 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_keys_to_a_third_value",
+            .sql =
+            \\# Setting two rows to the same (previously non-existent, non-NULL) primary key is
+            \\# an error.
+            \\#
+            \\# Engines that do not support primary keys can skip this test by overriding
+            \\# TestDriver::SkipTestsWithPrimaryKeyMode().
+            \\UPDATE TableInt64Values SET primary_key = 100 WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_keys_to_a_third_value_no_pk_update",
+            .sql = "UPDATE TableInt64Values SET primary_key = 100 WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_keys_to_null",
+            .sql =
+            \\# Setting two primary keys to NULL is an error.
+            \\#
+            \\# Engines that do not support primary keys can skip this test by overriding
+            \\# TestDriver::SkipTestsWithPrimaryKeyMode().
+            \\UPDATE TableInt64Values SET primary_key = NULL WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_keys_to_null_no_null_pks",
+            .sql =
+            \\# Setting two primary keys to NULL is an error.
+            \\UPDATE TableInt64Values SET primary_key = NULL WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_keys_to_null_no_pk_update",
+            .sql =
+            \\# Setting two primary keys to NULL is an error.
+            \\UPDATE TableInt64Values SET primary_key = NULL WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "assignment_coercion_int64_to_int32_failed",
+            .sql =
+            \\# Same as above, but the coercion fails.
+            \\UPDATE TableInt32Value SET int32_value = (CAST(1 AS INT64) << 60) WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "assignment_coercion_uint64_to_uint32_failed",
+            .sql =
+            \\# Same as above, but the coercion fails.
+            \\UPDATE TableUInt32Value SET uint32_value = (CAST(1 AS UINT64) << 60) WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_duplicate_array_elements_with_set",
+            .sql =
+            \\UPDATE TableArrayValue
+            \\SET array_value[OFFSET(0)] = 100,
+            \\    array_value[OFFSET(0)] = 200
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_element_with_set_null_array",
+            .sql = "UPDATE TableArrayValue SET array_value[OFFSET(1)] = 100 WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_element_with_set_null_index",
+            .sql =
+            \\UPDATE TableArrayValue
+            \\SET array_value[OFFSET(NULL)] = 100
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_element_with_set_negative_index",
+            .sql =
+            \\UPDATE TableArrayValue
+            \\SET array_value[OFFSET(-1)] = 100
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_element_with_set_negative_offset_with_ordinal",
+            .sql =
+            \\# ORDINAL vs. OFFSET is handled by the analyzer here, but it's still good to see
+            \\# ORDINAL work end-to-end.
+            \\UPDATE TableArrayValue
+            \\SET array_value[ORDINAL(0)] = 100
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_element_with_set_index_too_large",
+            .sql =
+            \\UPDATE TableArrayValue
+            \\SET array_value[OFFSET(1000)] = 100
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_element_with_set_offset_too_large_with_ordinal",
+            .sql =
+            \\# ORDINAL vs. OFFSET is handled by the analyzer here, but it's still good to see
+            \\# ORDINAL work end-to-end.
+            \\UPDATE TableArrayValue
+            \\SET array_value[ORDINAL(1001)] = 100
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_element_with_set_index_barely_too_large",
+            .sql =
+            \\UPDATE TableArrayValue
+            \\SET array_value[OFFSET(3)] = 100
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_element_with_set_offset_barely_too_large_with_ordinal",
+            .sql =
+            \\# ORDINAL vs. OFFSET is handled by the analyzer here, but it's still good to see
+            \\# ORDINAL work end-to-end.
+            \\UPDATE TableArrayValue
+            \\SET array_value[ORDINAL(4)] = 100
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_primary_key_to_itself_no_pk_update",
+            .sql =
+            \\# Repeat the primary key tests above, but with an array as the primary key.
+            \\UPDATE TableArrayKey SET primary_key = primary_key WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_primary_key_to_another_row",
+            .sql = "UPDATE TableArrayKey SET primary_key = [10, 11, 12] WHERE primary_key[OFFSET(0)] = 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_primary_key_to_another_row_no_pk_update",
+            .sql = "UPDATE TableArrayKey SET primary_key = [10, 11, 12] WHERE primary_key[OFFSET(0)] = 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_array_keys_to_a_third_value",
+            .sql = "UPDATE TableArrayKey SET primary_key = [100, 101, 102] WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_array_keys_to_a_third_value_no_pk_update",
+            .sql = "UPDATE TableArrayKey SET primary_key = [100, 101, 102] WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_array_keys_to_null",
+            .sql = "UPDATE TableArrayKey SET primary_key = NULL WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_array_keys_to_null_no_pk_update",
+            .sql = "UPDATE TableArrayKey SET primary_key = NULL WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_array_keys_with_null_element",
+            .sql =
+            \\# TODO: The reference implementation does not correctly support
+            \\# DISALLOW_NULL_PRIMARY_KEYS yet, because it supposed to disallow arrays with a
+            \\# NULL element when that feature is enabled. It doesn't seem worth it to fix
+            \\# this until there is actually some engine that cares. In the meantime, we only
+            \\# run this compliance test with DISALLOW_NULL_PRIMARY_KEYS is disabled.
+            \\UPDATE TableArrayKey SET primary_key = [1, NULL, 2] WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_two_primary_array_keys_with_null_element_no_pk_update",
+            .sql =
+            \\# TODO: The reference implementation does not correctly support
+            \\# DISALLOW_NULL_PRIMARY_KEYS yet, because it supposed to disallow arrays with a
+            \\# NULL element when that feature is enabled. It doesn't seem worth it to fix
+            \\# this until there is actually some engine that cares. In the meantime, we only
+            \\# run this compliance test with DISALLOW_NULL_PRIMARY_KEYS is disabled.
+            \\UPDATE TableArrayKey SET primary_key = [1, NULL, 2] WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_with_join_where_true_returning_star",
+            .sql =
+            \\UPDATE TableInt64Values
+            \\SET value1 = TableInt64Values.value1 + TableInt64Values2.value1
+            \\FROM TableInt64Values2
+            \\WHERE true
+            \\THEN RETURN *
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_with_join_to_self",
+            .sql =
+            \\UPDATE TableNonTrivialInt64PrimaryKeys
+            \\SET value = Table2.max_value
+            \\FROM (SELECT 2 * CAST(primary_key / 2 AS INT64) AS truncated_key,
+            \\             MIN(value) AS max_value
+            \\      FROM TableNonTrivialInt64PrimaryKeys
+            \\      GROUP BY truncated_key) AS Table2
+            \\WHERE TableNonTrivialInt64PrimaryKeys.primary_key = Table2.truncated_key
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "update_with_join_too_many_rows",
+            .sql =
+            \\UPDATE TableInt64Values
+            \\SET value1 = 100000
+            \\FROM TableInt64Values2
+            \\WHERE TableInt64Values.value3 = TableInt64Values2.value3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_with_join_assert_rows_modified_failure",
+            .sql =
+            \\UPDATE TableInt64Values
+            \\SET value1 = TableInt64Values.value1 + TableInt64Values2.value1
+            \\FROM TableInt64Values2
+            \\WHERE TableInt64Values.primary_key = TableInt64Values2.primary_key
+            \\      AND TableInt64Values.primary_key = 1
+            \\ASSERT_ROWS_MODIFIED 0
+            ,
+            .expect_error_any = true,
+        },
+    },
+}

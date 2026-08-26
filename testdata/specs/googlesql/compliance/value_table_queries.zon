@@ -1,0 +1,223 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/value_table_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/value_table_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# See specification at (broken link)
+            \\CREATE TABLE TestTable AS
+            \\SELECT 1 foo, "abc" bar,
+            \\  cast("int64_key_1: 100, int64_key_2: 200" AS googlesql_test.KitchenSinkPB) pb
+            \\UNION ALL
+            \\SELECT 2 foo, "def" bar,
+            \\  cast("int64_key_1: 300, int64_key_2: 400 double_val: 3.14"
+            \\       AS googlesql_test.KitchenSinkPB) pb
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE StructValueTable AS
+            \\SELECT AS STRUCT 55 foo, "fifty five" bar
+            \\UNION ALL
+            \\SELECT AS STRUCT 77 foo, "seventy seven" bar
+            ,
+        },
+        .{
+            .desc = "value_table_struct_single_row",
+            .sql = "SELECT AS STRUCT 1 foo, \"hey\" bar",
+            .rows = .{
+                .{ 1, "hey" },
+            },
+        },
+        .{
+            .desc = "value_table_struct_single_row_column",
+            .sql = "SELECT AS STRUCT 1 foo",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "value_table_struct_union_all",
+            .sql =
+            \\SELECT AS STRUCT 1 foo, "hey" bar UNION ALL
+            \\SELECT AS STRUCT 2 foo, "there" bar UNION ALL
+            \\SELECT AS STRUCT 2 foo, "there" bar
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "hey" },
+                .{ 2, "there" },
+                .{ 2, "there" },
+            },
+        },
+        .{
+            .desc = "value_table_struct_union",
+            .sql =
+            \\SELECT AS STRUCT 1 foo, "hey" bar UNION DISTINCT
+            \\SELECT AS STRUCT 2 foo, "there" bar UNION DISTINCT
+            \\SELECT AS STRUCT 1 foo, "hey" bar
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "hey" },
+                .{ 2, "there" },
+            },
+        },
+        .{
+            .desc = "value_table_struct_from",
+            .sql =
+            \\SELECT AS STRUCT foo, bar
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "def" },
+                .{ 1, "abc" },
+            },
+        },
+        .{
+            .desc = "value_table_distinct_struct_from",
+            .sql =
+            \\SELECT DISTINCT AS STRUCT foo, bar
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "def" },
+                .{ 1, "abc" },
+            },
+        },
+        .{
+            .desc = "value_table_source_proto_star",
+            .sql = "SELECT * FROM TestExtraPBValueTable",
+            .unordered = true,
+            .rows = .{
+                .{ 77, 0, .{ "77one", "77two" } },
+                .{ 55, 0, .{} },
+            },
+        },
+        .{
+            .desc = "value_table_source_proto_self",
+            .sql = "SELECT p FROM TestExtraPBValueTable p",
+            .unordered = true,
+            .rows = .{
+                .{.{"int32_val1: 55"}},
+                .{.{"int32_val1: 77 str_value: \"77one\" str_value: \"77two\""}},
+            },
+        },
+        .{
+            .desc = "value_table_source_proto_filter",
+            .sql =
+            \\SELECT AS googlesql_test.TestExtraPB p.* FROM TestExtraPBValueTable p
+            \\WHERE p.int32_val1 = 77
+            ,
+            .rows = .{
+                .{"int32_val1: 77 int32_val2: 0 str_value: \"77one\" str_value: \"77two\""},
+            },
+        },
+        .{
+            .desc = "value_table_source_struct_star",
+            .sql = "SELECT * FROM StructValueTable",
+            .unordered = true,
+            .rows = .{
+                .{ 77, "seventy seven" },
+                .{ 55, "fifty five" },
+            },
+        },
+        .{
+            .desc = "value_table_source_struct_self",
+            .sql = "SELECT s FROM StructValueTable s",
+            .unordered = true,
+            .rows = .{
+                .{.{ 55, "fifty five" }},
+                .{.{ 77, "seventy seven" }},
+            },
+        },
+        .{
+            .desc = "value_table_source_struct_filter",
+            .sql =
+            \\SELECT AS STRUCT s.* FROM StructValueTable s
+            \\WHERE s.foo = 77
+            ,
+            .rows = .{
+                .{ 77, "seventy seven" },
+            },
+        },
+        .{
+            .desc = "value_table_with_struct_star",
+            .sql =
+            \\WITH
+            \\  WithStructValueTable AS
+            \\    (SELECT AS STRUCT 55 foo, "fifty five" bar
+            \\     UNION ALL
+            \\     SELECT AS STRUCT 77 foo, "seventy seven" bar)
+            \\SELECT * FROM WithStructValueTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 55, "fifty five" },
+                .{ 77, "seventy seven" },
+            },
+        },
+        .{
+            .desc = "value_table_with_struct_star_filter",
+            .sql =
+            \\WITH
+            \\  WithStructValueTable AS
+            \\    (SELECT AS STRUCT 55 foo, "fifty five" bar
+            \\     UNION ALL
+            \\     SELECT AS STRUCT 77 foo, "seventy seven" bar)
+            \\SELECT AS STRUCT * FROM WithStructValueTable
+            \\WHERE foo = 77
+            ,
+            .rows = .{
+                .{ 77, "seventy seven" },
+            },
+        },
+        .{
+            .desc = "output_scalar_value_table_1",
+            .sql = "select as value 5",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "output_scalar_value_table_2",
+            .sql =
+            \\select as value t.str
+            \\from (
+            \\  select 'abc' str
+            \\  union all
+            \\  select 'def' str
+            \\) t
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"abc"},
+                .{"def"},
+            },
+        },
+        .{
+            .desc = "value_table_scalar_distinct",
+            .sql =
+            \\# TODO Remove exclude_in_sql_builder_pipe_sql_equivalence_tests once the bug is fixed.
+            \\select distinct as value x
+            \\from (select as value 1
+            \\      union all
+            \\      select as value 2
+            \\      union all
+            \\      select as value 1) x
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+    },
+}

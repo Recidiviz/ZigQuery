@@ -1,0 +1,957 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_avg",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_avg.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestTable AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as bool) as bool_val,
+            \\       cast(null as int64) as int64_val,
+            \\       cast(null as uint64) as uint64_val,
+            \\       cast(null as double) as double_val UNION ALL
+            \\  SELECT 2,  true,  2,    3,    1.5  UNION ALL
+            \\  SELECT 3,  false, 1,    6,    1.5  UNION ALL
+            \\  SELECT 4,  true,  null, 2,    2.5  UNION ALL
+            \\  SELECT 5,  false, 1,    null, 3.5  UNION ALL
+            \\  SELECT 6,  true,  2,    2,    null UNION ALL
+            \\  SELECT 7,  false, 1,    5,    -0.5 UNION ALL
+            \\  SELECT 8,  true,  4,    2,    -1.5 UNION ALL
+            \\  SELECT 9,  false, 2,    3,    1.5  UNION ALL
+            \\  SELECT 10, true,  3,    1,    2.5
+            ,
+        },
+        .{
+            .desc = "analytic_avg",
+            .sql =
+            \\SELECT bool_val, row_id, int64_val,
+            \\       AVG(int64_val) OVER (PARTITION BY bool_val),
+            \\       AVG(int64_val) OVER (ORDER BY row_id
+            \\                            ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING),
+            \\       AVG(int64_val) OVER (PARTITION BY bool_val ORDER BY row_id),
+            \\       AVG(uint64_val) OVER (ORDER BY row_id
+            \\                             ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),
+            \\       AVG(double_val) OVER (PARTITION BY bool_val
+            \\                             ORDER BY row_id
+            \\                             RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null, null, null, null, 3, null },
+                .{ false, 3, 1, 1.25, null, 1, 3.6666666666666665, 2.5 },
+                .{ false, 5, 1, 1.25, 1.5, 1, 3.3333333333333335, 1.5 },
+                .{ false, 7, 1, 1.25, 1.3333333333333333, 1, 3, 0.5 },
+                .{ false, 9, 2, 1.25, 1.4, 1.25, 2.75, 1.5 },
+                .{ true, 2, 2, 2.75, null, 2, 4.5, 2 },
+                .{ true, 4, null, 2.75, 2, 2, 3.6666666666666665, 2.5 },
+                .{ true, 6, 2, 2.75, 1.5, 2, 3, -1.5 },
+                .{ true, 8, 4, 2.75, 1.5, 2.6666666666666665, 3, 0.5 },
+                .{ true, 10, 3, 2.75, 1.8333333333333333, 2.75, 2, 2.5 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_numeric",
+            .sql =
+            \\# The same as above but with all columns converted to NUMERIC.
+            \\SELECT bool_val, row_id, numeric_val1,
+            \\       AVG(numeric_val1) OVER (PARTITION BY bool_val),
+            \\       AVG(numeric_val1) OVER (ORDER BY row_id
+            \\                               ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING),
+            \\       AVG(numeric_val1) OVER (PARTITION BY bool_val ORDER BY row_id),
+            \\       AVG(numeric_val2) OVER (ORDER BY row_id
+            \\                               ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),
+            \\       AVG(numeric_val3) OVER (PARTITION BY bool_val
+            \\                               ORDER BY row_id
+            \\                               RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING)
+            \\FROM (SELECT row_id,
+            \\             bool_val,
+            \\             cast(int64_val as NUMERIC) as numeric_val1,
+            \\             cast(uint64_val as NUMERIC) as numeric_val2,
+            \\             cast(double_val as NUMERIC) as numeric_val3
+            \\      FROM TestTable)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "analytic_avg_with_unbounded_window_1",
+            .sql =
+            \\SELECT bool_val, row_id, int64_val, uint64_val, double_val,
+            \\       AVG(int64_val) OVER (PARTITION BY bool_val),
+            \\       AVG(uint64_val) OVER (PARTITION BY bool_val),
+            \\       AVG(uint64_val) OVER (),
+            \\       AVG(double_val) OVER ()
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null, null, null, null, null, 3, 1.375 },
+                .{ false, 5, 1, null, 3.5, 1.25, 4.666666666666667, 3, 1.375 },
+                .{ false, 3, 1, 6, 1.5, 1.25, 4.666666666666667, 3, 1.375 },
+                .{ false, 9, 2, 3, 1.5, 1.25, 4.666666666666667, 3, 1.375 },
+                .{ false, 7, 1, 5, -0.5, 1.25, 4.666666666666667, 3, 1.375 },
+                .{ true, 4, null, 2, 2.5, 2.75, 2, 3, 1.375 },
+                .{ true, 2, 2, 3, 1.5, 2.75, 2, 3, 1.375 },
+                .{ true, 10, 3, 1, 2.5, 2.75, 2, 3, 1.375 },
+                .{ true, 8, 4, 2, -1.5, 2.75, 2, 3, 1.375 },
+                .{ true, 6, 2, 2, null, 2.75, 2, 3, 1.375 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_numeric_with_unbounded_window_1",
+            .sql =
+            \\# The same as above but with all columns converted to NUMERIC.
+            \\SELECT bool_val, row_id, numeric_val1, numeric_val2, numeric_val3,
+            \\       AVG(numeric_val1) OVER (PARTITION BY bool_val),
+            \\       AVG(numeric_val2) OVER (PARTITION BY bool_val),
+            \\       AVG(numeric_val2) OVER (),
+            \\       AVG(numeric_val3) OVER ()
+            \\FROM (SELECT row_id,
+            \\             bool_val,
+            \\             cast(int64_val as NUMERIC) as numeric_val1,
+            \\             cast(uint64_val as NUMERIC) as numeric_val2,
+            \\             cast(double_val as NUMERIC) as numeric_val3
+            \\      FROM TestTable)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "analytic_avg_with_unbounded_window_2",
+            .sql =
+            \\# When partitioning by int64_val, some of the partitions now take the AVG
+            \\# over all NULL values.
+            \\SELECT bool_val, row_id, int64_val, uint64_val, double_val,
+            \\       AVG(int64_val) OVER (PARTITION BY int64_val),
+            \\       AVG(uint64_val) OVER (PARTITION BY int64_val),
+            \\       AVG(double_val) OVER (PARTITION BY int64_val)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, 4, null, 2, 2.5, null, 2, 2.5 },
+                .{ null, 1, null, null, null, null, 2, 2.5 },
+                .{ false, 3, 1, 6, 1.5, 1, 5.5, 1.5 },
+                .{ false, 5, 1, null, 3.5, 1, 5.5, 1.5 },
+                .{ false, 7, 1, 5, -0.5, 1, 5.5, 1.5 },
+                .{ true, 6, 2, 2, null, 2, 2.6666666666666665, 1.5 },
+                .{ false, 9, 2, 3, 1.5, 2, 2.6666666666666665, 1.5 },
+                .{ true, 2, 2, 3, 1.5, 2, 2.6666666666666665, 1.5 },
+                .{ true, 10, 3, 1, 2.5, 3, 1, 2.5 },
+                .{ true, 8, 4, 2, -1.5, 4, 2, -1.5 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_with_cumulative_window_1",
+            .sql =
+            \\# The ORDER BY row_id is unique, so RANGE and ROWS behave the same.
+            \\SELECT bool_val, row_id, int64_val, uint64_val, double_val,
+            \\       AVG(int64_val) OVER (PARTITION BY bool_val ORDER BY row_id
+            \\                            RANGE BETWEEN UNBOUNDED PRECEDING
+            \\                                      AND CURRENT ROW),
+            \\       AVG(int64_val) OVER (PARTITION BY bool_val ORDER BY row_id
+            \\                            ROWS BETWEEN UNBOUNDED PRECEDING
+            \\                                     AND CURRENT ROW),
+            \\       AVG(uint64_val) OVER (PARTITION BY bool_val ORDER BY row_id),
+            \\       AVG(double_val) OVER (ORDER BY row_id
+            \\                             RANGE BETWEEN UNBOUNDED PRECEDING
+            \\                                       AND CURRENT ROW),
+            \\       AVG(double_val) OVER (ORDER BY row_id
+            \\                             ROWS BETWEEN UNBOUNDED PRECEDING
+            \\                                      AND CURRENT ROW)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null, null, null, null, null, null, null, null },
+                .{ true, 2, 2, 3, 1.5, 2, 2, 3, 1.5, 1.5 },
+                .{ false, 3, 1, 6, 1.5, 1, 1, 6, 1.5, 1.5 },
+                .{ true, 4, null, 2, 2.5, 2, 2, 2.5, 1.8333333333333333, 1.8333333333333333 },
+                .{ false, 5, 1, null, 3.5, 1, 1, 6, 2.25, 2.25 },
+                .{ true, 6, 2, 2, null, 2, 2, 2.3333333333333335, 2.25, 2.25 },
+                .{ false, 7, 1, 5, -0.5, 1, 1, 5.5, 1.7, 1.7 },
+                .{ true, 8, 4, 2, -1.5, 2.6666666666666665, 2.6666666666666665, 2.25, 1.1666666666666667, 1.1666666666666667 },
+                .{ false, 9, 2, 3, 1.5, 1.25, 1.25, 4.666666666666667, 1.2142857142857142, 1.2142857142857142 },
+                .{ true, 10, 3, 1, 2.5, 2.75, 2.75, 2, 1.375, 1.375 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_with_cumulative_window_range_2",
+            .sql =
+            \\# This test does ORDER BY with 'row_id / 2', so the ORDER BY values are no
+            \\# longer unique and therefore ROWS and RANGE behave differently.
+            \\SELECT bool_val, row_id, int64_val, uint64_val, double_val,
+            \\       AVG(int64_val) OVER (PARTITION BY bool_val ORDER BY row_id / 2
+            \\                            RANGE BETWEEN UNBOUNDED PRECEDING
+            \\                                      AND CURRENT ROW),
+            \\       AVG(uint64_val) OVER (PARTITION BY bool_val ORDER BY row_id / 2
+            \\                             RANGE BETWEEN UNBOUNDED PRECEDING
+            \\                                       AND CURRENT ROW),
+            \\       AVG(double_val) OVER (ORDER BY row_id / 2
+            \\                             RANGE BETWEEN UNBOUNDED PRECEDING
+            \\                                       AND CURRENT ROW)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null, null, null, null, null, null },
+                .{ true, 2, 2, 3, 1.5, 2, 3, 1.5 },
+                .{ false, 3, 1, 6, 1.5, 1, 6, 1.5 },
+                .{ true, 4, null, 2, 2.5, 2, 2.5, 1.8333333333333333 },
+                .{ false, 5, 1, null, 3.5, 1, 6, 2.25 },
+                .{ true, 6, 2, 2, null, 2, 2.3333333333333335, 2.25 },
+                .{ false, 7, 1, 5, -0.5, 1, 5.5, 1.7 },
+                .{ true, 8, 4, 2, -1.5, 2.6666666666666665, 2.25, 1.1666666666666667 },
+                .{ false, 9, 2, 3, 1.5, 1.25, 4.666666666666667, 1.2142857142857142 },
+                .{ true, 10, 3, 1, 2.5, 2.75, 2, 1.375 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_with_cumulative_window_rows_2",
+            .sql =
+            \\# Same test as previous, but with ROWS instead of RANGE.
+            \\SELECT bool_val, row_id, int64_val, uint64_val, double_val,
+            \\       AVG(int64_val) OVER (PARTITION BY bool_val ORDER BY row_id / 2
+            \\                            ROWS BETWEEN UNBOUNDED PRECEDING
+            \\                                     AND CURRENT ROW),
+            \\       AVG(uint64_val) OVER (PARTITION BY bool_val ORDER BY row_id / 2
+            \\                             ROWS BETWEEN UNBOUNDED PRECEDING
+            \\                                      AND CURRENT ROW),
+            \\       AVG(double_val) OVER (ORDER BY row_id / 2
+            \\                             ROWS BETWEEN UNBOUNDED PRECEDING
+            \\                                      AND CURRENT ROW)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null, null, null, null, null, null },
+                .{ true, 2, 2, 3, 1.5, 2, 3, 1.5 },
+                .{ false, 3, 1, 6, 1.5, 1, 6, 1.5 },
+                .{ true, 4, null, 2, 2.5, 2, 2.5, 1.8333333333333333 },
+                .{ false, 5, 1, null, 3.5, 1, 6, 2.25 },
+                .{ true, 6, 2, 2, null, 2, 2.3333333333333335, 2.25 },
+                .{ false, 7, 1, 5, -0.5, 1, 5.5, 1.7 },
+                .{ true, 8, 4, 2, -1.5, 2.6666666666666665, 2.25, 1.1666666666666667 },
+                .{ false, 9, 2, 3, 1.5, 1.25, 4.666666666666667, 1.2142857142857142 },
+                .{ true, 10, 3, 1, 2.5, 2.75, 2, 1.375 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_distinct_1",
+            .sql =
+            \\SELECT bool_val, row_id, int64_val, uint64_val, double_val,
+            \\       AVG(DISTINCT int64_val) OVER (PARTITION BY bool_val),
+            \\       AVG(DISTINCT uint64_val) OVER (PARTITION BY bool_val),
+            \\       AVG(DISTINCT double_val) OVER ()
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null, null, null, null, null, 1.1 },
+                .{ false, 5, 1, null, 3.5, 1.5, 4.666666666666667, 1.1 },
+                .{ false, 3, 1, 6, 1.5, 1.5, 4.666666666666667, 1.1 },
+                .{ false, 9, 2, 3, 1.5, 1.5, 4.666666666666667, 1.1 },
+                .{ false, 7, 1, 5, -0.5, 1.5, 4.666666666666667, 1.1 },
+                .{ true, 4, null, 2, 2.5, 3, 2, 1.1 },
+                .{ true, 2, 2, 3, 1.5, 3, 2, 1.1 },
+                .{ true, 10, 3, 1, 2.5, 3, 2, 1.1 },
+                .{ true, 8, 4, 2, -1.5, 3, 2, 1.1 },
+                .{ true, 6, 2, 2, null, 3, 2, 1.1 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_1",
+            .sql =
+            \\# Tests for RANGE-based trailing moving AVG.
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id
+            \\                      RANGE BETWEEN 1 PRECEDING
+            \\                                AND CURRENT ROW)
+            \\FROM (SELECT 3 row_id, 3 val UNION ALL
+            \\      SELECT 1, NULL         UNION ALL
+            \\      SELECT 2, 2            UNION ALL
+            \\      SELECT 4, 4)
+            \\order by row_id
+            ,
+            .rows = .{
+                .{ 1, null, null },
+                .{ 2, 2, 2 },
+                .{ 3, 3, 2.5 },
+                .{ 4, 4, 3.5 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_2",
+            .sql =
+            \\# With a single ordering group.
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id RANGE 1 PRECEDING)
+            \\FROM (SELECT 1 row_id, 1 val UNION ALL
+            \\      SELECT 1, 3            UNION ALL
+            \\      SELECT 1, NULL         UNION ALL
+            \\      SELECT 1, 4            UNION ALL
+            \\      SELECT 1, 2            UNION ALL
+            \\      SELECT 1, 5)
+            \\order by row_id, val
+            ,
+            .rows = .{
+                .{ 1, null, 3 },
+                .{ 1, 1, 3 },
+                .{ 1, 2, 3 },
+                .{ 1, 3, 3 },
+                .{ 1, 4, 3 },
+                .{ 1, 5, 3 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_3a",
+            .sql =
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id DESC RANGE 1 PRECEDING)
+            \\FROM (SELECT 1 row_id, NULL val UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 2, NULL            UNION ALL
+            \\      SELECT 2, 10              UNION ALL
+            \\      SELECT 2, 20              UNION ALL
+            \\      SELECT 3, NULL            UNION ALL
+            \\      SELECT 4, NULL            UNION ALL
+            \\      SELECT 4, 40              UNION ALL
+            \\      SELECT 5, -40             UNION ALL
+            \\      SELECT 6, 100)
+            \\order by row_id, val
+            ,
+            .rows = .{
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 2, null, 15 },
+                .{ 2, 10, 15 },
+                .{ 2, 20, 15 },
+                .{ 3, null, 40 },
+                .{ 4, null, 0 },
+                .{ 4, 40, 0 },
+                .{ 5, -40, 30 },
+                .{ 6, 100, 100 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_3b",
+            .sql =
+            \\# Same as previous, but aggregating INT32 values.
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id DESC RANGE 1 PRECEDING)
+            \\FROM (SELECT 1 row_id, NULL val UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 2, NULL            UNION ALL
+            \\      SELECT 2, 10              UNION ALL
+            \\      SELECT 2, 20              UNION ALL
+            \\      SELECT 3, NULL            UNION ALL
+            \\      SELECT 4, NULL            UNION ALL
+            \\      SELECT 4, 40              UNION ALL
+            \\      SELECT 5, -40             UNION ALL
+            \\      SELECT 6, cast(100 as INT32))
+            \\order by row_id, val
+            ,
+            .rows = .{
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 2, null, 15 },
+                .{ 2, 10, 15 },
+                .{ 2, 20, 15 },
+                .{ 3, null, 40 },
+                .{ 4, null, 0 },
+                .{ 4, 40, 0 },
+                .{ 5, -40, 30 },
+                .{ 6, 100, 100 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_3c",
+            .sql =
+            \\# Mostly the same as previous (without the negative 'val'),
+            \\# but aggregating UINT64 values.
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id DESC RANGE 1 PRECEDING)
+            \\FROM (SELECT 1 row_id, NULL val UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 2, NULL            UNION ALL
+            \\      SELECT 2, 10              UNION ALL
+            \\      SELECT 2, 20              UNION ALL
+            \\      SELECT 3, NULL            UNION ALL
+            \\      SELECT 4, NULL            UNION ALL
+            \\      SELECT 4, 40              UNION ALL
+            \\      SELECT 5, 40              UNION ALL
+            \\      SELECT 6, cast(100 as UINT64))
+            \\order by row_id, val
+            ,
+            .rows = .{
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 2, null, 15 },
+                .{ 2, 10, 15 },
+                .{ 2, 20, 15 },
+                .{ 3, null, 40 },
+                .{ 4, null, 40 },
+                .{ 4, 40, 40 },
+                .{ 5, 40, 70 },
+                .{ 6, 100, 100 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_3d",
+            .sql =
+            \\# Mostly the same as previous (without the negative 'val'),
+            \\# but aggregating UINT32 values.
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id DESC RANGE 1 PRECEDING)
+            \\FROM (SELECT 1 row_id, NULL val UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 2, NULL            UNION ALL
+            \\      SELECT 2, 10              UNION ALL
+            \\      SELECT 2, 20              UNION ALL
+            \\      SELECT 3, NULL            UNION ALL
+            \\      SELECT 4, NULL            UNION ALL
+            \\      SELECT 4, 40              UNION ALL
+            \\      SELECT 5, 40              UNION ALL
+            \\      SELECT 6, cast(100 as UINT32))
+            \\order by row_id, val
+            ,
+            .rows = .{
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 2, null, 15 },
+                .{ 2, 10, 15 },
+                .{ 2, 20, 15 },
+                .{ 3, null, 40 },
+                .{ 4, null, 40 },
+                .{ 4, 40, 40 },
+                .{ 5, 40, 70 },
+                .{ 6, 100, 100 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_3e",
+            .sql =
+            \\# Same as previous, but aggregating FLOAT values.
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id DESC RANGE 1 PRECEDING)
+            \\FROM (SELECT 1 row_id, NULL val UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 2, NULL            UNION ALL
+            \\      SELECT 2, 10              UNION ALL
+            \\      SELECT 2, 20              UNION ALL
+            \\      SELECT 3, NULL            UNION ALL
+            \\      SELECT 4, NULL            UNION ALL
+            \\      SELECT 4, 40              UNION ALL
+            \\      SELECT 5, -40             UNION ALL
+            \\      SELECT 6, cast(100.0 as FLOAT))
+            \\order by row_id, val
+            ,
+            .rows = .{
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 2, null, 15 },
+                .{ 2, 10, 15 },
+                .{ 2, 20, 15 },
+                .{ 3, null, 40 },
+                .{ 4, null, 0 },
+                .{ 4, 40, 0 },
+                .{ 5, -40, 30 },
+                .{ 6, 100, 100 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_3f",
+            .sql =
+            \\# Same as previous, but aggregating DOUBLE values.
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id DESC RANGE 1 PRECEDING)
+            \\FROM (SELECT 1 row_id, NULL val UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 1, NULL            UNION ALL
+            \\      SELECT 2, NULL            UNION ALL
+            \\      SELECT 2, 10              UNION ALL
+            \\      SELECT 2, 20              UNION ALL
+            \\      SELECT 3, NULL            UNION ALL
+            \\      SELECT 4, NULL            UNION ALL
+            \\      SELECT 4, 40              UNION ALL
+            \\      SELECT 5, -40             UNION ALL
+            \\      SELECT 6, 100.0)
+            \\order by row_id, val
+            ,
+            .rows = .{
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 1, null, 15 },
+                .{ 2, null, 15 },
+                .{ 2, 10, 15 },
+                .{ 2, 20, 15 },
+                .{ 3, null, 40 },
+                .{ 4, null, 0 },
+                .{ 4, 40, 0 },
+                .{ 5, -40, 30 },
+                .{ 6, 100, 100 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_trailing_range_moving_avg_4",
+            .sql =
+            \\select row_id, val,
+            \\       avg(val) over (order by row_id DESC RANGE 1000 PRECEDING)
+            \\FROM (SELECT NULL row_id, 10 val UNION ALL
+            \\      SELECT 1, 10               UNION ALL
+            \\      SELECT 1, 10               UNION ALL
+            \\      SELECT 2, 10               UNION ALL
+            \\      SELECT 2, 10               UNION ALL
+            \\      SELECT 2, 10               UNION ALL
+            \\      SELECT 3, 10               UNION ALL
+            \\      SELECT 4, 20               UNION ALL
+            \\      SELECT 4, 40               UNION ALL
+            \\      SELECT 5, -40              UNION ALL
+            \\      SELECT 6, 100)
+            \\ORDER BY row_id DESC, val DESC
+            ,
+            .rows = .{
+                .{ 6, 100, 100 },
+                .{ 5, -40, 30 },
+                .{ 4, 40, 30 },
+                .{ 4, 20, 30 },
+                .{ 3, 10, 26 },
+                .{ 2, 10, 20 },
+                .{ 2, 10, 20 },
+                .{ 2, 10, 20 },
+                .{ 1, 10, 18 },
+                .{ 1, 10, 18 },
+                .{ null, 10, 10 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_preceding_1",
+            .sql =
+            \\# AVG OVER RANGE BETWEEN <m> PRECEDING AND <n> PRECEDING
+            \\# Note that these tests don't exhaustively cover every variation
+            \\# of ordering key types and values, and special values being
+            \\# averaged - those are tested extensively elsewhere, largely
+            \\# in the trailing moving window (RANGE BETWEEN <n> PRECEDING
+            \\# AND CURRENT ROW) tests above.
+            \\#
+            \\# So these tests primarily focus on ensuring that this frame
+            \\# works in basic cases, and handles corner cases with empty
+            \\# window frames appropriately (for both statically empty frames,
+            \\# and frames that are outside the partition).
+            \\# Since all the row_ids are the same, all rows are peers and all
+            \\# window frames include all rows.
+            \\SELECT row_id, val,
+            \\       avg(val) over (order_by RANGE BETWEEN 0 PRECEDING AND 0 PRECEDING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 1 PRECEDING AND 0 PRECEDING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 1 PRECEDING AND 1 PRECEDING)
+            \\FROM (SELECT 1 row_id, 1 val UNION ALL
+            \\      SELECT 1, 3            UNION ALL
+            \\      SELECT 1, NULL         UNION ALL
+            \\      SELECT 1, 4            UNION ALL
+            \\      SELECT 1, 2            UNION ALL
+            \\      SELECT 1, 5)
+            \\WINDOW order_by as (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 4, 3, 3, null },
+                .{ 1, 1, 3, 3, null },
+                .{ 1, 2, 3, 3, null },
+                .{ 1, 3, 3, 3, null },
+                .{ 1, 5, 3, 3, null },
+                .{ 1, null, 3, 3, null },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_preceding_2",
+            .sql =
+            \\# RANGE BETWEEN <n> PRECEDING and <m> PRECEDING with <n> less than <m> is
+            \\# always empty for a tuple with a finite key.
+            \\SELECT row_id, val,
+            \\       avg(val) over (order_by RANGE BETWEEN 0 PRECEDING AND 1 PRECEDING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 1 PRECEDING AND 3 PRECEDING),
+            \\       avg(val) over (order_by RANGE BETWEEN 2 PRECEDING AND 3 PRECEDING)
+            \\FROM (SELECT 1 row_id, 1 val UNION ALL
+            \\      SELECT 1, 2            UNION ALL
+            \\      SELECT 1, 3            UNION ALL
+            \\      SELECT 2, 4            UNION ALL
+            \\      SELECT 2, 5            UNION ALL
+            \\      SELECT 2, 6            UNION ALL
+            \\      SELECT 3, 7            UNION ALL
+            \\      SELECT 4, 8            UNION ALL
+            \\      SELECT 4, 9            UNION ALL
+            \\      SELECT 5, 10           UNION ALL
+            \\      SELECT 6, 11           UNION ALL
+            \\      SELECT 8, 12           UNION ALL
+            \\      SELECT 11, 13          UNION ALL
+            \\      SELECT 18, 14)
+            \\WINDOW order_by as (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1, null, null, null },
+                .{ 1, 2, null, null, null },
+                .{ 1, 3, null, null, null },
+                .{ 2, 6, null, null, null },
+                .{ 2, 4, null, null, null },
+                .{ 2, 5, null, null, null },
+                .{ 3, 7, null, null, null },
+                .{ 4, 9, null, null, null },
+                .{ 4, 8, null, null, null },
+                .{ 5, 10, null, null, null },
+                .{ 6, 11, null, null, null },
+                .{ 8, 12, null, null, null },
+                .{ 11, 13, null, null, null },
+                .{ 18, 14, null, null, null },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_preceding_3",
+            .sql =
+            \\# The basic cases
+            \\SELECT row_id, val,
+            \\       avg(val) over (order_by
+            \\                      RANGE BETWEEN 0 PRECEDING AND 0 PRECEDING),
+            \\       avg(val) over (order_by
+            \\                      RANGE BETWEEN 2 PRECEDING AND 0 PRECEDING),
+            \\       avg(val) over (order_by
+            \\                      RANGE BETWEEN 2 PRECEDING AND 1 PRECEDING),
+            \\       avg(val) over (order_by
+            \\                      RANGE BETWEEN 2 PRECEDING AND 2 PRECEDING),
+            \\       avg(val) over (order_by
+            \\                      RANGE BETWEEN 3 PRECEDING AND 1 PRECEDING),
+            \\       avg(val) over (order_by
+            \\                      RANGE BETWEEN 200 PRECEDING AND 100 PRECEDING)
+            \\FROM (SELECT 1 row_id, 1 val UNION ALL
+            \\      SELECT 1, 2            UNION ALL
+            \\      SELECT 1, 3            UNION ALL
+            \\      SELECT 2, 4            UNION ALL
+            \\      SELECT 2, 5            UNION ALL
+            \\      SELECT 2, 6            UNION ALL
+            \\      SELECT 3, 7            UNION ALL
+            \\      SELECT 4, 8            UNION ALL
+            \\      SELECT 4, 9            UNION ALL
+            \\      SELECT 5, 10           UNION ALL
+            \\      SELECT 6, 11           UNION ALL
+            \\      SELECT 8, 12           UNION ALL
+            \\      SELECT 11, 13          UNION ALL
+            \\      SELECT 18, 14)
+            \\WINDOW order_by as (ORDER BY row_id DESC)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 18, 14, 14, 14, null, null, null, null },
+                .{ 11, 13, 13, 13, null, null, null, null },
+                .{ 8, 12, 12, 12, null, null, 13, null },
+                .{ 6, 11, 11, 11.5, 12, 12, 12, null },
+                .{ 5, 10, 10, 10.5, 11, null, 11.5, null },
+                .{ 4, 9, 8.5, 9.5, 10.5, 11, 10.5, null },
+                .{ 4, 8, 8.5, 9.5, 10.5, 11, 10.5, null },
+                .{ 3, 7, 7, 8.5, 9, 10, 9.5, null },
+                .{ 2, 6, 5, 6.5, 8, 8.5, 8.5, null },
+                .{ 2, 4, 5, 6.5, 8, 8.5, 8.5, null },
+                .{ 2, 5, 5, 6.5, 8, 8.5, 8.5, null },
+                .{ 1, 1, 2, 4, 5.5, 7, 6.5, null },
+                .{ 1, 2, 2, 4, 5.5, 7, 6.5, null },
+                .{ 1, 3, 2, 4, 5.5, 7, 6.5, null },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_following_one_ordering_group_asc",
+            .sql =
+            \\SELECT row_id, val,
+            \\       avg(val) over (order_by RANGE BETWEEN 0 PRECEDING AND 0 FOLLOWING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 1 PRECEDING AND 0 FOLLOWING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 2 PRECEDING AND 1 FOLLOWING)
+            \\FROM (SELECT 1 row_id, 1 val UNION ALL
+            \\      SELECT 1, 3            UNION ALL
+            \\      SELECT 1, NULL         UNION ALL
+            \\      SELECT 1, 4            UNION ALL
+            \\      SELECT 1, 2            UNION ALL
+            \\      SELECT 1, 5)
+            \\WINDOW order_by as (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 4, 3, 3, 3, 3 },
+                .{ 1, 1, 3, 3, 3, 3 },
+                .{ 1, 2, 3, 3, 3, 3 },
+                .{ 1, 3, 3, 3, 3, 3 },
+                .{ 1, 5, 3, 3, 3, 3 },
+                .{ 1, null, 3, 3, 3, 3 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_following_one_ordering_group_desc",
+            .sql =
+            \\SELECT row_id, val,
+            \\       avg(val) over (order_by RANGE BETWEEN 0 PRECEDING AND 0 FOLLOWING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 1 PRECEDING AND 0 FOLLOWING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING),
+            \\       avg(val) OVER (order_by RANGE BETWEEN 2 PRECEDING AND 1 FOLLOWING)
+            \\FROM (SELECT 1 row_id, 1 val UNION ALL
+            \\      SELECT 1, 3            UNION ALL
+            \\      SELECT 1, NULL         UNION ALL
+            \\      SELECT 1, 4            UNION ALL
+            \\      SELECT 1, 2            UNION ALL
+            \\      SELECT 1, 5)
+            \\WINDOW order_by as (ORDER BY row_id DESC)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 4, 3, 3, 3, 3 },
+                .{ 1, 1, 3, 3, 3, 3 },
+                .{ 1, 2, 3, 3, 3, 3 },
+                .{ 1, 3, 3, 3, 3, 3 },
+                .{ 1, 5, 3, 3, 3, 3 },
+                .{ 1, null, 3, 3, 3, 3 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_following_with_partitionby_asc",
+            .sql =
+            \\SELECT bool_val, int64_val, double_val,
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val
+            \\                             RANGE BETWEEN 1 PRECEDING AND 2 FOLLOWING),
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val
+            \\                             RANGE BETWEEN 2 PRECEDING AND 1 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, null, null, null },
+                .{ false, 1, 3.5, 1.5, 1.5 },
+                .{ false, 1, -0.5, 1.5, 1.5 },
+                .{ false, 1, 1.5, 1.5, 1.5 },
+                .{ false, 2, 1.5, 1.5, 1.5 },
+                .{ true, null, 2.5, 2.5, 2.5 },
+                .{ true, 2, 1.5, 0.83333333333333337, 2 },
+                .{ true, 2, null, 0.83333333333333337, 2 },
+                .{ true, 3, 2.5, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, 4, -1.5, 0.5, 0.83333333333333337 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_following_with_partitionby_desc",
+            .sql =
+            \\SELECT bool_val, int64_val, double_val,
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val DESC
+            \\                             RANGE BETWEEN 1 PRECEDING AND 2 FOLLOWING),
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val DESC
+            \\                             RANGE BETWEEN 2 PRECEDING AND 1 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, null, null, null },
+                .{ false, 2, 1.5, 1.5, 1.5 },
+                .{ false, 1, 1.5, 1.5, 1.5 },
+                .{ false, 1, 3.5, 1.5, 1.5 },
+                .{ false, 1, -0.5, 1.5, 1.5 },
+                .{ true, 4, -1.5, 0.83333333333333337, 0.5 },
+                .{ true, 3, 2.5, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, 2, null, 2, 0.83333333333333337 },
+                .{ true, 2, 1.5, 2, 0.83333333333333337 },
+                .{ true, null, 2.5, 2.5, 2.5 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_following_large_offset_asc",
+            .sql =
+            \\SELECT bool_val, int64_val, double_val,
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val
+            \\                             RANGE BETWEEN 100 PRECEDING AND 2 FOLLOWING),
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val
+            \\                             RANGE BETWEEN 2 PRECEDING AND 100 FOLLOWING),
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val
+            \\                             RANGE BETWEEN 200 PRECEDING AND 100 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, null, null, null, null },
+                .{ false, 1, 3.5, 1.5, 1.5, 1.5 },
+                .{ false, 1, -0.5, 1.5, 1.5, 1.5 },
+                .{ false, 1, 1.5, 1.5, 1.5, 1.5 },
+                .{ false, 2, 1.5, 1.5, 1.5, 1.5 },
+                .{ true, null, 2.5, 2.5, 2.5, 2.5 },
+                .{ true, 2, 1.5, 0.83333333333333337, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, 2, null, 0.83333333333333337, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, 3, 2.5, 0.83333333333333337, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, 4, -1.5, 0.83333333333333337, 0.83333333333333337, 0.83333333333333337 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_following_large_offset_desc",
+            .sql =
+            \\SELECT bool_val, int64_val, double_val,
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val DESC
+            \\                             RANGE BETWEEN 100 PRECEDING AND 2 FOLLOWING),
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val DESC
+            \\                             RANGE BETWEEN 2 PRECEDING AND 100 FOLLOWING),
+            \\       avg(double_val) OVER (PARTITION BY bool_val ORDER BY int64_val DESC
+            \\                             RANGE BETWEEN 200 PRECEDING AND 100 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, null, null, null, null },
+                .{ false, 2, 1.5, 1.5, 1.5, 1.5 },
+                .{ false, 1, 1.5, 1.5, 1.5, 1.5 },
+                .{ false, 1, 3.5, 1.5, 1.5, 1.5 },
+                .{ false, 1, -0.5, 1.5, 1.5, 1.5 },
+                .{ true, 4, -1.5, 0.83333333333333337, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, 3, 2.5, 0.83333333333333337, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, 2, null, 0.83333333333333337, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, 2, 1.5, 0.83333333333333337, 0.83333333333333337, 0.83333333333333337 },
+                .{ true, null, 2.5, 2.5, 2.5, 2.5 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_following_small_order_keys_and_null_asc",
+            .sql =
+            \\SELECT uint32_val, double_val,
+            \\       avg(double_val) OVER (
+            \\         ORDER BY uint32_val
+            \\         RANGE BETWEEN 1 PRECEDING AND 2 FOLLOWING
+            \\       )
+            \\FROM (SELECT CAST(0 AS uint32) uint32_val, NULL double_val UNION ALL
+            \\      SELECT CAST(1 AS uint32),            1.0 UNION ALL
+            \\      SELECT CAST(2 AS uint32),            2.0 UNION ALL
+            \\      SELECT CAST(3 AS uint32),            3.0 UNION ALL
+            \\      SELECT NULL,                         4.0)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 4, 4 },
+                .{ 0, null, 1.5 },
+                .{ 1, 1, 2 },
+                .{ 2, 2, 2 },
+                .{ 3, 3, 2.5 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_preceding_following_small_order_keys_and_null_desc",
+            .sql =
+            \\SELECT uint32_val, double_val,
+            \\       avg(double_val) OVER (
+            \\         ORDER BY uint32_val DESC
+            \\         RANGE BETWEEN 1 PRECEDING AND 2 FOLLOWING
+            \\       )
+            \\FROM (SELECT CAST(0 AS uint32) uint32_val, NULL double_val UNION ALL
+            \\      SELECT CAST(1 AS uint32),            1.0 UNION ALL
+            \\      SELECT CAST(2 AS uint32),            2.0 UNION ALL
+            \\      SELECT CAST(3 AS uint32),            3.0 UNION ALL
+            \\      SELECT NULL,                         4.0)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, 3, 2 },
+                .{ 2, 2, 2 },
+                .{ 1, 1, 1.5 },
+                .{ 0, null, 1 },
+                .{ null, 4, 4 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_current_and_following_int64_asc",
+            .sql =
+            \\SELECT row_id, val,
+            \\       avg(val) OVER (order by row_id
+            \\                      RANGE BETWEEN CURRENT ROW AND 0 FOLLOWING),
+            \\       avg(val) OVER (order by row_id
+            \\                      RANGE BETWEEN CURRENT ROW AND 1 FOLLOWING),
+            \\       avg(val) OVER (order by row_id
+            \\                      RANGE BETWEEN CURRENT ROW AND 5 FOLLOWING)
+            \\FROM (SELECT 1 row_id, 1 val UNION ALL
+            \\      SELECT 1, 2            UNION ALL
+            \\      SELECT 1, 3            UNION ALL
+            \\      SELECT 2, 4            UNION ALL
+            \\      SELECT 2, 5            UNION ALL
+            \\      SELECT 2, 6            UNION ALL
+            \\      SELECT 3, 7            UNION ALL
+            \\      SELECT 4, 8            UNION ALL
+            \\      SELECT 4, 9            UNION ALL
+            \\      SELECT 5, 10           UNION ALL
+            \\      SELECT 6, 11           UNION ALL
+            \\      SELECT 8, 12           UNION ALL
+            \\      SELECT 11, 13          UNION ALL
+            \\      SELECT 18, 14)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2, 2, 3.5, 6 },
+                .{ 1, 1, 2, 3.5, 6 },
+                .{ 1, 3, 2, 3.5, 6 },
+                .{ 2, 6, 5, 5.5, 7.5 },
+                .{ 2, 5, 5, 5.5, 7.5 },
+                .{ 2, 4, 5, 5.5, 7.5 },
+                .{ 3, 7, 7, 8, 9.5 },
+                .{ 4, 9, 8.5, 9, 10 },
+                .{ 4, 8, 8.5, 9, 10 },
+                .{ 5, 10, 10, 10.5, 11 },
+                .{ 6, 11, 11, 11, 12 },
+                .{ 8, 12, 12, 12, 12.5 },
+                .{ 11, 13, 13, 13, 13 },
+                .{ 18, 14, 14, 14, 14 },
+            },
+        },
+        .{
+            .desc = "analytic_avg_range_current_and_following_int64_desc",
+            .sql =
+            \\SELECT row_id, val,
+            \\       avg(val) OVER (order by row_id DESC
+            \\                      RANGE BETWEEN CURRENT ROW AND 0 FOLLOWING),
+            \\       avg(val) OVER (order by row_id DESC
+            \\                      RANGE BETWEEN CURRENT ROW AND 1 FOLLOWING),
+            \\       avg(val) OVER (order by row_id DESC
+            \\                      RANGE BETWEEN CURRENT ROW AND 5 FOLLOWING)
+            \\FROM (SELECT 1 row_id, 1 val UNION ALL
+            \\      SELECT 1, 2            UNION ALL
+            \\      SELECT 1, 3            UNION ALL
+            \\      SELECT 2, 4            UNION ALL
+            \\      SELECT 2, 5            UNION ALL
+            \\      SELECT 2, 6            UNION ALL
+            \\      SELECT 3, 7            UNION ALL
+            \\      SELECT 4, 8            UNION ALL
+            \\      SELECT 4, 9            UNION ALL
+            \\      SELECT 5, 10           UNION ALL
+            \\      SELECT 6, 11           UNION ALL
+            \\      SELECT 8, 12           UNION ALL
+            \\      SELECT 11, 13          UNION ALL
+            \\      SELECT 18, 14)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 18, 14, 14, 14, 14 },
+                .{ 11, 13, 13, 13, 12 },
+                .{ 8, 12, 12, 12, 9.5 },
+                .{ 6, 11, 11, 10.5, 6 },
+                .{ 5, 10, 10, 9, 5.5 },
+                .{ 4, 9, 8.5, 8, 5 },
+                .{ 4, 8, 8.5, 8, 5 },
+                .{ 3, 7, 7, 5.5, 4 },
+                .{ 2, 4, 5, 3.5, 3.5 },
+                .{ 2, 6, 5, 3.5, 3.5 },
+                .{ 2, 5, 5, 3.5, 3.5 },
+                .{ 1, 1, 2, 2, 2 },
+                .{ 1, 3, 2, 2, 2 },
+                .{ 1, 2, 2, 2, 2 },
+            },
+        },
+    },
+}

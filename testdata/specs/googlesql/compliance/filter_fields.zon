@@ -1,0 +1,177 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/filter_fields",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/filter_fields.test",
+    .cases = .{
+        .{
+            .desc = "filter_fields_exclude_fields",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    CAST(
+            \\      "int64_key_1:13, int64_key_2:123, int32_val:321, string_val:'sample'"
+            \\        as googlesql_test.KitchenSinkPB
+            \\    ),
+            \\    -int32_val
+            \\  )
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 13 int64_key_2: 123 string_val: \"sample\""}},
+            },
+        },
+        .{
+            .desc = "filter_fields_exclude_message_field",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    NEW googlesql_test.KitchenSinkPB(
+            \\      1 as int64_key_1,
+            \\      2 as int64_key_2,
+            \\      "nested_int64:3 nested_repeated_int64:10" as nested_value
+            \\    ),
+            \\    -nested_value
+            \\  )
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2"}},
+            },
+        },
+        .{
+            .desc = "filter_fields_null_value",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    CAST(
+            \\      NULL as googlesql_test.KitchenSinkPB
+            \\    ),
+            \\    +int64_key_1,
+            \\    +int64_key_2
+            \\  )
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "filter_fields_include_fields",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    CAST(
+            \\      "int64_key_1:13, int64_key_2:123, int32_val:321, string_val:'sample'"
+            \\        as googlesql_test.KitchenSinkPB
+            \\    ),
+            \\    +int64_key_1,
+            \\    +int64_key_2
+            \\  )
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 13 int64_key_2: 123"}},
+            },
+        },
+        .{
+            .desc = "filter_fields_with_cleared_required_field",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    CAST(
+            \\      "int64_key_1:13, int64_key_2:123, int32_val:321, string_val:'sample'"
+            \\        as googlesql_test.KitchenSinkPB
+            \\    ),
+            \\    +int64_key_1,
+            \\    RESET_CLEARED_REQUIRED_FIELDS => True
+            \\  )
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 13 int64_key_2: 0"}},
+            },
+        },
+        .{
+            .desc = "filter_fields_exclude_group",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    NEW
+            \\      googlesql_test.KitchenSinkPB(
+            \\        1 as int64_key_1,
+            \\        2 as int64_key_2,
+            \\        "sample" as string_val,
+            \\        CAST("int64_val:3 string_val: 'a'"
+            \\              AS googlesql_test.KitchenSinkPB.OptionalGroup) as OptionalGroup,
+            \\        [
+            \\          CAST("id:4 idstr:'4'" AS googlesql_test.KitchenSinkPB.NestedRepeatedGroup),
+            \\          CAST("id:5 idstr:'4'" AS googlesql_test.KitchenSinkPB.NestedRepeatedGroup)
+            \\        ] as NestedRepeatedGroup
+            \\      ),
+            \\    -OptionalGroup,
+            \\    -NestedRepeatedGroup
+            \\  )
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 string_val: \"sample\""}},
+            },
+        },
+        .{
+            .desc = "filter_fields_include_oneof_field",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    NEW
+            \\      googlesql_test.KitchenSinkPB(
+            \\        1 as int64_key_1,
+            \\        2 as int64_key_2,
+            \\        "sample" as string_val,
+            \\        3 as int32_one_of
+            \\      ),
+            \\    +int64_key_1,
+            \\    +int64_key_2,
+            \\    +int32_one_of,
+            \\    +string_one_of
+            \\  )
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 int32_one_of: 3"}},
+            },
+        },
+        .{
+            .desc = "filter_fields_exclude_oneof_field",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    NEW
+            \\      googlesql_test.KitchenSinkPB(
+            \\        1 as int64_key_1,
+            \\        2 as int64_key_2,
+            \\        "sample" as string_val,
+            \\        3 as int32_one_of
+            \\      ),
+            \\    -int32_one_of
+            \\  )
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 string_val: \"sample\""}},
+            },
+        },
+        .{
+            .desc = "filter_fields_exclude_other_field_in_oneof_group",
+            .sql =
+            \\SELECT
+            \\  FILTER_FIELDS(
+            \\    NEW
+            \\      googlesql_test.KitchenSinkPB(
+            \\        1 as int64_key_1,
+            \\        2 as int64_key_2,
+            \\        "sample" as string_val,
+            \\        3 as int32_one_of
+            \\      ),
+            \\    -string_one_of
+            \\  )
+            ,
+            .rows = .{
+                .{.{"int64_key_1: 1 int64_key_2: 2 string_val: \"sample\" int32_one_of: 3"}},
+            },
+        },
+    },
+}

@@ -1,0 +1,1760 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/except_intersect_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/except_intersect_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# The "set_operations" label applies to all set operations except UNION ALL.
+            \\#
+            \\# Table1 contains a column for each primitive data type.
+            \\# This means no enums, structs and arrays.
+            \\# Each column has 9 rows of data with different repeated counts.
+            \\# 1, 1, 1, 2, 2, 3, 4, NULL, NULL
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-1 as int32) as int32_val, cast(-1 as int64) as int64_val,
+            \\       cast(1 as uint32) as uint32_val, cast(1 as uint64) as uint64_val,
+            \\       cast(0.1 as float) as float_val, cast(0.1 as double) as double_val,
+            \\       cast("1" as string) as str_val, CAST("1" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(2 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-1 as int32) as int32_val, cast(-1 as int64) as int64_val,
+            \\       cast(1 as uint32) as uint32_val, cast(1 as uint64) as uint64_val,
+            \\       cast(0.1 as float) as float_val, cast(0.1 as double) as double_val,
+            \\       cast("1" as string) as str_val, CAST("1" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(3 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-1 as int32) as int32_val, cast(-1 as int64) as int64_val,
+            \\       cast(1 as uint32) as uint32_val, cast(1 as uint64) as uint64_val,
+            \\       cast(0.1 as float) as float_val, cast(0.1 as double) as double_val,
+            \\       cast("1" as string) as str_val, CAST("1" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(4 as int64) as primary_key, cast(false as bool) as bool_val,
+            \\       cast(-2 as int32) as int32_val, cast(-2 as int64) as int64_val,
+            \\       cast(2 as uint32) as uint32_val, cast(2 as uint64) as uint64_val,
+            \\       cast(0.2 as float) as float_val, cast(0.2 as double) as double_val,
+            \\       cast("2" as string) as str_val, CAST("2" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(5 as int64) as primary_key, cast(false as bool) as bool_val,
+            \\       cast(-2 as int32) as int32_val, cast(-2 as int64) as int64_val,
+            \\       cast(2 as uint32) as uint32_val, cast(2 as uint64) as uint64_val,
+            \\       cast(0.2 as float) as float_val, cast(0.2 as double) as double_val,
+            \\       cast("2" as string) as str_val, CAST("2" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(6 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-3 as int32) as int32_val, cast(-3 as int64) as int64_val,
+            \\       cast(3 as uint32) as uint32_val, cast(3 as uint64) as uint64_val,
+            \\       cast(0.3 as float) as float_val, cast(0.3 as double) as double_val,
+            \\       cast("3" as string) as str_val, CAST("3" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(7 as int64) as primary_key, cast(false as bool) as bool_val,
+            \\       cast(-4 as int32) as int32_val, cast(-4 as int64) as int64_val,
+            \\       cast(4 as uint32) as uint32_val, cast(4 as uint64) as uint64_val,
+            \\       cast(0.4 as float) as float_val, cast(0.4 as double) as double_val,
+            \\       cast("4" as string) as str_val, CAST("4" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(8 as int64) as primary_key, cast(NULL as bool) as bool_val,
+            \\       cast(NULL as int32) as int32_val, cast(NULL as int64) as int64_val,
+            \\       cast(NULL as uint32) as uint32_val, cast(NULL as uint64) as uint64_val,
+            \\       cast(NULL as float) as float_val, cast(NULL as double) as double_val,
+            \\       cast(NULL as string) as str_val, CAST(NULL as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(9 as int64) as primary_key, cast(NULL as bool) as bool_val,
+            \\       cast(NULL as int32) as int32_val, cast(NULL as int64) as int64_val,
+            \\       cast(NULL as uint32) as uint32_val, cast(NULL as uint64) as uint64_val,
+            \\       cast(NULL as float) as float_val, cast(NULL as double) as double_val,
+            \\       cast(NULL as string) as str_val, CAST(NULL as bytes) as bytes_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Table2 contains a column for each primitive data type.
+            \\# This means no enums, structs and arrays.
+            \\# Each column has 8 rows of data with different repeated counts.
+            \\# 3, 3, 3, 2, 2, 1, 0, NULL
+            \\CREATE TABLE Table2 AS
+            \\SELECT cast(1 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-3 as int32) as int32_val, cast(-3 as int64) as int64_val,
+            \\       cast(3 as uint32) as uint32_val, cast(3 as uint64) as uint64_val,
+            \\       cast(0.3 as float) as float_val, cast(0.3 as double) as double_val,
+            \\       cast("3" as string) as str_val, CAST("3" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(2 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-3 as int32) as int32_val, cast(-3 as int64) as int64_val,
+            \\       cast(3 as uint32) as uint32_val, cast(3 as uint64) as uint64_val,
+            \\       cast(0.3 as float) as float_val, cast(0.3 as double) as double_val,
+            \\       cast("3" as string) as str_val, CAST("3" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(3 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-3 as int32) as int32_val, cast(-3 as int64) as int64_val,
+            \\       cast(3 as uint32) as uint32_val, cast(3 as uint64) as uint64_val,
+            \\       cast(0.3 as float) as float_val, cast(0.3 as double) as double_val,
+            \\       cast("3" as string) as str_val, CAST("3" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(4 as int64) as primary_key, cast(false as bool) as bool_val,
+            \\       cast(-2 as int32) as int32_val, cast(-2 as int64) as int64_val,
+            \\       cast(2 as uint32) as uint32_val, cast(2 as uint64) as uint64_val,
+            \\       cast(0.2 as float) as float_val, cast(0.2 as double) as double_val,
+            \\       cast("2" as string) as str_val, CAST("2" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(5 as int64) as primary_key, cast(false as bool) as bool_val,
+            \\       cast(-2 as int32) as int32_val, cast(-2 as int64) as int64_val,
+            \\       cast(2 as uint32) as uint32_val, cast(2 as uint64) as uint64_val,
+            \\       cast(0.2 as float) as float_val, cast(0.2 as double) as double_val,
+            \\       cast("2" as string) as str_val, CAST("2" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(6 as int64) as primary_key, cast(true as bool) as bool_val,
+            \\       cast(-1 as int32) as int32_val, cast(-1 as int64) as int64_val,
+            \\       cast(1 as uint32) as uint32_val, cast(1 as uint64) as uint64_val,
+            \\       cast(0.1 as float) as float_val, cast(0.1 as double) as double_val,
+            \\       cast("1" as string) as str_val, CAST("1" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(7 as int64) as primary_key, cast(false as bool) as bool_val,
+            \\       cast(0 as int32) as int32_val, cast(0 as int64) as int64_val,
+            \\       cast(0 as uint32) as uint32_val, cast(0 as uint64) as uint64_val,
+            \\       cast(0.0 as float) as float_val, cast(0.0 as double) as double_val,
+            \\       cast("0" as string) as str_val, CAST("0" as bytes) as bytes_val
+            \\UNION ALL
+            \\SELECT cast(8 as int64) as primary_key, cast(NULL as bool) as bool_val,
+            \\       cast(NULL as int32) as int32_val, cast(NULL as int64) as int64_val,
+            \\       cast(NULL as uint32) as uint32_val, cast(NULL as uint64) as uint64_val,
+            \\       cast(NULL as float) as float_val, cast(NULL as double) as double_val,
+            \\       cast(NULL as string) as str_val, CAST(NULL as bytes) as bytes_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestDistinct AS
+            \\SELECT CAST(1 AS INT64) AS primary_key, CAST(-2 AS INT32) AS int32_val,
+            \\  CAST(-2 AS INT64) AS int64_val, CAST(2 AS UINT32) AS uint32_val
+            \\UNION ALL
+            \\SELECT CAST(2 AS INT64) AS primary_key, CAST(-2 AS INT32) AS int32_val,
+            \\  CAST(-2 AS INT64) AS int64_val, CAST(2 AS UINT32) AS uint32_val
+            \\UNION ALL
+            \\SELECT CAST(3 AS INT64) AS primary_key, CAST(100 AS INT32) AS int32_val,
+            \\  CAST(100 AS INT64) AS int64_val, CAST(100 AS UINT32) AS uint32_val
+            \\UNION ALL
+            \\SELECT CAST(4 AS INT64) AS primary_key, CAST(100 AS INT32) AS int32_val,
+            \\  CAST(100 AS INT64) AS int64_val, CAST(100 AS UINT32) AS uint32_val
+            ,
+        },
+        .{
+            .desc = "except_intersect_1",
+            .sql =
+            \\# The queries are structured such that every query is repeated 4 times:
+            \\# INTERSECT DISTINCT, INTERSECT ALL, EXCEPT DISTINCT, EXCEPT ALL.
+            \\#
+            \\# ******************************
+            \\#
+            \\# The "set_operations" label applies to all set operations except UNION ALL.
+            \\SELECT 1 INTERSECT DISTINCT SELECT 1
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_2",
+            .sql = "SELECT 1 INTERSECT ALL SELECT 1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_3",
+            .sql = "SELECT 1 EXCEPT DISTINCT SELECT 1",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_4",
+            .sql = "SELECT 1 EXCEPT ALL SELECT 1",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_5",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 1) INTERSECT DISTINCT SELECT 1
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_6",
+            .sql = "(SELECT 1 UNION ALL SELECT 1) INTERSECT ALL SELECT 1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_7",
+            .sql = "(SELECT 1 UNION ALL SELECT 1) EXCEPT DISTINCT SELECT 1",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_8",
+            .sql = "(SELECT 1 UNION ALL SELECT 1) EXCEPT ALL SELECT 1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_9",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 1) INTERSECT DISTINCT (SELECT 1 UNION ALL SELECT 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_10",
+            .sql = "(SELECT 1 UNION ALL SELECT 1) INTERSECT ALL (SELECT 1 UNION ALL SELECT 1)",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_11",
+            .sql = "(SELECT 1 UNION ALL SELECT 1) EXCEPT DISTINCT (SELECT 1 UNION ALL SELECT 1)",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_12",
+            .sql = "(SELECT 1 UNION ALL SELECT 1) EXCEPT ALL (SELECT 1 UNION ALL SELECT 1)",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_13",
+            .sql =
+            \\# ******************************
+            \\SELECT 1 INTERSECT DISTINCT SELECT 2
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_14",
+            .sql = "SELECT 1 INTERSECT ALL SELECT 2",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_15",
+            .sql = "SELECT 1 EXCEPT ALL SELECT 2",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_16",
+            .sql = "SELECT 1 EXCEPT DISTINCT SELECT 2",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_17",
+            .sql =
+            \\# ******************************
+            \\SELECT NULL INTERSECT DISTINCT SELECT 2
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_18",
+            .sql = "SELECT NULL INTERSECT ALL SELECT 2",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_19",
+            .sql = "SELECT NULL EXCEPT DISTINCT SELECT 2",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_20",
+            .sql = "SELECT NULL EXCEPT ALL SELECT 2",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_21",
+            .sql =
+            \\# ******************************
+            \\SELECT NULL INTERSECT DISTINCT SELECT NULL
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_22",
+            .sql = "SELECT NULL INTERSECT ALL SELECT NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_23",
+            .sql = "SELECT NULL EXCEPT DISTINCT SELECT NULL",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_24",
+            .sql = "SELECT NULL EXCEPT ALL SELECT NULL",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_25",
+            .sql =
+            \\# ******************************
+            \\(SELECT NULL UNION ALL SELECT NULL) INTERSECT DISTINCT SELECT NULL
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_26",
+            .sql = "(SELECT NULL UNION ALL SELECT NULL) INTERSECT ALL SELECT NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_27",
+            .sql = "(SELECT NULL UNION ALL SELECT NULL) EXCEPT DISTINCT SELECT NULL",
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_28",
+            .sql = "(SELECT NULL UNION ALL SELECT NULL) EXCEPT ALL SELECT NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_29",
+            .sql =
+            \\# ******************************
+            \\(SELECT NULL, 0 UNION ALL SELECT NULL, 0) INTERSECT DISTINCT
+            \\(SELECT NULL, 0 UNION ALL SELECT NULL, 0)
+            ,
+            .rows = .{
+                .{ null, 0 },
+            },
+        },
+        .{
+            .desc = "except_intersect_30",
+            .sql =
+            \\(SELECT NULL, 0 UNION ALL SELECT NULL, 0) INTERSECT ALL
+            \\(SELECT NULL, 0 UNION ALL SELECT NULL, 0)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0 },
+                .{ null, 0 },
+            },
+        },
+        .{
+            .desc = "except_intersect_31",
+            .sql =
+            \\(SELECT NULL, 0 UNION ALL SELECT NULL, 0) EXCEPT DISTINCT
+            \\(SELECT NULL, 0 UNION ALL SELECT NULL, 0)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_32",
+            .sql =
+            \\(SELECT NULL, 0 UNION ALL SELECT NULL, 0) EXCEPT ALL
+            \\(SELECT NULL, 0 UNION ALL SELECT NULL, 0)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_33",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 2) INTERSECT DISTINCT SELECT 1
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_34",
+            .sql = "(SELECT 1 UNION ALL SELECT 2) INTERSECT ALL SELECT 1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_35",
+            .sql = "(SELECT 1 UNION ALL SELECT 2) EXCEPT DISTINCT SELECT 1",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "except_intersect_36",
+            .sql = "(SELECT 1 UNION ALL SELECT 2) EXCEPT ALL SELECT 1",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "except_intersect_37",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 1) INTERSECT DISTINCT SELECT 1
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_38",
+            .sql = "(SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 1) INTERSECT ALL SELECT 1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_39",
+            .sql = "(SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 1) EXCEPT DISTINCT SELECT 1",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "except_intersect_40",
+            .sql = "(SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 1) EXCEPT ALL SELECT 1",
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_41",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 1) INTERSECT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_42",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 1) INTERSECT ALL
+            \\(SELECT 1 UNION ALL SELECT 1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_43",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 1) EXCEPT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT 1)
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "except_intersect_44",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 1) EXCEPT ALL
+            \\(SELECT 1 UNION ALL SELECT 1)
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "except_intersect_45",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 3) INTERSECT DISTINCT
+            \\SELECT 1                      INTERSECT DISTINCT
+            \\SELECT 3
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_46",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 3) INTERSECT ALL
+            \\SELECT 1                      INTERSECT ALL
+            \\SELECT 3
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_47",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 3) EXCEPT DISTINCT
+            \\SELECT 1                      EXCEPT DISTINCT
+            \\SELECT 3
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_48",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 3) EXCEPT ALL
+            \\SELECT 1                      EXCEPT ALL
+            \\SELECT 3
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_49",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_50",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            \\INTERSECT ALL
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{null},
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_51",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_52",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            \\EXCEPT ALL
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_53",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_54",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            \\INTERSECT ALL
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            \\INTERSECT ALL
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_55",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_56",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            \\EXCEPT ALL
+            \\(SELECT 1 UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            \\EXCEPT ALL
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT NULL)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_57",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL
+            \\ SELECT 2 UNION ALL SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            \\INTERSECT DISTINCT
+            \\(SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{4},
+                .{3},
+            },
+        },
+        .{
+            .desc = "except_intersect_58",
+            .sql =
+            \\(SELECT 1 UNION ALL
+            \\ SELECT 2 UNION ALL SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            \\INTERSECT ALL
+            \\(SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{4},
+                .{4},
+                .{4},
+                .{3},
+                .{3},
+            },
+        },
+        .{
+            .desc = "except_intersect_59",
+            .sql =
+            \\(SELECT 1 UNION ALL
+            \\ SELECT 2 UNION ALL SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            \\EXCEPT DISTINCT
+            \\(SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_60",
+            .sql =
+            \\(SELECT 1 UNION ALL
+            \\ SELECT 2 UNION ALL SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            \\EXCEPT ALL
+            \\(SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{4},
+                .{1},
+                .{3},
+            },
+        },
+        .{
+            .desc = "except_intersect_61",
+            .sql =
+            \\# ******************************
+            \\(SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1 UNION ALL
+            \\ SELECT 2 UNION ALL SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{4},
+                .{3},
+            },
+        },
+        .{
+            .desc = "except_intersect_62",
+            .sql =
+            \\(SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            \\INTERSECT ALL
+            \\(SELECT 1 UNION ALL
+            \\ SELECT 2 UNION ALL SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{4},
+                .{4},
+                .{4},
+                .{3},
+                .{3},
+            },
+        },
+        .{
+            .desc = "except_intersect_63",
+            .sql =
+            \\(SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1 UNION ALL
+            \\ SELECT 2 UNION ALL SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_64",
+            .sql =
+            \\(SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            \\EXCEPT ALL
+            \\(SELECT 1 UNION ALL
+            \\ SELECT 2 UNION ALL SELECT 2 UNION ALL
+            \\ SELECT 3 UNION ALL SELECT 3 UNION ALL SELECT 3 UNION ALL
+            \\ SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4 UNION ALL SELECT 4)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_65",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_66",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1)
+            \\INTERSECT ALL
+            \\(SELECT 1)
+            \\INTERSECT ALL
+            \\(SELECT 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_67",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_68",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1)
+            \\EXCEPT ALL
+            \\(SELECT 1)
+            \\EXCEPT ALL
+            \\(SELECT 1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_69",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL
+            \\ SELECT NULL UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT NULL)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_70",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL
+            \\ SELECT NULL UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            \\INTERSECT ALL
+            \\(SELECT 1 UNION ALL SELECT NULL)
+            \\INTERSECT ALL
+            \\(SELECT 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "except_intersect_71",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL
+            \\ SELECT NULL UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1 UNION ALL SELECT NULL)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_72",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL
+            \\ SELECT NULL UNION ALL SELECT NULL UNION ALL SELECT NULL)
+            \\EXCEPT ALL
+            \\(SELECT 1 UNION ALL SELECT NULL)
+            \\EXCEPT ALL
+            \\(SELECT 1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+                .{null},
+                .{null},
+            },
+        },
+        .{
+            .desc = "except_intersect_73",
+            .sql =
+            \\# ******************************
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1)
+            \\INTERSECT DISTINCT
+            \\(SELECT 0)
+            \\INTERSECT DISTINCT
+            \\(SELECT 1)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_74",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1)
+            \\INTERSECT ALL
+            \\(SELECT 0)
+            \\INTERSECT ALL
+            \\(SELECT 1)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_75",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1)
+            \\EXCEPT DISTINCT
+            \\(SELECT 0)
+            \\EXCEPT DISTINCT
+            \\(SELECT 1)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_intersect_76",
+            .sql =
+            \\(SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1)
+            \\EXCEPT ALL
+            \\(SELECT 0)
+            \\EXCEPT ALL
+            \\(SELECT 1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "intersect_distinct_multiple_cols",
+            .sql =
+            \\# ******************************
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       str_val, bytes_val FROM Table1
+            \\INTERSECT DISTINCT
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       str_val, bytes_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1, -1, 1, 1, "1", "\x31" },
+                .{ null, null, null, null, null, null, null },
+                .{ false, -2, -2, 2, 2, "2", "\x32" },
+                .{ true, -3, -3, 3, 3, "3", "\x33" },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_multiple_cols_float",
+            .sql =
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val FROM Table1
+            \\INTERSECT DISTINCT
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val FROM Table2
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "intersect_all_multiple_cols",
+            .sql =
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       str_val, bytes_val FROM Table1
+            \\INTERSECT ALL
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       str_val, bytes_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1, -1, 1, 1, "1", "\x31" },
+                .{ null, null, null, null, null, null, null },
+                .{ false, -2, -2, 2, 2, "2", "\x32" },
+                .{ false, -2, -2, 2, 2, "2", "\x32" },
+                .{ true, -3, -3, 3, 3, "3", "\x33" },
+            },
+        },
+        .{
+            .desc = "intersect_all_multiple_cols_float",
+            .sql =
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val FROM Table1
+            \\INTERSECT ALL
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val FROM Table2
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "except_distinct_multiple_cols",
+            .sql =
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       str_val, bytes_val FROM Table1
+            \\EXCEPT DISTINCT
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       str_val, bytes_val FROM Table2
+            ,
+            .rows = .{
+                .{ false, -4, -4, 4, 4, "4", "\x34" },
+            },
+        },
+        .{
+            .desc = "except_distinct_multiple_cols_float",
+            .sql =
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val FROM Table1
+            \\EXCEPT DISTINCT
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val FROM Table2
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "except_all_multiple_cols",
+            .sql =
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       str_val, bytes_val FROM Table1
+            \\EXCEPT ALL
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       str_val, bytes_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, -4, -4, 4, 4, "4", "\x34" },
+                .{ true, -1, -1, 1, 1, "1", "\x31" },
+                .{ true, -1, -1, 1, 1, "1", "\x31" },
+                .{ null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "except_all_multiple_cols_float",
+            .sql =
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val FROM Table1
+            \\EXCEPT ALL
+            \\SELECT bool_val, int32_val, int64_val, uint32_val, uint64_val,
+            \\       float_val, double_val, str_val, bytes_val FROM Table2
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "intersect_distinct_struct_subquery",
+            .sql =
+            \\# ******************************
+            \\# SELECT struct type resulting from subquery.
+            \\# These tests do not require tables to support struct type.
+            \\#
+            \\SELECT AS STRUCT bool_val, int64_val from table1
+            \\INTERSECT DISTINCT
+            \\SELECT as struct bool_val, int64_val from table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1 },
+                .{ null, null },
+                .{ false, -2 },
+                .{ true, -3 },
+            },
+        },
+        .{
+            .desc = "intersect_all_struct_subquery",
+            .sql =
+            \\SELECT as struct bool_val, int64_val from table1
+            \\INTERSECT ALL
+            \\SELECT as struct bool_val, int64_val from table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1 },
+                .{ null, null },
+                .{ false, -2 },
+                .{ false, -2 },
+                .{ true, -3 },
+            },
+        },
+        .{
+            .desc = "except_distinct_struct_subquery",
+            .sql =
+            \\SELECT as struct bool_val, int64_val from table1
+            \\EXCEPT DISTINCT
+            \\SELECT as struct bool_val, int64_val from table2
+            ,
+            .rows = .{
+                .{ false, -4 },
+            },
+        },
+        .{
+            .desc = "except_all_struct_subquery",
+            .sql =
+            \\SELECT as struct bool_val, int64_val from table1
+            \\EXCEPT ALL
+            \\SELECT as struct bool_val, int64_val from table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, -4 },
+                .{ true, -1 },
+                .{ true, -1 },
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "intersect_homogeneous",
+            .sql =
+            \\# ******************************
+            \\SELECT bool_val, int32_val, int64_val FROM Table1
+            \\INTERSECT DISTINCT
+            \\SELECT bool_val, int32_val, int64_val FROM Table2
+            \\INTERSECT DISTINCT
+            \\SELECT bool_val, int32_val, int64_val FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1, -1 },
+                .{ null, null, null },
+                .{ false, -2, -2 },
+                .{ true, -3, -3 },
+            },
+        },
+        .{
+            .desc = "except_intersect_good_precedence",
+            .sql =
+            \\SELECT bool_val, int32_val, int64_val FROM Table1
+            \\INTERSECT DISTINCT
+            \\(
+            \\SELECT bool_val, int32_val, int64_val FROM Table2
+            \\EXCEPT ALL
+            \\SELECT bool_val, int32_val, int64_val FROM Table1
+            \\)
+            ,
+            .rows = .{
+                .{ true, -3, -3 },
+            },
+        },
+        .{
+            .desc = "except_intersect_heterogeneous_good_2",
+            .sql =
+            \\(
+            \\SELECT bool_val, int32_val, int64_val FROM Table1
+            \\INTERSECT DISTINCT
+            \\SELECT bool_val, int32_val, int64_val FROM Table2
+            \\)
+            \\EXCEPT ALL
+            \\SELECT bool_val, int32_val, int64_val FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "intersect_distinct_corresponding_different_positions",
+            .sql =
+            \\SELECT bool_val, int32_val FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int32_val, bool_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1 },
+                .{ null, null },
+                .{ false, -2 },
+                .{ true, -3 },
+            },
+        },
+        .{
+            .desc = "intersect_all_corresponding_different_positions",
+            .unsupported_in_bigquery = "\"INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT bool_val, int32_val FROM Table1
+            \\INTERSECT ALL CORRESPONDING
+            \\SELECT int32_val, bool_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1 },
+                .{ null, null },
+                .{ false, -2 },
+                .{ false, -2 },
+                .{ true, -3 },
+            },
+        },
+        .{
+            .desc = "except_distinct_corresponding_different_positions",
+            .sql =
+            \\SELECT bool_val, int32_val FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int32_val, bool_val FROM Table2
+            ,
+            .rows = .{
+                .{ false, -4 },
+            },
+        },
+        .{
+            .desc = "except_all_corresponding_different_positions",
+            .unsupported_in_bigquery = "\"EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT bool_val, int32_val FROM Table1
+            \\EXCEPT ALL CORRESPONDING
+            \\SELECT int32_val, bool_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, -4 },
+                .{ true, -1 },
+                .{ true, -1 },
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_corresponding_extra_columns",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int32_val, bool_val, float_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1 },
+                .{ null, null },
+                .{ false, -2 },
+                .{ true, -3 },
+            },
+        },
+        .{
+            .desc = "intersect_all_corresponding_extra_columns",
+            .unsupported_in_bigquery = "\"INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val FROM Table1
+            \\INTERSECT ALL CORRESPONDING
+            \\SELECT int32_val, bool_val, float_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, -1 },
+                .{ null, null },
+                .{ false, -2 },
+                .{ false, -2 },
+                .{ true, -3 },
+            },
+        },
+        .{
+            .desc = "except_distinct_corresponding_extra_columns",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int32_val, bool_val, float_val FROM Table2
+            ,
+            .rows = .{
+                .{ false, -4 },
+            },
+        },
+        .{
+            .desc = "except_all_corresponding_extra_columns",
+            .unsupported_in_bigquery = "\"EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val FROM Table1
+            \\EXCEPT ALL CORRESPONDING
+            \\SELECT int32_val, bool_val, float_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, -4 },
+                .{ true, -1 },
+                .{ true, -1 },
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "intersect_all_corresponding_parenthesized_multiple_operands",
+            .unsupported_in_bigquery = "\"INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val
+            \\FROM Table1
+            \\INTERSECT ALL CORRESPONDING
+            \\(
+            \\  SELECT bool_val, int32_val, int64_val, float_val
+            \\  FROM Table2
+            \\  EXCEPT DISTINCT CORRESPONDING
+            \\  SELECT int32_val, bool_val, float_val, int64_val
+            \\  FROM Table1
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "intersect_distinct_corresponding_parenthesized_multiple_operands",
+            .unsupported_in_bigquery = "\"EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported.\" (nested operand; recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val
+            \\FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\(
+            \\  SELECT bool_val, int32_val, int64_val, float_val
+            \\  FROM Table2
+            \\  EXCEPT ALL CORRESPONDING
+            \\  SELECT int32_val, bool_val, float_val, int64_val
+            \\  FROM Table1
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "except_all_corresponding_parenthesized_multiple_operands",
+            .unsupported_in_bigquery = "\"EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val
+            \\FROM Table1
+            \\EXCEPT ALL CORRESPONDING
+            \\(
+            \\  SELECT bool_val, int32_val, int64_val, float_val
+            \\  FROM Table2
+            \\  INTERSECT DISTINCT CORRESPONDING
+            \\  SELECT int32_val, bool_val, float_val, int64_val
+            \\  FROM Table1
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "except_distinct_corresponding_parenthesized_multiple_operands",
+            .unsupported_in_bigquery = "\"INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported.\" (nested operand; recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val
+            \\FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\(
+            \\  SELECT bool_val, int32_val, int64_val, float_val
+            \\  FROM Table2
+            \\  INTERSECT ALL CORRESPONDING
+            \\  SELECT int32_val, bool_val, float_val, int64_val
+            \\  FROM Table1
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "intersect_all_corresponding_multiple_operands",
+            .unsupported_in_bigquery = "\"INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val
+            \\FROM Table1
+            \\INTERSECT ALL CORRESPONDING
+            \\SELECT bool_val, int32_val, int64_val, float_val
+            \\FROM Table2
+            \\INTERSECT ALL CORRESPONDING
+            \\SELECT int32_val, bool_val, float_val, int64_val
+            \\FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, false, -2 },
+                .{ -2, false, -2 },
+                .{ null, null, null },
+                .{ -3, true, -3 },
+                .{ -1, true, -1 },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_corresponding_multiple_operands",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val
+            \\FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT bool_val, int32_val, int64_val, float_val
+            \\FROM Table2
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int32_val, bool_val, float_val, int64_val
+            \\FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, false, -2 },
+                .{ null, null, null },
+                .{ -3, true, -3 },
+                .{ -1, true, -1 },
+            },
+        },
+        .{
+            .desc = "except_all_corresponding_multiple_operands",
+            .unsupported_in_bigquery = "\"EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val
+            \\FROM Table1
+            \\EXCEPT ALL CORRESPONDING
+            \\SELECT bool_val, int32_val, int64_val, float_val
+            \\FROM Table2
+            \\EXCEPT ALL CORRESPONDING
+            \\SELECT int32_val, bool_val, float_val, int64_val
+            \\FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "except_distinct_corresponding_multiple_operands",
+            .sql =
+            \\SELECT int64_val, bool_val, int32_val
+            \\FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT bool_val, int32_val, int64_val, float_val
+            \\FROM Table2
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int32_val, bool_val, float_val, int64_val
+            \\FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "intersect_all_corresponding_type_coercion",
+            .unsupported_in_bigquery = "\"INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val AS col1, bool_val AS col2, int32_val AS col3
+            \\FROM Table1
+            \\INTERSECT ALL CORRESPONDING
+            \\SELECT int64_val AS col3, int32_val AS col1, bool_val AS col2
+            \\FROM Table2
+            \\INTERSECT ALL CORRESPONDING
+            \\SELECT int32_val AS col1, bool_val AS col2, float_val AS col3
+            \\FROM Table1
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "intersect_distinct_corresponding_type_coercion",
+            .sql =
+            \\SELECT int64_val AS col1, bool_val AS col2, int32_val AS col3
+            \\FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int64_val AS col3, int32_val AS col1, bool_val AS col2
+            \\FROM Table2
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int32_val AS col1, bool_val AS col2, float_val AS col3
+            \\FROM Table1
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "except_all_corresponding_type_coercion",
+            .unsupported_in_bigquery = "\"EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT int64_val AS col1, bool_val AS col2, int32_val AS col3
+            \\FROM Table1
+            \\EXCEPT ALL CORRESPONDING
+            \\SELECT int64_val AS col3, int32_val AS col1, bool_val AS col2
+            \\FROM Table2
+            \\EXCEPT ALL CORRESPONDING
+            \\SELECT int32_val AS col1, bool_val AS col2, float_val AS col3
+            \\FROM Table1
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "except_distinct_corresponding_type_coercion",
+            .sql =
+            \\SELECT int64_val AS col1, bool_val AS col2, int32_val AS col3
+            \\FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int64_val AS col3, int32_val AS col1, bool_val AS col2
+            \\FROM Table2
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int32_val AS col1, bool_val AS col2, float_val AS col3
+            \\FROM Table1
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_with_extra_columns_in_first_table_scan",
+            .sql =
+            \\SELECT primary_key, int32_val, int64_val FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM TestDistinct
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -4, -4 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_with_extra_columns_in_first_single_scan",
+            .sql =
+            \\SELECT primary_key, int32_val, int64_val FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT CAST(-2 AS INT64) AS int64_val, CAST(-2 AS INT32) AS int32_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -4, -4 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_extra_columns_in_second",
+            .sql =
+            \\SELECT int32_val, int64_val FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT CAST(-2 AS INT64) AS int64_val, CAST(-2 AS INT32) AS int32_val, 1 AS extra
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -4, -4 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_no_extra_columns",
+            .sql =
+            \\SELECT int32_val, int64_val FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT CAST(-2 AS INT64) AS int64_val, CAST(-2 AS INT32) AS int32_val FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -4, -4 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_type_coercion",
+            .sql =
+            \\SELECT int32_val AS a, uint32_val AS b FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int64_val AS b FROM TestDistinct
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{4},
+                .{null},
+                .{1},
+                .{3},
+            },
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_nested_operations",
+            .sql =
+            \\(
+            \\  SELECT int32_val, int64_val, uint32_val FROM Table1
+            \\  UNION ALL
+            \\  SELECT int32_val, int64_val, CAST(uint32_val + 1 AS UINT32) AS uint32_val
+            \\  FROM Table1
+            \\)
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM TestDistinct
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -4, -4 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_nested_operations_single_row_scan",
+            .sql =
+            \\(
+            \\  SELECT int32_val, int64_val, uint32_val FROM Table1
+            \\  UNION ALL
+            \\  SELECT CAST(-1 AS INT32), CAST(-1 AS INT64), CAST(100 AS UINT32)
+            \\)
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM TestDistinct
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -4, -4 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_nested_operation_with_project_scan",
+            .sql =
+            \\SELECT *
+            \\FROM (
+            \\  (
+            \\    SELECT int32_val, int64_val, uint32_val FROM Table1
+            \\    UNION ALL
+            \\    SELECT int32_val, int64_val, CAST(uint32_val + 1 AS UINT32) AS uint32_val
+            \\    FROM Table1
+            \\  )
+            \\)
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM TestDistinct
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -4, -4 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "except_distinct_with_corresponding_multiple_expressions",
+            .sql =
+            \\SELECT int64_val, int32_val, primary_key FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT int32_val, int64_val FROM TestDistinct
+            \\EXCEPT DISTINCT CORRESPONDING
+            \\SELECT -100 AS int64_val, CAST(-100 AS INT32) AS int32_val, "random str" AS extra_col
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -3, -3 },
+                .{ -1, -1 },
+                .{ null, null },
+                .{ -4, -4 },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_with_corresponding_with_extra_columns_in_first_table_scan",
+            .sql =
+            \\SELECT primary_key, int32_val, int64_val FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, -2 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_with_corresponding_with_extra_columns_in_second_table_scan",
+            .sql =
+            \\SELECT int32_val, int64_val FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val, primary_key FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, -2 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_with_corresponding_no_extra_columns",
+            .sql =
+            \\SELECT int32_val, int64_val FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, -2 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_with_corresponding_type_coercion",
+            .sql =
+            \\SELECT int32_val AS a, uint32_val AS b FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int64_val AS b FROM Table2
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "intersect_distinct_with_corresponding_nested_operations",
+            .sql =
+            \\(
+            \\  SELECT int32_val, int64_val, uint32_val FROM Table1
+            \\  UNION ALL
+            \\  SELECT int32_val, int64_val, CAST(uint32_val + 1 AS UINT32) AS uint32_val
+            \\  FROM Table1
+            \\)
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, -2 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_with_corresponding_nested_operations_single_row_scan",
+            .sql =
+            \\(
+            \\  SELECT int32_val, int64_val, uint32_val FROM Table1
+            \\  UNION ALL
+            \\  SELECT CAST(-1 AS INT32), CAST(-1 AS INT64), CAST(100 AS UINT32)
+            \\)
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, -2 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_with_corresponding_nested_operation_with_project_scan",
+            .sql =
+            \\SELECT *
+            \\FROM (
+            \\  (
+            \\    SELECT int32_val, int64_val, uint32_val FROM Table1
+            \\    UNION ALL
+            \\    SELECT int32_val, int64_val, CAST(uint32_val + 1 AS UINT32) AS uint32_val
+            \\    FROM Table1
+            \\  )
+            \\)
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int64_val, int32_val FROM Table2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -2, -2 },
+                .{ null, null },
+                .{ -3, -3 },
+                .{ -1, -1 },
+            },
+        },
+        .{
+            .desc = "intersect_distinct_with_corresponding_multiple_expressions",
+            .sql =
+            \\SELECT int64_val, int32_val, primary_key FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT int32_val, int64_val, uint32_val FROM Table2
+            \\INTERSECT DISTINCT CORRESPONDING
+            \\SELECT uint32_val, int64_val, int32_val FROM TestDistinct
+            ,
+            .rows = .{
+                .{ -2, -2 },
+            },
+        },
+    },
+}

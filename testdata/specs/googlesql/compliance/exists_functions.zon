@@ -1,0 +1,659 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/exists_functions",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/exists_functions.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(true as bool) as bool_val, cast(0.1 as double) as double_val,
+            \\       cast(1 as int64) as int64_val, cast("1" as string) as str_val UNION ALL
+            \\  SELECT 2, false, 0.2, 2, "2"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table2 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(true as bool) as bool_val, cast(0.3 as double) as double_val,
+            \\       cast(3 as int64) as int64_val, cast("3" as string) as str_val UNION ALL
+            \\  SELECT 2, false, 0.4, 4, "4"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table3 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(true as bool) as bool_val, cast(0.5 as double) as double_val,
+            \\       cast(5 as int64) as int64_val, cast("5" as string) as str_val UNION ALL
+            \\  SELECT 2, false, 0.6, 6, "6"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table4 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       ARRAY<int32>[1, 2, 3] array_val UNION ALL
+            \\  SELECT 2, ARRAY<int32>[] UNION ALL
+            \\  SELECT 3, ARRAY<int32>[4, 5, 6]
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table5 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(1 as int64) as int64_val1,
+            \\       cast(10 as int64) as int64_val2,
+            \\       cast(100 as int64) as int64_val3
+            \\UNION ALL SELECT 2, 1, 11, 101
+            \\UNION ALL SELECT 3, 2, 20, 200
+            \\UNION ALL SELECT 4, 2, 21, 201
+            \\UNION ALL SELECT 5, 2, 22, 202
+            \\UNION ALL SELECT 6, 3, 30, 300
+            ,
+        },
+        .{
+            .desc = "exists_functions_1",
+            .sql =
+            \\#
+            \\# Tests with EXISTS in the WHERE clause
+            \\#
+            \\# EXISTS returns true
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (SELECT NULL)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "exists_functions_2",
+            .sql =
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (SELECT 1)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "exists_functions_3",
+            .sql =
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (SELECT * FROM Table2)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "exists_functions_4",
+            .sql =
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (SELECT 1 UNION ALL SELECT 2)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "exists_functions_5",
+            .sql =
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (
+            \\  SELECT * FROM Table2 UNION ALL SELECT * FROM Table3)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "exists_functions_6",
+            .sql =
+            \\# The second clause of the UNION ALL returns rows.
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (
+            \\  SELECT * FROM Table2 t2 WHERE t2.int64_val = 0 UNION ALL SELECT * FROM Table3)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "exists_functions_7",
+            .sql =
+            \\# EXISTS returns false so the parent query returns 0 rows.
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (SELECT * FROM Table2 WHERE int64_val = 0)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "exists_functions_8",
+            .sql =
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (
+            \\  SELECT * FROM Table2 WHERE int64_val = 0 UNION ALL
+            \\  SELECT * FROM Table3 WHERE int64_val = 0)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "exists_functions_9",
+            .sql =
+            \\# EXISTS returns false but due to the NOT, the parent query returns all rows.
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE NOT EXISTS (SELECT * FROM Table2 WHERE int64_val = 0)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "exists_functions_10",
+            .sql =
+            \\# EXISTS returns true but due to the NOT, the parent query returns 0 rows.
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE NOT EXISTS (SELECT 1)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "exists_functions_11",
+            .sql =
+            \\# Correlated reference 'a' refers to the outer query, condition is true.
+            \\SELECT * FROM (select 1 a) t1 WHERE EXISTS (SELECT * FROM (select 0 b) t2 WHERE a = 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "exists_functions_12",
+            .sql =
+            \\# Correlated reference 'a' refers to the outer query, condition is false.
+            \\SELECT * FROM (select 0 a) t1 WHERE EXISTS (SELECT * FROM (select 0 b) t2 WHERE a = 1)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "exists_functions_13",
+            .sql =
+            \\# Column 'a' in WHERE refers to the inner query, condition is false.
+            \\SELECT * FROM (select 1 a) t1 WHERE EXISTS (SELECT * FROM (select 0 a) t2 WHERE a = 1)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "empty_array",
+            .sql =
+            \\# EXISTS with an empty array returns true.
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (SELECT ARRAY<INT32>[])
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "null_array",
+            .sql =
+            \\# EXISTS with a NULL array returns true.
+            \\SELECT primary_key, bool_val, double_val, int64_val, str_val
+            \\FROM Table1 WHERE EXISTS (SELECT CAST(NULL AS ARRAY<INT32>))
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false, 0.2, 2, "2" },
+                .{ 1, true, 0.1, 1, "1" },
+            },
+        },
+        .{
+            .desc = "correlated_filter_table",
+            .sql =
+            \\# EXISTS with correlated filter on table.
+            \\SELECT primary_key FROM Table1 t1
+            \\WHERE EXISTS(SELECT * FROM Table2 t2 WHERE t1.primary_key + 1 = t2.int64_val)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "correlated_unnest",
+            .sql =
+            \\# EXISTS with correlated UNNEST.
+            \\SELECT primary_key FROM Table4 t4
+            \\WHERE EXISTS(SELECT * FROM t4.array_val)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{3},
+                .{1},
+            },
+        },
+        .{
+            .desc = "correlated_unnest_filter_table",
+            .sql =
+            \\# EXISTS with correlated UNNEST and filter on table.
+            \\SELECT primary_key FROM Table4 t4
+            \\WHERE EXISTS(SELECT * FROM Table2 t2, t4.array_val a
+            \\             WHERE t2.primary_key = a)
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "select_uncorrelated_constant",
+            .sql =
+            \\#
+            \\# Tests with EXISTS using correlated and uncorrelated subqueries in various
+            \\# contexts: SELECT, CASE, IF, JOIN ON, GROUP BY, HAVING, ORDER BY
+            \\#
+            \\# Simple EXISTS over constant scan in SELECT
+            \\SELECT primary_key, NOT EXISTS(SELECT 1)
+            \\FROM Table1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false },
+                .{ 1, false },
+            },
+        },
+        .{
+            .desc = "select_uncorrelated_table",
+            .sql =
+            \\# EXISTS over table in SELECT
+            \\SELECT primary_key, EXISTS(SELECT * FROM Table1)
+            \\FROM Table1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, true },
+                .{ 1, true },
+            },
+        },
+        .{
+            .desc = "select_correlated_table",
+            .sql =
+            \\# Correlated EXISTS over table in SELECT
+            \\SELECT primary_key,
+            \\       NOT EXISTS(SELECT * FROM Table2 t2
+            \\                  WHERE t1.primary_key + 1 = t2.int64_val)
+            \\FROM Table1 t1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, false },
+                .{ 1, true },
+            },
+        },
+        .{
+            .desc = "select_correlated_unnest",
+            .sql =
+            \\# Correlated EXISTS over UNNEST in SELECT
+            \\SELECT primary_key,
+            \\       EXISTS(SELECT * FROM t4.array_val)
+            \\FROM Table4 t4
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 3, true },
+                .{ 2, false },
+                .{ 1, true },
+            },
+        },
+        .{
+            .desc = "case_uncorrelated_constant",
+            .sql =
+            \\# Simple EXISTS over constant scan in CASE
+            \\SELECT primary_key,
+            \\       CASE WHEN NOT EXISTS(SELECT 1) THEN "not exists" ELSE "exists" END
+            \\FROM Table1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, "exists" },
+                .{ 1, "exists" },
+            },
+        },
+        .{
+            .desc = "case_uncorrelated_table",
+            .sql =
+            \\# EXISTS over table in CASE
+            \\SELECT primary_key,
+            \\       CASE WHEN EXISTS(SELECT * FROM Table1)
+            \\            THEN "exists" ELSE "not exists" END
+            \\FROM Table1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, "exists" },
+                .{ 1, "exists" },
+            },
+        },
+        .{
+            .desc = "case_correlated_table",
+            .sql =
+            \\# Correlated EXISTS over table in CASE
+            \\SELECT primary_key,
+            \\       CASE WHEN NOT EXISTS(SELECT * FROM Table2 t2
+            \\                            WHERE t1.primary_key + 1 = t2.int64_val)
+            \\            THEN "not exists" ELSE "exists" END
+            \\FROM Table1 t1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, "exists" },
+                .{ 1, "not exists" },
+            },
+        },
+        .{
+            .desc = "case_correlated_unnest",
+            .sql =
+            \\# Correlated EXISTS over UNNEST in CASE
+            \\SELECT primary_key,
+            \\       CASE WHEN EXISTS(SELECT * FROM t4.array_val)
+            \\            THEN "exists" ELSE "not exists" END
+            \\FROM Table4 t4
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 3, "exists" },
+                .{ 2, "not exists" },
+                .{ 1, "exists" },
+            },
+        },
+        .{
+            .desc = "if_uncorrelated_constant",
+            .sql =
+            \\# Simple EXISTS over constant scan in IF
+            \\SELECT primary_key,
+            \\       IF (NOT EXISTS(SELECT 1), "not exists", "exists")
+            \\FROM Table1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, "exists" },
+                .{ 1, "exists" },
+            },
+        },
+        .{
+            .desc = "if_uncorrelated_table",
+            .sql =
+            \\# EXISTS over table in IF
+            \\SELECT primary_key,
+            \\       IF (EXISTS(SELECT * FROM Table1), "exists", "not exists")
+            \\FROM Table1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, "exists" },
+                .{ 1, "exists" },
+            },
+        },
+        .{
+            .desc = "if_correlated_table",
+            .sql =
+            \\# Correlated EXISTS over table in IF
+            \\SELECT primary_key,
+            \\       IF (NOT EXISTS(SELECT * FROM Table2 t2
+            \\                 WHERE t1.primary_key + 1 = t2.int64_val),
+            \\          "not exists", "exists")
+            \\FROM Table1 t1
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 2, "exists" },
+                .{ 1, "not exists" },
+            },
+        },
+        .{
+            .desc = "if_correlated_unnest",
+            .sql =
+            \\# Correlated EXISTS over UNNEST in IF
+            \\SELECT primary_key,
+            \\       IF (EXISTS(SELECT * FROM t4.array_val), "exists", "not exists")
+            \\FROM Table4 t4
+            \\ORDER BY primary_key DESC
+            ,
+            .rows = .{
+                .{ 3, "exists" },
+                .{ 2, "not exists" },
+                .{ 1, "exists" },
+            },
+        },
+        .{
+            .desc = "on_uncorrelated_constant",
+            .sql =
+            \\# Simple EXISTS over constant scan in ON clause
+            \\SELECT t1.primary_key, t4.primary_key
+            \\FROM Table1 t1 INNER JOIN Table4 t4
+            \\     ON t1.primary_key = t4.primary_key AND NOT EXISTS(SELECT 1)
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "on_uncorrelated_table",
+            .sql =
+            \\# EXISTS over table in ON clause
+            \\SELECT t1.primary_key, t4.primary_key
+            \\FROM Table1 t1 INNER JOIN Table4 t4
+            \\     ON t1.primary_key = t4.primary_key AND EXISTS(SELECT * FROM Table2)
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+            },
+        },
+        .{
+            .desc = "on_correlated_table",
+            .sql =
+            \\# Correlated EXISTS over table in ON clause
+            \\SELECT t1.primary_key, t4.primary_key
+            \\FROM Table1 t1 INNER JOIN Table4 t4
+            \\  ON t1.primary_key = t4.primary_key AND
+            \\    NOT EXISTS(SELECT * FROM Table2 t2 WHERE t1.primary_key + 1 = t2.int64_val)
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "on_correlated_unnest",
+            .sql =
+            \\# Correlated EXISTS over UNNEST in ON clause
+            \\SELECT t1.primary_key, t4.primary_key
+            \\FROM Table1 t1 INNER JOIN Table4 t4
+            \\     ON t1.primary_key = t4.primary_key AND EXISTS(SELECT * FROM t4.array_val)
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "group_by_uncorrelated_constant",
+            .sql =
+            \\# EXISTS over constant in GROUP BY
+            \\SELECT COUNT(*) c
+            \\FROM Table5
+            \\GROUP BY NOT EXISTS (SELECT 1)
+            ,
+            .rows = .{
+                .{6},
+            },
+        },
+        .{
+            .desc = "group_by_uncorrelated_table",
+            .sql =
+            \\# Uncorrelated EXISTS over table in GROUP BY
+            \\SELECT COUNT(*) c
+            \\FROM Table5
+            \\GROUP BY EXISTS (SELECT * FROM Table1)
+            ,
+            .rows = .{
+                .{6},
+            },
+        },
+        .{
+            .desc = "group_by_correlated_table",
+            .sql =
+            \\# EXISTS with correlated filter over table in GROUP BY
+            \\SELECT COUNT(*) c
+            \\FROM Table5
+            \\GROUP BY EXISTS (SELECT * FROM Table1 t1 where t1.primary_key = int64_val1)
+            \\ORDER BY c
+            ,
+            .rows = .{
+                .{1},
+                .{5},
+            },
+        },
+        .{
+            .desc = "group_by_correlated_unnest",
+            .sql =
+            \\# EXISTS over correlated UNNEST in GROUP BY
+            \\SELECT COUNT(*) c
+            \\FROM Table4 t4
+            \\GROUP BY EXISTS (SELECT * FROM t4.array_val)
+            \\ORDER BY c
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "having_uncorrelated_constant",
+            .sql =
+            \\# EXISTS over constant in HAVING
+            \\SELECT int64_val1, SUM(int64_val2), ARRAY_AGG(int64_val3) aa
+            \\FROM Table5
+            \\GROUP BY int64_val1
+            \\HAVING NOT EXISTS (SELECT 1)
+            \\ORDER BY int64_val1 DESC
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "having_uncorrelated_table",
+            .sql =
+            \\# Uncorrelated EXISTS over table in HAVING
+            \\SELECT int64_val1, SUM(int64_val2)
+            \\FROM Table5
+            \\GROUP BY int64_val1
+            \\HAVING EXISTS (SELECT * FROM Table1)
+            \\ORDER BY int64_val1 DESC
+            ,
+            .rows = .{
+                .{ 3, 30 },
+                .{ 2, 63 },
+                .{ 1, 21 },
+            },
+        },
+        .{
+            .desc = "having_correlated_table",
+            .sql =
+            \\# EXISTS with correlated filter over table in HAVING
+            \\SELECT int64_val1, SUM(int64_val2)
+            \\FROM Table5
+            \\GROUP BY int64_val1
+            \\HAVING NOT EXISTS (SELECT * FROM Table1 t1 where t1.primary_key = int64_val1)
+            \\ORDER BY int64_val1 DESC
+            ,
+            .rows = .{
+                .{ 3, 30 },
+            },
+        },
+        .{
+            .desc = "order_by_uncorrelated_constant",
+            .sql =
+            \\# Simple EXISTS over constant scan in ORDER BY
+            \\SELECT primary_key
+            \\FROM Table1
+            \\ORDER BY NOT EXISTS(SELECT 1), primary_key DESC
+            ,
+            .rows = .{
+                .{2},
+                .{1},
+            },
+        },
+        .{
+            .desc = "order_by_uncorrelated_table",
+            .sql =
+            \\# EXISTS over table in ORDER BY
+            \\SELECT primary_key
+            \\FROM Table1
+            \\ORDER BY EXISTS(SELECT * FROM Table1), primary_key DESC
+            ,
+            .rows = .{
+                .{2},
+                .{1},
+            },
+        },
+        .{
+            .desc = "order_by_correlated_table",
+            .sql =
+            \\# Correlated EXISTS over table in ORDER BY
+            \\SELECT primary_key
+            \\FROM Table1 t1
+            \\ORDER BY
+            \\  NOT EXISTS(SELECT * FROM Table2 t2
+            \\             WHERE t1.primary_key + 1 = t2.int64_val) DESC,
+            \\  primary_key DESC
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "order_by_correlated_unnest",
+            .sql =
+            \\# Correlated EXISTS over UNNEST in ORDER BY
+            \\SELECT primary_key
+            \\FROM Table4 t4
+            \\ORDER BY EXISTS(SELECT * FROM t4.array_val), primary_key DESC
+            ,
+            .rows = .{
+                .{2},
+                .{3},
+                .{1},
+            },
+        },
+    },
+}

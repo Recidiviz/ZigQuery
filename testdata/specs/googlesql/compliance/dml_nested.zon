@@ -1,0 +1,280 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_nested",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_nested.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE BasicTable AS
+            \\SELECT cast(10 as int64) as primary_key,
+            \\       cast(11 as int64) as int64_value,
+            \\       cast([12, 13, 14] as ARRAY<INT64>) as array_value
+            \\UNION ALL
+            \\SELECT 20, 21, [22, 23, 24]
+            \\UNION ALL
+            \\SELECT 30, 31, NULL
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Use a new table in case some engines don't support array-valued primary keys.
+            \\#
+            \\# We must annotate this [prepare_database] statement with
+            \\# [required_features=GROUP_BY_ARRAY] in order to pass the compliace test
+            \\# framework's validation that the first column can be thought of as a primary
+            \\# key. As a result, the table will only be created for drivers that support
+            \\# GROUP_BY_ARRAY, and it will only be visible to tests that require
+            \\# that feature.
+            \\CREATE TABLE TableWithArrayKey AS
+            \\SELECT cast([1, 2] as ARRAY<INT64>) as primary_key,
+            \\       cast(100 as int64) as int64_value
+            \\UNION ALL
+            \\SELECT [1, 2, 3], 200
+            \\UNION ALL
+            \\SELECT [1, 2, 4], 300
+            \\UNION ALL
+            \\SELECT [1, 2, 3, 4], 400
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Use a new table because some engines don't support structs.
+            \\CREATE TABLE ArrayOfStructsTable AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       [ STRUCT(110 as int64_value, [1100, 1101] as array_value2),
+            \\         (120, [1200, 1201]) ] as array_value
+            \\UNION ALL
+            \\SELECT 2,
+            \\       [ STRUCT(210 as int64_value, [200, 201] as array_value2),
+            \\         (220, [2200, 2201]) ]
+            ,
+        },
+        .{
+            .desc = "delete_everything_from_null_row",
+            .sql = "UPDATE BasicTable SET (DELETE array_value WHERE True) WHERE array_value IS NULL",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "delete_nothing_from_null_row",
+            .sql = "UPDATE BasicTable SET (DELETE array_value WHERE False) WHERE array_value IS NULL",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "delete_from_primary_key_no_pk_updates",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (DELETE primary_key WHERE primary_key = 1 ASSERT_ROWS_MODIFIED 1)
+            \\WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "delete_causes_primary_key_collision",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (DELETE primary_key WHERE primary_key = 4 ASSERT_ROWS_MODIFIED 1)
+            \\WHERE ARRAY_LENGTH(primary_key) = 4
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "delete_causes_primary_key_collision_no_pk_updates",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (DELETE primary_key WHERE primary_key = 4 ASSERT_ROWS_MODIFIED 1)
+            \\WHERE ARRAY_LENGTH(primary_key) = 4
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "nested_delete_assert_rows_modified_failure",
+            .sql =
+            \\UPDATE BasicTable SET
+            \\  (DELETE array_value WHERE True ASSERT_ROWS_MODIFIED 0)
+            \\WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_everything_from_one_null_row",
+            .sql =
+            \\UPDATE BasicTable SET
+            \\  (UPDATE array_value SET array_value = array_value + 1 WHERE True)
+            \\WHERE array_value IS NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_nothing_in_null_row",
+            .sql =
+            \\UPDATE BasicTable SET
+            \\  (UPDATE array_value SET array_value = array_value + 1 WHERE False)
+            \\WHERE array_value IS NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_primary_key_no_pk_updates",
+            .sql =
+            \\# An intermediate state has a primary key collision, but the spec says that is
+            \\# ok.
+            \\UPDATE TableWithArrayKey SET
+            \\  (UPDATE primary_key SET primary_key = 4 WHERE primary_key = 3),
+            \\  (UPDATE primary_key SET primary_key = 5 WHERE primary_key = 4)
+            \\WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_causes_primary_key_collision",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (UPDATE primary_key SET primary_key = 4 WHERE primary_key = 3)
+            \\WHERE int64_value = 200
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_causes_primary_key_collision_no_pk_updates",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (UPDATE primary_key SET primary_key = 4 WHERE primary_key = 3)
+            \\WHERE int64_value = 200
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "nested_update_assert_rows_modified_failure",
+            .sql =
+            \\UPDATE BasicTable SET
+            \\  (UPDATE array_value SET array_value = 100 WHERE True ASSERT_ROWS_MODIFIED 0)
+            \\WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "two_overlapping_updates",
+            .sql =
+            \\UPDATE BasicTable SET
+            \\  (UPDATE array_value SET array_value = 1 WHERE array_value = 12
+            \\   ASSERT_ROWS_MODIFIED 1),
+            \\  (UPDATE array_value SET array_value = 1 WHERE array_value = 12
+            \\   ASSERT_ROWS_MODIFIED 1)
+            \\WHERE primary_key = 10
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "updates_with_same_offset_twice",
+            .sql =
+            \\UPDATE BasicTable SET
+            \\  (UPDATE array_value WITH OFFSET
+            \\   SET array_value = 500
+            \\   WHERE offset = 0),
+            \\  (UPDATE array_value WITH OFFSET
+            \\   SET array_value = 501
+            \\   WHERE offset = 0)
+            \\WHERE array_value IS NOT NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_into_null_row",
+            .sql =
+            \\UPDATE BasicTable SET (INSERT array_value VALUES (100), (200), (300))
+            \\WHERE array_value IS NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_into_primary_key_no_pk_updates",
+            .sql =
+            \\# An intermediate state has a primary key collision, but the spec says that is
+            \\# ok.
+            \\UPDATE TableWithArrayKey SET
+            \\  (INSERT primary_key VALUES (4))
+            \\WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_causes_primary_key_collision",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (INSERT primary_key VALUES (4))
+            \\WHERE ARRAY_LENGTH(primary_key) = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_causes_primary_key_collision_no_pk_updates",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (INSERT primary_key VALUES (4))
+            \\WHERE ARRAY_LENGTH(primary_key) = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_query_causes_primary_key_collision",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (INSERT primary_key (SELECT 4))
+            \\WHERE ARRAY_LENGTH(primary_key) = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "insert_query_causes_primary_key_collision_no_pk_updates",
+            .sql =
+            \\UPDATE TableWithArrayKey SET
+            \\  (INSERT primary_key (SELECT 4))
+            \\WHERE ARRAY_LENGTH(primary_key) = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "nested_delete_and_update_intermediate_primary_key_collision_no_pk_updates",
+            .sql =
+            \\# An intermediate state has a primary key collision, but the spec says that is
+            \\# ok.
+            \\UPDATE TableWithArrayKey SET
+            \\  (DELETE primary_key WHERE primary_key = 4 ASSERT_ROWS_MODIFIED 1),
+            \\  (UPDATE primary_key SET primary_key = 5 WHERE primary_key = 3
+            \\   ASSERT_ROWS_MODIFIED 1)
+            \\WHERE ARRAY_LENGTH(primary_key) = 4
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "nested_delete_and_insert_intermediate_primary_key_collision_no_pk_updates",
+            .sql =
+            \\# An intermediate state has a primary key collision, but the spec says that is
+            \\# ok.
+            \\UPDATE TableWithArrayKey SET
+            \\  (DELETE primary_key WHERE primary_key = 4 ASSERT_ROWS_MODIFIED 1),
+            \\  (INSERT primary_key VALUES (4) ASSERT_ROWS_MODIFIED 1)
+            \\WHERE ARRAY_LENGTH(primary_key) = 4
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "nested_update_and_insert_intermediate_primary_key_collision_no_pk_updates",
+            .sql =
+            \\# An intermediate state has a primary key collision, but the spec says that is
+            \\# ok.
+            \\UPDATE TableWithArrayKey SET
+            \\  (UPDATE primary_key SET primary_key = 3 WHERE primary_key = 4
+            \\   ASSERT_ROWS_MODIFIED 1),
+            \\  (INSERT primary_key VALUES (5) ASSERT_ROWS_MODIFIED 1)
+            \\WHERE int64_value = 300
+            ,
+            .expect_error_any = true,
+        },
+    },
+}

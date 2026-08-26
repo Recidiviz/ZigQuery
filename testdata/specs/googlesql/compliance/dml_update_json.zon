@@ -1,0 +1,219 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_update_json",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_update_json.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE Table JsonValue AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\      JSON '{"a": 1}' as json_value
+            \\UNION ALL
+            \\SELECT cast (2 as int64), JSON '{}'
+            \\UNION ALL
+            \\SELECT cast (3 as int64), JSON '[]'
+            \\UNION ALL
+            \\select cast (4 as int64), JSON 'null'
+            \\UNION ALL
+            \\SELECT cast (5 as int64), JSON '1'
+            \\UNION ALL
+            \\SELECT cast (6 as int64), CAST(NULL AS JSON)
+            \\UNION ALL
+            \\SELECT cast (7 as int64), JSON '{"a": {"b": null}}'
+            \\UNION ALL
+            \\SELECT cast (8 as int64), JSON '{"a": {"b": true}}'
+            \\UNION ALL
+            \\SELECT cast (9 as int64), JSON '{"a": [1, 2, 3]}'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE Table DoubleJsonValue AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\      JSON '{"a": 1}' as json_value_1,
+            \\      JSON '{"a": 1}' as json_value_2
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE Table JsonContainers AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\      ARRAY<JSON>[JSON '{"a": 1}', JSON '{"b": 2}'] AS array_of_json,
+            \\      STRUCT(JSON '{"c": 3}' AS json_value) AS struct_of_json,
+            \\      ARRAY<STRUCT<key INT64, value JSON>>[
+            \\        STRUCT(1 AS key, JSON '{"a": 1}' AS value)
+            \\      ] AS array_of_structs,
+            \\UNION ALL
+            \\SELECT cast(2 as int64) as primary_key,
+            \\       ARRAY<JSON>[NULL, JSON '1'] AS array_of_json,
+            \\       STRUCT(CAST(NULL AS JSON) AS json_value) AS struct_of_json,
+            \\       ARRAY<STRUCT<key INT64, value JSON>>[
+            \\         STRUCT(1 AS key, CAST(NULL AS JSON) AS value)
+            \\       ] AS array_of_structs
+            ,
+        },
+        .{
+            .desc = "update_with_json",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value.a.b = JSON '1'
+            \\WHERE primary_key = 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_invalid_path",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value.a = JSON '1'
+            \\WHERE primary_key = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "invalid_update_scalar_value",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value.a = JSON '1'
+            \\WHERE primary_key = 5
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiple_items_only_two_overlapping",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value.a = 1, json_value.b = 2, json_value["a"] = 3, json_value["c"] = 4
+            \\WHERE primary_key = 2
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "expression_overlaps",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value[1+2] = 1, json_value[3] = 2
+            \\WHERE primary_key = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "overlapping_updates_ar_array_level",
+            .sql =
+            \\Update JsonContainers
+            \\SET array_of_json[OFFSET(0)].a = 2, array_of_json[OFFSET(0)].a = 2
+            \\WHERE primary_key = 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "overlapping_updates_in_struct",
+            .sql =
+            \\UPDATE JsonContainers
+            \\SET struct_of_json.json_value["a"] = 2, struct_of_json.json_value[CONCAT('a', '')]= 3
+            \\WHERE primary_key = 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "overlapping_updates_in_array_of_structs",
+            .sql =
+            \\UPDATE JsonContainers
+            \\SET array_of_structs[OFFSET(0)].value["a"] = 2, array_of_structs[OFFSET(0)].value["a"]= 3
+            \\WHERE primary_key = 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_of_struct",
+            .sql =
+            \\UPDATE JsonContainers
+            \\SET array_of_structs[OFFSET(0)].value = 2, array_of_structs[OFFSET(0)].key = 2
+            \\WHERE primary_key = 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_json_array_with_field_error",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value.a = 1
+            \\WHERE primary_key = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_json_array_with_field_subscript_error",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value["a"] = 1
+            \\WHERE primary_key = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_json_object_with_index_error",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value[0] = 1
+            \\WHERE primary_key = 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_json_object_NULL_key",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value[NULL] = 1
+            \\WHERE primary_key = 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_json_array_negative_index",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value[-1] = 1
+            \\WHERE primary_key = 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "set_invalid_path",
+            .sql = "UPDATE JsonValue SET json_value.a.b.c = 5 WHERE primary_key = 8",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "set_and_remove_same_index_error",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value["a"][0] = 10, json_value["a"][0+0] = NULL
+            \\WHERE primary_key = 9
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "remove_same_index_twice_error",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value["a"][0] = NULL, json_value["a"][0+0] = NULL
+            \\WHERE primary_key = 9
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "set_same_index_twice_error",
+            .sql =
+            \\UPDATE JsonValue
+            \\SET json_value["a"][0] = 10, json_value["a"][0+0] = 20
+            \\WHERE primary_key = 9
+            ,
+            .expect_error_any = true,
+        },
+    },
+}

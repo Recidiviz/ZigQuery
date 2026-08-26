@@ -1,0 +1,2729 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/grouping_sets_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/grouping_sets_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE simple_table AS
+            \\SELECT 1 AS key, 10 AS a, 'foo' AS b, true AS c, 12.0 AS d
+            \\UNION ALL SELECT 2, 123, 'foo', false, CAST("NAN" as FLOAT64)
+            \\UNION ALL SELECT 3, 123, 'bar', true, 123.456e-67
+            \\UNION ALL SELECT 4, CAST(NULL AS int64), CAST(NULL AS STRING), CAST(NULL AS BOOL), CAST(NULL AS FLOAT64)
+            \\UNION ALL SELECT 5, 10, 'bar', CAST(NULL AS BOOL), CAST(NULL AS FLOAT64)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE simple_collation_table AS
+            \\SELECT 'a' AS col_ci, 'a' AS col_binary, 'a' AS col_no_collation, 1 AS col
+            \\UNION ALL SELECT 'b', 'b', 'b', 2
+            \\UNION ALL SELECT 'B', 'B', 'B', 3
+            \\UNION ALL SELECT 'ana', 'ana', 'ana', 4
+            \\UNION ALL SELECT 'banana', 'banana', 'banana', 5
+            ,
+        },
+        .{
+            .desc = "grouping_sets_single_column_grouping_set",
+            .sql =
+            \\SELECT a, b, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, b)
+            \\ORDER BY a, b
+            ,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, "bar", 2 },
+                .{ null, "foo", 2 },
+                .{ 10, null, 2 },
+                .{ 123, null, 2 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_single_column_grouping_set_count_distinct",
+            .sql =
+            \\SELECT a, b, COUNT(DISTINCT c)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, b)
+            \\ORDER BY a, b
+            ,
+            .rows = .{
+                .{ null, null, 0 },
+                .{ null, null, 0 },
+                .{ null, "bar", 1 },
+                .{ null, "foo", 2 },
+                .{ 10, null, 1 },
+                .{ 123, null, 2 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_multi_column_grouping_set",
+            .sql =
+            \\SELECT a, b, c, d, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((a, b), (c, d))
+            \\ORDER BY a, b, c, d, COUNT(*)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "grouping_sets_empty_grouping_set",
+            .sql =
+            \\SELECT a, b, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((a, b), (), ())
+            \\ORDER BY a, b, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ null, null, 5 },
+                .{ null, null, 5 },
+                .{ 10, "bar", 1 },
+                .{ 10, "foo", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "foo", 1 },
+            },
+        },
+        .{
+            .desc = "empty_grouping_sets_select_aggregate_function",
+            .sql =
+            \\SELECT COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(())
+            ,
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "empty_grouping_sets_select_literal",
+            .sql =
+            \\SELECT 1, "a", 1.23
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(())
+            ,
+            .rows = .{
+                .{ 1, "a", 1.23 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_expression_columns",
+            .sql =
+            \\SELECT a+1, UPPER(b), a-1, LOWER(b), COUNT(*), MAX(a), MAX(b)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((a+1, UPPER(b)), a-1, LOWER(b), ())
+            \\ORDER BY MAX(a), MAX(b), COUNT(*)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, null, null, 1, null, null },
+                .{ null, null, null, null, 1, null, null },
+                .{ null, null, null, null, 1, null, null },
+                .{ 11, "BAR", null, null, 1, 10, "bar" },
+                .{ 11, "FOO", null, null, 1, 10, "foo" },
+                .{ null, null, 9, null, 2, 10, "foo" },
+                .{ 124, "BAR", null, null, 1, 123, "bar" },
+                .{ null, null, null, "bar", 2, 123, "bar" },
+                .{ 124, "FOO", null, null, 1, 123, "foo" },
+                .{ null, null, null, "foo", 2, 123, "foo" },
+                .{ null, null, 122, null, 2, 123, "foo" },
+                .{ null, null, null, null, 5, 123, "foo" },
+            },
+        },
+        .{
+            .desc = "grouping_sets_select_expression_match_to_column_reference",
+            .sql =
+            \\SELECT a, a+1, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, a+1)
+            \\ORDER BY a, a+1, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 2 },
+                .{ null, null, 2 },
+                .{ 10, 11, 2 },
+                .{ 123, 124, 2 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_duplicate_keys_in_grouping_set",
+            .sql =
+            \\SELECT a, b, a+1, UPPER(b), COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((a, a, b), (a, b, b), (a+1, a+1, a+1), (UPPER(b), UPPER(b)))
+            \\ORDER BY a, b, a+1, UPPER(b), COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 2 },
+                .{ null, null, null, null, 2 },
+                .{ null, null, null, null, 2 },
+                .{ null, null, null, null, 2 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_duplicate_columns_alias_ordinal_index_in_grouping_set",
+            .sql =
+            \\SELECT a, b, a+1, UPPER(b) AS ub, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((a, a, b), (1, b, b), (3, 3, 3), (ub, ub))
+            \\ORDER BY 1, 2, 3, 4, 5
+            ,
+            .rows = .{
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, "BAR", 2 },
+                .{ null, null, null, "FOO", 2 },
+                .{ null, null, 11, null, 2 },
+                .{ null, null, 124, null, 2 },
+                .{ 10, "bar", null, null, 1 },
+                .{ 10, "bar", null, null, 1 },
+                .{ 10, "foo", null, null, 1 },
+                .{ 10, "foo", null, null, 1 },
+                .{ 123, "bar", null, null, 1 },
+                .{ 123, "bar", null, null, 1 },
+                .{ 123, "foo", null, null, 1 },
+                .{ 123, "foo", null, null, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_duplicate_grouping_sets",
+            .sql =
+            \\SELECT a, b, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((a, b), (a, b), a, a)
+            \\ORDER BY a, b, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ 10, null, 2 },
+                .{ 10, null, 2 },
+                .{ 10, "bar", 1 },
+                .{ 10, "bar", 1 },
+                .{ 10, "foo", 1 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 2 },
+                .{ 123, null, 2 },
+                .{ 123, "bar", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "foo", 1 },
+                .{ 123, "foo", 1 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_duplicate_grouping_sets_count_distinct",
+            .sql =
+            \\SELECT a, b, COUNT(distinct c)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((a, b), (a, b), a, a)
+            \\ORDER BY a, b, COUNT(distinct c)
+            ,
+            .rows = .{
+                .{ null, null, 0 },
+                .{ null, null, 0 },
+                .{ null, null, 0 },
+                .{ null, null, 0 },
+                .{ 10, null, 1 },
+                .{ 10, null, 1 },
+                .{ 10, "bar", 0 },
+                .{ 10, "bar", 0 },
+                .{ 10, "foo", 1 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 2 },
+                .{ 123, null, 2 },
+                .{ 123, "bar", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "foo", 1 },
+                .{ 123, "foo", 1 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_alias",
+            .sql =
+            \\SELECT a+d AS x, b AS y, c AS z, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(x, (y, z), z)
+            \\ORDER BY 1, 2, 3, COUNT(*)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "grouping_sets_with_ordinal_columns",
+            .sql =
+            \\SELECT a, b, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(1, 2, (1, 2))
+            \\ORDER BY 1, 2, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, "bar", 2 },
+                .{ null, "foo", 2 },
+                .{ 10, null, 2 },
+                .{ 10, "bar", 1 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 2 },
+                .{ 123, "bar", 1 },
+                .{ 123, "foo", 1 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_mix_of_column_alias_ordinal_index",
+            .sql =
+            \\SELECT a+d AS x, UPPER(b), c, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(x, (2, c), 3)
+            \\ORDER BY 1, 2, 3, COUNT(*)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "grouping_sets_with_duplicate_simple_expressions",
+            .sql =
+            \\SELECT a+1, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a+1, a+1, a+1)
+            \\ORDER BY ANY_VALUE(a), COUNT(*)
+            ,
+            .rows = .{
+                .{ null, 1 },
+                .{ null, 1 },
+                .{ null, 1 },
+                .{ 11, 2 },
+                .{ 11, 2 },
+                .{ 11, 2 },
+                .{ 124, 2 },
+                .{ 124, 2 },
+                .{ 124, 2 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_duplicate_subquery_expressions",
+            .sql =
+            \\SELECT COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((SELECT a+1), (SELECT a+1))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+                .{2},
+                .{2},
+                .{2},
+                .{2},
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_collation_columns",
+            .sql =
+            \\SELECT
+            \\  UPPER(col_ci) AS col1, col_binary AS col_2, col AS col_3,
+            \\  COUNT(*) AS count
+            \\FROM simple_collation_table
+            \\GROUP BY GROUPING SETS(col1, (col_binary, col))
+            \\ORDER BY col1, col_2, col_3, count
+            ,
+            .rows = .{
+                .{ null, "B", 3, 1 },
+                .{ null, "a", 1, 1 },
+                .{ null, "ana", 4, 1 },
+                .{ null, "b", 2, 1 },
+                .{ null, "banana", 5, 1 },
+                .{ "A", null, null, 1 },
+                .{ "ANA", null, null, 1 },
+                .{ "B", null, null, 2 },
+                .{ "BANANA", null, null, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_aggregate_functions",
+            .sql =
+            \\SELECT a, b, ANY_VALUE(a), ARRAY_AGG(c),
+            \\FROM simple_table
+            \\WHERE c IS NOT NULL
+            \\GROUP BY GROUPING SETS((a, b), a, ())
+            \\HAVING b IS NOT NULL
+            \\ORDER BY a, b
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "grouping_sets_with_analytic_functions",
+            .sql =
+            \\SELECT a, b,
+            \\  COUNT(*) OVER (
+            \\    PARTITION BY a
+            \\    ORDER BY a
+            \\    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS count,
+            \\  SUM(a) OVER (
+            \\    PARTITION BY b
+            \\    ORDER BY a
+            \\    ROWS BETWEEN CURRENT ROW AND CURRENT ROW) AS sum,
+            \\  MAX(b) OVER (
+            \\    PARTITION BY b
+            \\    ORDER BY a
+            \\    RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS max
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS((a, b), a, ())
+            \\ORDER BY 1, 2, 3, 4, 5
+            ,
+            .rows = .{
+                .{ null, null, 3, null, null },
+                .{ null, null, 3, null, null },
+                .{ null, null, 3, null, null },
+                .{ 10, null, 3, 10, null },
+                .{ 10, "bar", 3, 10, "bar" },
+                .{ 10, "foo", 3, 10, "foo" },
+                .{ 123, null, 3, 123, null },
+                .{ 123, "bar", 3, 123, "bar" },
+                .{ 123, "foo", 3, 123, "foo" },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_subquery_constant",
+            .sql =
+            \\SELECT SUM(key)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(
+            \\  (SELECT 'abc'),
+            \\  (SELECT 1))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{15},
+                .{15},
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_subquery_from_the_table",
+            .sql =
+            \\SELECT SUM(key)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(
+            \\  (SELECT COUNT(*) FROM simple_table),
+            \\  ((SELECT SUM(key) FROM simple_table), (SELECT MAX(key) FROM simple_table))
+            \\)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{15},
+                .{15},
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_correlated_subquery",
+            .sql =
+            \\SELECT SUM(key)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(
+            \\  (SELECT a+1),
+            \\  (SELECT b)
+            \\)
+            \\ORDER BY SUM(key)
+            ,
+            .rows = .{
+                .{3},
+                .{4},
+                .{4},
+                .{5},
+                .{6},
+                .{8},
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_keyword_column_name",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT 10 AS `GROUPING SETS`, "bar" AS `ROLLUP`, true AS `CUBE` UNION ALL
+            \\  SELECT 11 AS `GROUPING SETS`, "bar" AS `ROLLUP`, false AS `CUBE`
+            \\)
+            \\SELECT `GROUPING SETS`, `ROLLUP`, `CUBE`,  COUNT(*)
+            \\FROM T
+            \\GROUP BY GROUPING SETS(`GROUPING SETS`, `ROLLUP`, `CUBE`)
+            \\ORDER BY `GROUPING SETS`, `ROLLUP`, `CUBE`, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, false, 1 },
+                .{ null, null, true, 1 },
+                .{ null, "bar", null, 2 },
+                .{ 10, null, null, 1 },
+                .{ 11, null, null, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_rollup_cube",
+            .sql =
+            \\SELECT a+1, b, c, d, COUNT(*) AS cnt
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a+1, ROLLUP(b, c), CUBE(d), ())
+            \\ORDER BY 1, b, c, d, cnt
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "grouping_sets_with_rollup_cube_on_multi_columns",
+            .sql =
+            \\SELECT a+1, b, c, d, COUNT(*) AS cnt
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a+1, ROLLUP(b, (c, d)), CUBE(a+1, (c, b)), ())
+            \\ORDER BY 1, b, c, d, cnt
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "grouping_sets_with_rollup_cube_mix_column_alias_ordinal_index",
+            .sql =
+            \\SELECT a+1, b AS x, c AS y, d, COUNT(*) AS cnt
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(1, ROLLUP(x, (y, d)), CUBE(1, (3, 2)), ())
+            \\ORDER BY 1, x, y, d, cnt
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "grouping_sets_with_constant_select_list",
+            .sql =
+            \\SELECT "a", true, 1.23
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, b)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_all_post_aggregate_clauses",
+            .sql =
+            \\SELECT a, b, c, COUNT(*) OVER() AS cnt
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, b, c)
+            \\HAVING a IS NULL
+            \\QUALIFY c
+            \\ORDER BY a, b, c, cnt
+            ,
+            .rows = .{
+                .{ null, null, true, 7 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_having_clauses",
+            .sql =
+            \\SELECT a, b, c, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, b, c)
+            \\HAVING GROUPING(a) = 0
+            \\ORDER BY 1, 2, 3, 4
+            ,
+            .rows = .{
+                .{ null, null, null, 1 },
+                .{ 10, null, null, 2 },
+                .{ 123, null, null, 2 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_qualify_clauses",
+            .sql =
+            \\SELECT a, b, c, COUNT(*) OVER()
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, b, c)
+            \\QUALIFY GROUPING(a) = 0
+            \\ORDER BY 1, 2, 3, 4
+            ,
+            .rows = .{
+                .{ null, null, null, 9 },
+                .{ 10, null, null, 9 },
+                .{ 123, null, null, 9 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_pivot",
+            .sql =
+            \\SELECT a+1, foo, bar, COUNT(*) AS cnt
+            \\FROM simple_table PIVOT(SUM(d) FOR b IN ('foo', 'bar'))
+            \\GROUP BY GROUPING SETS(a+1, foo, bar)
+            \\ORDER BY 1, foo, bar, cnt
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "grouping_sets_with_unpivot",
+            .sql =
+            \\SELECT a+1, e, f, COUNT(*) AS cnt
+            \\FROM simple_table UNPIVOT(e FOR f in (b))
+            \\GROUP BY GROUPING SETS(a+1, e, f)
+            \\ORDER BY 1, e, f, cnt
+            ,
+            .rows = .{
+                .{ null, null, "b", 4 },
+                .{ null, "bar", null, 2 },
+                .{ null, "foo", null, 2 },
+                .{ 11, null, null, 2 },
+                .{ 124, null, null, 2 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_and_with_recursive",
+            .sql =
+            \\WITH RECURSIVE
+            \\  CTE_1 AS (
+            \\    (
+            \\      SELECT iteration as it, iteration+1 AS it1
+            \\      FROM UNNEST([1, 2, 3, 4]) AS iteration
+            \\      GROUP BY GROUPING SETS(iteration, iteration+1)
+            \\    )
+            \\    UNION ALL (
+            \\    SELECT it+1 AS it, it1+1 AS it1 FROM CTE_1 WHERE it < 3)
+            \\  )
+            \\SELECT it, it1 FROM CTE_1
+            \\ORDER BY 1, 2 ASC
+            ,
+            .rows = .{
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ 1, 2 },
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 4, 5 },
+            },
+        },
+        .{
+            .desc = "rollup_with_single_columns",
+            .sql =
+            \\SELECT a, b, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, b)
+            \\ORDER BY a, b, SUM(key)
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 10, null, 6 },
+                .{ 10, "bar", 5 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 5 },
+                .{ 123, "bar", 3 },
+                .{ 123, "foo", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_with_expression_columns",
+            .sql =
+            \\SELECT a+1, UPPER(b), SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a+1, UPPER(b))
+            \\ORDER BY 1, 2, SUM(key)
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 11, null, 6 },
+                .{ 11, "BAR", 5 },
+                .{ 11, "FOO", 1 },
+                .{ 124, null, 5 },
+                .{ 124, "BAR", 3 },
+                .{ 124, "FOO", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_with_duplicate_columns",
+            .sql =
+            \\SELECT a+1, b, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a+1, a+1, a+1, b, b)
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 11, null, 6 },
+                .{ 11, null, 6 },
+                .{ 11, null, 6 },
+                .{ 11, "bar", 5 },
+                .{ 11, "bar", 5 },
+                .{ 11, "foo", 1 },
+                .{ 11, "foo", 1 },
+                .{ 124, null, 5 },
+                .{ 124, null, 5 },
+                .{ 124, null, 5 },
+                .{ 124, "bar", 3 },
+                .{ 124, "bar", 3 },
+                .{ 124, "foo", 2 },
+                .{ 124, "foo", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_with_duplicate_mix_of_column_alias_ordinal_index",
+            .sql =
+            \\SELECT a+1 AS a1, b, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a1, 1, 1, b, 2, 2)
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 11, null, 6 },
+                .{ 11, null, 6 },
+                .{ 11, null, 6 },
+                .{ 11, "bar", 5 },
+                .{ 11, "bar", 5 },
+                .{ 11, "bar", 5 },
+                .{ 11, "foo", 1 },
+                .{ 11, "foo", 1 },
+                .{ 11, "foo", 1 },
+                .{ 124, null, 5 },
+                .{ 124, null, 5 },
+                .{ 124, null, 5 },
+                .{ 124, "bar", 3 },
+                .{ 124, "bar", 3 },
+                .{ 124, "bar", 3 },
+                .{ 124, "foo", 2 },
+                .{ 124, "foo", 2 },
+                .{ 124, "foo", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_with_single_columns_in_parentheses",
+            .sql =
+            \\SELECT a, b, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP((a), (b))
+            \\ORDER BY a, b, SUM(key)
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 10, null, 6 },
+                .{ 10, "bar", 5 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 5 },
+                .{ 123, "bar", 3 },
+                .{ 123, "foo", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_with_multi_columns",
+            .sql =
+            \\SELECT a, b, c, d, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP((a, b), (c), d)
+            \\ORDER BY a, b, c, d, SUM(key)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "rollup_with_parenthesised_single_column",
+            .sql =
+            \\SELECT a, b, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP((a), (b))
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 10, null, 6 },
+                .{ 10, "bar", 5 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 5 },
+                .{ 123, "bar", 3 },
+                .{ 123, "foo", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_with_parenthesised_single_column_when_grouping_sets_enabled",
+            .sql =
+            \\# The WHERE EXISTS clause is to make sure the GROUPING_SETS feature option
+            \\# required. Without the where clause, the query can be run by missing the
+            \\# GROUPING_SETS feature option, which will cause
+            \\# required_feature_integrity_test fail. It's intentional to test the query
+            \\# behavior won't change when GROUPING_SETS is enabled. GROUPING_SETS
+            \\# uses a new code path to resolve the ROLLUP.
+            \\SELECT a, b, SUM(key)
+            \\FROM simple_table
+            \\WHERE EXISTS(SELECT "a" FROM simple_table GROUP BY GROUPING SETS(()))
+            \\GROUP BY ROLLUP((a), (b))
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 10, null, 6 },
+                .{ 10, "bar", 5 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 5 },
+                .{ 123, "bar", 3 },
+                .{ 123, "foo", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_with_multi_columns_as_struct",
+            .sql =
+            \\# (a, b) is resolved as a struct when only GROUP_BY_ROLLUP is enabled, and is
+            \\# resolved to a multi-column when GROUPING_SETS is enabled.
+            \\SELECT SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP((a, b), (c, d))
+            \\ORDER BY SUM(key)
+            ,
+            .rows = .{
+                .{1},
+                .{1},
+                .{2},
+                .{2},
+                .{3},
+                .{3},
+                .{4},
+                .{4},
+                .{5},
+                .{5},
+                .{15},
+            },
+        },
+        .{
+            .desc = "rollup_with_multi_expression_columns",
+            .sql =
+            \\SELECT a+1, UPPER(b), c, d, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a+1, (UPPER(b), c), d)
+            \\ORDER BY 1, 2, c, d, SUM(key)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "rollup_with_duplicate_multi_columns",
+            .sql =
+            \\SELECT a, b, UPPER(b), SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP((a, b), (a, b), UPPER(b), UPPER(b))
+            \\ORDER BY 1, 2, 3, 4
+            ,
+            .rows = .{
+                .{ null, null, null, 4 },
+                .{ null, null, null, 4 },
+                .{ null, null, null, 4 },
+                .{ null, null, null, 4 },
+                .{ null, null, null, 15 },
+                .{ 10, "bar", "BAR", 5 },
+                .{ 10, "bar", "BAR", 5 },
+                .{ 10, "bar", "BAR", 5 },
+                .{ 10, "bar", "BAR", 5 },
+                .{ 10, "foo", "FOO", 1 },
+                .{ 10, "foo", "FOO", 1 },
+                .{ 10, "foo", "FOO", 1 },
+                .{ 10, "foo", "FOO", 1 },
+                .{ 123, "bar", "BAR", 3 },
+                .{ 123, "bar", "BAR", 3 },
+                .{ 123, "bar", "BAR", 3 },
+                .{ 123, "bar", "BAR", 3 },
+                .{ 123, "foo", "FOO", 2 },
+                .{ 123, "foo", "FOO", 2 },
+                .{ 123, "foo", "FOO", 2 },
+                .{ 123, "foo", "FOO", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_with_duplicate_columns_in_multi_columns",
+            .sql =
+            \\SELECT a+1, a-1, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP((a+1, a+1, a+1), (a-1, a-1, a-1))
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 11, null, 6 },
+                .{ 11, 9, 6 },
+                .{ 124, null, 5 },
+                .{ 124, 122, 5 },
+            },
+        },
+        .{
+            .desc = "rollup_with_duplicate_mix_of_column_alias_ordinal_index_in_multi_columns",
+            .sql =
+            \\SELECT a+1, a-1, a*2 AS a2, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP((a+1, 1, 1), (2, a-1, 2), (a2, 3, a2))
+            \\ORDER BY 1, 2, 3, 4
+            ,
+            .rows = .{
+                .{ null, null, null, 4 },
+                .{ null, null, null, 4 },
+                .{ null, null, null, 4 },
+                .{ null, null, null, 15 },
+                .{ 11, null, null, 6 },
+                .{ 11, 9, null, 6 },
+                .{ 11, 9, 20, 6 },
+                .{ 124, null, null, 5 },
+                .{ 124, 122, null, 5 },
+                .{ 124, 122, 246, 5 },
+            },
+        },
+        .{
+            .desc = "rollup_with_mix_of_column_alias_ordinal_index",
+            .sql =
+            \\SELECT a+1, a-1 AS x, b, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(1, (a+1, x), b)
+            \\ORDER BY 1, 2, 3, 4
+            ,
+            .rows = .{
+                .{ null, null, null, 4 },
+                .{ null, null, null, 4 },
+                .{ null, null, null, 4 },
+                .{ null, null, null, 15 },
+                .{ 11, null, null, 6 },
+                .{ 11, 9, null, 6 },
+                .{ 11, 9, "bar", 5 },
+                .{ 11, 9, "foo", 1 },
+                .{ 124, null, null, 5 },
+                .{ 124, 122, null, 5 },
+                .{ 124, 122, "bar", 3 },
+                .{ 124, 122, "foo", 2 },
+            },
+        },
+        .{
+            .desc = "rollup_expression_match",
+            .sql =
+            \\SELECT a, a+1, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, a+1)
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+            },
+        },
+        .{
+            .desc = "rollup_multi_column_expression_match",
+            .sql =
+            \\SELECT a, a+1, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, (a, a+1), a+1)
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 15 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+            },
+        },
+        .{
+            .desc = "rollup_with_subquery",
+            .sql =
+            \\SELECT SUM(key)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(
+            \\  (SELECT COUNT(*) FROM simple_table),
+            \\  ((SELECT SUM(key) FROM simple_table), (SELECT MAX(key) FROM simple_table))
+            \\)
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{15},
+                .{15},
+                .{15},
+            },
+        },
+        .{
+            .desc = "rollup_with_collation_columns",
+            .sql =
+            \\SELECT
+            \\  UPPER(col_ci) AS col1, col_binary AS col_2, col AS col_3,
+            \\  COUNT(*) AS count
+            \\FROM simple_collation_table
+            \\GROUP BY ROLLUP(col1, (col_binary, col))
+            \\ORDER BY col1, col_2, col_3, count
+            ,
+            .rows = .{
+                .{ null, null, null, 5 },
+                .{ "A", null, null, 1 },
+                .{ "A", "a", 1, 1 },
+                .{ "ANA", null, null, 1 },
+                .{ "ANA", "ana", 4, 1 },
+                .{ "B", null, null, 2 },
+                .{ "B", "B", 3, 1 },
+                .{ "B", "b", 2, 1 },
+                .{ "BANANA", null, null, 1 },
+                .{ "BANANA", "banana", 5, 1 },
+            },
+        },
+        .{
+            .desc = "cube_simple_query",
+            .sql =
+            \\SELECT a, b, GROUPING(a), GROUPING(b), COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, b)
+            \\ORDER BY a, b, GROUPING(a), GROUPING(b), COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, 0, 0, 1 },
+                .{ null, null, 0, 1, 1 },
+                .{ null, null, 1, 0, 1 },
+                .{ null, null, 1, 1, 5 },
+                .{ null, "bar", 1, 0, 2 },
+                .{ null, "foo", 1, 0, 2 },
+                .{ 10, null, 0, 1, 2 },
+                .{ 10, "bar", 0, 0, 1 },
+                .{ 10, "foo", 0, 0, 1 },
+                .{ 123, null, 0, 1, 2 },
+                .{ 123, "bar", 0, 0, 1 },
+                .{ 123, "foo", 0, 0, 1 },
+            },
+        },
+        .{
+            .desc = "cube_simple_query_no_grouping",
+            .sql =
+            \\SELECT a, b, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, b)
+            \\ORDER BY a, b, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 5 },
+                .{ null, "bar", 2 },
+                .{ null, "foo", 2 },
+                .{ 10, null, 2 },
+                .{ 10, "bar", 1 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 2 },
+                .{ 123, "bar", 1 },
+                .{ 123, "foo", 1 },
+            },
+        },
+        .{
+            .desc = "cube_with_multi_columns_grouping_set",
+            .sql =
+            \\SELECT a, b, c, GROUPING(c), SUM(d)
+            \\FROM simple_table
+            \\GROUP BY CUBE(c, (a, b))
+            \\ORDER BY a, b, c, GROUPING(c), SUM(d)
+            ,
+            .rows = .{
+                .{ null, null, null, 0, null },
+                .{ null, null, null, 0, null },
+                .{ null, null, null, 1, null },
+                .{ null, null, null, 1, nan },
+                .{ null, null, false, 0, nan },
+                .{ null, null, true, 0, 12 },
+                .{ 10, "bar", null, 0, null },
+                .{ 10, "bar", null, 1, null },
+                .{ 10, "foo", null, 1, 12 },
+                .{ 10, "foo", true, 0, 12 },
+                .{ 123, "bar", null, 1, 1.23456e-65 },
+                .{ 123, "bar", true, 0, 1.23456e-65 },
+                .{ 123, "foo", null, 1, nan },
+                .{ 123, "foo", false, 0, nan },
+            },
+        },
+        .{
+            .desc = "cube_with_multi_columns_grouping_set_no_grouping",
+            .sql =
+            \\SELECT a, b, c, SUM(d)
+            \\FROM simple_table
+            \\GROUP BY CUBE(c, (a, b))
+            \\ORDER BY a, b, c, SUM(d)
+            ,
+            .rows = .{
+                .{ null, null, null, null },
+                .{ null, null, null, null },
+                .{ null, null, null, null },
+                .{ null, null, null, nan },
+                .{ null, null, false, nan },
+                .{ null, null, true, 12 },
+                .{ 10, "bar", null, null },
+                .{ 10, "bar", null, null },
+                .{ 10, "foo", null, 12 },
+                .{ 10, "foo", true, 12 },
+                .{ 123, "bar", null, 1.23456e-65 },
+                .{ 123, "bar", true, 1.23456e-65 },
+                .{ 123, "foo", null, nan },
+                .{ 123, "foo", false, nan },
+            },
+        },
+        .{
+            .desc = "cube_with_duplicated_columns_no_grouping",
+            .sql =
+            \\SELECT a, b, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, a, b, a)
+            \\ORDER BY a, b, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 5 },
+                .{ null, "bar", 2 },
+                .{ null, "foo", 2 },
+                .{ 10, null, 2 },
+                .{ 10, null, 2 },
+                .{ 10, null, 2 },
+                .{ 10, null, 2 },
+                .{ 10, null, 2 },
+                .{ 10, null, 2 },
+                .{ 10, null, 2 },
+                .{ 10, "bar", 1 },
+                .{ 10, "bar", 1 },
+                .{ 10, "bar", 1 },
+                .{ 10, "bar", 1 },
+                .{ 10, "bar", 1 },
+                .{ 10, "bar", 1 },
+                .{ 10, "bar", 1 },
+                .{ 10, "foo", 1 },
+                .{ 10, "foo", 1 },
+                .{ 10, "foo", 1 },
+                .{ 10, "foo", 1 },
+                .{ 10, "foo", 1 },
+                .{ 10, "foo", 1 },
+                .{ 10, "foo", 1 },
+                .{ 123, null, 2 },
+                .{ 123, null, 2 },
+                .{ 123, null, 2 },
+                .{ 123, null, 2 },
+                .{ 123, null, 2 },
+                .{ 123, null, 2 },
+                .{ 123, null, 2 },
+                .{ 123, "bar", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "bar", 1 },
+                .{ 123, "foo", 1 },
+                .{ 123, "foo", 1 },
+                .{ 123, "foo", 1 },
+                .{ 123, "foo", 1 },
+                .{ 123, "foo", 1 },
+                .{ 123, "foo", 1 },
+                .{ 123, "foo", 1 },
+            },
+        },
+        .{
+            .desc = "cube_with_duplicated_multi_columns",
+            .sql =
+            \\SELECT a, b, c, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY CUBE((a, b), (a, b), c, c, (c, c), (c, c))
+            \\ORDER BY a, b, c, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 2 },
+                .{ null, null, null, 5 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, false, 1 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ null, null, true, 2 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "foo", null, 1 },
+                .{ 10, "foo", null, 1 },
+                .{ 10, "foo", null, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 10, "foo", true, 1 },
+                .{ 123, "bar", null, 1 },
+                .{ 123, "bar", null, 1 },
+                .{ 123, "bar", null, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "bar", true, 1 },
+                .{ 123, "foo", null, 1 },
+                .{ 123, "foo", null, 1 },
+                .{ 123, "foo", null, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+                .{ 123, "foo", false, 1 },
+            },
+        },
+        .{
+            .desc = "cube_with_expressions",
+            .sql =
+            \\SELECT b, MAX(c)
+            \\FROM simple_table
+            \\GROUP BY CUBE(key+1, b, c)
+            \\ORDER BY b, MAX(c)
+            ,
+            .rows = .{
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, false },
+                .{ null, false },
+                .{ null, false },
+                .{ null, true },
+                .{ null, true },
+                .{ null, true },
+                .{ null, true },
+                .{ null, true },
+                .{ null, true },
+                .{ "bar", null },
+                .{ "bar", null },
+                .{ "bar", null },
+                .{ "bar", true },
+                .{ "bar", true },
+                .{ "bar", true },
+                .{ "bar", true },
+                .{ "foo", false },
+                .{ "foo", false },
+                .{ "foo", false },
+                .{ "foo", true },
+                .{ "foo", true },
+                .{ "foo", true },
+                .{ "foo", true },
+            },
+        },
+        .{
+            .desc = "cube_with_collated_column",
+            .sql =
+            \\SELECT
+            \\  UPPER(col_ci) AS col1,
+            \\  col_no_collation AS col2,
+            \\  COUNT(*) AS count
+            \\FROM simple_collation_table
+            \\GROUP BY CUBE(col_ci, col_no_collation, col)
+            \\ORDER BY col1, col2, count
+            ,
+            .rows = .{
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 1 },
+                .{ null, null, 5 },
+                .{ null, "B", 1 },
+                .{ null, "B", 1 },
+                .{ null, "a", 1 },
+                .{ null, "a", 1 },
+                .{ null, "ana", 1 },
+                .{ null, "ana", 1 },
+                .{ null, "b", 1 },
+                .{ null, "b", 1 },
+                .{ null, "banana", 1 },
+                .{ null, "banana", 1 },
+                .{ "A", null, 1 },
+                .{ "A", null, 1 },
+                .{ "A", "a", 1 },
+                .{ "A", "a", 1 },
+                .{ "ANA", null, 1 },
+                .{ "ANA", null, 1 },
+                .{ "ANA", "ana", 1 },
+                .{ "ANA", "ana", 1 },
+                .{ "B", null, 1 },
+                .{ "B", null, 1 },
+                .{ "B", null, 1 },
+                .{ "B", null, 1 },
+                .{ "B", "B", 1 },
+                .{ "B", "B", 1 },
+                .{ "B", "b", 1 },
+                .{ "B", "b", 1 },
+                .{ "BANANA", null, 1 },
+                .{ "BANANA", null, 1 },
+                .{ "BANANA", "banana", 1 },
+                .{ "BANANA", "banana", 1 },
+            },
+        },
+        .{
+            .desc = "cube_with_analytic_functions",
+            .sql =
+            \\SELECT a, b,
+            \\  COUNT(*) OVER (
+            \\    PARTITION BY a
+            \\    ORDER BY a
+            \\    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS count,
+            \\  SUM(a) OVER (
+            \\    PARTITION BY b
+            \\    ORDER BY a
+            \\    ROWS BETWEEN CURRENT ROW AND CURRENT ROW) AS sum,
+            \\  MAX(b) OVER (
+            \\    PARTITION BY b
+            \\    ORDER BY a
+            \\    RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS max
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, b)
+            \\ORDER BY 1, 2, 3, 4, 5
+            ,
+            .rows = .{
+                .{ null, null, 6, null, null },
+                .{ null, null, 6, null, null },
+                .{ null, null, 6, null, null },
+                .{ null, null, 6, null, null },
+                .{ null, "bar", 6, null, "bar" },
+                .{ null, "foo", 6, null, "foo" },
+                .{ 10, null, 3, 10, null },
+                .{ 10, "bar", 3, 10, "bar" },
+                .{ 10, "foo", 3, 10, "foo" },
+                .{ 123, null, 3, 123, null },
+                .{ 123, "bar", 3, 123, "bar" },
+                .{ 123, "foo", 3, 123, "foo" },
+            },
+        },
+        .{
+            .desc = "cube_with_parenthesized_single_column",
+            .sql =
+            \\SELECT a, b,
+            \\  COUNT(*) OVER (
+            \\    PARTITION BY a
+            \\    ORDER BY a
+            \\    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS count,
+            \\  SUM(a) OVER (
+            \\    PARTITION BY b
+            \\    ORDER BY a
+            \\    ROWS BETWEEN CURRENT ROW AND CURRENT ROW) AS sum,
+            \\  MAX(b) OVER (
+            \\    PARTITION BY b
+            \\    ORDER BY a
+            \\    RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS max
+            \\FROM simple_table
+            \\GROUP BY CUBE( (a), (b) )
+            \\ORDER BY 1, 2, 3, 4, 5
+            ,
+            .rows = .{
+                .{ null, null, 6, null, null },
+                .{ null, null, 6, null, null },
+                .{ null, null, 6, null, null },
+                .{ null, null, 6, null, null },
+                .{ null, "bar", 6, null, "bar" },
+                .{ null, "foo", 6, null, "foo" },
+                .{ 10, null, 3, 10, null },
+                .{ 10, "bar", 3, 10, "bar" },
+                .{ 10, "foo", 3, 10, "foo" },
+                .{ 123, null, 3, 123, null },
+                .{ 123, "bar", 3, 123, "bar" },
+                .{ 123, "foo", 3, 123, "foo" },
+            },
+        },
+        .{
+            .desc = "cube_mixed_column_alias_and_ordinal_index",
+            .sql =
+            \\SELECT a, b, a+1, UPPER(b) AS ub, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, 1, 2, 2, ub)
+            \\ORDER BY 1, 2, 3, 4, 5
+            ,
+            .rows = .{
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 1 },
+                .{ null, null, null, null, 5 },
+                .{ null, null, null, "BAR", 2 },
+                .{ null, null, null, "FOO", 2 },
+                .{ null, "bar", null, null, 2 },
+                .{ null, "bar", null, null, 2 },
+                .{ null, "bar", null, null, 2 },
+                .{ null, "bar", null, "BAR", 2 },
+                .{ null, "bar", null, "BAR", 2 },
+                .{ null, "bar", null, "BAR", 2 },
+                .{ null, "foo", null, null, 2 },
+                .{ null, "foo", null, null, 2 },
+                .{ null, "foo", null, null, 2 },
+                .{ null, "foo", null, "FOO", 2 },
+                .{ null, "foo", null, "FOO", 2 },
+                .{ null, "foo", null, "FOO", 2 },
+                .{ 10, null, 11, null, 2 },
+                .{ 10, null, 11, null, 2 },
+                .{ 10, null, 11, null, 2 },
+                .{ 10, null, 11, "BAR", 1 },
+                .{ 10, null, 11, "BAR", 1 },
+                .{ 10, null, 11, "BAR", 1 },
+                .{ 10, null, 11, "FOO", 1 },
+                .{ 10, null, 11, "FOO", 1 },
+                .{ 10, null, 11, "FOO", 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, null, 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "bar", 11, "BAR", 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, null, 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 10, "foo", 11, "FOO", 1 },
+                .{ 123, null, 124, null, 2 },
+                .{ 123, null, 124, null, 2 },
+                .{ 123, null, 124, null, 2 },
+                .{ 123, null, 124, "BAR", 1 },
+                .{ 123, null, 124, "BAR", 1 },
+                .{ 123, null, 124, "BAR", 1 },
+                .{ 123, null, 124, "FOO", 1 },
+                .{ 123, null, 124, "FOO", 1 },
+                .{ 123, null, 124, "FOO", 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, null, 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "bar", 124, "BAR", 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, null, 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+                .{ 123, "foo", 124, "FOO", 1 },
+            },
+        },
+        .{
+            .desc = "cube_with_constant_select_list",
+            .sql =
+            \\SELECT "abc", 111, "ddd"
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, b)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "abc", 111, "ddd" },
+                .{ "abc", 111, "ddd" },
+                .{ "abc", 111, "ddd" },
+                .{ "abc", 111, "ddd" },
+                .{ "abc", 111, "ddd" },
+                .{ "abc", 111, "ddd" },
+            },
+        },
+        .{
+            .desc = "cube_with_post_aggregate_clauses",
+            .sql =
+            \\SELECT a, b, c, COUNT(*) OVER() AS cnt
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, b, c)
+            \\QUALIFY a > 10
+            \\ORDER BY a, b, c, cnt
+            ,
+            .rows = .{
+                .{ 123, null, null, 30 },
+                .{ 123, null, false, 30 },
+                .{ 123, null, true, 30 },
+                .{ 123, "bar", null, 30 },
+                .{ 123, "bar", true, 30 },
+                .{ 123, "foo", null, 30 },
+                .{ 123, "foo", false, 30 },
+            },
+        },
+        .{
+            .desc = "cube_with_having_clauses",
+            .sql =
+            \\SELECT a, b, COUNT(*)
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, b)
+            \\HAVING COUNT(*) > 1
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 5 },
+                .{ null, "bar", 2 },
+                .{ null, "foo", 2 },
+                .{ 10, null, 2 },
+                .{ 123, null, 2 },
+            },
+        },
+        .{
+            .desc = "cube_with_qualify_clauses",
+            .sql =
+            \\SELECT a, b, COUNT(*) OVER()
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, b)
+            \\QUALIFY GROUPING(a) = 0
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 12 },
+                .{ null, null, 12 },
+                .{ 10, null, 12 },
+                .{ 10, "bar", 12 },
+                .{ 10, "foo", 12 },
+                .{ 123, null, 12 },
+                .{ 123, "bar", 12 },
+                .{ 123, "foo", 12 },
+            },
+        },
+        .{
+            .desc = "cube_with_pivot",
+            .sql =
+            \\SELECT a, foo, bar, COUNT(*) AS cnt
+            \\FROM simple_table PIVOT(SUM(d) FOR b IN ('foo', 'bar'))
+            \\GROUP BY CUBE(a, foo, bar)
+            \\ORDER BY a, foo, bar, cnt
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cube_with_unpivot",
+            .sql =
+            \\SELECT a, e, f, COUNT(*) AS cnt
+            \\FROM simple_table UNPIVOT(e FOR f in (b))
+            \\GROUP BY CUBE(a, e, f)
+            \\ORDER BY a, e, f, cnt
+            ,
+            .rows = .{
+                .{ null, null, null, 4 },
+                .{ null, null, "b", 4 },
+                .{ null, "bar", null, 2 },
+                .{ null, "bar", "b", 2 },
+                .{ null, "foo", null, 2 },
+                .{ null, "foo", "b", 2 },
+                .{ 10, null, null, 2 },
+                .{ 10, null, "b", 2 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", "b", 1 },
+                .{ 10, "foo", null, 1 },
+                .{ 10, "foo", "b", 1 },
+                .{ 123, null, null, 2 },
+                .{ 123, null, "b", 2 },
+                .{ 123, "bar", null, 1 },
+                .{ 123, "bar", "b", 1 },
+                .{ 123, "foo", null, 1 },
+                .{ 123, "foo", "b", 1 },
+            },
+        },
+        .{
+            .desc = "cube_and_with_recursive",
+            .sql =
+            \\WITH RECURSIVE
+            \\  CTE_1 AS (
+            \\    (
+            \\      SELECT iteration as it, iteration+1 AS it1
+            \\      FROM UNNEST([1, 2, 3, 4]) AS iteration
+            \\      GROUP BY CUBE(iteration, iteration+1)
+            \\    )
+            \\    UNION ALL (
+            \\    SELECT it+1 AS it, it1+1 AS it1 FROM CTE_1 WHERE it < 3)
+            \\  )
+            \\SELECT it, it1 FROM CTE_1
+            \\ORDER BY 1, 2 ASC
+            ,
+            .rows = .{
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ null, null },
+                .{ 1, 2 },
+                .{ 1, 2 },
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 4, 5 },
+                .{ 4, 5 },
+            },
+        },
+        .{
+            .desc = "cube_expression_match",
+            .sql =
+            \\SELECT a, a+1, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, a+1)
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 5 },
+                .{ null, null, 6 },
+                .{ null, null, 15 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+            },
+        },
+        .{
+            .desc = "cube_multi_column_expression_match",
+            .sql =
+            \\SELECT a, a+1, SUM(key)
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, (a, a+1), a+1)
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 4 },
+                .{ null, null, 5 },
+                .{ null, null, 6 },
+                .{ null, null, 15 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 10, 11, 6 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+                .{ 123, 124, 5 },
+            },
+        },
+        .{
+            .desc = "cube_with_subquery",
+            .sql =
+            \\SELECT SUM(key)
+            \\FROM simple_table
+            \\GROUP BY CUBE(
+            \\  (SELECT COUNT(*) FROM simple_table),
+            \\  ((SELECT SUM(key) FROM simple_table), (SELECT MAX(key) FROM simple_table))
+            \\)
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{15},
+                .{15},
+                .{15},
+                .{15},
+            },
+        },
+        .{
+            .desc = "cube_with_keyword_column_name",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT 10 AS `GROUPING SETS`, "bar" AS `ROLLUP`, true AS `CUBE` UNION ALL
+            \\  SELECT 11 AS `GROUPING SETS`, "bar" AS `ROLLUP`, false AS `CUBE`
+            \\)
+            \\SELECT `GROUPING SETS`, `ROLLUP`, `CUBE`,  COUNT(*)
+            \\FROM T
+            \\GROUP BY CUBE(`GROUPING SETS`, `ROLLUP`, `CUBE`)
+            \\ORDER BY `GROUPING SETS`, `ROLLUP`, `CUBE`, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, null, 2 },
+                .{ null, null, false, 1 },
+                .{ null, null, true, 1 },
+                .{ null, "bar", null, 2 },
+                .{ null, "bar", false, 1 },
+                .{ null, "bar", true, 1 },
+                .{ 10, null, null, 1 },
+                .{ 10, null, true, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", true, 1 },
+                .{ 11, null, null, 1 },
+                .{ 11, null, false, 1 },
+                .{ 11, "bar", null, 1 },
+                .{ 11, "bar", false, 1 },
+            },
+        },
+        .{
+            .desc = "rollup_with_analytic_functions",
+            .sql =
+            \\SELECT a, b,
+            \\  COUNT(*) OVER (
+            \\    PARTITION BY a
+            \\    ORDER BY a
+            \\    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS count,
+            \\  SUM(a) OVER (
+            \\    PARTITION BY b
+            \\    ORDER BY a
+            \\    ROWS BETWEEN CURRENT ROW AND CURRENT ROW) AS sum,
+            \\  MAX(b) OVER (
+            \\    PARTITION BY b
+            \\    ORDER BY a
+            \\    RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS max
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, b, a)
+            \\ORDER BY 1, 2, 3, 4, 5
+            ,
+            .rows = .{
+                .{ null, null, 4, null, null },
+                .{ null, null, 4, null, null },
+                .{ null, null, 4, null, null },
+                .{ null, null, 4, null, null },
+                .{ 10, null, 5, 10, null },
+                .{ 10, "bar", 5, 10, "bar" },
+                .{ 10, "bar", 5, 10, "bar" },
+                .{ 10, "foo", 5, 10, "foo" },
+                .{ 10, "foo", 5, 10, "foo" },
+                .{ 123, null, 5, 123, null },
+                .{ 123, "bar", 5, 123, "bar" },
+                .{ 123, "bar", 5, 123, "bar" },
+                .{ 123, "foo", 5, 123, "foo" },
+                .{ 123, "foo", 5, 123, "foo" },
+            },
+        },
+        .{
+            .desc = "rollup_with_qualify_clauses",
+            .sql =
+            \\SELECT a, UPPER(b), c, COUNT(*) OVER() AS cnt
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, UPPER(b), c)
+            \\QUALIFY GROUPING(a) = 0
+            \\ORDER BY 1, 2, 3, 4
+            ,
+            .rows = .{
+                .{ null, null, null, 14 },
+                .{ null, null, null, 14 },
+                .{ null, null, null, 14 },
+                .{ 10, null, null, 14 },
+                .{ 10, "BAR", null, 14 },
+                .{ 10, "BAR", null, 14 },
+                .{ 10, "FOO", null, 14 },
+                .{ 10, "FOO", true, 14 },
+                .{ 123, null, null, 14 },
+                .{ 123, "BAR", null, 14 },
+                .{ 123, "BAR", true, 14 },
+                .{ 123, "FOO", null, 14 },
+                .{ 123, "FOO", false, 14 },
+            },
+        },
+        .{
+            .desc = "rollup_with_having_clause",
+            .sql =
+            \\SELECT a, UPPER(b), c, COUNT(*) AS cnt
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, UPPER(b), c)
+            \\HAVING GROUPING(a) = 0
+            \\ORDER BY 1, 2, 3, 4
+            ,
+            .rows = .{
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ null, null, null, 1 },
+                .{ 10, null, null, 2 },
+                .{ 10, "BAR", null, 1 },
+                .{ 10, "BAR", null, 1 },
+                .{ 10, "FOO", null, 1 },
+                .{ 10, "FOO", true, 1 },
+                .{ 123, null, null, 2 },
+                .{ 123, "BAR", null, 1 },
+                .{ 123, "BAR", true, 1 },
+                .{ 123, "FOO", null, 1 },
+                .{ 123, "FOO", false, 1 },
+            },
+        },
+        .{
+            .desc = "rollup_with_all_post_aggregate_clauses",
+            .sql =
+            \\SELECT a, UPPER(b), c, COUNT(*) OVER() AS cnt
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, UPPER(b), c)
+            \\HAVING a IS NOT NULL
+            \\QUALIFY c
+            \\ORDER BY 1, 2, 3, 4
+            ,
+            .rows = .{
+                .{ 10, "FOO", true, 10 },
+                .{ 123, "BAR", true, 10 },
+            },
+        },
+        .{
+            .desc = "rollup_with_constant_select_list",
+            .sql =
+            \\SELECT "a", true, 1.23
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, b)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+                .{ "a", true, 1.23 },
+            },
+        },
+        .{
+            .desc = "rollup_with_keyword_column_name",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT 10 AS `GROUPING SETS`, "bar" AS `ROLLUP`, true AS `CUBE` UNION ALL
+            \\  SELECT 11 AS `GROUPING SETS`, "bar" AS `ROLLUP`, false AS `CUBE`
+            \\)
+            \\SELECT `GROUPING SETS`, `ROLLUP`, `CUBE`,  COUNT(*)
+            \\FROM T
+            \\GROUP BY ROLLUP(`GROUPING SETS`, `ROLLUP`, `CUBE`)
+            \\ORDER BY `GROUPING SETS`, `ROLLUP`, `CUBE`, COUNT(*)
+            ,
+            .rows = .{
+                .{ null, null, null, 2 },
+                .{ 10, null, null, 1 },
+                .{ 10, "bar", null, 1 },
+                .{ 10, "bar", true, 1 },
+                .{ 11, null, null, 1 },
+                .{ 11, "bar", null, 1 },
+                .{ 11, "bar", false, 1 },
+            },
+        },
+        .{
+            .desc = "rollup_single_columns_with_pivot",
+            .sql =
+            \\SELECT a+1, foo, bar, COUNT(*) AS cnt
+            \\FROM simple_table PIVOT(SUM(d) FOR b IN ('foo', 'bar'))
+            \\GROUP BY ROLLUP(a+1, foo, bar)
+            \\ORDER BY 1, foo, bar, cnt
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "rollup_multi_columns_with_pivot",
+            .sql =
+            \\# Note: the GroupingSetRewriter will be triggered only when GROUPING_SETS
+            \\# is enabled. For ROLLUP test cases testing rewriter conflicts, we intentionally
+            \\# test it w/o GROUPING_SETS being enabled.
+            \\SELECT a+1, foo, bar, COUNT(*) AS cnt
+            \\FROM simple_table PIVOT(SUM(d) FOR b IN ('foo', 'bar'))
+            \\GROUP BY ROLLUP(a+1, (foo, bar))
+            \\ORDER BY 1, foo, bar, cnt
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "rollup_single_columns_with_unpivot",
+            .sql =
+            \\SELECT a+1, e, f, COUNT(*) AS cnt
+            \\FROM simple_table UNPIVOT(e FOR f in (b))
+            \\GROUP BY ROLLUP(a+1, e, f)
+            \\ORDER BY 1, e, f, cnt
+            ,
+            .rows = .{
+                .{ null, null, null, 4 },
+                .{ 11, null, null, 2 },
+                .{ 11, "bar", null, 1 },
+                .{ 11, "bar", "b", 1 },
+                .{ 11, "foo", null, 1 },
+                .{ 11, "foo", "b", 1 },
+                .{ 124, null, null, 2 },
+                .{ 124, "bar", null, 1 },
+                .{ 124, "bar", "b", 1 },
+                .{ 124, "foo", null, 1 },
+                .{ 124, "foo", "b", 1 },
+            },
+        },
+        .{
+            .desc = "rollup_multi_columns_with_unpivot",
+            .sql =
+            \\SELECT a+1, e, f, COUNT(*) AS cnt
+            \\FROM simple_table UNPIVOT(e FOR f in (b))
+            \\GROUP BY ROLLUP(a+1, (e, f))
+            \\ORDER BY 1, e, f, cnt
+            ,
+            .rows = .{
+                .{ null, null, null, 4 },
+                .{ 11, null, null, 2 },
+                .{ 11, "bar", "b", 1 },
+                .{ 11, "foo", "b", 1 },
+                .{ 124, null, null, 2 },
+                .{ 124, "bar", "b", 1 },
+                .{ 124, "foo", "b", 1 },
+            },
+        },
+        .{
+            .desc = "rollup_and_with_recursive",
+            .sql =
+            \\WITH RECURSIVE
+            \\  CTE_1 AS (
+            \\    (
+            \\      SELECT iteration as it, iteration+1 AS it1
+            \\      FROM UNNEST([1, 2, 3, 4]) AS iteration
+            \\      GROUP BY ROLLUP(iteration, iteration+1)
+            \\    )
+            \\    UNION ALL (
+            \\    SELECT it+1 AS it, it1+1 AS it1 FROM CTE_1 WHERE it < 3)
+            \\  )
+            \\SELECT it, it1 FROM CTE_1
+            \\ORDER BY 1, 2 ASC
+            ,
+            .rows = .{
+                .{ null, null },
+                .{ 1, 2 },
+                .{ 1, 2 },
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 2, 3 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 3, 4 },
+                .{ 4, 5 },
+                .{ 4, 5 },
+            },
+        },
+        .{
+            .desc = "grouping_func_with_regular_group_by_query",
+            .sql =
+            \\SELECT a, UPPER(b), GROUPING(a), GROUPING(UPPER(b))
+            \\FROM simple_table
+            \\GROUP BY a, UPPER(b)
+            \\ORDER BY 3, 4, 1, 2
+            ,
+            .rows = .{
+                .{ null, null, 0, 0 },
+                .{ 10, "BAR", 0, 0 },
+                .{ 10, "FOO", 0, 0 },
+                .{ 123, "BAR", 0, 0 },
+                .{ 123, "FOO", 0, 0 },
+            },
+        },
+        .{
+            .desc = "grouping_func_with_single_column_rollup",
+            .sql =
+            \\SELECT a, UPPER(b), GROUPING(a), GROUPING(UPPER(b))
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, UPPER(b))
+            \\ORDER BY 3, 4, 1, 2
+            ,
+            .rows = .{
+                .{ null, null, 0, 0 },
+                .{ 10, "BAR", 0, 0 },
+                .{ 10, "FOO", 0, 0 },
+                .{ 123, "BAR", 0, 0 },
+                .{ 123, "FOO", 0, 0 },
+                .{ null, null, 0, 1 },
+                .{ 10, null, 0, 1 },
+                .{ 123, null, 0, 1 },
+                .{ null, null, 1, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_func_with_multi_column_rollup",
+            .sql =
+            \\SELECT a, UPPER(b), c, GROUPING(a), GROUPING(UPPER(b)), GROUPING(c)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(a, (UPPER(b), c))
+            \\ORDER BY 4, 5, 6, 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, null, 0, 0, 0 },
+                .{ 10, "BAR", null, 0, 0, 0 },
+                .{ 10, "FOO", true, 0, 0, 0 },
+                .{ 123, "BAR", true, 0, 0, 0 },
+                .{ 123, "FOO", false, 0, 0, 0 },
+                .{ null, null, null, 0, 1, 1 },
+                .{ 10, null, null, 0, 1, 1 },
+                .{ 123, null, null, 0, 1, 1 },
+                .{ null, null, null, 1, 1, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_func_with_cube",
+            .sql =
+            \\SELECT a, UPPER(b), c, GROUPING(a), GROUPING(UPPER(b)), GROUPING(c)
+            \\FROM simple_table
+            \\GROUP BY CUBE(a, (UPPER(b), c))
+            \\ORDER BY 4, 5, 6, 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, null, 0, 0, 0 },
+                .{ 10, "BAR", null, 0, 0, 0 },
+                .{ 10, "FOO", true, 0, 0, 0 },
+                .{ 123, "BAR", true, 0, 0, 0 },
+                .{ 123, "FOO", false, 0, 0, 0 },
+                .{ null, null, null, 0, 1, 1 },
+                .{ 10, null, null, 0, 1, 1 },
+                .{ 123, null, null, 0, 1, 1 },
+                .{ null, null, null, 1, 0, 0 },
+                .{ null, "BAR", null, 1, 0, 0 },
+                .{ null, "BAR", true, 1, 0, 0 },
+                .{ null, "FOO", false, 1, 0, 0 },
+                .{ null, "FOO", true, 1, 0, 0 },
+                .{ null, null, null, 1, 1, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_func_with_grouping_sets",
+            .sql =
+            \\SELECT a, UPPER(b), c, GROUPING(a), GROUPING(UPPER(b)), GROUPING(c)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, (UPPER(b), c), ())
+            \\ORDER BY 4, 5, 6, 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, null, 0, 1, 1 },
+                .{ 10, null, null, 0, 1, 1 },
+                .{ 123, null, null, 0, 1, 1 },
+                .{ null, null, null, 1, 0, 0 },
+                .{ null, "BAR", null, 1, 0, 0 },
+                .{ null, "BAR", true, 1, 0, 0 },
+                .{ null, "FOO", false, 1, 0, 0 },
+                .{ null, "FOO", true, 1, 0, 0 },
+                .{ null, null, null, 1, 1, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_func_in_having_clause",
+            .sql =
+            \\SELECT a, UPPER(b), c, GROUPING(a), GROUPING(UPPER(b)), GROUPING(c)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, (UPPER(b), c), ())
+            \\\-- Extract the result set only from grouping set (a)
+            \\HAVING GROUPING(a) = 0 AND GROUPING(UPPER(b)) = 1 AND GROUPING(c) = 1
+            \\ORDER BY 4, 5, 6, 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, null, 0, 1, 1 },
+                .{ 10, null, null, 0, 1, 1 },
+                .{ 123, null, null, 0, 1, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_func_in_order_by_clause",
+            .sql =
+            \\SELECT a, UPPER(b), c, GROUPING(a), GROUPING(UPPER(b)), GROUPING(c)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, (UPPER(b), c), ())
+            \\ORDER BY 1, 2, 3, GROUPING(a), GROUPING(UPPER(b)), GROUPING(c)
+            ,
+            .rows = .{
+                .{ null, null, null, 0, 1, 1 },
+                .{ null, null, null, 1, 0, 0 },
+                .{ null, null, null, 1, 1, 1 },
+                .{ null, "BAR", null, 1, 0, 0 },
+                .{ null, "BAR", true, 1, 0, 0 },
+                .{ null, "FOO", false, 1, 0, 0 },
+                .{ null, "FOO", true, 1, 0, 0 },
+                .{ 10, null, null, 0, 1, 1 },
+                .{ 123, null, null, 0, 1, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_func_in_qualify_clause",
+            .sql =
+            \\SELECT a, b, COUNT(*) OVER()
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, b)
+            \\\-- Extract the result generated by the grouping set (a)
+            \\QUALIFY GROUPING(a) = 1
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, 6 },
+                .{ null, "bar", 6 },
+                .{ null, "foo", 6 },
+            },
+        },
+        .{
+            .desc = "grouping_func_with_alias",
+            .sql =
+            \\SELECT a AS x, UPPER(b) AS y, c AS z
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(x, (y, z), ())
+            \\HAVING GROUPING(x) = 0 AND GROUPING(y) = 1 AND GROUPING(z) = 1
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, null },
+                .{ 10, null, null },
+                .{ 123, null, null },
+            },
+        },
+        .{
+            .desc = "grouping_func_inside_another_func",
+            .sql =
+            \\SELECT a, UPPER(b), c, GROUPING(a) - 1, GROUPING(UPPER(b)) + 1, ABS(GROUPING(c))
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(a, (UPPER(b), c), ())
+            \\ORDER BY 4, 5, 6, 1, 2, 3
+            ,
+            .rows = .{
+                .{ null, null, null, -1, 2, 1 },
+                .{ 10, null, null, -1, 2, 1 },
+                .{ 123, null, null, -1, 2, 1 },
+                .{ null, null, null, 0, 1, 0 },
+                .{ null, "BAR", null, 0, 1, 0 },
+                .{ null, "BAR", true, 0, 1, 0 },
+                .{ null, "FOO", false, 0, 1, 0 },
+                .{ null, "FOO", true, 0, 1, 0 },
+                .{ null, null, null, 0, 2, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_func_with_collation_columns",
+            .sql =
+            \\SELECT
+            \\  UPPER(col_ci) AS col1, col_binary AS col_2, col AS col_3,
+            \\  GROUPING(col_ci), GROUPING(col_binary), GROUPING(col)
+            \\FROM simple_collation_table
+            \\GROUP BY GROUPING SETS(col_ci, (col_binary, col))
+            \\ORDER BY 1, 2, 3, 4, 5, 6
+            ,
+            .rows = .{
+                .{ null, "B", 3, 1, 0, 0 },
+                .{ null, "a", 1, 1, 0, 0 },
+                .{ null, "ana", 4, 1, 0, 0 },
+                .{ null, "b", 2, 1, 0, 0 },
+                .{ null, "banana", 5, 1, 0, 0 },
+                .{ "A", null, null, 0, 1, 1 },
+                .{ "ANA", null, null, 0, 1, 1 },
+                .{ "B", null, null, 0, 1, 1 },
+                .{ "B", null, null, 0, 1, 1 },
+                .{ "BANANA", null, null, 0, 1, 1 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_int_literals_and_ordinal_columns",
+            .sql =
+            \\# 1 matches to the first column key, instead of the constant expression 1.
+            \\WITH KeyValue AS (
+            \\  SELECT 1 AS key, 'a' AS value
+            \\)
+            \\SELECT key, 1, GROUPING(key) AS grp_key
+            \\FROM KeyValue
+            \\GROUP BY GROUPING SETS(key, 2, 1)
+            \\ORDER BY key
+            ,
+            .rows = .{
+                .{ null, 1, 1 },
+                .{ 1, null, 0 },
+                .{ 1, null, 0 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_with_cast_int_literals_and_ordinal_columns",
+            .sql =
+            \\# 1 matches to the first column key, instead of the constant expression
+            \\# CAST(true AS INT64).
+            \\WITH KeyValue AS (
+            \\  SELECT 1 AS key, 'a' AS value
+            \\)
+            \\SELECT key, CAST(true AS INT64), GROUPING(key) AS grp_key
+            \\FROM KeyValue
+            \\GROUP BY GROUPING SETS(key, 2, 1)
+            \\ORDER BY key
+            ,
+            .rows = .{
+                .{ null, 1, 1 },
+                .{ 1, null, 0 },
+                .{ 1, null, 0 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_grouping_function_with_pre_group_by_expr",
+            .sql =
+            \\SELECT a+1 AS a1, GROUPING(a+1)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(1, a+1, a1)
+            \\ORDER BY a1
+            ,
+            .rows = .{
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_grouping_function_with_pre_group_by_expr_in_order_by",
+            .sql =
+            \\SELECT a+1 AS a1, GROUPING(a+1)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(1, a+1, a1)
+            \\ORDER BY GROUPING(a+1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+            },
+        },
+        .{
+            .desc = "grouping_sets_grouping_function_with_post_group_by_expr_in_order_by",
+            .sql =
+            \\SELECT a+1 AS a1, GROUPING(a+1)
+            \\FROM simple_table
+            \\GROUP BY GROUPING SETS(1, a+1, a1)
+            \\ORDER BY GROUPING(a+1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+            },
+        },
+        .{
+            .desc = "rollup_grouping_function_with_pre_group_by_expr_in_order_by",
+            .sql =
+            \\SELECT a+1 AS a1, GROUPING(a+1)
+            \\FROM simple_table
+            \\GROUP BY ROLLUP(1, a+1, b)
+            \\ORDER BY GROUPING(a+1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ null, 1 },
+            },
+        },
+        .{
+            .desc = "cube_grouping_function_with_post_group_by_expr_in_order_by",
+            .sql =
+            \\SELECT a+1 AS a1, GROUPING(a+1)
+            \\FROM simple_table
+            \\GROUP BY CUBE(1, a1, b)
+            \\ORDER BY GROUPING(a1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 11, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ 124, 0 },
+                .{ null, 1 },
+                .{ null, 1 },
+                .{ null, 1 },
+                .{ null, 1 },
+            },
+        },
+        .{
+            .desc = "regular_group_by_grouping_function_with_pre_and_post_group_by_expr_in_order_by",
+            .sql =
+            \\SELECT a+1 AS a1, GROUPING(a+1)
+            \\FROM simple_table
+            \\GROUP BY 1
+            \\ORDER BY GROUPING(a+1), GROUPING(a1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 11, 0 },
+                .{ null, 0 },
+                .{ 124, 0 },
+            },
+        },
+        .{
+            .desc = "regular_group_by_grouping_function_with_pre_and_post_group_by_struct_field_expr",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT STRUCT<a INT64, b STRING>(a, b) AS kv FROM simple_table
+            \\)
+            \\SELECT kv.a AS a1, GROUPING(kv.a)
+            \\FROM T
+            \\GROUP BY 1
+            \\HAVING GROUPING(kv.a) = 0
+            \\ORDER BY GROUPING(a1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0 },
+                .{ 10, 0 },
+                .{ 123, 0 },
+            },
+        },
+        .{
+            .desc = "regular_group_by_grouping_function_with_pre_and_post_group_by_dot_star_field_expr",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT STRUCT<a INT64, b STRING>(a, b) AS kv FROM simple_table
+            \\)
+            \\SELECT kv.*, GROUPING(kv.a), GROUPING(kv.b)
+            \\FROM T
+            \\GROUP BY 1, 2
+            \\HAVING GROUPING(kv.a) = 0
+            \\ORDER BY GROUPING(kv.b)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 123, "bar", 0, 0 },
+                .{ 10, "foo", 0, 0 },
+                .{ 10, "bar", 0, 0 },
+                .{ null, null, 0, 0 },
+                .{ 123, "foo", 0, 0 },
+            },
+        },
+        .{
+            .desc = "regular_group_by_grouping_function_with_pre_and_post_group_by_column_reference_in_order_by",
+            .sql =
+            \\SELECT a AS a1, GROUPING(a)
+            \\FROM simple_table
+            \\GROUP BY 1
+            \\HAVING GROUPING(a) = 0
+            \\ORDER BY GROUPING(a1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0 },
+                .{ 10, 0 },
+                .{ 123, 0 },
+            },
+        },
+    },
+}

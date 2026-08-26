@@ -1,0 +1,1203 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/array_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/array_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE AllArraysTable AS
+            \\  SELECT
+            \\    1 as key,
+            \\    ARRAY<BOOL>[true, false, true] bool_arrcol,
+            \\    ARRAY<INT32>[1, 0, -1] int32_arrcol,
+            \\    ARRAY<UINT32>[2, 1, 0] uint32_arrcol,
+            \\    ARRAY<INT64>[8589934592, 0, -8589934592] int64_arrcol,
+            \\    ARRAY<UINT64>[8589934592, 1, 0] uint64_arrcol,
+            \\    ARRAY<FLOAT>[1.1, 0.0, -1.1] float_arrcol,
+            \\    ARRAY<DOUBLE>[1.1, 0.0, -1.1] double_arrcol,
+            \\    ARRAY<STRING>['σ', 'π', '⨝'] string_arrcol,
+            \\    ARRAY<BYTES>[b"a", b"b", b"c"] bytes_arrcol,
+            \\    ARRAY<DATE>["1984-08-02", "2000-01-01", "2014-09-11"] date_arrcol,
+            \\    ARRAY<TIMESTAMP>["1984-08-02 01:01:01.001001 UTC",
+            \\                     "2000-01-01 01:01:01.001001 UTC",
+            \\                     "2014-09-11 01:01:01.001001 UTC"] micros_arrcol,
+            \\    ARRAY<googlesql_test.TestEnum>[
+            \\      "TESTENUM0", "TESTENUM1", "TESTENUM2"] enum_arrcol,
+            \\    ARRAY<googlesql_test.KitchenSinkPB>[
+            \\      '''
+            \\        int64_key_1: 11
+            \\        int64_key_2: 12
+            \\      ''',
+            \\      '''
+            \\        int64_key_1: 21
+            \\        int64_key_2: 22
+            \\      ''',
+            \\      '''
+            \\        int64_key_1: 31
+            \\        int64_key_2: 32
+            \\      '''] proto_arrcol,
+            \\    ARRAY<STRUCT<int64, int64>>[(11, 12), (21, 22), (31, 32)] struct_arrcol
+            \\UNION ALL
+            \\  SELECT
+            \\    2 as key,
+            \\    ARRAY<BOOL>[true, NULL, true],
+            \\    ARRAY<INT32>[1, NULL, -1],
+            \\    ARRAY<UINT32>[2, NULL, 0],
+            \\    ARRAY<INT64>[8589934592, NULL, -8589934592],
+            \\    ARRAY<UINT64>[8589934592, NULL, 0],
+            \\    ARRAY<FLOAT>[1.1, NULL, -1.1],
+            \\    ARRAY<DOUBLE>[1.1, NULL, -1.1],
+            \\    ARRAY<STRING>['σ', NULL, '⨝'],
+            \\    ARRAY<BYTES>[b"a", NULL, b"c"],
+            \\    ARRAY<DATE>["1984-08-02", NULL, "2014-09-11"],
+            \\    ARRAY<TIMESTAMP>["1984-08-02 01:01:01.001001 UTC", NULL,
+            \\                     "2014-09-11 01:01:01.001001 UTC"],
+            \\    ARRAY<googlesql_test.TestEnum>["TESTENUM0", NULL, "TESTENUM2"],
+            \\    ARRAY<googlesql_test.KitchenSinkPB>[
+            \\      '''
+            \\        int64_key_1: 11
+            \\        int64_key_2: 12
+            \\      ''',
+            \\      NULL,
+            \\      '''
+            \\        int64_key_1: 31
+            \\        int64_key_2: 32
+            \\      '''],
+            \\    ARRAY<STRUCT<int64, int64>>[(11, 12), NULL, (31, 32)]
+            \\UNION ALL
+            \\  SELECT
+            \\    3 as key,
+            \\    ARRAY<BOOL>[NULL, true],
+            \\    ARRAY<INT32>[NULL, -1],
+            \\    ARRAY<UINT32>[NULL, 0],
+            \\    ARRAY<INT64>[NULL, -8589934592],
+            \\    ARRAY<UINT64>[NULL, 0],
+            \\    ARRAY<FLOAT>[NULL, -1.1],
+            \\    ARRAY<DOUBLE>[NULL, -1.1],
+            \\    ARRAY<STRING>[NULL, '⨝'],
+            \\    ARRAY<BYTES>[NULL, b"c"],
+            \\    ARRAY<DATE>[NULL, "2014-09-11"],
+            \\    ARRAY<TIMESTAMP>[NULL, "2014-09-11 01:01:01.001001 UTC"],
+            \\    ARRAY<googlesql_test.TestEnum>[NULL, "TESTENUM2"],
+            \\    ARRAY<googlesql_test.KitchenSinkPB>[
+            \\      NULL,
+            \\      '''
+            \\        int64_key_1: 31
+            \\        int64_key_2: 32
+            \\      '''],
+            \\    ARRAY<STRUCT<int64, int64>>[NULL, (31, 32)]
+            \\UNION ALL
+            \\  SELECT
+            \\    4 as key,
+            \\    ARRAY<BOOL>[true, NULL],
+            \\    ARRAY<INT32>[1, NULL],
+            \\    ARRAY<UINT32>[2, NULL],
+            \\    ARRAY<INT64>[8589934592, NULL],
+            \\    ARRAY<UINT64>[8589934592, NULL],
+            \\    ARRAY<FLOAT>[1.1, NULL],
+            \\    ARRAY<DOUBLE>[1.1, NULL],
+            \\    ARRAY<STRING>['σ', NULL],
+            \\    ARRAY<BYTES>[b"a", NULL],
+            \\    ARRAY<DATE>["1984-08-02", NULL],
+            \\    ARRAY<TIMESTAMP>["1984-08-02 01:01:01.001001 UTC", NULL],
+            \\    ARRAY<googlesql_test.TestEnum>["TESTENUM0", NULL],
+            \\    ARRAY<googlesql_test.KitchenSinkPB>[
+            \\      '''
+            \\        int64_key_1: 11
+            \\        int64_key_2: 12
+            \\      ''', NULL],
+            \\    ARRAY<STRUCT<int64, int64>>[(11, 12), NULL]
+            \\UNION ALL
+            \\  SELECT
+            \\    5 as key,
+            \\    ARRAY<BOOL>[NULL, NULL],
+            \\    ARRAY<INT32>[NULL, NULL],
+            \\    ARRAY<UINT32>[NULL, NULL],
+            \\    ARRAY<INT64>[NULL, NULL],
+            \\    ARRAY<UINT64>[NULL, NULL],
+            \\    ARRAY<FLOAT>[NULL, NULL],
+            \\    ARRAY<DOUBLE>[NULL, NULL],
+            \\    ARRAY<STRING>[NULL, NULL],
+            \\    ARRAY<BYTES>[NULL, NULL],
+            \\    ARRAY<DATE>[NULL, NULL],
+            \\    ARRAY<TIMESTAMP>[NULL, NULL],
+            \\    ARRAY<googlesql_test.TestEnum>[NULL, NULL],
+            \\    ARRAY<googlesql_test.KitchenSinkPB>[NULL, NULL],
+            \\    ARRAY<STRUCT<int64, int64>>[NULL, NULL]
+            \\UNION ALL
+            \\  SELECT
+            \\    6 as key,
+            \\    ARRAY<BOOL>[NULL],
+            \\    ARRAY<INT32>[NULL],
+            \\    ARRAY<UINT32>[NULL],
+            \\    ARRAY<INT64>[NULL],
+            \\    ARRAY<UINT64>[NULL],
+            \\    ARRAY<FLOAT>[NULL],
+            \\    ARRAY<DOUBLE>[NULL],
+            \\    ARRAY<STRING>[NULL],
+            \\    ARRAY<BYTES>[NULL],
+            \\    ARRAY<DATE>[NULL],
+            \\    ARRAY<TIMESTAMP>[NULL],
+            \\    ARRAY<googlesql_test.TestEnum>[NULL],
+            \\    ARRAY<googlesql_test.KitchenSinkPB>[NULL],
+            \\    ARRAY<STRUCT<int64, int64>>[NULL]
+            \\UNION ALL
+            \\  SELECT
+            \\    7 as key,
+            \\    ARRAY<BOOL>[true],
+            \\    ARRAY<INT32>[1],
+            \\    ARRAY<UINT32>[2],
+            \\    ARRAY<INT64>[8589934592],
+            \\    ARRAY<UINT64>[8589934592],
+            \\    ARRAY<FLOAT>[1.1],
+            \\    ARRAY<DOUBLE>[1.1],
+            \\    ARRAY<STRING>['σ'],
+            \\    ARRAY<BYTES>[b"a"],
+            \\    ARRAY<DATE>["1984-08-02"],
+            \\    ARRAY<TIMESTAMP>["1984-08-02 01:01:01.001001 UTC"],
+            \\    ARRAY<googlesql_test.TestEnum>["TESTENUM0"],
+            \\    ARRAY<googlesql_test.KitchenSinkPB>[
+            \\      '''
+            \\        int64_key_1: 11
+            \\        int64_key_2: 12
+            \\      '''],
+            \\    ARRAY<STRUCT<int64, int64>>[(11, 12)]
+            \\UNION ALL
+            \\  SELECT
+            \\    8 as key,
+            \\    ARRAY<BOOL>[],
+            \\    ARRAY<INT32>[],
+            \\    ARRAY<UINT32>[],
+            \\    ARRAY<INT64>[],
+            \\    ARRAY<UINT64>[],
+            \\    ARRAY<FLOAT>[],
+            \\    ARRAY<DOUBLE>[],
+            \\    ARRAY<STRING>[],
+            \\    ARRAY<BYTES>[],
+            \\    ARRAY<DATE>[],
+            \\    ARRAY<TIMESTAMP>[],
+            \\    ARRAY<googlesql_test.TestEnum>[],
+            \\    ARRAY<googlesql_test.KitchenSinkPB>[],
+            \\    ARRAY<STRUCT<int64, int64>>[]
+            \\UNION ALL
+            \\  SELECT
+            \\    9 as key,
+            \\    IF(FALSE, ARRAY<BOOL>[], NULL),
+            \\    IF(FALSE, ARRAY<INT32>[], NULL),
+            \\    IF(FALSE, ARRAY<UINT32>[], NULL),
+            \\    IF(FALSE, ARRAY<INT64>[], NULL),
+            \\    IF(FALSE, ARRAY<UINT64>[], NULL),
+            \\    IF(FALSE, ARRAY<FLOAT>[], NULL),
+            \\    IF(FALSE, ARRAY<DOUBLE>[], NULL),
+            \\    IF(FALSE, ARRAY<STRING>[], NULL),
+            \\    IF(FALSE, ARRAY<BYTES>[], NULL),
+            \\    IF(FALSE, ARRAY<DATE>[], NULL),
+            \\    IF(FALSE, ARRAY<TIMESTAMP>[], NULL),
+            \\    IF(FALSE, ARRAY<googlesql_test.TestEnum>[], NULL),
+            \\    IF(FALSE, ARRAY<googlesql_test.KitchenSinkPB>[], NULL),
+            \\    IF(FALSE, ARRAY<STRUCT<int64, int64>>[], NULL)
+            ,
+        },
+        .{
+            .desc = "select_bool_arrays",
+            .sql = "SELECT bool_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ true, false, true }},
+                .{.{ true, null, true }},
+                .{.{ null, true }},
+                .{.{ true, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{true}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_bool_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.bool_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{true},
+                .{true},
+                .{null},
+                .{true},
+                .{null},
+                .{false},
+                .{true},
+                .{true},
+                .{true},
+                .{null},
+                .{null},
+                .{null},
+                .{true},
+            },
+        },
+        .{
+            .desc = "select_bool_array_unnest_from_table_name_array_path",
+            .sql = "SELECT elem FROM AllArraysTable.bool_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{true},
+                .{true},
+                .{null},
+                .{true},
+                .{null},
+                .{false},
+                .{true},
+                .{true},
+                .{true},
+                .{null},
+                .{null},
+                .{null},
+                .{true},
+            },
+        },
+        .{
+            .desc = "select_int32_arrays",
+            .sql = "SELECT int32_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ 1, 0, -1 }},
+                .{.{ 1, null, -1 }},
+                .{.{ null, -1 }},
+                .{.{ 1, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{1}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_int32_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.int32_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{1},
+                .{-1},
+                .{null},
+                .{1},
+                .{null},
+                .{0},
+                .{1},
+                .{-1},
+                .{-1},
+                .{null},
+                .{null},
+                .{null},
+                .{1},
+            },
+        },
+        .{
+            .desc = "select_int32_array_unnest_from_table_name_array_path",
+            .sql = "SELECT elem FROM AllArraysTable.int32_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{1},
+                .{-1},
+                .{null},
+                .{1},
+                .{null},
+                .{0},
+                .{1},
+                .{-1},
+                .{-1},
+                .{null},
+                .{null},
+                .{null},
+                .{1},
+            },
+        },
+        .{
+            .desc = "select_uint32_arrays",
+            .sql = "SELECT uint32_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ 2, 1, 0 }},
+                .{.{ 2, null, 0 }},
+                .{.{ null, 0 }},
+                .{.{ 2, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{2}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_uint32_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.uint32_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{2},
+                .{0},
+                .{null},
+                .{2},
+                .{null},
+                .{1},
+                .{2},
+                .{0},
+                .{0},
+                .{null},
+                .{null},
+                .{null},
+                .{2},
+            },
+        },
+        .{
+            .desc = "select_uint32_array_unnest_from_table_name_array_path",
+            .sql = "SELECT elem FROM AllArraysTable.uint32_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{2},
+                .{0},
+                .{null},
+                .{2},
+                .{null},
+                .{1},
+                .{2},
+                .{0},
+                .{0},
+                .{null},
+                .{null},
+                .{null},
+                .{2},
+            },
+        },
+        .{
+            .desc = "select_int64_arrays",
+            .sql = "SELECT int64_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ 8589934592, 0, -8589934592 }},
+                .{.{ 8589934592, null, -8589934592 }},
+                .{.{ null, -8589934592 }},
+                .{.{ 8589934592, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{8589934592}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_int64_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.int64_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{8589934592},
+                .{-8589934592},
+                .{null},
+                .{8589934592},
+                .{null},
+                .{0},
+                .{8589934592},
+                .{-8589934592},
+                .{-8589934592},
+                .{null},
+                .{null},
+                .{null},
+                .{8589934592},
+            },
+        },
+        .{
+            .desc = "select_int64_array_unnest_from_table_name_array_path",
+            .sql = "SELECT elem FROM AllArraysTable.int64_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{8589934592},
+                .{-8589934592},
+                .{null},
+                .{8589934592},
+                .{null},
+                .{0},
+                .{8589934592},
+                .{-8589934592},
+                .{-8589934592},
+                .{null},
+                .{null},
+                .{null},
+                .{8589934592},
+            },
+        },
+        .{
+            .desc = "select_uint64_arrays",
+            .sql = "SELECT uint64_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ 8589934592, 1, 0 }},
+                .{.{ 8589934592, null, 0 }},
+                .{.{ null, 0 }},
+                .{.{ 8589934592, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{8589934592}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_uint64_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.uint64_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{8589934592},
+                .{0},
+                .{null},
+                .{8589934592},
+                .{null},
+                .{1},
+                .{8589934592},
+                .{0},
+                .{0},
+                .{null},
+                .{null},
+                .{null},
+                .{8589934592},
+            },
+        },
+        .{
+            .desc = "select_float_arrays",
+            .sql = "SELECT float_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ 1.1, 0, -1.1 }},
+                .{.{ 1.1, null, -1.1 }},
+                .{.{ null, -1.1 }},
+                .{.{ 1.1, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{1.1}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_float_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.float_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{1.1},
+                .{-1.1},
+                .{null},
+                .{1.1},
+                .{null},
+                .{0},
+                .{1.1},
+                .{-1.1},
+                .{-1.1},
+                .{null},
+                .{null},
+                .{null},
+                .{1.1},
+            },
+        },
+        .{
+            .desc = "select_double_arrays",
+            .sql = "SELECT double_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ 1.1, 0, -1.1 }},
+                .{.{ 1.1, null, -1.1 }},
+                .{.{ null, -1.1 }},
+                .{.{ 1.1, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{1.1}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_double_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.double_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{1.1},
+                .{-1.1},
+                .{null},
+                .{1.1},
+                .{null},
+                .{0},
+                .{1.1},
+                .{-1.1},
+                .{-1.1},
+                .{null},
+                .{null},
+                .{null},
+                .{1.1},
+            },
+        },
+        .{
+            .desc = "select_string_arrays",
+            .sql = "SELECT string_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ "σ", "π", "⨝" }},
+                .{.{ "σ", null, "⨝" }},
+                .{.{ null, "⨝" }},
+                .{.{ "σ", null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{"σ"}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_string_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.string_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"σ"},
+                .{"⨝"},
+                .{null},
+                .{"σ"},
+                .{null},
+                .{"π"},
+                .{"σ"},
+                .{"⨝"},
+                .{"⨝"},
+                .{null},
+                .{null},
+                .{null},
+                .{"σ"},
+            },
+        },
+        .{
+            .desc = "select_bytes_arrays",
+            .sql = "SELECT bytes_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ "\x61", "\x62", "\x63" }},
+                .{.{ "\x61", null, "\x63" }},
+                .{.{ null, "\x63" }},
+                .{.{ "\x61", null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{"\x61"}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_bytes_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.bytes_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"\x61"},
+                .{"\x63"},
+                .{null},
+                .{"\x61"},
+                .{null},
+                .{"\x62"},
+                .{"\x61"},
+                .{"\x63"},
+                .{"\x63"},
+                .{null},
+                .{null},
+                .{null},
+                .{"\x61"},
+            },
+        },
+        .{
+            .desc = "select_date_arrays",
+            .sql = "SELECT date_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ "1984-08-02", "2000-01-01", "2014-09-11" }},
+                .{.{ "1984-08-02", null, "2014-09-11" }},
+                .{.{ null, "2014-09-11" }},
+                .{.{ "1984-08-02", null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{"1984-08-02"}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_date_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.date_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"1984-08-02"},
+                .{"2014-09-11"},
+                .{null},
+                .{"1984-08-02"},
+                .{null},
+                .{"2000-01-01"},
+                .{"1984-08-02"},
+                .{"2014-09-11"},
+                .{"2014-09-11"},
+                .{null},
+                .{null},
+                .{null},
+                .{"1984-08-02"},
+            },
+        },
+        .{
+            .desc = "select_timestamp_arrays",
+            .sql = "SELECT micros_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ "1984-08-02 01:01:01.001001+00", "2000-01-01 01:01:01.001001+00", "2014-09-11 01:01:01.001001+00" }},
+                .{.{ "1984-08-02 01:01:01.001001+00", null, "2014-09-11 01:01:01.001001+00" }},
+                .{.{ null, "2014-09-11 01:01:01.001001+00" }},
+                .{.{ "1984-08-02 01:01:01.001001+00", null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{"1984-08-02 01:01:01.001001+00"}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_timestamp_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.micros_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"1984-08-02 01:01:01.001001+00"},
+                .{"2014-09-11 01:01:01.001001+00"},
+                .{null},
+                .{"1984-08-02 01:01:01.001001+00"},
+                .{null},
+                .{"2000-01-01 01:01:01.001001+00"},
+                .{"1984-08-02 01:01:01.001001+00"},
+                .{"2014-09-11 01:01:01.001001+00"},
+                .{"2014-09-11 01:01:01.001001+00"},
+                .{null},
+                .{null},
+                .{null},
+                .{"1984-08-02 01:01:01.001001+00"},
+            },
+        },
+        .{
+            .desc = "select_enum_arrays",
+            .sql = "SELECT enum_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ "TESTENUM0", "TESTENUM1", "TESTENUM2" }},
+                .{.{ "TESTENUM0", null, "TESTENUM2" }},
+                .{.{ null, "TESTENUM2" }},
+                .{.{ "TESTENUM0", null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{"TESTENUM0"}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_enum_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.enum_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"TESTENUM0"},
+                .{"TESTENUM2"},
+                .{null},
+                .{"TESTENUM0"},
+                .{null},
+                .{"TESTENUM1"},
+                .{"TESTENUM0"},
+                .{"TESTENUM2"},
+                .{"TESTENUM2"},
+                .{null},
+                .{null},
+                .{null},
+                .{"TESTENUM0"},
+            },
+        },
+        .{
+            .desc = "select_proto_arrays",
+            .sql = "SELECT proto_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ .{"int64_key_1: 11 int64_key_2: 12"}, .{"int64_key_1: 21 int64_key_2: 22"}, .{"int64_key_1: 31 int64_key_2: 32"} }},
+                .{.{ .{"int64_key_1: 11 int64_key_2: 12"}, null, .{"int64_key_1: 31 int64_key_2: 32"} }},
+                .{.{ null, .{"int64_key_1: 31 int64_key_2: 32"} }},
+                .{.{ .{"int64_key_1: 11 int64_key_2: 12"}, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{.{"int64_key_1: 11 int64_key_2: 12"}}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_proto_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.proto_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{.{"int64_key_1: 11 int64_key_2: 12"}},
+                .{.{"int64_key_1: 31 int64_key_2: 32"}},
+                .{null},
+                .{.{"int64_key_1: 11 int64_key_2: 12"}},
+                .{null},
+                .{.{"int64_key_1: 21 int64_key_2: 22"}},
+                .{.{"int64_key_1: 11 int64_key_2: 12"}},
+                .{.{"int64_key_1: 31 int64_key_2: 32"}},
+                .{.{"int64_key_1: 31 int64_key_2: 32"}},
+                .{null},
+                .{null},
+                .{null},
+                .{.{"int64_key_1: 11 int64_key_2: 12"}},
+            },
+        },
+        .{
+            .desc = "select_struct_arrays",
+            .sql = "SELECT struct_arrcol FROM AllArraysTable",
+            .unordered = true,
+            .rows = .{
+                .{.{ .{ 11, 12 }, .{ 21, 22 }, .{ 31, 32 } }},
+                .{.{ .{ 11, 12 }, null, .{ 31, 32 } }},
+                .{.{ null, .{ 31, 32 } }},
+                .{.{ .{ 11, 12 }, null }},
+                .{.{ null, null }},
+                .{.{null}},
+                .{.{.{ 11, 12 }}},
+                .{.{}},
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_struct_array_unnest",
+            .sql = "SELECT elem FROM AllArraysTable t, t.struct_arrcol elem",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{.{ 11, 12 }},
+                .{.{ 31, 32 }},
+                .{null},
+                .{.{ 11, 12 }},
+                .{null},
+                .{.{ 21, 22 }},
+                .{.{ 11, 12 }},
+                .{.{ 31, 32 }},
+                .{.{ 31, 32 }},
+                .{null},
+                .{null},
+                .{null},
+                .{.{ 11, 12 }},
+            },
+        },
+        .{
+            .desc = "select_string_array_unnest_explicit",
+            .sql =
+            \\##
+            \\## Queries that tests explicit unnest. This time we do not require a full
+            \\## matrix.
+            \\##
+            \\SELECT elem FROM AllArraysTable t, UNNEST(t.string_arrcol) AS elem
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"σ"},
+                .{"⨝"},
+                .{null},
+                .{"σ"},
+                .{null},
+                .{"π"},
+                .{"σ"},
+                .{"⨝"},
+                .{"⨝"},
+                .{null},
+                .{null},
+                .{null},
+                .{"σ"},
+            },
+        },
+        .{
+            .desc = "select_string_array_unnest_with_offset",
+            .sql =
+            \\##
+            \\## From here, several queries to test offset/ordinality without joins.
+            \\##
+            \\SELECT elem, offset FROM AllArraysTable t, t.string_arrcol elem WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1 },
+                .{ "σ", 0 },
+                .{ "⨝", 2 },
+                .{ null, 1 },
+                .{ "σ", 0 },
+                .{ null, 0 },
+                .{ "π", 1 },
+                .{ "σ", 0 },
+                .{ "⨝", 2 },
+                .{ "⨝", 1 },
+                .{ null, 0 },
+                .{ null, 1 },
+                .{ null, 0 },
+                .{ "σ", 0 },
+            },
+        },
+        .{
+            .desc = "select_string_array_unnest_with_offset_aliased",
+            .sql = "SELECT elem, off FROM AllArraysTable t, t.string_arrcol elem WITH OFFSET off",
+            .unordered = true,
+            .rows = .{
+                .{ null, 1 },
+                .{ "σ", 0 },
+                .{ "⨝", 2 },
+                .{ null, 1 },
+                .{ "σ", 0 },
+                .{ null, 0 },
+                .{ "π", 1 },
+                .{ "σ", 0 },
+                .{ "⨝", 2 },
+                .{ "⨝", 1 },
+                .{ null, 0 },
+                .{ null, 1 },
+                .{ null, 0 },
+                .{ "σ", 0 },
+            },
+        },
+        .{
+            .desc = "select_string_array_unnest_with_offset_sorted",
+            .sql =
+            \\SELECT elem, offset
+            \\FROM AllArraysTable t, t.string_arrcol elem WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "σ", 0 },
+                .{ null, 0 },
+                .{ "σ", 0 },
+                .{ "σ", 0 },
+                .{ "σ", 0 },
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ null, 1 },
+                .{ "⨝", 1 },
+                .{ null, 1 },
+                .{ null, 1 },
+                .{ "π", 1 },
+                .{ "⨝", 2 },
+                .{ "⨝", 2 },
+            },
+        },
+        .{
+            .desc = "select_string_array_unnest_with_offset_aliased_sorted",
+            .sql =
+            \\SELECT elem, off
+            \\FROM AllArraysTable t, t.string_arrcol elem WITH OFFSET off
+            \\ORDER BY off
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "σ", 0 },
+                .{ null, 0 },
+                .{ "σ", 0 },
+                .{ "σ", 0 },
+                .{ "σ", 0 },
+                .{ null, 0 },
+                .{ null, 0 },
+                .{ null, 1 },
+                .{ "⨝", 1 },
+                .{ null, 1 },
+                .{ null, 1 },
+                .{ "π", 1 },
+                .{ "⨝", 2 },
+                .{ "⨝", 2 },
+            },
+        },
+        .{
+            .desc = "select_array_equality_literals",
+            .sql =
+            \\# TODO: Introduce these queries to test WITH ORDINALITY
+            \\# [name=select_string_array_unnest_with_ordinality]
+            \\# SELECT arr
+            \\# FROM AllArraysTable t, UNNEST(t.string_arrcol) WITH ORDINALITY arr
+            \\# --
+            \\# false
+            \\# ==
+            \\# [name=select_string_array_unnest_with_ordinality_aliased]
+            \\# SELECT arr.elem, arr.ord, elem, ord
+            \\# FROM AllArraysTable t, UNNEST(t.string_arrcol) WITH ORDINALITY arr(elem, ord)
+            \\# --
+            \\# false
+            \\# ==
+            \\# [name=select_string_array_unnest_with_ordinality_sorted]
+            \\# SELECT arr
+            \\# FROM AllArraysTable t, UNNEST(t.string_arrcol) WITH ORDINALITY arr(elem, ord)
+            \\# ORDER BY arr.ord
+            \\# --
+            \\# false
+            \\# ==
+            \\# [name=select_string_array_correlated_unnest_with_ordinality_aliased]
+            \\# SELECT ARRAY(SELECT arr FROM UNNEST(t.string_arrcol) WITH ORDINALITY arr)
+            \\# FROM AllArraysTable t
+            \\# --
+            \\# false
+            \\# ==
+            \\SELECT [] = [],
+            \\       [1,2,3] = [1,2,3],
+            \\       [1,2] = [1,2,3],
+            \\       [1,NULL] = [1,2,3],
+            \\       [1,NULL,3] = [1,2,3],
+            \\       [1,NULL,2] = [1,2,3],
+            \\       [1,NULL,2] = [1,NULL,2]
+            ,
+            .rows = .{
+                .{ true, true, false, false, null, false, null },
+            },
+        },
+        .{
+            .desc = "select_array_equality_empty_array_null",
+            .sql = "SELECT [] = cast(NULL AS ARRAY<INT64>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_array_equality_join_on_array_types",
+            .sql =
+            \\SELECT *
+            \\FROM AllArraysTable a JOIN AllArraysTable b
+            \\ON a.bool_arrcol = b.bool_arrcol AND
+            \\   a.int32_arrcol = b.int32_arrcol AND
+            \\   a.uint32_arrcol = b.uint32_arrcol AND
+            \\   a.int64_arrcol = b.int64_arrcol AND
+            \\   a.uint64_arrcol = b.uint64_arrcol AND
+            \\   a.string_arrcol = b.string_arrcol AND
+            \\   a.bytes_arrcol = b.bytes_arrcol AND
+            \\   a.date_arrcol = b.date_arrcol AND
+            \\   a.micros_arrcol = b.micros_arrcol AND
+            \\   a.enum_arrcol = b.enum_arrcol AND
+            \\   a.struct_arrcol = b.struct_arrcol
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 8, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, 8, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} },
+                .{ 1, .{ true, false, true }, .{ 1, 0, -1 }, .{ 2, 1, 0 }, .{ 8589934592, 0, -8589934592 }, .{ 8589934592, 1, 0 }, .{ 1.1, 0, -1.1 }, .{ 1.1, 0, -1.1 }, .{ "σ", "π", "⨝" }, .{ "\x61", "\x62", "\x63" }, .{ "1984-08-02", "2000-01-01", "2014-09-11" }, .{ "1984-08-02 01:01:01.001001+00", "2000-01-01 01:01:01.001001+00", "2014-09-11 01:01:01.001001+00" }, .{ "TESTENUM0", "TESTENUM1", "TESTENUM2" }, .{ .{"int64_key_1: 11 int64_key_2: 12"}, .{"int64_key_1: 21 int64_key_2: 22"}, .{"int64_key_1: 31 int64_key_2: 32"} }, .{ .{ 11, 12 }, .{ 21, 22 }, .{ 31, 32 } }, 1, .{ true, false, true }, .{ 1, 0, -1 }, .{ 2, 1, 0 }, .{ 8589934592, 0, -8589934592 }, .{ 8589934592, 1, 0 }, .{ 1.1, 0, -1.1 }, .{ 1.1, 0, -1.1 }, .{ "σ", "π", "⨝" }, .{ "\x61", "\x62", "\x63" }, .{ "1984-08-02", "2000-01-01", "2014-09-11" }, .{ "1984-08-02 01:01:01.001001+00", "2000-01-01 01:01:01.001001+00", "2014-09-11 01:01:01.001001+00" }, .{ "TESTENUM0", "TESTENUM1", "TESTENUM2" }, .{ .{"int64_key_1: 11 int64_key_2: 12"}, .{"int64_key_1: 21 int64_key_2: 22"}, .{"int64_key_1: 31 int64_key_2: 32"} }, .{ .{ 11, 12 }, .{ 21, 22 }, .{ 31, 32 } } },
+                .{ 7, .{true}, .{1}, .{2}, .{8589934592}, .{8589934592}, .{1.1}, .{1.1}, .{"σ"}, .{"\x61"}, .{"1984-08-02"}, .{"1984-08-02 01:01:01.001001+00"}, .{"TESTENUM0"}, .{.{"int64_key_1: 11 int64_key_2: 12"}}, .{.{ 11, 12 }}, 7, .{true}, .{1}, .{2}, .{8589934592}, .{8589934592}, .{1.1}, .{1.1}, .{"σ"}, .{"\x61"}, .{"1984-08-02"}, .{"1984-08-02 01:01:01.001001+00"}, .{"TESTENUM0"}, .{.{"int64_key_1: 11 int64_key_2: 12"}}, .{.{ 11, 12 }} },
+            },
+        },
+        .{
+            .desc = "select_array_equality_all_array_types",
+            .sql =
+            \\SELECT bool_arrcol = bool_arrcol,
+            \\       int32_arrcol = int32_arrcol,
+            \\       uint32_arrcol = uint32_arrcol,
+            \\       int64_arrcol = int64_arrcol,
+            \\       uint64_arrcol = uint64_arrcol,
+            \\       float_arrcol = float_arrcol,
+            \\       double_arrcol = double_arrcol,
+            \\       string_arrcol = string_arrcol,
+            \\       bytes_arrcol = bytes_arrcol,
+            \\       date_arrcol = date_arrcol,
+            \\       enum_arrcol = enum_arrcol,
+            \\       struct_arrcol = struct_arrcol
+            \\FROM AllArraysTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, null, null, null, null, null, null, null, null, null, null },
+                .{ null, null, null, null, null, null, null, null, null, null, null, null },
+                .{ null, null, null, null, null, null, null, null, null, null, null, null },
+                .{ true, true, true, true, true, true, true, true, true, true, true, true },
+                .{ true, true, true, true, true, true, true, true, true, true, true, true },
+                .{ null, null, null, null, null, null, null, null, null, null, null, null },
+                .{ null, null, null, null, null, null, null, null, null, null, null, null },
+                .{ true, true, true, true, true, true, true, true, true, true, true, true },
+                .{ null, null, null, null, null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "array_equality_on_incidentally_different_ordered_arrays",
+            .sql =
+            \\# In this test, the arrays have no guaranteed order, so the result of equality
+            \\# is not knowable. This query should be marked as non-deterministic.
+            \\SELECT a, b, a = b
+            \\FROM (
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) as a,
+            \\         ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_distinct_from_on_incidentally_different_ordered_arrays",
+            .sql =
+            \\# In this test, the arrays have no guaranteed order, so the result of equality
+            \\# is not knowable. This query should be marked as non-deterministic.
+            \\SELECT a, b, a IS NOT DISTINCT FROM b
+            \\FROM (
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) as a,
+            \\         ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_equality_on_incidentally_different_ordered_arrays_of_different_value_sets",
+            .sql =
+            \\# In this test, the arrays have no guaranteed order, and the arrays have the
+            \\# same length, but the sets of values are different. This is
+            \\# deterministic, but its more expensive to compute than we probably want in
+            \\# the equality operator, so we let this be a false positive for now.
+            \\SELECT a, b, a = b
+            \\FROM (
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([1, 2, 4]) as e) as a,
+            \\         ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_equality_on_incidentally_different_ordered_arrays_nested_in_structs",
+            .sql =
+            \\# In this test, the arrays have no guaranteed order, so the result of equality
+            \\# is not knowable. This query should be marked as non-deterministic.
+            \\SELECT a, b, a = b
+            \\FROM (
+            \\  SELECT STRUCT(1, ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) AS f) as a,
+            \\         STRUCT(2, ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) AS f) as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_equality_on_incidentally_different_ordered_arrays_embeed_in_ordered_arrays",
+            .sql =
+            \\# In this test, the arrays have no guaranteed order, so the result of equality
+            \\# is not knowable. This query should be marked as non-deterministic.
+            \\SELECT a, b, a = b
+            \\FROM (
+            \\  SELECT [NULL, STRUCT(1, ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) AS f)] as a,
+            \\         [NULL, STRUCT(2, ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) AS f)] as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_inequality_on_incidentally_different_ordered_arrays",
+            .sql =
+            \\# In this test, the arrays have no guaranteed order, so the result of inequality
+            \\# is not knowable. This query should be marked as non-deterministic.
+            \\SELECT a, b, a < b
+            \\FROM (
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) as a,
+            \\         ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_inequality_on_incidentally_different_ordered_arrays_of_different_lenths",
+            .sql =
+            \\# In this test, the arrays have no guaranteed order and which elements are the
+            \\# prefix of the array is unknowable. The result of inequality is likewise
+            \\# unknowable. This query should be marked as non-deterministic.
+            \\SELECT a, b, a < b
+            \\FROM (
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([1, 2, 3, 1]) as e) as a,
+            \\         ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_lessequal_on_incidentally_different_ordered_arrays_of_different_lenths",
+            .sql =
+            \\# In this test, the arrays have no guaranteed order and which elements are the
+            \\# prefix of the array is unknowable. The result of inequality is likewise
+            \\# unknowable. This query should be marked as non-deterministic.
+            \\SELECT a, b, a <= b
+            \\FROM (
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([1, 2, 3, 1]) as e) as a,
+            \\         ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_inequality_on_incidentally_different_ordered_arrays_of_disjoint_value_ranges",
+            .sql =
+            \\# In this test, the arrays have no guaranteed internal order. It happens that
+            \\# every element in the second array is larger than any element of the first
+            \\# array. In this case, it is possible to know that a < b. So ideally, the
+            \\# reference implementation does not report this as non-deterministic. This is
+            \\# deterministic, but its more expensive to compute than we probably want in
+            \\# the equality operator, so we let this be a false positive for now.
+            \\SELECT a, b, a < b
+            \\FROM (
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) as a,
+            \\         ARRAY(SELECT e FROM UNNEST([4, 5, 6]) as e) as b,
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_group_by_on_incidentally_different_ordered_arrays_nested_in_structs",
+            .sql =
+            \\# In this test, the arrays have no guarenteed internal order, so whether the two
+            \\# rows group  is not knowable.
+            \\SELECT a
+            \\FROM (
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) as a
+            \\  UNION ALL
+            \\  SELECT ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) as a
+            \\)
+            \\GROUP BY a
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_group_by_on_incidentally_different_ordered_arrays_embedded_in_ordered_arrays",
+            .sql =
+            \\# In this test, the arrays have no guarenteed internal order, so whether the two
+            \\# rows group  is not knowable.
+            \\SELECT a
+            \\FROM (
+            \\  SELECT STRUCT(1, ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) AS f) as a
+            \\  UNION ALL
+            \\  SELECT STRUCT(2, ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) AS f) as a
+            \\)
+            \\GROUP BY a
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_group_by_on_incidentally_different_ordered_arrays",
+            .sql =
+            \\# In this test, the arrays have no guarenteed internal order, so whether the two
+            \\# rows group  is not knowable.
+            \\SELECT a
+            \\FROM (
+            \\  SELECT [NULL, STRUCT(1, ARRAY(SELECT e FROM UNNEST([1, 2, 3]) as e) AS f)] as a
+            \\  UNION ALL
+            \\  SELECT [NULL, STRUCT(2, ARRAY(SELECT e FROM UNNEST([3, 2, 1]) as e) AS f)] as a
+            \\)
+            \\GROUP BY a
+            ,
+            .nondeterministic = true,
+        },
+    },
+}

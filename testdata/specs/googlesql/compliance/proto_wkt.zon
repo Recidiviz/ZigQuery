@@ -1,0 +1,35 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/proto_wkt",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/proto_wkt.test",
+    .cases = .{
+        .{
+            .desc = "proto_latlng_cast_to_string",
+            .sql =
+            \\SELECT STARTS_WITH(CAST(NEW google.type.LatLng(
+            \\  L2_NORM(ARRAY<INT64>[
+            \\    -731745004652846381,
+            \\    3810178364118150752,
+            \\    -5800812032276548757,
+            \\    -5503066408405699075,
+            \\    4338521905298770737]) AS longitude) AS STRING), 'longitude: ')
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "proto_doublevalue_cast_to_bytes",
+            .unsupported_in_bigquery = "\"Function not found: to_proto\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT LENGTH(CAST(TO_PROTO(L1_NORM(
+            \\    [-88563840779000917,
+            \\     1014750489886051693,
+            \\     6154502464381648894,
+            \\     827356353489583791,
+            \\     96139788329714178])) AS BYTES)) > 3
+            ,
+            .nondeterministic = true,
+        },
+    },
+}

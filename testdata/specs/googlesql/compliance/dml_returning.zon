@@ -1,0 +1,37 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_returning",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_returning.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as int64) as value
+            \\UNION ALL
+            \\SELECT 2, 20
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# used for UPDATE tests
+            \\CREATE TABLE TableInt64Values AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as int64) as value1,
+            \\       cast(100 as int64) as value2,
+            \\       cast(1000 as int64) as value3
+            \\UNION ALL
+            \\SELECT 2, 20, 200, 2000
+            ,
+        },
+        .{
+            .desc = "select_empty_rows_with_nested_error_function",
+            .sql = "SELECT 1 FROM Table1 WHERE primary_key = 99 AND IF (primary_key = 99, IF (true, error('hello'), true), false)",
+            .rows = .{},
+        },
+    },
+}

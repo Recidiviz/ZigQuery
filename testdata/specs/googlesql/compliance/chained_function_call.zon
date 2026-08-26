@@ -1,0 +1,78 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/chained_function_call",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/chained_function_call.test",
+    .cases = .{
+        .{
+            .desc = "chained_call",
+            .sql =
+            \\select key, (key).upper().substr(1,3)
+            \\from (select "aBcDeF" AS key)
+            ,
+            .rows = .{
+                .{ "aBcDeF", "ABC" },
+            },
+        },
+        .{
+            .desc = "safe_call",
+            .sql =
+            \\select val,
+            \\       (val).(safe.sqrt)(),
+            \\       abs(val).sqrt().sqrt()
+            \\from unnest([16,0,null,-16]) AS val
+            \\order by val
+            ,
+            .rows = .{
+                .{ null, null, null },
+                .{ -16, null, 2 },
+                .{ 0, 0, 0 },
+                .{ 16, 4, 2 },
+            },
+        },
+        .{
+            .desc = "error_before_safe_call",
+            .sql =
+            \\select val,
+            \\       sqrt(val).(safe.sqrt)().sqrt()
+            \\from unnest([16,0,null,-16]) AS val
+            \\order by val
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "long_chain",
+            .sql =
+            \\select (value)
+            \\          .upper()
+            \\          .replace("A","Z")
+            \\          .lower()
+            \\          .substr(1,4)
+            \\from (select "aAbcAadE" AS value)
+            ,
+            .rows = .{
+                .{"zzbc"},
+            },
+        },
+        .{
+            .desc = "chain_with_apply",
+            .unsupported_in_bigquery = "\"Function not found: apply\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\select key, (key)
+            \\              .apply(x -> cast(x as string))
+            \\              .concat('!')
+            \\              .apply(x -> concat('aBC', x, 'dEF'))
+            \\              .lower()
+            \\from UNNEST([123, 0, null, -10]) AS key
+            \\order by key
+            ,
+            .rows = .{
+                .{ null, null },
+                .{ -10, "abc-10!def" },
+                .{ 0, "abc0!def" },
+                .{ 123, "abc123!def" },
+            },
+        },
+    },
+}

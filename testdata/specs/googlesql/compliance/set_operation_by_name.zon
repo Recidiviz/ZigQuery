@@ -1,0 +1,118 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/set_operation_by_name",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/set_operation_by_name.test",
+    .cases = .{
+        .{
+            .desc = "by_name",
+            .sql =
+            \\# This file contains compliance test cases for BY NAME in set operations.
+            \\# This tests that the syntax works but doesn't cover all the details
+            \\# because we assume those are covered in tests for CORRESPONDING syntaxes,
+            \\# which produce the same Resolved ASTs.
+            \\# Literal coercion STRICT mode
+            \\SELECT 1 AS a, 2 AS b
+            \\UNION ALL BY NAME
+            \\SELECT 3 AS b, 4 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2 },
+                .{ 4, 3 },
+            },
+        },
+        .{
+            .desc = "inner",
+            .sql =
+            \\SELECT 1 AS b, 2 AS a, 5 AS z
+            \\INNER UNION ALL BY NAME
+            \\SELECT 6 AS y, 3 AS b, 4 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2 },
+                .{ 3, 4 },
+            },
+        },
+        .{
+            .desc = "full",
+            .sql =
+            \\SELECT 1 AS b, 2 AS a, 5 AS z
+            \\FULL UNION ALL BY NAME
+            \\SELECT 6 AS y, 3 AS b, 4 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2, 5, null },
+                .{ 3, 4, null, 6 },
+            },
+        },
+        .{
+            .desc = "left",
+            .sql =
+            \\SELECT 1 AS b, 2 AS a, 5 AS z
+            \\FULL UNION ALL BY NAME
+            \\SELECT 6 AS y, 3 AS b, 4 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2, 5, null },
+                .{ 3, 4, null, 6 },
+            },
+        },
+        .{
+            .desc = "by_name_on",
+            .sql =
+            \\SELECT 1 AS a, 2 AS b
+            \\UNION ALL BY NAME ON (B, a)
+            \\SELECT 3 AS b, 4 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 1 },
+                .{ 3, 4 },
+            },
+        },
+        .{
+            .desc = "inner_on",
+            .sql =
+            \\SELECT 1 AS b, 2 AS a, 5 AS z
+            \\INNER UNION ALL BY NAME ON (B, a)
+            \\SELECT 6 AS y, 3 AS b, 4 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2 },
+                .{ 3, 4 },
+            },
+        },
+        .{
+            .desc = "full_on",
+            .sql =
+            \\SELECT 1 AS b, 2 AS a, 5 AS z
+            \\FULL UNION ALL BY NAME ON (B, z, y)
+            \\SELECT 6 AS y, 3 AS b, 4 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 5, null },
+                .{ 3, null, 6 },
+            },
+        },
+        .{
+            .desc = "left_on",
+            .sql =
+            \\SELECT 1 AS b, 2 AS a, 5 AS z
+            \\LEFT UNION ALL BY NAME ON (B, z)
+            \\SELECT 6 AS y, 3 AS b, 4 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 5 },
+                .{ 3, null },
+            },
+        },
+    },
+}

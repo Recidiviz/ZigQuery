@@ -1,0 +1,27 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/proto_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/proto_queries.test",
+    .cases = .{
+        .{
+            .desc = "read_missing_required_field",
+            .sql =
+            \\SELECT p.int64_key_2
+            \\FROM (select CAST(b'' AS googlesql_test.KitchenSinkPB) p)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "has_missing_required_field",
+            .sql =
+            \\SELECT p.has_int64_key_2
+            \\FROM (select CAST(b'' AS googlesql_test.KitchenSinkPB) p)
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+    },
+}

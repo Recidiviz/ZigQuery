@@ -1,0 +1,697 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/measures",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/measures.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# TODO: b/350555383 - Remove PlaceHolderTable once we support creating Measures
+            \\# in compliance tests.
+            \\# The use of PlaceholderTable is a workaround for creating tables with Measures
+            \\# in compliance tests. There is currently no way to create measures via SQL or
+            \\# DDL. As a result, compliance testing for measures requires pre-loading the
+            \\# catalog with tables containing measures. This is done in the
+            \\# `SQLTestBase::StepCreateDatabase()` method, which is only run when there is a
+            \\# non-empty test database. So we create PlaceHolderTable to ensure the test
+            \\# database is non-empty.
+            \\CREATE TABLE PlaceholderTable AS SELECT 1 AS key
+            ,
+        },
+        .{
+            .desc = "measure_aggregation_with_group_by_and_cross_join",
+            .sql =
+            \\# Since this is a cross join and the grouping key is from `T2`, each group of
+            \\# rows has all the rows from `T1`. As a result, any measure from T1 will produce
+            \\# the same result for each grouping key.
+            \\SELECT
+            \\  T2.country,
+            \\  AGG(T1.measure_sum_price) AS agg1,
+            \\  AGG(T2.measure_sum_price) AS agg2,
+            \\  AGG(T1.measure_ratio_price_to_quantity) AS agg3,
+            \\  AGG(T2.measure_ratio_price_to_quantity) AS agg4,
+            \\  AGG(T1.measure_country_count) AS agg5,
+            \\  AGG(T2.measure_country_count) AS agg6,
+            \\  AGG(T1.measure_avg_monthly_price) AS agg7,
+            \\  AGG(T2.measure_avg_monthly_price) AS agg8,
+            \\  AGG(T2.measure_sum_price_via_subquery) AS agg9,
+            \\  AGG(T2.measure_sum_price_via_aggregate_subquery) AS agg10,
+            \\  AGG(T2.measure_sum_price_plus_one_via_subquery) AS agg11
+            \\FROM MeasureTable_SingleKey AS T1, MeasureTable_SingleKey AS T2
+            \\GROUP BY T2.country
+            \\ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9
+            ,
+            .rows = .{
+                .{ "Canada", 550, 220, 2.2, 2.2, 3, 1, 275, 110, 220, 220, 221 },
+                .{ "Mexico", 550, 270, 2.2, 2.7, 3, 1, 275, 135, 270, 270, 271 },
+                .{ "USA", 550, 60, 2.2, 1.2, 3, 1, 275, 30, 60, 60, 61 },
+            },
+        },
+        .{
+            .desc = "measure_aggregation_with_group_by_having_and_inner_join",
+            .sql =
+            \\# Using an `INNER JOIN` instead of a `CROSS JOIN` to avoid the scenario
+            \\# described in the test case above.
+            \\SELECT
+            \\  T1.country,
+            \\  AGG(T1.measure_sum_price),
+            \\  AGG(T2.measure_sum_price),
+            \\  AGG(T1.measure_ratio_price_to_quantity) AS price_to_quantity,
+            \\  AGG(T2.measure_ratio_price_to_quantity),
+            \\  AGG(T2.measure_country_count),
+            \\  AGG(T1.measure_avg_monthly_price),
+            \\  AGG(T1.measure_sum_price_via_subquery),
+            \\  AGG(T2.measure_sum_price_via_aggregate_subquery),
+            \\  AGG(T1.measure_sum_price_plus_one_via_subquery)
+            \\FROM MeasureTable_SingleKey AS T1
+            \\INNER JOIN MeasureTable_SingleKey AS T2 USING (key)
+            \\GROUP BY T1.country
+            \\HAVING price_to_quantity > 2
+            \\ORDER BY 1, 2, 3, 4, 5, 6, 7
+            ,
+            .rows = .{
+                .{ "Canada", 220, 220, 2.2, 2.2, 1, 110, 220, 220, 221 },
+                .{ "Mexico", 270, 270, 2.7, 2.7, 1, 135, 270, 270, 271 },
+            },
+        },
+        .{
+            .desc = "measure_aggregation_in_order_by",
+            .sql =
+            \\SELECT
+            \\  country,
+            \\FROM MeasureTable_SingleKey
+            \\GROUP BY country
+            \\ORDER BY AGG(measure_sum_price) DESC
+            ,
+            .rows = .{
+                .{"Mexico"},
+                .{"Canada"},
+                .{"USA"},
+            },
+        },
+        .{
+            .desc = "measure_aggregation_with_scalar_operations",
+            .sql =
+            \\SELECT
+            \\  country,
+            \\  AGG(measure_sum_price) + 100 AS sum_price_plus_100,
+            \\  AGG(measure_ratio_price_to_quantity) * AGG(measure_ratio_price_to_quantity) AS ratio_price_to_quantity_squared
+            \\FROM MeasureTable_SingleKey
+            \\GROUP BY country
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ "Canada", 320, 4.8400000000000007 },
+                .{ "Mexico", 370, 7.2900000000000009 },
+                .{ "USA", 160, 1.44 },
+            },
+        },
+        .{
+            .desc = "measure_aggregated_in_subquery_with_correlated_non_measure_column",
+            .sql =
+            \\SELECT
+            \\  OuterTable.country,
+            \\  (
+            \\    SELECT
+            \\      AGG(InnerTable.measure_sum_price) AS inner_measure_sum_price
+            \\    FROM MeasureTable_SingleKey AS InnerTable
+            \\    WHERE InnerTable.country = OuterTable.country
+            \\  )
+            \\FROM MeasureTable_SingleKey AS OuterTable
+            \\GROUP BY OuterTable.country
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ "Canada", 220 },
+                .{ "Mexico", 270 },
+                .{ "USA", 60 },
+            },
+        },
+        .{
+            .desc = "measures_with_grouping_sets",
+            .sql =
+            \\SELECT
+            \\  country,
+            \\  date_str,
+            \\  GROUPING(country) AS country_is_aggregated,
+            \\  GROUPING(date_str) AS date_str_is_aggregated,
+            \\  AGG(measure_sum_price),
+            \\  AGG(measure_sum_price_via_subquery),
+            \\  AGG(measure_sum_price_via_aggregate_subquery),
+            \\  AGG(measure_sum_price_plus_one_via_subquery)
+            \\FROM MeasureTable_SingleKey
+            \\GROUP BY GROUPING SETS (country, date_str)
+            \\ORDER BY 5, 6, 7, 8
+            ,
+            .rows = .{
+                .{ "USA", null, 0, 1, 60, 60, 60, 61 },
+                .{ "Canada", null, 0, 1, 220, 220, 220, 221 },
+                .{ null, "Feb 2024", 1, 0, 260, 260, 260, 261 },
+                .{ "Mexico", null, 0, 1, 270, 270, 270, 271 },
+                .{ null, "Jan 2024", 1, 0, 290, 290, 290, 291 },
+            },
+        },
+        .{
+            .desc = "measure_propagating_past_subquery_in_from",
+            .sql =
+            \\SELECT
+            \\  country,
+            \\  AGG(measure_sum_price)
+            \\FROM (
+            \\  SELECT
+            \\    country,
+            \\    measure_sum_price
+            \\  FROM MeasureTable_SingleKey
+            \\  WHERE country = 'USA'
+            \\)
+            \\GROUP BY country
+            ,
+            .rows = .{
+                .{ "USA", 60 },
+            },
+        },
+        .{
+            .desc = "measure_propagation_past_analytic_scan",
+            .sql =
+            \\SELECT
+            \\  country,
+            \\  AGG(measure_sum_price),
+            \\  COUNT(total_price)
+            \\FROM (
+            \\  SELECT
+            \\    country,
+            \\    measure_sum_price,
+            \\    SUM(price) OVER () AS total_price
+            \\  FROM MeasureTable_SingleKey
+            \\)
+            \\GROUP BY country
+            \\ORDER BY 2
+            ,
+            .rows = .{
+                .{ "USA", 60, 3 },
+                .{ "Canada", 220, 4 },
+                .{ "Mexico", 270, 3 },
+            },
+        },
+        .{
+            .desc = "measure_exprs_with_clauses_non_deterministic",
+            .sql =
+            \\SELECT
+            \\  AGG(measure_array_agg_distinct_country),
+            \\  AGG(measure_array_agg_nullable_str_ignore_nulls),
+            \\  AGG(measure_array_agg_country_limit_one)
+            \\FROM MeasureTable_SingleKey
+            \\GROUP BY country
+            \\ORDER BY country
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "measure_pseudo_column_count_star",
+            .sql =
+            \\SELECT
+            \\  AGG(measure_pseudo_column_sum_price),
+            \\FROM MeasureTable_SingleKey
+            ,
+            .rows = .{
+                .{550},
+            },
+        },
+        .{
+            .desc = "measure_not_actually_aggregated",
+            .sql =
+            \\SELECT
+            \\  AGG(measure_literal_one),
+            \\  AGG(measure_one_plus_one),
+            \\  AGG(measure_scalar_subquery)
+            \\FROM MeasureTable_SingleKey, UNNEST([1, 2, 3]) AS x
+            ,
+            .rows = .{
+                .{ 1, 2, 6 },
+            },
+        },
+        .{
+            .desc = "measure_not_actually_aggregated_with_group_by",
+            .sql =
+            \\SELECT
+            \\  country,
+            \\  AGG(measure_literal_one),
+            \\  AGG(measure_one_plus_one),
+            \\  AGG(measure_scalar_subquery)
+            \\FROM MeasureTable_SingleKey, UNNEST([1, 2, 3]) AS x
+            \\GROUP BY country
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "Canada", 1, 2, 6 },
+                .{ "Mexico", 1, 2, 6 },
+                .{ "USA", 1, 2, 6 },
+            },
+        },
+        .{
+            .desc = "measure_with_deeply_nested_subquery",
+            .sql =
+            \\SELECT
+            \\  country,
+            \\  AGG(measure_with_deeply_nested_subquery)
+            \\FROM MeasureTable_SingleKey
+            \\GROUP BY country
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "Canada", 220 },
+                .{ "Mexico", 270 },
+                .{ "USA", 60 },
+            },
+        },
+        .{
+            .desc = "correlated_measure_referenced_but_not_aggregated",
+            .sql =
+            \\SELECT
+            \\  key,
+            \\  (
+            \\    SELECT
+            \\      key
+            \\    FROM (
+            \\      SELECT
+            \\        OuterTable.key AS key,
+            \\        OuterTable.measure_sum_price
+            \\    )
+            \\  )
+            \\FROM MeasureTable_SingleKey AS OuterTable
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+                .{ 3, 3 },
+                .{ 4, 4 },
+                .{ 5, 5 },
+                .{ 6, 6 },
+                .{ 7, 7 },
+                .{ 8, 8 },
+                .{ 9, 9 },
+                .{ 10, 10 },
+            },
+        },
+        .{
+            .desc = "correlated_measure_referenced_and_aggregated",
+            .sql =
+            \\SELECT
+            \\  key,
+            \\  (
+            \\    SELECT
+            \\      OuterTable.key + AGG(OuterTable.measure_sum_price)
+            \\    FROM MeasureTable_SingleKey AS InnerTable
+            \\  ),
+            \\  (
+            \\    SELECT
+            \\      OuterTable.key + AGG(OuterTable.measure_sum_price_via_subquery)
+            \\    FROM MeasureTable_SingleKey AS InnerTable
+            \\  )
+            \\FROM MeasureTable_SingleKey AS OuterTable
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ 1, 11, 11 },
+                .{ 2, 22, 22 },
+                .{ 3, 33, 33 },
+                .{ 4, 44, 44 },
+                .{ 5, 55, 55 },
+                .{ 6, 66, 66 },
+                .{ 7, 77, 77 },
+                .{ 8, 88, 88 },
+                .{ 9, 99, 99 },
+                .{ 10, 110, 110 },
+            },
+        },
+        .{
+            .desc = "correlated_measure_referenced_and_aggregated_2",
+            .sql =
+            \\SELECT
+            \\  key,
+            \\  (
+            \\    SELECT
+            \\      OuterTable.key + AGG(correlated_measure_sum_price)
+            \\    FROM (
+            \\      SELECT OuterTable.measure_sum_price AS correlated_measure_sum_price
+            \\    )
+            \\  )
+            \\FROM MeasureTable_SingleKey AS OuterTable
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ 1, 11 },
+                .{ 2, 22 },
+                .{ 3, 33 },
+                .{ 4, 44 },
+                .{ 5, 55 },
+                .{ 6, 66 },
+                .{ 7, 77 },
+                .{ 8, 88 },
+                .{ 9, 99 },
+                .{ 10, 110 },
+            },
+        },
+        .{
+            .desc = "aggregate_measure_from_scalar_subquery",
+            .sql =
+            \\SELECT
+            \\  OuterTable.country,
+            \\  AGG((
+            \\    SELECT
+            \\      InnerTable.measure_sum_price AS inner_measure_sum_price
+            \\    FROM MeasureTable_SingleKey AS InnerTable
+            \\    WHERE InnerTable.country = OuterTable.country
+            \\    ORDER BY InnerTable.key
+            \\    LIMIT 1
+            \\  ))
+            \\FROM MeasureTable_SingleKey AS OuterTable
+            \\GROUP BY 1
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ "Canada", 40 },
+                .{ "Mexico", 80 },
+                .{ "USA", 10 },
+            },
+        },
+        .{
+            .desc = "aggregate_measure_from_with_query",
+            .sql =
+            \\WITH w0 AS (
+            \\  SELECT measure_sum_price AS renamed_measure FROM MeasureTable_SingleKey
+            \\) SELECT AGG(renamed_measure) FROM (SELECT * FROM w0)
+            ,
+            .rows = .{
+                .{550},
+            },
+        },
+        .{
+            .desc = "aggregate_measure_from_nested_with_query",
+            .sql =
+            \\WITH w0 AS (
+            \\  SELECT measure_sum_price AS renamed_measure FROM MeasureTable_SingleKey
+            \\), w1 AS (
+            \\  SELECT renamed_measure AS renamed_measure_2 FROM w0
+            \\)
+            \\SELECT AGG(renamed_measure_2) FROM (SELECT * FROM w1)
+            ,
+            .rows = .{
+                .{550},
+            },
+        },
+        .{
+            .desc = "aggregate_measure_from_scalar_subquery_in_with_query",
+            .sql =
+            \\WITH wq0 AS (
+            \\  SELECT
+            \\    (
+            \\      SELECT
+            \\        measure_sum_price AS a_11
+            \\      FROM
+            \\        MeasureTable_SingleKey
+            \\      ORDER BY key
+            \\      LIMIT 1
+            \\    ) AS a_8
+            \\  FROM ( SELECT 1 )
+            \\)
+            \\SELECT
+            \\  AGG(a_8)
+            \\FROM (SELECT * FROM wq0)
+            ,
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "measure_from_with_expr_from_column_ref",
+            .sql =
+            \\SELECT
+            \\  AGG(renamed_measure)
+            \\FROM (
+            \\  SELECT
+            \\    WITH(
+            \\      a_10 AS 1 + 2,
+            \\      Table.measure_sum_price
+            \\    ) AS renamed_measure
+            \\  FROM MeasureTable_SingleKey AS Table
+            \\)
+            ,
+            .rows = .{
+                .{550},
+            },
+        },
+        .{
+            .desc = "measure_from_with_expr_from_scalar_subquery",
+            .sql =
+            \\SELECT
+            \\  AGG(renamed_measure)
+            \\FROM (
+            \\  SELECT
+            \\    WITH(
+            \\      a_10 AS 1 + 2,
+            \\      (
+            \\        SELECT measure_sum_price
+            \\        FROM MeasureTable_SingleKey
+            \\        ORDER BY key
+            \\        LIMIT 1
+            \\      )
+            \\    ) AS renamed_measure
+            \\  FROM MeasureTable_SingleKey AS Table
+            \\)
+            ,
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "measure_from_with_expr_assignment_list_as_column_ref",
+            .sql =
+            \\SELECT
+            \\  AGG(a_10)
+            \\FROM (
+            \\  SELECT
+            \\    WITH(a_11 AS alias_1.a_8, a_11) AS a_10
+            \\  FROM (
+            \\    SELECT
+            \\      measure_sum_price AS a_8
+            \\    FROM
+            \\      MeasureTable_SingleKey
+            \\  ) AS alias_1
+            \\)
+            ,
+            .rows = .{
+                .{550},
+            },
+        },
+        .{
+            .desc = "measure_from_with_expr_assignment_list_as_scalar_subquery",
+            .sql =
+            \\SELECT
+            \\  AGG(a_10)
+            \\FROM (
+            \\  SELECT
+            \\    WITH(a_11 AS (SELECT alias_1.a_8), a_11) AS a_10
+            \\  FROM (
+            \\    SELECT
+            \\      measure_sum_price AS a_8
+            \\    FROM
+            \\      MeasureTable_SingleKey
+            \\  ) AS alias_1
+            \\)
+            ,
+            .rows = .{
+                .{550},
+            },
+        },
+        .{
+            .desc = "measure_agg_with_enum_in_function_signature",
+            .sql =
+            \\SELECT
+            \\  AGG(measure_with_enum_in_function_signature)
+            \\FROM MeasureTable_SingleKey
+            ,
+            .rows = .{
+                .{28},
+            },
+        },
+        .{
+            .desc = "measure_aggregation_in_in_expr",
+            .sql =
+            \\SELECT
+            \\  country,
+            \\  AGG(measure_aggregation_in_in_expr)
+            \\FROM MeasureTable_SingleKey
+            \\GROUP BY 1
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ "Canada", false },
+                .{ "Mexico", false },
+                .{ "USA", false },
+            },
+        },
+        .{
+            .desc = "measure_with_limit_zero",
+            .sql =
+            \\# Inspired by b/440426799.
+            \\SELECT
+            \\  AGG(measure_array_agg_price_respect_nulls),
+            \\  ARRAY_AGG(
+            \\    ANY_VALUE(structified.price)
+            \\    RESPECT NULLS
+            \\    GROUP BY structified.key),
+            \\  ARRAY_AGG(price RESPECT NULLS),
+            \\FROM (
+            \\  SELECT
+            \\    STRUCT(key, price) AS structified,
+            \\    measure_array_agg_price_respect_nulls,
+            \\    price
+            \\  FROM MeasureTable_SingleKey LIMIT 0
+            \\)
+            ,
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "null_measure_value_from_limit_zero",
+            .sql =
+            \\# Inspired by b/440426799.
+            \\SELECT
+            \\  AGG((
+            \\    SELECT
+            \\      measure_array_agg_price_respect_nulls
+            \\    FROM MeasureTable_SingleKey
+            \\    LIMIT 0
+            \\  )),
+            \\  ARRAY_AGG(
+            \\    (
+            \\      SELECT
+            \\        price
+            \\      FROM MeasureTable_SingleKey
+            \\      LIMIT 0
+            \\    )
+            \\    RESPECT NULLS
+            \\  )
+            \\FROM ( SELECT 1 )
+            ,
+            .rows = .{
+                .{ null, .{null} },
+            },
+        },
+        .{
+            .desc = "null_measure_value_from_where_false",
+            .sql =
+            \\# Inspired by b/440426799.
+            \\SELECT
+            \\  AGG((
+            \\    SELECT
+            \\      measure_array_agg_price_respect_nulls
+            \\    FROM MeasureTable_SingleKey
+            \\    WHERE false
+            \\  )),
+            \\  ARRAY_AGG(
+            \\    (
+            \\      SELECT
+            \\        price
+            \\      FROM MeasureTable_SingleKey
+            \\      WHERE false
+            \\    )
+            \\    RESPECT NULLS
+            \\  )
+            \\FROM ( SELECT 1 )
+            ,
+            .rows = .{
+                .{ null, .{null} },
+            },
+        },
+        .{
+            .desc = "null_measure_value_from_limit_zero_2",
+            .sql =
+            \\# Inspired by b/440426799.
+            \\SELECT
+            \\  AGG(measure_array_agg_price_respect_nulls),
+            \\  ARRAY_AGG(price RESPECT NULLS)
+            \\FROM ( SELECT 1 ) CROSS JOIN
+            \\( SELECT price, measure_array_agg_price_respect_nulls FROM MeasureTable_SingleKey LIMIT 0 )
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "column_level_row_identity_columns_in_order_by",
+            .sql =
+            \\SELECT
+            \\  product_category
+            \\FROM MeasureTable_Sales_Denormalized
+            \\GROUP BY product_category
+            \\ORDER BY AGG(measure_total_revenue) DESC
+            ,
+            .rows = .{
+                .{"Electronics"},
+                .{"Groceries"},
+            },
+        },
+        .{
+            .desc = "column_level_row_identity_columns_propagating_past_subquery_in_from",
+            .sql =
+            \\SELECT
+            \\  product_category,
+            \\  AGG(measure_total_revenue)
+            \\FROM (
+            \\  SELECT
+            \\    product_category,
+            \\    measure_total_revenue
+            \\  FROM MeasureTable_Sales_Denormalized
+            \\  WHERE store_region = 'North'
+            \\)
+            \\GROUP BY product_category
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ "Electronics", 2200 },
+                .{ "Groceries", 500 },
+            },
+        },
+        .{
+            .desc = "column_level_row_identity_columns_propagation_past_analytic_scan",
+            .sql =
+            \\SELECT
+            \\  product_category,
+            \\  AGG(measure_total_revenue),
+            \\  COUNT(total_revenue_analytic)
+            \\FROM (
+            \\  SELECT
+            \\    product_category,
+            \\    measure_total_revenue,
+            \\    SUM(revenue) OVER () AS total_revenue_analytic
+            \\  FROM MeasureTable_Sales_Denormalized
+            \\)
+            \\GROUP BY product_category
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ "Electronics", 3700, 3 },
+                .{ "Groceries", 500, 1 },
+            },
+        },
+        .{
+            .desc = "no_table_row_identity_columns_group_by",
+            .sql =
+            \\SELECT product_id, AGG(measure_all_product_names)
+            \\FROM MeasureTable_NoTableRowIdentityColumns
+            \\GROUP BY product_id
+            \\ORDER BY 1
+            ,
+            .rows = .{
+                .{ 101, .{"apple"} },
+                .{ 102, .{"banana"} },
+            },
+        },
+    },
+}

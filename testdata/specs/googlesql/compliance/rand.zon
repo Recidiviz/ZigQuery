@@ -1,0 +1,115 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/rand",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/rand.test",
+    .cases = .{
+        .{
+            .desc = "range",
+            .sql =
+            \\# While we cannot test results of RAND function directly, we test its
+            \\# properties.
+            \\SELECT RAND() BETWEEN 0 AND 1 right1, RAND() < 0 wrong1, RAND() > 1 wrong2
+            ,
+            .rows = .{
+                .{ true, false, false },
+            },
+        },
+        .{
+            .desc = "with",
+            .sql =
+            \\# When RAND() is used in WITH clause, the result has to be the same because of
+            \\# run-once behavior
+            \\WITH R AS (SELECT RAND() r)
+            \\SELECT (rs[offset(0)] = rs[offset(1)]) right1 FROM (
+            \\SELECT ARRAY_AGG(t.r) rs FROM (
+            \\(SELECT R.r FROM R) UNION ALL (SELECT R.r FROM R)) t)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "different_columns",
+            .sql =
+            \\# Tests which should pass with very high probability
+            \\# Different columns should have different values
+            \\SELECT (r1 = r2 and r2 = r3) wrong FROM
+            \\(SELECT rand() r1, rand() r2, rand() r3)
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "different_rows",
+            .sql =
+            \\# Different rows should have different values
+            \\SELECT (rs[offset(0)] = rs[offset(1)] and rs[offset(0)] = rs[offset(2)]) wrong
+            \\FROM
+            \\  (SELECT
+            \\     (SELECT array_agg(r) r
+            \\      FROM
+            \\        (SELECT rand() r
+            \\         FROM unnest([1,2,3]) x)) rs)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "uniform_distribution",
+            .sql =
+            \\SELECT
+            \\  MAX(RAND()) > 0.5 right1,
+            \\  MIN(RAND()) < 0.5 right2
+            \\FROM UNNEST([1,2,3,4,5,6,7,8,9,10]), UNNEST([1,2,3,4,5,6,7,8,9,10])
+            ,
+            .rows = .{
+                .{ true, true },
+            },
+        },
+        .{
+            .desc = "branches_of_union",
+            .sql =
+            \\SELECT COUNT(DISTINCT val) >= 3
+            \\FROM (
+            \\  SELECT RAND() val
+            \\  UNION ALL
+            \\  SELECT RAND() val
+            \\  UNION ALL
+            \\  SELECT RAND() val
+            \\)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_elements",
+            .sql =
+            \\SELECT COUNT(DISTINCT val) = 3
+            \\FROM UNNEST([RAND(), RAND(), RAND()]) val
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "expression",
+            .sql = "SELECT RAND() = RAND(), RAND() - RAND() = 0",
+            .rows = .{
+                .{ false, false },
+            },
+        },
+        .{
+            .desc = "join",
+            .sql =
+            \\SELECT * FROM (
+            \\  SELECT RAND() AS x) a
+            \\INNER JOIN (
+            \\  SELECT * FROM (
+            \\    SELECT RAND() AS x)) b
+            \\ON a.x = b.x
+            ,
+            .rows = .{},
+        },
+    },
+}

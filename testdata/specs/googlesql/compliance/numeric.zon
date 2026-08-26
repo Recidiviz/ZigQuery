@@ -1,0 +1,95 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/numeric",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/numeric.test",
+    .cases = .{
+        .{
+            .desc = "parse_numeric",
+            .sql = "SELECT parse_numeric(' - 1,2.34 '), parse_numeric(' 12.34e-1  +')",
+            .rows = .{
+                .{ -12.34, 1.234 },
+            },
+        },
+        .{
+            .desc = "parse_bignumeric",
+            .sql = "SELECT parse_bignumeric(' - 1,2.34 '), parse_bignumeric(' 12.34e-1  +')",
+            .rows = .{
+                .{ -12.34, 1.234 },
+            },
+        },
+        .{
+            .desc = "numeric_self_cast",
+            .sql = "SELECT CAST(NUMERIC '1.234' AS NUMERIC(4, 3))",
+            .rows = .{
+                .{1.234},
+            },
+        },
+        .{
+            .desc = "sum_numeric",
+            .sql = "SELECT SUM(x) FROM UNNEST([NUMERIC '1', NUMERIC '2']) AS x",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "window_sum_numeric",
+            .sql =
+            \\SELECT SUM(price) OVER () FROM (
+            \\SELECT "apple" as fruit, NUMERIC '1' AS price,
+            \\UNION ALL SELECT "pear", NUMERIC '2'
+            \\UNION ALL SELECT "banana", NUMERIC '3')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{6},
+                .{6},
+                .{6},
+            },
+        },
+        .{
+            .desc = "window_sum_numeric_partition_by",
+            .sql =
+            \\SELECT fruit, SUM(price) OVER (PARTITION BY fruit) FROM (
+            \\SELECT "apple" as fruit, NUMERIC '1' AS price,
+            \\UNION ALL SELECT "pear", NUMERIC '2'
+            \\UNION ALL SELECT "banana", NUMERIC '3') ORDER BY fruit
+            ,
+            .rows = .{
+                .{ "apple", 1 },
+                .{ "banana", 3 },
+                .{ "pear", 2 },
+            },
+        },
+        .{
+            .desc = "window_sum_numeric_order_by",
+            .sql =
+            \\SELECT fruit, SUM(price) OVER (ORDER BY price) FROM (
+            \\SELECT "apple" as fruit, NUMERIC '1' AS price,
+            \\UNION ALL SELECT "pear", NUMERIC '2'
+            \\UNION ALL SELECT "banana", NUMERIC '3') ORDER BY fruit
+            ,
+            .rows = .{
+                .{ "apple", 1 },
+                .{ "banana", 6 },
+                .{ "pear", 3 },
+            },
+        },
+        .{
+            .desc = "window_sum_numeric_order_by_with_range",
+            .sql =
+            \\SELECT fruit, SUM(price) OVER
+            \\(ORDER BY price RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM (
+            \\SELECT "apple" as fruit, NUMERIC '1' AS price,
+            \\UNION ALL SELECT "pear", NUMERIC '2'
+            \\UNION ALL SELECT "banana", NUMERIC '3') ORDER BY fruit
+            ,
+            .rows = .{
+                .{ "apple", 3 },
+                .{ "banana", 5 },
+                .{ "pear", 6 },
+            },
+        },
+    },
+}

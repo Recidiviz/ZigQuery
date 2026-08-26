@@ -1,0 +1,194 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/typeof",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/typeof.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE EverywhereTypes AS
+            \\SELECT CAST(0 AS INT64) AS i64,
+            \\       CAST(1.1 AS FLOAT64) AS f64,
+            \\       'abc' AS s,
+            \\       b'abc' AS b,
+            \\       DATE '2020-02-02' as d,
+            \\       TIMESTAMP '2020-02-02' as ts
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE ParameterizedTypes AS
+            \\SELECT CAST(1.1 AS NUMERIC(2, 1)) AS n,
+            \\       CAST('abc' AS STRING(10)) AS s,
+            \\       CAST(b'abc' AS BYTES(10)) AS b
+            ,
+        },
+        .{
+            .desc = "typeof_literals",
+            .sql =
+            \\SELECT [ TYPEOF(NULL),
+            \\         TYPEOF(0),
+            \\         TYPEOF(0x8000000000000000),
+            \\         TYPEOF(TRUE),
+            \\         TYPEOF(1.1),
+            \\         TYPEOF('abc'),
+            \\         TYPEOF(b'abc'),
+            \\         TYPEOF(DATE '2020-02-02'),
+            \\         TYPEOF(TIMESTAMP '2020-02-02') ]
+            ,
+            .rows = .{
+                .{.{ "INT64", "INT64", "UINT64", "BOOL", "DOUBLE", "STRING", "BYTES", "DATE", "TIMESTAMP" }},
+            },
+        },
+        .{
+            .desc = "typeof_operators",
+            .sql = "SELECT TYPEOF(1 + 2), TYPEOF('abc' || 'def')",
+            .rows = .{
+                .{ "INT64", "STRING" },
+            },
+        },
+        .{
+            .desc = "typeof_runtime_error_expr",
+            .sql =
+            \\# The expression should not be evaluated and the query should not produce a
+            \\# runtime error.
+            \\SELECT TYPEOF(1.0/0)
+            ,
+            .rows = .{
+                .{"DOUBLE"},
+            },
+        },
+        .{
+            .desc = "typeof_function_call",
+            .sql = "SELECT TYPEOF(EXTRACT(DATE FROM TIMESTAMP '2020-02-02 12:00:00'))",
+            .rows = .{
+                .{"DATE"},
+            },
+        },
+        .{
+            .desc = "typeof_error_function",
+            .sql =
+            \\# The function should not be evaluated and the query should not produce a
+            \\# runtime error.
+            \\SELECT TYPEOF(ERROR('abc'))
+            ,
+            .rows = .{
+                .{"INT64"},
+            },
+        },
+        .{
+            .desc = "typeof_struct_types",
+            .sql =
+            \\SELECT TYPEOF((1, 'abc', 2.0)),
+            \\       TYPEOF(STRUCT(1 AS a, 'abc', 2.0 AS c)),
+            \\       TYPEOF(STRUCT(1 AS a, ['abc'], 2.0 AS a))
+            ,
+            .rows = .{
+                .{ "STRUCT<INT64, STRING, DOUBLE>", "STRUCT<a INT64, STRING, c DOUBLE>", "STRUCT<a INT64, ARRAY<STRING>, a DOUBLE>" },
+            },
+        },
+        .{
+            .desc = "typeof_array_types",
+            .sql =
+            \\SELECT TYPEOF([1, 2, 3]),
+            \\       TYPEOF([(1, 2), (3, 4)]),
+            \\       TYPEOF([([1], 2), ([3], 4)])
+            ,
+            .rows = .{
+                .{ "ARRAY<INT64>", "ARRAY<STRUCT<INT64, INT64>>", "ARRAY<STRUCT<ARRAY<INT64>, INT64>>" },
+            },
+        },
+        .{
+            .desc = "typeof_columns_everywhere_types",
+            .sql =
+            \\SELECT TYPEOF(i64), TYPEOF(f64), TYPEOF(s), TYPEOF(b), TYPEOF(d), TYPEOF(ts)
+            \\FROM EverywhereTypes
+            ,
+            .rows = .{
+                .{ "INT64", "DOUBLE", "STRING", "BYTES", "DATE", "TIMESTAMP" },
+            },
+        },
+        .{
+            .desc = "typeof_parameterized_type_expression",
+            .sql = "SELECT TYPEOF(CAST('abc' AS STRING(10)))",
+            .rows = .{
+                .{"STRING"},
+            },
+        },
+        .{
+            .desc = "typeof_numeric",
+            .sql = "SELECT TYPEOF(NUMERIC '1.1')",
+            .rows = .{
+                .{"NUMERIC"},
+            },
+        },
+        .{
+            .desc = "typeof_bignumeric",
+            .sql = "SELECT TYPEOF(BIGNUMERIC '1.1')",
+            .rows = .{
+                .{"BIGNUMERIC"},
+            },
+        },
+        .{
+            .desc = "typeof_civil_time",
+            .sql =
+            \\SELECT TYPEOF(DATETIME '2020-02-02 20:20:02.02'),
+            \\       TYPEOF(TIME '20:20:02.02')
+            ,
+            .rows = .{
+                .{ "DATETIME", "TIME" },
+            },
+        },
+        .{
+            .desc = "typeof_geography",
+            .sql = "SELECT TYPEOF(CAST(NULL AS GEOGRAPHY))",
+            .rows = .{
+                .{"GEOGRAPHY"},
+            },
+        },
+        .{
+            .desc = "typeof_json",
+            .sql = "SELECT TYPEOF(CAST(NULL AS JSON))",
+            .rows = .{
+                .{"JSON"},
+            },
+        },
+        .{
+            .desc = "typeof_interval",
+            .sql = "SELECT TYPEOF(CAST(NULL AS INTERVAL))",
+            .rows = .{
+                .{"INTERVAL"},
+            },
+        },
+        .{
+            .desc = "typeof_parameterized_type_schema",
+            .sql = "SELECT TYPEOF(n), TYPEOF(s), TYPEOF(b) FROM ParameterizedTypes",
+            .rows = .{
+                .{ "NUMERIC", "STRING", "BYTES" },
+            },
+        },
+        .{
+            .desc = "typeof_collated_string",
+            .sql =
+            \\WITH t AS (SELECT COLLATE('aBc', 'und:ci') AS collated_str)
+            \\SELECT TYPEOF(collated_str) FROM t
+            ,
+            .rows = .{
+                .{"STRING"},
+            },
+        },
+        .{
+            .desc = "typeof_collated_compound_types",
+            .sql =
+            \\WITH t AS (SELECT [COLLATE('aBc', 'und:ci')] AS arr)
+            \\SELECT TYPEOF(t.arr), TYPEOF(t) FROM t
+            ,
+            .rows = .{
+                .{ "ARRAY<STRING>", "STRUCT<arr ARRAY<STRING>>" },
+            },
+        },
+    },
+}

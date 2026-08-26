@@ -1,0 +1,152 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/pipe_call",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/pipe_call.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE t1 AS
+            \\  SELECT * FROM UNNEST([
+            \\    STRUCT(1 AS rowid, 1 AS x),
+            \\    STRUCT(2 AS rowid, 1 AS x),
+            \\    STRUCT(3 AS rowid, 2 AS x),
+            \\    STRUCT(4 AS rowid, 2 AS x)])
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE t2 AS
+            \\  SELECT * FROM UNNEST([
+            \\    STRUCT(5 AS rowid, 3 AS x),
+            \\    STRUCT(6 AS rowid, 3 AS x),
+            \\    STRUCT(7 AS rowid, 4 AS x),
+            \\    STRUCT(8 AS rowid, 5 AS x)])
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE FUNCTION tvf_add_column(t ANY TABLE)
+            \\AS (
+            \\  FROM t
+            \\  |> EXTEND "added" AS added_column
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE FUNCTION tvf_union2(arg1 ANY TABLE, arg2 ANY TABLE)
+            \\AS (
+            \\  SELECT "arg1" AS source_table, * FROM arg1
+            \\  UNION ALL
+            \\  SELECT "arg2", * FROM arg2
+            \\)
+            ,
+        },
+        .{
+            .desc = "tvf_call",
+            .sql =
+            \\FROM t1
+            \\|> CALL tvf_add_column()
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1, "added" },
+                .{ 2, 1, "added" },
+                .{ 3, 2, "added" },
+                .{ 4, 2, "added" },
+            },
+        },
+        .{
+            .desc = "tvf_call_with_input_table",
+            .sql =
+            \\FROM t1
+            \\|> CALL tvf_add_column(INPUT TABLE)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1, "added" },
+                .{ 2, 1, "added" },
+                .{ 3, 2, "added" },
+                .{ 4, 2, "added" },
+            },
+        },
+        .{
+            .desc = "tvf_call_two_tables",
+            .sql =
+            \\FROM t1
+            \\|> CALL tvf_union2( TABLE t2 )
+            \\|> ORDER BY 1,2
+            ,
+            .rows = .{
+                .{ "arg1", 1, 1 },
+                .{ "arg1", 2, 1 },
+                .{ "arg1", 3, 2 },
+                .{ "arg1", 4, 2 },
+                .{ "arg2", 5, 3 },
+                .{ "arg2", 6, 3 },
+                .{ "arg2", 7, 4 },
+                .{ "arg2", 8, 5 },
+            },
+        },
+        .{
+            .desc = "tvf_call_two_tables_input_table_first",
+            .sql =
+            \\FROM t1
+            \\|> CALL tvf_union2( INPUT TABLE, TABLE t2 )
+            \\|> ORDER BY 1,2
+            ,
+            .rows = .{
+                .{ "arg1", 1, 1 },
+                .{ "arg1", 2, 1 },
+                .{ "arg1", 3, 2 },
+                .{ "arg1", 4, 2 },
+                .{ "arg2", 5, 3 },
+                .{ "arg2", 6, 3 },
+                .{ "arg2", 7, 4 },
+                .{ "arg2", 8, 5 },
+            },
+        },
+        .{
+            .desc = "tvf_call_two_tables_input_table_second",
+            .sql =
+            \\FROM t2
+            \\|> CALL tvf_union2( TABLE t1, INPUT TABLE )
+            \\|> ORDER BY 1,2
+            ,
+            .rows = .{
+                .{ "arg1", 1, 1 },
+                .{ "arg1", 2, 1 },
+                .{ "arg1", 3, 2 },
+                .{ "arg1", 4, 2 },
+                .{ "arg2", 5, 3 },
+                .{ "arg2", 6, 3 },
+                .{ "arg2", 7, 4 },
+                .{ "arg2", 8, 5 },
+            },
+        },
+        .{
+            .desc = "tvf_call_two_tables_input_table_named_args",
+            .sql =
+            \\FROM t1
+            \\|> CALL tvf_union2( arg2=>(SELECT * FROM t2), arg1=>INPUT TABLE )
+            \\|> ORDER BY 1,2
+            ,
+            .rows = .{
+                .{ "arg1", 1, 1 },
+                .{ "arg1", 2, 1 },
+                .{ "arg1", 3, 2 },
+                .{ "arg1", 4, 2 },
+                .{ "arg2", 5, 3 },
+                .{ "arg2", 6, 3 },
+                .{ "arg2", 7, 4 },
+                .{ "arg2", 8, 5 },
+            },
+        },
+    },
+}

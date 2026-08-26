@@ -1,0 +1,102 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/round",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/round.test",
+    .cases = .{
+        .{
+            .desc = "round_numeric_with_no_rounding_mode",
+            .sql = "SELECT ROUND(NUMERIC \"2.45\", 1)",
+            .rows = .{
+                .{2.5},
+            },
+        },
+        .{
+            .desc = "round_numeric_with_round_half_even",
+            .sql = "SELECT ROUND(NUMERIC \"2.45\", 1, \"ROUND_HALF_EVEN\")",
+            .rows = .{
+                .{2.4},
+            },
+        },
+        .{
+            .desc = "round_numeric_with_round_half_even_unaffected",
+            .sql = "SELECT ROUND(NUMERIC \"2.45\", 5, \"ROUND_HALF_EVEN\")",
+            .rows = .{
+                .{2.45},
+            },
+        },
+        .{
+            .desc = "round_numeric_with_round_half_away_from_zero",
+            .sql = "SELECT ROUND(NUMERIC \"2.45\", 1, \"ROUND_HALF_AWAY_FROM_ZERO\")",
+            .rows = .{
+                .{2.5},
+            },
+        },
+        .{
+            .desc = "round_numeric_with_round_half_away_from_zero_unaffected",
+            .sql = "SELECT ROUND(NUMERIC \"2.45\", 12, \"ROUND_HALF_AWAY_FROM_ZERO\")",
+            .rows = .{
+                .{2.45},
+            },
+        },
+        .{
+            .desc = "round_numeric_with_null_rounding_mode",
+            .sql = "SELECT ROUND(NUMERIC \"2.45\", 1, NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "round_numeric_passing_rounding_mode_as_cast_expression",
+            .unsupported_in_bigquery = "no standalone ROUNDING_MODE type: CAST(... AS ROUNDING_MODE) is rejected outside a ROUND() argument (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT ROUND(NUMERIC \"2.45\", 1, CAST(concat(\"ROUND_\", \"HALF_AWAY_FROM_ZERO\") as ROUNDING_MODE))",
+            .rows = .{
+                .{2.5},
+            },
+        },
+        .{
+            .desc = "round_numeric_null_rounding_mode_via_casting",
+            .unsupported_in_bigquery = "no standalone ROUNDING_MODE type: CAST(... AS ROUNDING_MODE) is rejected outside a ROUND() argument (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT ROUND(NUMERIC \"2.45\", 1, CAST(NULL as ROUNDING_MODE))",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "round_bignumeric_with_no_rounding_mode",
+            .sql = "SELECT ROUND(BIGNUMERIC \"1321232.41325\", 4)",
+            .rows = .{
+                .{1321232.4133},
+            },
+        },
+        .{
+            .desc = "round_bignumeric_with_round_half_even",
+            .sql = "SELECT ROUND(BIGNUMERIC \"1321232.41325\", 4, \"ROUND_HALF_EVEN\")",
+            .rows = .{
+                .{1321232.4132},
+            },
+        },
+        .{
+            .desc = "round_bignumeric_with_round_half_even_unaffected",
+            .sql = "SELECT ROUND(BIGNUMERIC \"1321232.41325\", 9, \"ROUND_HALF_EVEN\")",
+            .rows = .{
+                .{1321232.41325},
+            },
+        },
+        .{
+            .desc = "round_bignumeric_with_round_half_away_from_zero",
+            .sql = "SELECT ROUND(BIGNUMERIC \"1321232.41325\", 4, \"ROUND_HALF_AWAY_FROM_ZERO\")",
+            .rows = .{
+                .{1321232.4133},
+            },
+        },
+        .{
+            .desc = "round_bignumeric_with_round_half_away_from_zero_unaffected",
+            .sql = "SELECT ROUND(BIGNUMERIC \"1321232.41325\", 12, \"ROUND_HALF_AWAY_FROM_ZERO\")",
+            .rows = .{
+                .{1321232.41325},
+            },
+        },
+    },
+}

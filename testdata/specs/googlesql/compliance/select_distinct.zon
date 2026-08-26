@@ -1,0 +1,1041 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/select_distinct",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/select_distinct.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\#
+            \\# Create tables
+            \\#
+            \\CREATE TABLE TableDistincts AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(1 as int64) as distinct_1, cast(1 as int64) as distinct_2,
+            \\       cast(1 as int64) as distinct_4, cast(1 as int64) as distinct_8,
+            \\       cast(1 as int64) as distinct_16, cast(1 as int64) as distinct_2B,
+            \\       cast(1 as int64) as distinct_4B UNION ALL
+            \\  SELECT 2, 1, 2, 2, 2, 2, 1, 1 UNION ALL
+            \\  SELECT 3, 1, 1, 3, 3, 3,  1, 1 UNION ALL
+            \\  SELECT 4, 1, 2, 4, 4, 4,  1, 1 UNION ALL
+            \\  SELECT 5, 1, 1, 1, 5, 5,  1, 2 UNION ALL
+            \\  SELECT 6, 1, 2, 2, 6, 6,  1, 2 UNION ALL
+            \\  SELECT 7, 1, 1, 3, 7, 7,  1, 2 UNION ALL
+            \\  SELECT 8, 1, 2, 4, 8, 8,  1, 2 UNION ALL
+            \\  SELECT 9, 1, 1, 1, 1, 9,  2, 3 UNION ALL
+            \\  SELECT 10, 1, 2, 2, 2, 10, 2, 3 UNION ALL
+            \\  SELECT 11, 1, 1, 3, 3, 11, 2, 3 UNION ALL
+            \\  SELECT 12, 1, 2, 4, 4, 12, 2, 3 UNION ALL
+            \\  SELECT 13, 1, 1, 1, 5, 13, 2, 4 UNION ALL
+            \\  SELECT 14, 1, 2, 2, 6, 14, 2, 4 UNION ALL
+            \\  SELECT 15, 1, 1, 3, 7, 15, 2, 4 UNION ALL
+            \\  SELECT 16, 1, 2, 4, 8, 16, 2, 4
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableAllNull AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(null as int32) as int32_val, cast(null as int64) as int64_val,
+            \\       cast(null as uint32) as uint32_val, cast(null as uint64) as uint64_val,
+            \\       cast(null as bool) as bool_val,
+            \\       cast(null as float) as float_val, cast(null as double) as double_val,
+            \\       cast(null as string) as string_val, cast(null as bytes) as bytes_val,
+            \\       cast(null as date) as date_val union all
+            \\SELECT cast(2 as int64), cast(null as int32), cast(null as int64),
+            \\       cast(null as uint32), cast(null as uint64), cast(null as bool),
+            \\       cast(null as float), cast(null as double), cast(null as string),
+            \\       cast(null as bytes), cast(null as date)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableLarge AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(null as bool) as bool_val, cast(null as double) as double_val,
+            \\       cast(null as int64) as int64_val,
+            \\       cast(null as string) as str_val UNION ALL
+            \\  SELECT 2, true,  null, null, null UNION ALL
+            \\  SELECT 3, false, 0.2,  null, null UNION ALL
+            \\  SELECT 4, true,  0.3,  3,    null UNION ALL
+            \\  SELECT 5, false, 0.4,  4,     "4" UNION ALL
+            \\  SELECT 6, true,  0.5,  5,     "5" UNION ALL
+            \\  SELECT 7, false, 0.6,  6,     "6" UNION ALL
+            \\  SELECT 8, true,  0.7,  7,     "7" UNION ALL
+            \\  SELECT 9, false, 0.8,  8,     "8" UNION ALL
+            \\  SELECT 10, true,  0.9,  9,     "9" UNION ALL
+            \\  SELECT 11, false, 1.0, 10,    "10"
+            ,
+        },
+        .{
+            .desc = "distinct_1",
+            .sql =
+            \\# -------------------
+            \\# Distinct values.
+            \\# -------------------
+            \\SELECT DISTINCT distinct_1 from TableDistincts
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "distinct_2",
+            .sql = "SELECT DISTINCT distinct_2 from TableDistincts",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "distinct_16",
+            .sql = "SELECT DISTINCT distinct_16 from TableDistincts",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+                .{4},
+                .{5},
+                .{6},
+                .{7},
+                .{8},
+                .{9},
+                .{10},
+                .{11},
+                .{12},
+                .{13},
+                .{14},
+                .{15},
+                .{16},
+            },
+        },
+        .{
+            .desc = "distinct_4B",
+            .sql = "SELECT DISTINCT distinct_4B from TableDistincts",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+                .{4},
+            },
+        },
+        .{
+            .desc = "column_with_multiple_null_and_non_null_values",
+            .sql = "SELECT DISTINCT int64_val from TableLarge",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{3},
+                .{4},
+                .{5},
+                .{6},
+                .{7},
+                .{8},
+                .{9},
+                .{10},
+            },
+        },
+        .{
+            .desc = "distinct_empty",
+            .sql = "SELECT DISTINCT * from UNNEST(ARRAY<int64>[])",
+            .rows = .{},
+        },
+        .{
+            .desc = "distinct_where",
+            .sql =
+            \\# TODO Remove exclude_in_sql_builder_pipe_sql_equivalence_tests once the bug is fixed.
+            \\SELECT DISTINCT distinct_4B
+            \\from TableDistincts
+            \\where distinct_4B IN (1, 4)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{4},
+            },
+        },
+        .{
+            .desc = "count_distinct_1",
+            .sql =
+            \\# ----------------
+            \\# Count rows after SELECT DISTINCT.
+            \\# ---------------
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_1 from TableDistincts)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "count_distinct_2",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_2 from TableDistincts)
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "count_distinct_4",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_4 from TableDistincts)
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "count_distinct_8",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_8 from TableDistincts)
+            ,
+            .rows = .{
+                .{8},
+            },
+        },
+        .{
+            .desc = "count_distinct_16",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_16 from TableDistincts)
+            ,
+            .rows = .{
+                .{16},
+            },
+        },
+        .{
+            .desc = "count_distinct_2B",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_2B from TableDistincts)
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "count_distinct_4B",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_4B from TableDistincts)
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "count_distinct_1_distinct_4_distinct_16",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_1, distinct_4, distinct_16 from TableDistincts)
+            ,
+            .rows = .{
+                .{16},
+            },
+        },
+        .{
+            .desc = "count_distinct_8_distinct_2B",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_8, distinct_2B from TableDistincts)
+            ,
+            .rows = .{
+                .{16},
+            },
+        },
+        .{
+            .desc = "count_distinct_4_distinct_4B",
+            .sql =
+            \\SELECT COUNT(*)
+            \\FROM (SELECT DISTINCT distinct_4, distinct_4B from TableDistincts)
+            ,
+            .rows = .{
+                .{16},
+            },
+        },
+        .{
+            .desc = "count_distinct_4B_distinct_16",
+            .sql =
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_4B, distinct_16 from TableDistincts)
+            ,
+            .rows = .{
+                .{16},
+            },
+        },
+        .{
+            .desc = "count_distint_16_distinct_4B",
+            .sql =
+            \\# Distinct values counts the same even when the columns are out of order.
+            \\SELECT COUNT(*)
+            \\from (SELECT DISTINCT distinct_16, distinct_4B from TableDistincts)
+            ,
+            .rows = .{
+                .{16},
+            },
+        },
+        .{
+            .desc = "null_of_supported_types",
+            .sql =
+            \\# ------
+            \\# NULLs.
+            \\# ------
+            \\SELECT DISTINCT
+            \\  int32_val, int64_val, uint32_val, uint64_val,
+            \\  bool_val,
+            \\  string_val, bytes_val,
+            \\  date_val
+            \\from TableAllNull
+            ,
+            .rows = .{
+                .{ null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "null_of_supported_float_types",
+            .sql =
+            \\SELECT DISTINCT
+            \\  float_val, double_val
+            \\from TableAllNull
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_int32",
+            .sql =
+            \\# ------------------------------
+            \\# Distinct supported data types.
+            \\# ------------------------------
+            \\SELECT DISTINCT val.INT32
+            \\from (select cast(1 as int32) INT32 union all
+            \\      select cast(NULL as int32) union all
+            \\      select cast(-1 as int32) union all
+            \\      select cast(1 as int32) union all
+            \\      select cast(NULL as int32)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{-1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "distinct_int64",
+            .sql =
+            \\SELECT DISTINCT val.INT64
+            \\from (select cast(1 as int64) INT64 union all
+            \\      select cast(NULL as int64) union all
+            \\      select cast(-1 as int64) union all
+            \\      select cast(1 as int64) union all
+            \\      select cast(NULL as int64)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{-1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "distinct_uint32",
+            .sql =
+            \\SELECT DISTINCT val.UINT32
+            \\from (select cast(1 as uint32) UINT32 union all
+            \\      select cast(NULL as uint32) union all
+            \\      select cast(0 as uint32) union all
+            \\      select cast(1 as uint32) union all
+            \\      select cast(NULL as uint32)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{0},
+                .{1},
+            },
+        },
+        .{
+            .desc = "distinct_uint64",
+            .sql =
+            \\SELECT DISTINCT val.UINT64
+            \\from (select cast(1 as uint64) UINT64 union all
+            \\      select cast(NULL as uint64) union all
+            \\      select cast(0 as uint64) union all
+            \\      select cast(1 as uint64) union all
+            \\      select cast(NULL as uint64)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{0},
+                .{1},
+            },
+        },
+        .{
+            .desc = "distinct_bool",
+            .sql =
+            \\SELECT DISTINCT val.BOOL
+            \\from (select true BOOL union all
+            \\      select cast(NULL as bool) union all
+            \\      select false union all
+            \\      select true union all
+            \\      select cast(NULL as bool) union all
+            \\      select false) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{false},
+                .{true},
+            },
+        },
+        .{
+            .desc = "distinct_float",
+            .sql =
+            \\SELECT DISTINCT val.FLOAT
+            \\from (select cast(1.0 as float) FLOAT union all
+            \\      select cast(NULL as float) union all
+            \\      select cast(-1.0 as float) union all
+            \\      select cast(1.0 as float) union all
+            \\      select cast(NULL as float)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_double",
+            .sql =
+            \\SELECT DISTINCT val.DOUBLE
+            \\from (select cast(1.0 as double) DOUBLE union all
+            \\      select cast(NULL as double) union all
+            \\      select cast(-1.0 as double) union all
+            \\      select cast(1.0 as double) union all
+            \\      select cast(NULL as double)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_string",
+            .sql =
+            \\SELECT DISTINCT val.STRING
+            \\from (select "1" STRING union all
+            \\      select cast(NULL as string) union all
+            \\      select "-1" union all
+            \\      select "1" union all
+            \\      select cast(NULL as string)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"-1"},
+                .{"1"},
+            },
+        },
+        .{
+            .desc = "distinct_string_case",
+            .sql =
+            \\SELECT DISTINCT val.STRING
+            \\from (select "STRING" STRING union all
+            \\      select "string" union all
+            \\      select "StRiNg") val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"STRING"},
+                .{"StRiNg"},
+                .{"string"},
+            },
+        },
+        .{
+            .desc = "distinct_string_null_and_empty",
+            .sql =
+            \\SELECT DISTINCT val.STRING
+            \\from (select "" STRING union all
+            \\      select cast(NULL as string) union all
+            \\      select "" union all
+            \\      select cast(NULL as string)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{""},
+            },
+        },
+        .{
+            .desc = "distinct_bytes",
+            .sql =
+            \\SELECT DISTINCT val.BYTES
+            \\from (select b"1" BYTES union all
+            \\      select cast(NULL as bytes) union all
+            \\      select b"-1" union all
+            \\      select b"1" union all
+            \\      select cast(NULL as bytes)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"\x2d\x31"},
+                .{"\x31"},
+            },
+        },
+        .{
+            .desc = "distinct_bytes_case",
+            .sql =
+            \\SELECT DISTINCT val.BYTES
+            \\from (select b"BYTES" BYTES union all
+            \\      select b"bytes" union all
+            \\      select b"ByTeS") val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"\x42\x59\x54\x45\x53"},
+                .{"\x42\x79\x54\x65\x53"},
+                .{"\x62\x79\x74\x65\x73"},
+            },
+        },
+        .{
+            .desc = "distinct_bytes_null_and_empty",
+            .sql =
+            \\SELECT DISTINCT val.BYTES
+            \\from (select b"" BYTES union all
+            \\      select cast(NULL as bytes) union all
+            \\      select b"" union all
+            \\      select cast(NULL as bytes)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{""},
+            },
+        },
+        .{
+            .desc = "distinct_date",
+            .sql =
+            \\SELECT DISTINCT val.DATE
+            \\from (select DATE"2014-01-01" DATE union all
+            \\      select cast(NULL as date) union all
+            \\      select DATE"2014-01-02" union all
+            \\      select DATE"2014-01-01" union all
+            \\      select cast(NULL as date)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"2014-01-01"},
+                .{"2014-01-02"},
+            },
+        },
+        .{
+            .desc = "distinct_array",
+            .sql =
+            \\SELECT DISTINCT s.a
+            \\FROM ((select NULL as a) union all
+            \\      (select NULL) union all
+            \\      (select [1]) union all
+            \\      (select [2]) union all
+            \\      (select [1, NULL]) union all
+            \\      (select [2, NULL]) union all
+            \\      (select [1]) union all
+            \\      (select [2, NULL]) union all
+            \\      (select ARRAY<INT64>[]) union all
+            \\      (select ARRAY<INT64>[]) union all
+            \\      (select [1, 2])) s
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{.{}},
+                .{.{1}},
+                .{.{ 1, null }},
+                .{.{ 1, 2 }},
+                .{.{2}},
+                .{.{ 2, null }},
+            },
+        },
+        .{
+            .desc = "distinct_array_no_nulls",
+            .sql =
+            \\SELECT DISTINCT s.a
+            \\FROM ((select NULL as a) union all
+            \\      (select NULL) union all
+            \\      (select [1]) union all
+            \\      (select [2]) union all
+            \\      (select [1]) union all
+            \\      (select ARRAY<INT64>[]) union all
+            \\      (select ARRAY<INT64>[]) union all
+            \\      (select [1, 2]) union all
+            \\      (select [1, 2])) s
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{.{}},
+                .{.{1}},
+                .{.{ 1, 2 }},
+                .{.{2}},
+            },
+        },
+        .{
+            .desc = "distinct_zeros",
+            .sql =
+            \\# -------------------
+            \\# Grouping of doubles.
+            \\# -------------------
+            \\SELECT DISTINCT val.DOUBLE
+            \\from (select -0.0 DOUBLE union all
+            \\      select +0.0 union all
+            \\      select SQRT(0.0) union all
+            \\      select SQRT(-0.0) union all
+            \\      select 0.0 / 1 union all
+            \\      select 0.0 / -1 union all
+            \\      select -0.0 / 1 union all
+            \\      select -0.0 / -1 union all
+            \\      select (-0.0) * (-0.0) union all
+            \\      select (-0.0) + (-0.0) union all
+            \\      select (0.0) - (-0.0) union all
+            \\      select 1.0 - 1.0 union all
+            \\      select 0.0 / IEEE_DIVIDE(-1, 0.0) union all
+            \\      select -0.0 / IEEE_DIVIDE(-1, 0.0) union all
+            \\      select 0.0 / IEEE_DIVIDE(1, 0.0) union all
+            \\      select -0.0 / IEEE_DIVIDE(-1, 0.0) union all
+            \\      select cast("-0.0" as DOUBLE) union all
+            \\      select cast("+0.0" as DOUBLE)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_positive_infinities",
+            .sql =
+            \\SELECT DISTINCT val.DOUBLE
+            \\from (select IEEE_DIVIDE(1, 0) DOUBLE union all
+            \\      select POW(0.1, IEEE_DIVIDE(-1, 0)) union all
+            \\      select POW(1.1, IEEE_DIVIDE(1, 0)) union all
+            \\      select POW(IEEE_DIVIDE(-1, 0), 2) union all
+            \\      select POW(IEEE_DIVIDE(1, 0), 2) union all
+            \\      select LOG(IEEE_DIVIDE(1, 0), 1.1) union all
+            \\      select CAST("Inf" as DOUBLE)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_negative_infinities",
+            .sql =
+            \\SELECT DISTINCT val.DOUBLE
+            \\from (select IEEE_DIVIDE(-1, 0) DOUBLE union all
+            \\      select POW(IEEE_DIVIDE(-1, 0), 3) union all
+            \\      select LOG(IEEE_DIVIDE(1, 0), 0.1) union all
+            \\      select CAST("-Inf" as DOUBLE)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_nan",
+            .sql =
+            \\SELECT DISTINCT val.NAN
+            \\from (select TAN(IEEE_DIVIDE(1, 0)) NAN union all
+            \\      select TAN(IEEE_DIVIDE(-1, 0)) union all
+            \\      select TAN(TAN(IEEE_DIVIDE(1, 0))) union all
+            \\      select IEEE_DIVIDE(0, 0) union all
+            \\      select LOG(IEEE_DIVIDE(-1, 0), 1) union all
+            \\      select LOG(1, IEEE_DIVIDE(1, 0)) union all
+            \\      select cast("NAN" as DOUBLE) union all
+            \\      select cast("-NAN" as DOUBLE) union all
+            \\      select -cast("NAN" as DOUBLE)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_doubles",
+            .sql =
+            \\SELECT DISTINCT DOUBLE
+            \\from (select -0.0 DOUBLE union all
+            \\      select +0.0 union all
+            \\      select SQRT(0.0) union all
+            \\      select SQRT(-0.0) union all
+            \\      select 0.0 / 1 union all
+            \\      select 0.0 / -1 union all
+            \\      select -0.0 / 1 union all
+            \\      select -0.0 / -1 union all
+            \\      select (-0.0) * (-0.0) union all
+            \\      select 1 union all
+            \\      select cast(NULL as double) union all
+            \\      select (-0.0) + (-0.0) union all
+            \\      select (0.0) - (-0.0) union all
+            \\      select 1.0 - 1.0 union all
+            \\      select 0.0 / IEEE_DIVIDE(-1, 0.0) union all
+            \\      select -0.0 / IEEE_DIVIDE(-1, 0.0) union all
+            \\      select 0.0 / IEEE_DIVIDE(1, 0.0) union all
+            \\      select -0.0 / IEEE_DIVIDE(-1, 0.0) union all
+            \\      select -1 union all
+            \\      select -cast(NULL as double) union all
+            \\      select cast("-0.0" as DOUBLE) union all
+            \\      select cast("+0.0" as DOUBLE) union all
+            \\      select IEEE_DIVIDE(1, 0) union all
+            \\      select POW(0.1, IEEE_DIVIDE(-1, 0)) union all
+            \\      select POW(1.1, IEEE_DIVIDE(1, 0)) union all
+            \\      select POW(IEEE_DIVIDE(-1, 0), 2) union all
+            \\      select POW(IEEE_DIVIDE(1, 0), 2) union all
+            \\      select LOG(IEEE_DIVIDE(1, 0), 1.1) union all
+            \\      select CAST("Inf" as DOUBLE) union all
+            \\      select 1 union all
+            \\      select -cast(NULL as double) union all
+            \\      select IEEE_DIVIDE(-1, 0) union all
+            \\      select POW(IEEE_DIVIDE(-1, 0), 3) union all
+            \\      select LOG(IEEE_DIVIDE(1, 0), 0.1) union all
+            \\      select CAST("-Inf" as DOUBLE) union all
+            \\      select TAN(IEEE_DIVIDE(1, 0)) union all
+            \\      select TAN(IEEE_DIVIDE(-1, 0)) union all
+            \\      select TAN(TAN(IEEE_DIVIDE(1, 0))) union all
+            \\      select IEEE_DIVIDE(0, 0) union all
+            \\      select LOG(IEEE_DIVIDE(-1, 0), 1) union all
+            \\      select -1 union all
+            \\      select cast(NULL as double) union all
+            \\      select LOG(1, IEEE_DIVIDE(1, 0)) union all
+            \\      select cast("NAN" as DOUBLE) union all
+            \\      select cast("-NAN" as DOUBLE) union all
+            \\      select -cast("NAN" as DOUBLE)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_zeros_float",
+            .sql =
+            \\# -------------------
+            \\# Grouping of floats.
+            \\# -------------------
+            \\SELECT DISTINCT val.FLOAT
+            \\from (select cast(-0.0 as float) FLOAT union all
+            \\      select cast(+0.0 as float) union all
+            \\      select cast(SQRT(0.0) as float) union all
+            \\      select cast(SQRT(-0.0) as float) union all
+            \\      select cast((0.0 / 1) as float) union all
+            \\      select cast((0.0 / -1) as float) union all
+            \\      select cast((-0.0 / 1) as float) union all
+            \\      select cast((-0.0 / -1) as float) union all
+            \\      select cast(((-0.0) * (-0.0)) as float) union all
+            \\      select cast(((-0.0) + (-0.0)) as float) union all
+            \\      select cast(((0.0) - (-0.0)) as float) union all
+            \\      select cast((1.0 - 1.0) as float) union all
+            \\      select cast((0.0 / IEEE_DIVIDE(-1, 0.0)) as float) union all
+            \\      select cast((-0.0 / IEEE_DIVIDE(-1, 0.0)) as float) union all
+            \\      select cast((0.0 / IEEE_DIVIDE(1, 0.0)) as float) union all
+            \\      select cast((-0.0 / IEEE_DIVIDE(-1, 0.0)) as float) union all
+            \\      select cast("-0.0" as float) union all
+            \\      select cast("+0.0" as float)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_positive_infinities_float",
+            .sql =
+            \\SELECT DISTINCT val.FLOAT
+            \\from (select cast(IEEE_DIVIDE(1, 0) as float) FLOAT union all
+            \\      select cast(POW(0.1, IEEE_DIVIDE(-1, 0)) as float) union all
+            \\      select cast(POW(1.1, IEEE_DIVIDE(1, 0)) as float) union all
+            \\      select cast(POW(IEEE_DIVIDE(-1, 0), 2) as float) union all
+            \\      select cast(POW(IEEE_DIVIDE(1, 0), 2) as float) union all
+            \\      select cast(LOG(IEEE_DIVIDE(1, 0), 1.1) as float) union all
+            \\      select CAST("Inf" as float)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_negative_infinities_float",
+            .sql =
+            \\SELECT DISTINCT val.FLOAT
+            \\from (select cast(IEEE_DIVIDE(-1, 0) as float) FLOAT union all
+            \\      select cast(POW(IEEE_DIVIDE(-1, 0), 3) as float) union all
+            \\      select cast(LOG(IEEE_DIVIDE(1, 0), 0.1) as float) union all
+            \\      select CAST("-Inf" as float)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_nan_float",
+            .sql =
+            \\SELECT DISTINCT val.NAN
+            \\from (select cast(TAN(IEEE_DIVIDE(1, 0)) as float) NAN union all
+            \\      select cast(TAN(IEEE_DIVIDE(-1, 0)) as float) union all
+            \\      select cast(TAN(TAN(IEEE_DIVIDE(1, 0))) as float) union all
+            \\      select cast(IEEE_DIVIDE(0, 0) as float) union all
+            \\      select cast(LOG(IEEE_DIVIDE(-1, 0), 1) as float) union all
+            \\      select cast(LOG(1, IEEE_DIVIDE(1, 0)) as float) union all
+            \\      select cast("NAN" as float) union all
+            \\      select cast("-NAN" as float) union all
+            \\      select -cast("NAN" as float)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_floats",
+            .sql =
+            \\SELECT DISTINCT FLOAT
+            \\from (select cast(-0.0 as float) FLOAT union all
+            \\      select cast(+0.0 as float) union all
+            \\      select cast(SQRT(0.0) as float) union all
+            \\      select cast(SQRT(-0.0) as float) union all
+            \\      select cast((0.0 / 1) as float) union all
+            \\      select cast((0.0 / -1) as float) union all
+            \\      select cast((-0.0 / 1) as float) union all
+            \\      select cast((-0.0 / -1) as float) union all
+            \\      select cast(((-0.0) * (-0.0)) as float) union all
+            \\      select cast(((-0.0) + (-0.0)) as float) union all
+            \\      select 1 union all
+            \\      select cast(((0.0) - (-0.0)) as float) union all
+            \\      select cast((1.0 - 1.0) as float) union all
+            \\      select cast((0.0 / IEEE_DIVIDE(-1, 0.0)) as float) union all
+            \\      select cast((-0.0 / IEEE_DIVIDE(-1, 0.0)) as float) union all
+            \\      select cast((0.0 / IEEE_DIVIDE(1, 0.0)) as float) union all
+            \\      select cast((-0.0 / IEEE_DIVIDE(-1, 0.0)) as float) union all
+            \\      select -1 union all
+            \\      select cast("-0.0" as float) union all
+            \\      select cast("+0.0" as float) union all
+            \\      select cast(IEEE_DIVIDE(1, 0) as float) union all
+            \\      select cast(POW(0.1, IEEE_DIVIDE(-1, 0)) as float) union all
+            \\      select cast(POW(1.1, IEEE_DIVIDE(1, 0)) as float) union all
+            \\      select cast(POW(IEEE_DIVIDE(-1, 0), 2) as float) union all
+            \\      select cast(POW(IEEE_DIVIDE(1, 0), 2) as float) union all
+            \\      select cast(LOG(IEEE_DIVIDE(1, 0), 1.1) as float) union all
+            \\      select 1 union all
+            \\      select CAST("Inf" as float) union all
+            \\      select cast(IEEE_DIVIDE(-1, 0) as float) union all
+            \\      select cast(POW(IEEE_DIVIDE(-1, 0), 3) as float) union all
+            \\      select cast(LOG(IEEE_DIVIDE(1, 0), 0.1) as float) union all
+            \\      select CAST("-Inf" as float) union all
+            \\      select cast(TAN(IEEE_DIVIDE(1, 0)) as float) union all
+            \\      select cast(TAN(IEEE_DIVIDE(-1, 0)) as float) union all
+            \\      select cast(TAN(TAN(IEEE_DIVIDE(1, 0))) as float) union all
+            \\      select -1 union all
+            \\      select cast(IEEE_DIVIDE(0, 0) as float) union all
+            \\      select cast(LOG(IEEE_DIVIDE(-1, 0), 1) as float) union all
+            \\      select cast(LOG(1, IEEE_DIVIDE(1, 0)) as float) union all
+            \\      select cast("NAN" as float) union all
+            \\      select cast("-NAN" as float) union all
+            \\      select -cast("NAN" as float)) val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "distinct_groupby_aggregate_input",
+            .sql =
+            \\SELECT COUNT(distinct_1), SUM(distinct_2)
+            \\from TableDistincts GROUP BY distinct_4
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 4, 4 },
+                .{ 4, 8 },
+                .{ 4, 4 },
+                .{ 4, 8 },
+            },
+        },
+        .{
+            .desc = "distinct_groupby_aggregate",
+            .sql =
+            \\# DISTINCT with aggregate functions and GROUP BY.
+            \\SELECT DISTINCT COUNT(distinct_1), SUM(distinct_2)
+            \\from TableDistincts GROUP BY distinct_4
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 4, 4 },
+                .{ 4, 8 },
+            },
+        },
+        .{
+            .desc = "distinct_having_aggregate_input_without_having",
+            .sql = "SELECT SUM(distinct_8) from TableDistincts GROUP BY distinct_4B",
+            .unordered = true,
+            .rows = .{
+                .{10},
+                .{26},
+                .{10},
+                .{26},
+            },
+        },
+        .{
+            .desc = "distinct_having_aggregate_input",
+            .sql =
+            \\SELECT SUM(distinct_8) from TableDistincts
+            \\GROUP BY distinct_4B HAVING MIN(distinct_8) > 4
+            ,
+            .unordered = true,
+            .rows = .{
+                .{26},
+                .{26},
+            },
+        },
+        .{
+            .desc = "distinct_having_aggregate",
+            .sql =
+            \\# DISTINCT with aggregate functions and HAVING.
+            \\SELECT DISTINCT SUM(distinct_8) from TableDistincts
+            \\GROUP BY distinct_4B HAVING MIN(distinct_8) > 4
+            ,
+            .rows = .{
+                .{26},
+            },
+        },
+        .{
+            .desc = "distinct_distinct",
+            .sql =
+            \\# Use DISTINCT on a result of previous DISTINCT.
+            \\SELECT DISTINCT val.distinct_4, val.distinct_4B
+            \\from (select DISTINCT distinct_4, distinct_4B from TableDistincts) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 2 },
+                .{ 1, 3 },
+                .{ 1, 4 },
+                .{ 2, 1 },
+                .{ 2, 2 },
+                .{ 2, 3 },
+                .{ 2, 4 },
+                .{ 3, 1 },
+                .{ 3, 2 },
+                .{ 3, 3 },
+                .{ 3, 4 },
+                .{ 4, 1 },
+                .{ 4, 2 },
+                .{ 4, 3 },
+                .{ 4, 4 },
+            },
+        },
+        .{
+            .desc = "groupby_aggregate_distinct",
+            .sql =
+            \\# Use aggregation and GROUP BY after DISTINCT.
+            \\SELECT MAX(a), b
+            \\from (SELECT DISTINCT distinct_4 a, distinct_4B b from TableDistincts) GROUP BY b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 4, 1 },
+                .{ 4, 2 },
+                .{ 4, 3 },
+                .{ 4, 4 },
+            },
+        },
+        .{
+            .desc = "distinct_in_scalar_subquery",
+            .sql = "select (SELECT DISTINCT distinct_1 from TableDistincts)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "distinct_in_scalar_subquery_2",
+            .sql = "select (SELECT DISTINCT distinct_2 from TableDistincts)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "distinct_in_exists_subquery",
+            .sql =
+            \\select EXISTS(SELECT DISTINCT distinct_1 from TableDistincts),
+            \\       EXISTS(SELECT DISTINCT val from UNNEST(ARRAY<int64>[]) val)
+            ,
+            .rows = .{
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "distinct_in_in_subquery",
+            .sql =
+            \\select 2 IN(SELECT DISTINCT distinct_2 from TableDistincts),
+            \\       4 IN(SELECT DISTINCT distinct_2 from TableDistincts)
+            ,
+            .rows = .{
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "distinct_union_all_input",
+            .sql =
+            \\SELECT DISTINCT union1
+            \\from (select 1 union1 UNION ALL select 2 UNION ALL select 1) UNION ALL
+            \\SELECT DISTINCT union2
+            \\from (select 3 union2 UNION ALL select 2 UNION ALL select 3)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{1},
+                .{3},
+                .{2},
+            },
+        },
+        .{
+            .desc = "distinct_union_all",
+            .sql =
+            \\SELECT DISTINCT val.ELEM
+            \\from (SELECT DISTINCT union1 ELEM
+            \\      from (select 1 union1 UNION ALL select 2 UNION ALL select 1) UNION ALL
+            \\      SELECT DISTINCT union2
+            \\      from (select 3 union2 UNION ALL select 2 UNION ALL select 3)) val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "limit_on_distinct_1",
+            .sql =
+            \\# ------------------
+            \\# LIMIT on DISTINCT.
+            \\# ------------------
+            \\select count(*)
+            \\from (SELECT DISTINCT distinct_16 from TableDistincts LIMIT 8)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "limit_on_distinct_2",
+            .sql =
+            \\select count(*)
+            \\from (SELECT DISTINCT distinct_8 from TableDistincts LIMIT 8)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "limit_on_distinct_3",
+            .sql =
+            \\select count(*)
+            \\from (SELECT DISTINCT distinct_4 from TableDistincts LIMIT 8)
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "distinct_on_limit",
+            .sql =
+            \\SELECT DISTINCT *
+            \\from (select distinct_1 from TableDistincts LIMIT 8)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "offset_on_distinct",
+            .sql =
+            \\select count(*)
+            \\from (SELECT DISTINCT distinct_4 from TableDistincts LIMIT 4 OFFSET 3)
+            ,
+            .nondeterministic = true,
+        },
+    },
+}

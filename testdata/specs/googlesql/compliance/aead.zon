@@ -1,0 +1,470 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/aead",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/aead.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# KEYS.NEW_KEYSET is volatile--it doesn't produce the same keyset each time--
+            \\# so we can't call it directly as part of this table creation. Instead, the
+            \\# base64 strings here represent a few different keysets created using
+            \\# KEYS.NEW_KEYSET and KEY.ADD_KEY_FROM_RAW_BYTES.
+            \\CREATE TABLE KeysetTable AS
+            \\SELECT
+            \\  1 AS kt_id,
+            \\  FROM_BASE64('CJmMp4UJEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIP7Xj33VJoXuk9KMRwXsjkuDmo5P40WUSaVtJAzyve80GAEQARiZjKeFCSAB') AS keyset,
+            \\  'abc' AS aad_string,
+            \\  b'\x00\x01\x02' AS aad_bytes
+            \\UNION ALL
+            \\SELECT
+            \\  2,
+            \\  FROM_BASE64('CNnv5+cHEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIJg18Y4DFqVKes4Acs3h55Fe7yqPrqao+rfu70el0KPRGAEQARjZ7+fnByAB'),
+            \\  '',
+            \\  b''
+            \\UNION ALL
+            \\SELECT
+            \\  3,
+            \\  FROM_BASE64('CKGMgekFEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIE4Tia+cXn5OC3blTmI6KkPOAeE9zg0LxpD96L92bWG2GAEQARihjIHpBSABEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIDEyMzQxMjM0MTIzNDEyMzQxMjM0MTIzNDEyMzQxMjM0GAEQARirptH5DSAD'),
+            \\  REPEAT('abc', 10),
+            \\  REPEAT(b'abc', 10)
+            \\UNION ALL
+            \\SELECT
+            \\  4,
+            \\  FROM_BASE64('CNCso94EEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIB2qbQpyD+/M1uDxXnmIUWKMxRuL0ZDAqDbg2v8cBXUgGAEQARjQrKPeBCABEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIDEyMzQxMjM0MTIzNDEyMzQxMjM0MTIzNDEyMzQxMjM0GAEQARjmu9iLBiADEmMKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIGFiY2RhYmNkYWJjZGFiY2RhYmNkYWJjZGFiY2RhYmNkGAEQARiCkKwaIAM='),
+            \\  '1234',
+            \\  b'1234'
+            \\UNION ALL
+            \\SELECT
+            \\  5,
+            \\  NULL,
+            \\  '1234',
+            \\  b'1234'
+            \\UNION ALL
+            \\SELECT
+            \\  6,
+            \\  FROM_BASE64('CKOPsoUIEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIDjN158ZUGzLVM9Wz5mkJ57rykSFOeAV2BkEksmaTdSEGAEQARijj7KFCCAB'),
+            \\  NULL,
+            \\  NULL
+            \\UNION ALL
+            \\SELECT
+            \\  7,
+            \\  NULL,
+            \\  NULL,
+            \\  NULL
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE PlaintextTable AS
+            \\SELECT
+            \\  1 AS pt_id,
+            \\  'plaintext' AS plaintext_string,
+            \\  b'plaintext' AS plaintext_bytes
+            \\UNION ALL
+            \\SELECT
+            \\  2,
+            \\  'жэчыщчыщя',
+            \\  b'\x00\x01\x02\x03\x03\xFF\xFE\xFD'
+            \\UNION ALL
+            \\SELECT
+            \\  3,
+            \\  '',
+            \\  b''
+            \\UNION ALL
+            \\SELECT
+            \\  4,
+            \\  NULL,
+            \\  NULL
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE DeterministicKeysetTable AS
+            \\SELECT
+            \\  1 AS kt_id,
+            \\  FROM_BASE64('CIGYpMkDEoQBCngKMHR5cGUuZ29vZ2xlYXBpcy5jb20vZ29vZ2xlLmNyeXB0by50aW5rLkFlc1NpdktleRJCEkBKAovGAOp+siYkuWvTYKXRW6V/3Z5en87KNgswc+8TKZUzumbh/qVtCYQ8qHo7li/fYDx43MoBYwbfUPhv3//xGAEQARiBmKTJAyAB') AS keyset,
+            \\  'abc' AS aad_string,
+            \\  b'\x00\x01\x02' AS aad_bytes
+            \\UNION ALL
+            \\SELECT
+            \\  2,
+            \\  FROM_BASE64('CL3/4a8DEoQBCngKMHR5cGUuZ29vZ2xlYXBpcy5jb20vZ29vZ2xlLmNyeXB0by50aW5rLkFlc1NpdktleRJCEkAnQis9RHtvntHepDCBDr/F6oPv3hehuA845ks9Q1l5BgJm3Ypu9U8sAhNnOjJuzaMcgOmOfiT9iQJCdLxb//O0GAEQARi9/+GvAyAB'),
+            \\  '',
+            \\  b''
+            \\UNION ALL
+            \\SELECT
+            \\  3,
+            \\  FROM_BASE64('CKaF2KwCEoQBCngKMHR5cGUuZ29vZ2xlYXBpcy5jb20vZ29vZ2xlLmNyeXB0by50aW5rLkFlc1NpdktleRJCEkDx0cmGLyknWx/5rcyRNeacQYtEGeASUMfadtGnPe/MMCtg0BLO6YiRnugTkzuWtR09hWeRoo1+nOfyJTx8HAfwGAEQARimhdisAiAB'),
+            \\  REPEAT('abc', 10),
+            \\  REPEAT(b'abc', 10)
+            ,
+        },
+        .{
+            .desc = "encrypt_decrypt_roundtrip",
+            .sql =
+            \\SELECT
+            \\  kt_id,
+            \\  pt_id,
+            \\  plaintext_string,
+            \\  plaintext_bytes,
+            \\  AEAD.DECRYPT_STRING(
+            \\    keyset,
+            \\    AEAD.ENCRYPT(keyset, plaintext_string, aad_string),
+            \\    aad_string),
+            \\  AEAD.DECRYPT_BYTES(
+            \\    keyset,
+            \\    AEAD.ENCRYPT(keyset, plaintext_bytes, aad_bytes),
+            \\    aad_bytes),
+            \\  -- Decrypting the string as bytes is fine
+            \\  AEAD.DECRYPT_BYTES(
+            \\    keyset,
+            \\    AEAD.ENCRYPT(keyset, CAST(plaintext_string AS BYTES), aad_bytes),
+            \\    aad_bytes)
+            \\FROM KeysetTable
+            \\CROSS JOIN PlaintextTable
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ 1, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74" },
+                .{ 1, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "\xd0\xb6\xd1\x8d\xd1\x87\xd1\x8b\xd1\x89\xd1\x87\xd1\x8b\xd1\x89\xd1\x8f" },
+                .{ 1, 3, "", "", "", "", "" },
+                .{ 1, 4, null, null, null, null, null },
+                .{ 2, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74" },
+                .{ 2, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "\xd0\xb6\xd1\x8d\xd1\x87\xd1\x8b\xd1\x89\xd1\x87\xd1\x8b\xd1\x89\xd1\x8f" },
+                .{ 2, 3, "", "", "", "", "" },
+                .{ 2, 4, null, null, null, null, null },
+                .{ 3, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74" },
+                .{ 3, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "\xd0\xb6\xd1\x8d\xd1\x87\xd1\x8b\xd1\x89\xd1\x87\xd1\x8b\xd1\x89\xd1\x8f" },
+                .{ 3, 3, "", "", "", "", "" },
+                .{ 3, 4, null, null, null, null, null },
+                .{ 4, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74" },
+                .{ 4, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "\xd0\xb6\xd1\x8d\xd1\x87\xd1\x8b\xd1\x89\xd1\x87\xd1\x8b\xd1\x89\xd1\x8f" },
+                .{ 4, 3, "", "", "", "", "" },
+                .{ 4, 4, null, null, null, null, null },
+                .{ 5, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", null, null, null },
+                .{ 5, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", null, null, null },
+                .{ 5, 3, "", "", null, null, null },
+                .{ 5, 4, null, null, null, null, null },
+                .{ 6, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", null, null, null },
+                .{ 6, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", null, null, null },
+                .{ 6, 3, "", "", null, null, null },
+                .{ 6, 4, null, null, null, null, null },
+                .{ 7, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", null, null, null },
+                .{ 7, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", null, null, null },
+                .{ 7, 3, "", "", null, null, null },
+                .{ 7, 4, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "encrypt_different_outputs",
+            .sql =
+            \\SELECT COUNT(DISTINCT AEAD.ENCRYPT(keyset, 'plaintext', aad_string))
+            \\FROM KeysetTable
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "encrypt_same_keyset_different_outputs",
+            .sql =
+            \\# Verify that encrypting the same input with the same keyset produces different
+            \\# outputs, even in the same select list.
+            \\SELECT
+            \\  AEAD.ENCRYPT(keyset, 'plaintext', aad_string) =
+            \\    AEAD.ENCRYPT(keyset, 'plaintext', aad_string),
+            \\  AEAD.ENCRYPT(keyset, b'plaintext', aad_bytes) =
+            \\    AEAD.ENCRYPT(keyset, b'plaintext', aad_bytes)
+            \\FROM KeysetTable
+            \\GROUP BY 1, 2
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ null, null },
+                .{ false, false },
+            },
+        },
+        .{
+            .desc = "decrypt_invalid_keyset",
+            .sql =
+            \\SELECT
+            \\  AEAD.DECRYPT_STRING(
+            \\    b'', AEAD.ENCRYPT(keyset, 'plaintext', aad_string), aad_string
+            \\  )
+            \\FROM KeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "decrypt_invalid_ciphertext",
+            .sql =
+            \\SELECT
+            \\  AEAD.DECRYPT_STRING(keyset, b'123', aad_string)
+            \\FROM KeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "decrypt_invalid_additional_data",
+            .sql =
+            \\SELECT
+            \\  AEAD.DECRYPT_STRING(
+            \\    keyset, AEAD.ENCRYPT(keyset, 'plaintext', aad_string), 'different aad'
+            \\  )
+            \\FROM KeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "decrypt_bytes_invalid_additional_data",
+            .sql =
+            \\SELECT
+            \\  AEAD.DECRYPT_BYTES(
+            \\    keyset, AEAD.ENCRYPT(keyset, b'plaintext', aad_bytes), b'different aad'
+            \\  )
+            \\FROM KeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "decrypt_invalid_string",
+            .sql =
+            \\SELECT
+            \\  AEAD.DECRYPT_STRING(
+            \\    keyset, AEAD.ENCRYPT(keyset, b'\xFF\xFE', CAST(aad_string AS BYTES)),
+            \\    aad_string
+            \\  )
+            \\FROM KeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "encrypt_with_clause",
+            .sql =
+            \\# The WITH clause should have exactly-once semantics for evaluation of the
+            \\# expression.
+            \\WITH T AS (
+            \\  SELECT AEAD.ENCRYPT(keyset, plaintext_string, aad_string) AS ciphertext
+            \\  FROM KeysetTable
+            \\  CROSS JOIN PlaintextTable
+            \\  WHERE kt_id = 1 AND pt_id = 1
+            \\)
+            \\SELECT ciphertext = ciphertext
+            \\FROM T
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "safe_decrypt_string_functions",
+            .sql =
+            \\# Various error cases with the SAFE version of the functions.
+            \\SELECT
+            \\  -- Bad keyset
+            \\  SAFE.AEAD.DECRYPT_STRING(b'', b'', ''),
+            \\  -- Bad ciphertext/aad for the keyset
+            \\  SAFE.AEAD.DECRYPT_STRING(KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), b'', ''),
+            \\  -- Bad plaintext
+            \\  SAFE.DETERMINISTIC_DECRYPT_STRING(
+            \\    keyset,
+            \\    b'',
+            \\    aad_string)
+            \\FROM DeterministicKeysetTable
+            \\CROSS JOIN PlaintextTable
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "safe_functions",
+            .sql =
+            \\# Various error cases with the SAFE version of the functions.
+            \\SELECT
+            \\  -- Bad keyset
+            \\  SAFE.AEAD.ENCRYPT(b'', b'', b''),
+            \\  -- Bad keyset
+            \\  SAFE.AEAD.DECRYPT_BYTES(b'', b'', b''),
+            \\  -- Bad ciphertext/aad for the keyset
+            \\  SAFE.AEAD.DECRYPT_BYTES(KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), b'', b'')
+            ,
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "deterministic_encrypt_decrypt_roundtrip",
+            .sql =
+            \\SELECT
+            \\  kt_id,
+            \\  pt_id,
+            \\  plaintext_string,
+            \\  plaintext_bytes,
+            \\  DETERMINISTIC_DECRYPT_STRING(
+            \\    keyset,
+            \\    DETERMINISTIC_ENCRYPT(keyset, plaintext_string, aad_string),
+            \\    aad_string),
+            \\  DETERMINISTIC_DECRYPT_BYTES(
+            \\    keyset,
+            \\    DETERMINISTIC_ENCRYPT(keyset, plaintext_bytes, aad_bytes),
+            \\    aad_bytes),
+            \\  -- Decrypting the string as bytes is fine
+            \\  DETERMINISTIC_DECRYPT_BYTES(
+            \\    keyset,
+            \\    DETERMINISTIC_ENCRYPT(keyset, CAST(plaintext_string AS BYTES), aad_bytes),
+            \\    aad_bytes)
+            \\FROM DeterministicKeysetTable
+            \\CROSS JOIN PlaintextTable
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ 1, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74" },
+                .{ 1, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "\xd0\xb6\xd1\x8d\xd1\x87\xd1\x8b\xd1\x89\xd1\x87\xd1\x8b\xd1\x89\xd1\x8f" },
+                .{ 1, 3, "", "", "", "", "" },
+                .{ 1, 4, null, null, null, null, null },
+                .{ 2, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74" },
+                .{ 2, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "\xd0\xb6\xd1\x8d\xd1\x87\xd1\x8b\xd1\x89\xd1\x87\xd1\x8b\xd1\x89\xd1\x8f" },
+                .{ 2, 3, "", "", "", "", "" },
+                .{ 2, 4, null, null, null, null, null },
+                .{ 3, 1, "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "plaintext", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74", "\x70\x6c\x61\x69\x6e\x74\x65\x78\x74" },
+                .{ 3, 2, "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "жэчыщчыщя", "\x00\x01\x02\x03\x03\xff\xfe\xfd", "\xd0\xb6\xd1\x8d\xd1\x87\xd1\x8b\xd1\x89\xd1\x87\xd1\x8b\xd1\x89\xd1\x8f" },
+                .{ 3, 3, "", "", "", "", "" },
+                .{ 3, 4, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "deterministic_encrypt_different_outputs",
+            .sql =
+            \\SELECT COUNT(DISTINCT DETERMINISTIC_ENCRYPT(keyset, 'plaintext', aad_string))
+            \\FROM DeterministicKeysetTable
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "deterministic_encrypt_same_keyset_different_outputs",
+            .sql =
+            \\# Verify that encrypting the same input with the same keyset produces SAME
+            \\# outputs
+            \\SELECT
+            \\  DETERMINISTIC_ENCRYPT(keyset, 'plaintext', aad_string) =
+            \\    DETERMINISTIC_ENCRYPT(keyset, 'plaintext', aad_string),
+            \\  DETERMINISTIC_ENCRYPT(keyset, b'plaintext', aad_bytes) =
+            \\    DETERMINISTIC_ENCRYPT(keyset, b'plaintext', aad_bytes)
+            \\FROM DeterministicKeysetTable
+            \\GROUP BY 1, 2
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ true, true },
+            },
+        },
+        .{
+            .desc = "deterministic_decrypt_invalid_keyset",
+            .sql =
+            \\SELECT
+            \\  DETERMINISTIC_DECRYPT_STRING(
+            \\    b'', DETERMINISTIC_ENCRYPT(keyset, 'plaintext', aad_string), aad_string
+            \\  )
+            \\FROM DeterministicKeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "deterministic_decrypt_invalid_ciphertext",
+            .sql =
+            \\SELECT
+            \\  DETERMINISTIC_DECRYPT_STRING(keyset, b'123', aad_string)
+            \\FROM DeterministicKeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "deterministic_decrypt_invalid_additional_data",
+            .sql =
+            \\SELECT
+            \\  DETERMINISTIC_DECRYPT_STRING(
+            \\    keyset, DETERMINISTIC_ENCRYPT(keyset, 'plaintext', aad_string), 'different aad'
+            \\  )
+            \\FROM DeterministicKeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "deterministic_decrypt_bytes_invalid_additional_data",
+            .sql =
+            \\SELECT
+            \\  DETERMINISTIC_DECRYPT_BYTES(
+            \\    keyset, DETERMINISTIC_ENCRYPT(keyset, b'plaintext', aad_bytes), b'different aad'
+            \\  )
+            \\FROM DeterministicKeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "deterministic_decrypt_invalid_string",
+            .sql =
+            \\SELECT
+            \\  DETERMINISTIC_DECRYPT_STRING(
+            \\    keyset, DETERMINISTIC_ENCRYPT(keyset, b'\xFF\xFE', CAST(aad_string AS BYTES)),
+            \\    aad_string
+            \\  )
+            \\FROM DeterministicKeysetTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "deterministic_encrypt_with_clause",
+            .sql =
+            \\# The WITH clause should have exactly-once semantics for evaluation of the
+            \\# expression.
+            \\WITH T AS (
+            \\  SELECT DETERMINISTIC_ENCRYPT(keyset, plaintext_string, aad_string) AS ciphertext
+            \\  FROM DeterministicKeysetTable
+            \\  CROSS JOIN PlaintextTable
+            \\  WHERE kt_id = 1 AND pt_id = 1
+            \\)
+            \\SELECT ciphertext = ciphertext
+            \\FROM T
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "deterministic_safe_functions",
+            .sql =
+            \\# Various error cases with the SAFE version of the functions.
+            \\SELECT
+            \\  -- Bad keyset
+            \\  SAFE.DETERMINISTIC_ENCRYPT(b'', b'', b''),
+            \\  -- Bad keyset
+            \\  SAFE.DETERMINISTIC_DECRYPT_BYTES(b'', b'', b''),
+            \\  -- Bad ciphertext/aad for the keyset
+            \\  SAFE.DETERMINISTIC_DECRYPT_BYTES(KEYS.NEW_KEYSET('DETERMINISTIC_AEAD_AES_SIV_CMAC_256'), b'', b'')
+            ,
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+    },
+}

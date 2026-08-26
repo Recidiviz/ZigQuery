@@ -1,0 +1,74 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_percentile_disc",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_percentile_disc.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestTable AS
+            \\SELECT 0 AS row_id, -100.0 AS value, '2017-01-02 03:04:05-08' AS str UNION ALL
+            \\  SELECT 1, cast(null as double), '2017-01-01 23:58:59-08'           UNION ALL
+            \\  SELECT 2, cast('-inf' as double), '2017-01-02 03:04:05-08'         UNION ALL
+            \\  SELECT 3, cast('nan' as double), '2017-01-01 23:58:59-08'          UNION ALL
+            \\  SELECT 4, 3.40282346638528859812e+38, '2017-01-02 03:04:05+08'     UNION ALL
+            \\  SELECT 5, -3.40282346638528859812e+38, '2017-01-01 23:58:59-08'    UNION ALL
+            \\  SELECT 6, 4.94065645841247e-324, '2017-01-02 03:04:05+08'          UNION ALL
+            \\  SELECT 7, 0, cast(null as string)                                  UNION ALL
+            \\  SELECT 8, cast('inf' as double), '2017-01-02 03:04:05+08'
+            ,
+        },
+        .{
+            .desc = "analytic_percentile_disc_numeric_percentile",
+            .sql =
+            \\SELECT row_id, PERCENTILE_DISC(value, numeric "0") OVER(),
+            \\               PERCENTILE_DISC(value, numeric "0.4") OVER(),
+            \\               PERCENTILE_DISC(value, numeric "0.400000001") OVER(),
+            \\               PERCENTILE_DISC(value, numeric "1") OVER()
+            \\FROM (SELECT 1 row_id, CAST(NULL as STRING) value UNION ALL
+            \\      SELECT 2, "A1"                              UNION ALL
+            \\      SELECT 3, "a"                               UNION ALL
+            \\      SELECT 4, "A"                               UNION ALL
+            \\      SELECT 5, "z"                               UNION ALL
+            \\      SELECT 6, "")
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "", "A", "A1", "z" },
+                .{ 4, "", "A", "A1", "z" },
+                .{ 6, "", "A", "A1", "z" },
+                .{ 1, "", "A", "A1", "z" },
+                .{ 3, "", "A", "A1", "z" },
+                .{ 5, "", "A", "A1", "z" },
+            },
+        },
+        .{
+            .desc = "analytic_percentile_disc_bignumeric_percentile",
+            .sql =
+            \\SELECT row_id,
+            \\PERCENTILE_DISC(value, bignumeric "0") OVER(),
+            \\PERCENTILE_DISC(value, bignumeric "0.4") OVER(),
+            \\PERCENTILE_DISC(value, bignumeric "0.40000000000000000000000000000000000001")
+            \\    OVER(),
+            \\PERCENTILE_DISC(value, bignumeric "1") OVER()
+            \\FROM (SELECT 1 row_id, CAST(NULL as STRING) value UNION ALL
+            \\      SELECT 2, "A1"                              UNION ALL
+            \\      SELECT 3, "a"                               UNION ALL
+            \\      SELECT 4, "A"                               UNION ALL
+            \\      SELECT 5, "z"                               UNION ALL
+            \\      SELECT 6, "")
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "", "A", "A1", "z" },
+                .{ 4, "", "A", "A1", "z" },
+                .{ 6, "", "A", "A1", "z" },
+                .{ 1, "", "A", "A1", "z" },
+                .{ 3, "", "A", "A1", "z" },
+                .{ 5, "", "A", "A1", "z" },
+            },
+        },
+    },
+}

@@ -1,0 +1,116 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/is_unknown",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/is_unknown.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE KeyValue AS
+            \\SELECT 1 AS Key, TRUE AS Value
+            \\  UNION ALL
+            \\  SELECT 2 as Key, NULL as Value
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestTable AS
+            \\SELECT 1 AS id, TRUE AS bool_val, 'a' AS str_val
+            \\  UNION ALL
+            \\  SELECT 2, NULL, 'b'
+            \\  UNION ALL
+            \\  SELECT 3, NULL, 'c'
+            \\  UNION ALL
+            \\  SELECT 4, NULL, NULL
+            ,
+        },
+        .{
+            .desc = "is_unknown_1",
+            .sql = "SELECT NULL IS UNKNOWN",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is_unknown_2",
+            .sql = "SELECT NULL IS NOT UNKNOWN",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "is_unknown_3",
+            .sql = "SELECT TRUE IS UNKNOWN",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "is_unknown_4",
+            .sql = "SELECT TRUE IS NOT UNKNOWN",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is_unknown_5",
+            .sql = "SELECT FALSE IS UNKNOWN",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "is_unknown_6",
+            .sql = "SELECT FALSE IS NOT UNKNOWN",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is_unknown_7",
+            .sql = "SELECT FALSE IS NOT UNKNOWN UNKNOWN",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "is_unknown_8",
+            .sql =
+            \\SELECT Value IS UNKNOWN
+            \\FROM KeyValue kv
+            ,
+            .unordered = true,
+            .rows = .{
+                .{true},
+                .{false},
+            },
+        },
+        .{
+            .desc = "is_unknown_9",
+            .sql =
+            \\SELECT *
+            \\FROM KeyValue kv
+            \\WHERE kv.Value IS NOT UNKNOWN
+            ,
+            .rows = .{
+                .{ 1, true },
+            },
+        },
+        .{
+            .desc = "is_unknown_10",
+            .sql =
+            \\SELECT *
+            \\FROM TestTable t
+            \\WHERE t.bool_val IS UNKNOWN and t.str_val IS NOT NULL
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, null, "b" },
+                .{ 3, null, "c" },
+            },
+        },
+    },
+}

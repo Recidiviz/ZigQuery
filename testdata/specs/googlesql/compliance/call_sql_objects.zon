@@ -1,0 +1,135 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/call_sql_objects",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/call_sql_objects.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# This file includes tests that call a mix of different sorts of SQL objects
+            \\# such as UDFs, UDAs, and TVFs.
+            \\#
+            \\# We have a separate test file for these cases because some of the test drivers
+            \\# cannot handle the mix yet and we didn't want to unnessarily break the other
+            \\# test files for some drivers.
+            \\CREATE TABLE t1 AS
+            \\  SELECT * FROM UNNEST([
+            \\    STRUCT(1 AS rowid, 1 AS x, 100 AS y, 1000 AS z),
+            \\    STRUCT(2 AS rowid, 1 AS x, 100 AS y, 1000 AS z),
+            \\    STRUCT(3 AS rowid, 1 AS x, 100 AS y, 1001 AS z),
+            \\    STRUCT(4 AS rowid, 1 AS x, 100 AS y, 1002 AS z),
+            \\    STRUCT(5 AS rowid, 1 AS x, 100 AS y, 1003 AS z),
+            \\    STRUCT(6 AS rowid, 1 AS x, 100 AS y, 1004 AS z),
+            \\    STRUCT(7 AS rowid, 1 AS x, 101 AS y, 1000 AS z),
+            \\    STRUCT(8 AS rowid, 1 AS x, 101 AS y, 1001 AS z),
+            \\    STRUCT(9 AS rowid, 1 AS x, 101 AS y, 1002 AS z),
+            \\    STRUCT(10 AS rowid, 2 AS x, 100 AS y, 1000 AS z),
+            \\    STRUCT(11 AS rowid, 2 AS x, 101 AS y, 1001 AS z),
+            \\    STRUCT(12 AS rowid, 2 AS x, 102 AS y, 1002 AS z),
+            \\    STRUCT(13 AS rowid, 2 AS x, 102 AS y, NULL AS z),
+            \\    STRUCT(14 AS rowid, 2 AS x, 102 AS y, NULL AS z),
+            \\    STRUCT(15 AS rowid, 2 AS x, NULL AS y, 1002 AS z),
+            \\    STRUCT(16 AS rowid, 2 AS x, NULL AS y, 1002 AS z)
+            \\    ])
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION CountStar() RETURNS INT64 AS ( COUNT(*) )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION CallsCountStar(arg0 ANY TYPE) AS
+            \\((SELECT AS STRUCT arg0, CountStar()
+            \\  FROM (SELECT 1)
+            \\  WHERE (true) IS TRUE
+            \\  GROUP BY 1))
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION JustRefOneArg(
+            \\    arg0 STRING NOT AGGREGATE) AS (
+            \\  arg0
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION CallsJustRefOneArg(arg1 ANY TYPE) AS
+            \\(
+            \\  (SELECT JustRefOneArg('b') as col FROM (SELECT 1) WHERE false)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION AggregateCallsJustRefOneArg(arg0 ANY TYPE) AS
+            \\(
+            \\  JustRefOneArg('b')
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP CONSTANT CLiteral = 1",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP CONSTANT CSubquery = (SELECT COUNT(*) FROM (SELECT 1 UNION ALL SELECT 2))",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP CONSTANT CArray = GENERATE_ARRAY(1, 10)",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP CONSTANT CRand = Rand()",
+        },
+        .{
+            .desc = "repro350574193",
+            .unsupported_in_bigquery = "An internal error occurred and the request could not be completed, Error: 80038528 (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT CallsCountStar(e) FROM UNNEST([NULL, 'a']) AS e",
+            .unordered = true,
+            .rows = .{
+                .{.{ "a", 1 }},
+                .{.{ null, 1 }},
+            },
+        },
+        .{
+            .desc = "repro350786470",
+            .unsupported_in_bigquery = "JustRefOneArg aggregate function is not supported (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT CallsJustRefOneArg('a')
+            \\FROM UNNEST([1, 2, 3])
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"b"},
+                .{"b"},
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "repro350786470_3",
+            .unsupported_in_bigquery = "User defined aggregate function does not support template argument (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT AggregateCallsJustRefOneArg('b') FROM (SELECT 1) WHERE false",
+            .rows = .{
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "reference_constants",
+            .sql = "SELECT CLiteral, CSubquery, CArray, CRand = CRand",
+            .rows = .{
+                .{ 1, 2, .{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }, true },
+            },
+        },
+    },
+}

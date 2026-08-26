@@ -1,0 +1,413 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_last_value",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_last_value.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestTable AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as bool) as bool_val,
+            \\       cast(null as int64) as int64_val,
+            \\       cast(null as int32) as int32_val,
+            \\       cast(null as string) as str_val UNION ALL
+            \\  SELECT 2,  true,  null, null,  null  UNION ALL
+            \\  SELECT 3,  false, 1,    6,     "A"   UNION ALL
+            \\  SELECT 4,  true,  2,    2,     "A"   UNION ALL
+            \\  SELECT 5,  false, 1,    3,     "aA"   UNION ALL
+            \\  SELECT 6,  true,  2,    2,     "Aa"   UNION ALL
+            \\  SELECT 7,  false, 1,    5,     'a'   UNION ALL
+            \\  SELECT 8,  true,  4,    2,     "a"   UNION ALL
+            \\  SELECT 9,  false, 2,    3,     "b"   UNION ALL
+            \\  SELECT 10, true,  3,    1,     "B"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableDateTimeBytes AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as date) as date_val,
+            \\       cast(null as timestamp) as timestamp_val,
+            \\       cast(null as bytes) as bytes_val UNION ALL
+            \\SELECT 2,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("1" as bytes) UNION ALL
+            \\SELECT 3,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("2" as bytes) UNION ALL
+            \\SELECT 4,
+            \\       cast('2015-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("1" as bytes) UNION ALL
+            \\SELECT 5,
+            \\       cast('2015-01-01' as date),
+            \\       TIMESTAMP '2013-01-01 00:00:01.011011 UTC',
+            \\       cast("2" as bytes) UNION ALL
+            \\SELECT 6,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2015-01-01 00:00:01.011011 UTC',
+            \\       cast("5" as bytes)
+            ,
+        },
+        .{
+            .desc = "last_value_1",
+            .sql =
+            \\SELECT bool_val, row_id,
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING),
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null, null },
+                .{ false, 9, null, 5 },
+                .{ false, 7, 9, 3 },
+                .{ false, 5, 7, 3 },
+                .{ false, 3, 5, null },
+                .{ true, 10, null, 6 },
+                .{ true, 8, 10, 4 },
+                .{ true, 6, 8, 2 },
+                .{ true, 4, 6, 2 },
+                .{ true, 2, 4, null },
+            },
+        },
+        .{
+            .desc = "last_value_2",
+            .sql =
+            \\SELECT bool_val, int64_val,
+            \\       LAST_VALUE(int64_val * 2) OVER (PARTITION BY bool_val ORDER BY int64_val
+            \\                                       RANGE BETWEEN 1 PRECEDING AND
+            \\                                                     1 FOLLOWING),
+            \\       LAST_VALUE(int64_val) OVER (PARTITION BY bool_val ORDER BY int64_val
+            \\                                   RANGE BETWEEN CURRENT ROW AND 1 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null, null, null },
+                .{ false, 1, 4, 2 },
+                .{ false, 1, 4, 2 },
+                .{ false, 1, 4, 2 },
+                .{ false, 2, 4, 2 },
+                .{ true, null, null, null },
+                .{ true, 2, 6, 3 },
+                .{ true, 2, 6, 3 },
+                .{ true, 3, 8, 4 },
+                .{ true, 4, 8, 4 },
+            },
+        },
+        .{
+            .desc = "last_value_3_rows",
+            .sql =
+            \\SELECT bool_val, row_id,
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                ROWS BETWEEN UNBOUNDED PRECEDING
+            \\                                         AND UNBOUNDED FOLLOWING),
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                ROWS BETWEEN 5 PRECEDING
+            \\                                         AND UNBOUNDED FOLLOWING),
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                ROWS BETWEEN CURRENT ROW
+            \\                                         AND UNBOUNDED FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, 1, 1, 1 },
+                .{ false, 9, 3, 3, 3 },
+                .{ false, 7, 3, 3, 3 },
+                .{ false, 5, 3, 3, 3 },
+                .{ false, 3, 3, 3, 3 },
+                .{ true, 10, 2, 2, 2 },
+                .{ true, 8, 2, 2, 2 },
+                .{ true, 6, 2, 2, 2 },
+                .{ true, 4, 2, 2, 2 },
+                .{ true, 2, 2, 2, 2 },
+            },
+        },
+        .{
+            .desc = "last_value_3_range",
+            .sql =
+            \\SELECT bool_val, row_id,
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                RANGE BETWEEN UNBOUNDED PRECEDING
+            \\                                          AND UNBOUNDED FOLLOWING),
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                RANGE BETWEEN 5 PRECEDING
+            \\                                          AND UNBOUNDED FOLLOWING),
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                RANGE BETWEEN CURRENT ROW
+            \\                                          AND UNBOUNDED FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, 1, 1, 1 },
+                .{ false, 9, 3, 3, 3 },
+                .{ false, 7, 3, 3, 3 },
+                .{ false, 5, 3, 3, 3 },
+                .{ false, 3, 3, 3, 3 },
+                .{ true, 10, 2, 2, 2 },
+                .{ true, 8, 2, 2, 2 },
+                .{ true, 6, 2, 2, 2 },
+                .{ true, 4, 2, 2, 2 },
+                .{ true, 2, 2, 2, 2 },
+            },
+        },
+        .{
+            .desc = "last_value_4_rows",
+            .sql =
+            \\SELECT bool_val, row_id,
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                ROWS BETWEEN 2 FOLLOWING
+            \\                                         AND UNBOUNDED FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null },
+                .{ false, 9, 3 },
+                .{ false, 7, 3 },
+                .{ false, 5, null },
+                .{ false, 3, null },
+                .{ true, 10, 2 },
+                .{ true, 8, 2 },
+                .{ true, 6, 2 },
+                .{ true, 4, null },
+                .{ true, 2, null },
+            },
+        },
+        .{
+            .desc = "last_value_4_range",
+            .sql =
+            \\SELECT bool_val, row_id,
+            \\       LAST_VALUE(row_id) OVER (PARTITION BY bool_val ORDER BY row_id DESC
+            \\                                RANGE BETWEEN 2 FOLLOWING
+            \\                                          AND UNBOUNDED FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null },
+                .{ false, 9, 3 },
+                .{ false, 7, 3 },
+                .{ false, 5, 3 },
+                .{ false, 3, null },
+                .{ true, 10, 2 },
+                .{ true, 8, 2 },
+                .{ true, 6, 2 },
+                .{ true, 4, 2 },
+                .{ true, 2, null },
+            },
+        },
+        .{
+            .desc = "last_value_bool_int32",
+            .sql =
+            \\SELECT row_id, bool_val, int32_val,
+            \\       LAST_VALUE(bool_val) OVER (ORDER BY row_id
+            \\                                   ROWS BETWEEN CURRENT ROW AND
+            \\                                                UNBOUNDED FOLLOWING),
+            \\       LAST_VALUE(int32_val) OVER (ORDER BY row_id
+            \\                                    ROWS BETWEEN UNBOUNDED PRECEDING AND
+            \\                                                 CURRENT ROW)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null, true, null },
+                .{ 2, true, null, true, null },
+                .{ 3, false, 6, true, 6 },
+                .{ 4, true, 2, true, 2 },
+                .{ 5, false, 3, true, 3 },
+                .{ 6, true, 2, true, 2 },
+                .{ 7, false, 5, true, 5 },
+                .{ 8, true, 2, true, 2 },
+                .{ 9, false, 3, true, 3 },
+                .{ 10, true, 1, true, 1 },
+            },
+        },
+        .{
+            .desc = "last_value_uint32_int64",
+            .sql =
+            \\SELECT row_id, int32_val, int64_val,
+            \\       LAST_VALUE(CAST(int32_val as uint32))
+            \\           OVER (ORDER BY row_id
+            \\                 ROWS BETWEEN 3 PRECEDING AND 2 FOLLOWING),
+            \\       LAST_VALUE(int64_val)
+            \\           OVER (ORDER BY row_id
+            \\                 ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null, 6, 3 },
+                .{ 2, null, null, 2, 3 },
+                .{ 3, 6, 1, 3, 3 },
+                .{ 4, 2, 2, 2, 3 },
+                .{ 5, 3, 1, 5, 3 },
+                .{ 6, 2, 2, 2, 3 },
+                .{ 7, 5, 1, 3, 3 },
+                .{ 8, 2, 4, 1, 3 },
+                .{ 9, 3, 2, 1, null },
+                .{ 10, 1, 3, 1, null },
+            },
+        },
+        .{
+            .desc = "last_value_uint64",
+            .sql =
+            \\SELECT row_id, int64_val,
+            \\       LAST_VALUE(CAST(int64_val as uint64))
+            \\           OVER (ORDER BY row_id
+            \\                 ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null },
+                .{ 2, null, 1 },
+                .{ 3, 1, 2 },
+                .{ 4, 2, 1 },
+                .{ 5, 1, 2 },
+                .{ 6, 2, 1 },
+                .{ 7, 1, 4 },
+                .{ 8, 4, 2 },
+                .{ 9, 2, 3 },
+                .{ 10, 3, 3 },
+            },
+        },
+        .{
+            .desc = "last_value_float_double",
+            .sql =
+            \\SELECT row_id, cast(int64_val as float), cast(int32_val as double) + 1.5,
+            \\       LAST_VALUE(cast(int64_val as float))
+            \\           OVER (ORDER BY row_id
+            \\                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+            \\       LAST_VALUE(cast(int32_val as double) + 1.5)
+            \\           OVER (ORDER BY row_id
+            \\                 RANGE BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null, null, null },
+                .{ 2, null, null, null, null },
+                .{ 3, 1, 7.5, null, null },
+                .{ 4, 2, 3.5, 1, 7.5 },
+                .{ 5, 1, 4.5, 2, 3.5 },
+                .{ 6, 2, 3.5, 1, 4.5 },
+                .{ 7, 1, 6.5, 2, 3.5 },
+                .{ 8, 4, 3.5, 1, 6.5 },
+                .{ 9, 2, 4.5, 4, 3.5 },
+                .{ 10, 3, 2.5, 2, 4.5 },
+            },
+        },
+        .{
+            .desc = "last_value_string",
+            .sql =
+            \\SELECT row_id, str_val,
+            \\       LAST_VALUE(str_val) OVER (ORDER BY row_id
+            \\                                 ROWS BETWEEN 1 FOLLOWING AND
+            \\                                              2 FOLLOWING)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "A" },
+                .{ 2, null, "A" },
+                .{ 3, "A", "aA" },
+                .{ 4, "A", "Aa" },
+                .{ 5, "aA", "a" },
+                .{ 6, "Aa", "a" },
+                .{ 7, "a", "b" },
+                .{ 8, "a", "B" },
+                .{ 9, "b", "B" },
+                .{ 10, "B", null },
+            },
+        },
+        .{
+            .desc = "last_value_date",
+            .sql =
+            \\SELECT row_id, date_val,
+            \\       LAST_VALUE(date_val) OVER (ORDER BY row_id),
+            \\       LAST_VALUE(date_val) OVER (ORDER BY row_id
+            \\                                  ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)
+            \\FROM TableDateTimeBytes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null, "2014-01-01" },
+                .{ 2, "2014-01-01", "2014-01-01", "2014-01-01" },
+                .{ 3, "2014-01-01", "2014-01-01", "2015-01-01" },
+                .{ 4, "2015-01-01", "2015-01-01", "2015-01-01" },
+                .{ 5, "2015-01-01", "2015-01-01", "2014-01-01" },
+                .{ 6, "2014-01-01", "2014-01-01", "2014-01-01" },
+            },
+        },
+        .{
+            .desc = "last_value_timestamp",
+            .sql =
+            \\SELECT row_id, timestamp_val,
+            \\       LAST_VALUE(timestamp_val) OVER (ORDER BY row_id
+            \\                                       ROWS BETWEEN 1 PRECEDING AND 3 FOLLOWING)
+            \\FROM TableDateTimeBytes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "2014-01-01 00:00:01.011011+00" },
+                .{ 2, "2014-01-01 00:00:01.011011+00", "2013-01-01 00:00:01.011011+00" },
+                .{ 3, "2014-01-01 00:00:01.011011+00", "2015-01-01 00:00:01.011011+00" },
+                .{ 4, "2014-01-01 00:00:01.011011+00", "2015-01-01 00:00:01.011011+00" },
+                .{ 5, "2013-01-01 00:00:01.011011+00", "2015-01-01 00:00:01.011011+00" },
+                .{ 6, "2015-01-01 00:00:01.011011+00", "2015-01-01 00:00:01.011011+00" },
+            },
+        },
+        .{
+            .desc = "last_value_bytes",
+            .sql =
+            \\SELECT row_id, bytes_val,
+            \\       LAST_VALUE(bytes_val) OVER (ORDER BY row_id
+            \\                                   ROWS BETWEEN CURRENT ROW AND 3 FOLLOWING)
+            \\FROM TableDateTimeBytes
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "\x31" },
+                .{ 2, "\x31", "\x32" },
+                .{ 3, "\x32", "\x35" },
+                .{ 4, "\x31", "\x35" },
+                .{ 5, "\x32", "\x35" },
+                .{ 6, "\x35", "\x35" },
+            },
+        },
+        .{
+            .desc = "last_value_array",
+            .sql =
+            \\SELECT row_id, array_val,
+            \\       LAST_VALUE(array_val) OVER (ORDER BY row_id RANGE 2 PRECEDING)
+            \\FROM (SELECT 1 row_id, [1, 2, 3] array_val UNION ALL
+            \\      SELECT 2, [2, 3, 4] UNION ALL
+            \\      SELECT 3, [3, 4, 5] UNION ALL
+            \\      SELECT 5, CAST(null as ARRAY<int64>) UNION ALL
+            \\      SELECT 6, [6, 5] UNION ALL
+            \\      SELECT 7, CAST(null as ARRAY<int64>))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, .{ 1, 2, 3 }, .{ 1, 2, 3 } },
+                .{ 2, .{ 2, 3, 4 }, .{ 2, 3, 4 } },
+                .{ 3, .{ 3, 4, 5 }, .{ 3, 4, 5 } },
+                .{ 5, null, null },
+                .{ 6, .{ 6, 5 }, .{ 6, 5 } },
+                .{ 7, null, null },
+            },
+        },
+    },
+}

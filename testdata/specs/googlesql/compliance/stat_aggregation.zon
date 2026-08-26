@@ -1,0 +1,1937 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/stat_aggregation",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/stat_aggregation.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableEmpty AS
+            \\SELECT row_id, y, x FROM (SELECT 0 as row_id, 0.0 as y, 0.0 as x) WHERE false
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNulls AS
+            \\SELECT 1 as row_id, CAST(NULL as float64) as x UNION ALL
+            \\SELECT 2 as row_id, CAST(NULL as float64) as x
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TABLE TableOneValue AS SELECT 0 as row_id, 1.0 as x",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableOneNonNullValue AS
+            \\SELECT 1 as row_id, CAST(NULL as float64) as x UNION ALL
+            \\SELECT 2,           1.0                        UNION ALL
+            \\SELECT 3,           CAST(NULL as float64)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableSameValues AS
+            \\SELECT 1 as row_id, 1.0 x UNION ALL
+            \\SELECT 2,           1.0   UNION ALL
+            \\SELECT 3,           1.0   UNION ALL
+            \\SELECT 4,           1.0   UNION ALL
+            \\SELECT 5,           1.0
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericEmpty AS
+            \\SELECT row_id, y, x FROM (SELECT 0 as row_id, CAST(0 AS NUMERIC) as y, CAST(0 AS NUMERIC) as x) WHERE false
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericNulls AS
+            \\SELECT 1 as row_id, CAST(NULL as NUMERIC) as x UNION ALL
+            \\SELECT 2 as row_id, CAST(NULL as NUMERIC) as x
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TABLE TableNumericOneValue AS SELECT 0 as row_id, CAST(1 AS NUMERIC) as x",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericOneNonNullValue AS
+            \\SELECT 1 as row_id, CAST(NULL as NUMERIC) as x UNION ALL
+            \\SELECT 2,           CAST(1 AS NUMERIC)         UNION ALL
+            \\SELECT 3,           CAST(NULL as NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericSameValues AS
+            \\SELECT 1 as row_id, CAST(1 AS NUMERIC) as x UNION ALL
+            \\SELECT 2,           CAST(1 AS NUMERIC)      UNION ALL
+            \\SELECT 3,           CAST(1 AS NUMERIC)      UNION ALL
+            \\SELECT 4,           CAST(1 AS NUMERIC)      UNION ALL
+            \\SELECT 5,           CAST(1 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericSameColumn AS
+            \\SELECT 1 as row_id, CAST(1 AS NUMERIC) as x UNION ALL
+            \\SELECT 2,           CAST(2 AS NUMERIC)      UNION ALL
+            \\SELECT 3,           CAST(3 AS NUMERIC)      UNION ALL
+            \\SELECT 4,           CAST(4 AS NUMERIC)      UNION ALL
+            \\SELECT 5,           CAST(5 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericAllValuesStddevSamp AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(2 AS NUMERIC) as x UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(1 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(0 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(2 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(0 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericAllValuesStddevPop AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(4 AS NUMERIC) as x UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(-2 AS NUMERIC)     UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(2 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(0 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(1 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericAllValuesVar AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(1.1 AS NUMERIC) as x UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(2.2 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(3.3 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(-4.4 AS NUMERIC)     UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(-5.5 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericHighPrecValues AS
+            \\SELECT CAST(1 as int64) as row_id, CAST("1000000000000000000000000.1" AS NUMERIC) as x UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST("1000000000000000000000000.2" AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericAllValuesBinaryStat AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(1.1 AS NUMERIC) as x, CAST(2.2 AS NUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(2.2 AS NUMERIC)     , CAST(4.4 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(3.3 AS NUMERIC)     , CAST(3.3 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(-4.4 AS NUMERIC)    , CAST(-1.1 AS NUMERIC)    UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(-5.5 AS NUMERIC)    , CAST(5.5 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericAllValuesWithNullBinaryStat AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(2 AS NUMERIC) as x, CAST(4 AS NUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(1 AS NUMERIC)     , CAST(-2 AS NUMERIC)     UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(0 AS NUMERIC)     , CAST(2 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(2 AS NUMERIC)     , CAST(0 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(0 AS NUMERIC)     , CAST(1 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(6 as int64)          , CAST(0 AS NUMERIC)     , CAST(NULL AS NUMERIC)   UNION ALL
+            \\SELECT CAST(7 as int64)          , CAST(NULL AS NUMERIC)  , CAST(1 AS NUMERIC)   UNION ALL
+            \\SELECT CAST(8 as int64)          , CAST(0 AS NUMERIC)     , CAST(NULL AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericBigValuesBinaryStat AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(0 AS NUMERIC)              as x, CAST(9.9999999e+28 AS NUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(-9.9999999e+28 AS NUMERIC)     , CAST(0 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericSmallValuesBinaryStat AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(0 AS NUMERIC)     as x, CAST(1e-9 AS NUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(-1e-9 AS NUMERIC)     , CAST(0 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericZeroCorrelation AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(0 AS NUMERIC) as x, CAST(0 AS NUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64) as row_id, CAST(1 AS NUMERIC) as x, CAST(2 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(3 as int64) as row_id, CAST(2 AS NUMERIC) as x, CAST(0 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64) as row_id, CAST(3 AS NUMERIC) as x, CAST(2 AS NUMERIC)      UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(4 AS NUMERIC)     , CAST(0 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericNanCorrelation AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(0 AS NUMERIC) as x, CAST(2 AS NUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(1 AS NUMERIC)     , CAST(2 AS NUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericEmpty AS
+            \\SELECT row_id, y, x FROM (SELECT 0 as row_id, CAST(0 AS BIGNUMERIC) as y, CAST(0 AS BIGNUMERIC) as x) WHERE false
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericNulls AS
+            \\SELECT 1 as row_id, CAST(NULL as BIGNUMERIC) as x UNION ALL
+            \\SELECT 2 as row_id, CAST(NULL as BIGNUMERIC) as x
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TABLE TableBigNumericOneValue AS SELECT 0 as row_id, CAST(1 AS BIGNUMERIC) as x",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericOneNonNullValue AS
+            \\SELECT 1 as row_id, CAST(NULL as BIGNUMERIC) as x UNION ALL
+            \\SELECT 2,           CAST(1 AS BIGNUMERIC)         UNION ALL
+            \\SELECT 3,           CAST(NULL as BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericSameValues AS
+            \\SELECT 1 as row_id, CAST(1 AS BIGNUMERIC) as x UNION ALL
+            \\SELECT 2,           CAST(1 AS BIGNUMERIC)      UNION ALL
+            \\SELECT 3,           CAST(1 AS BIGNUMERIC)      UNION ALL
+            \\SELECT 4,           CAST(1 AS BIGNUMERIC)      UNION ALL
+            \\SELECT 5,           CAST(1 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericSameColumn AS
+            \\SELECT 1 as row_id, CAST(1 AS BIGNUMERIC) as x UNION ALL
+            \\SELECT 2,           CAST(2 AS BIGNUMERIC)      UNION ALL
+            \\SELECT 3,           CAST(3 AS BIGNUMERIC)      UNION ALL
+            \\SELECT 4,           CAST(4 AS BIGNUMERIC)      UNION ALL
+            \\SELECT 5,           CAST(5 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericAllValuesStddevSamp AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(2 AS BIGNUMERIC) as x UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(1 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(0 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(2 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(0 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericAllValuesStddevPop AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(4 AS BIGNUMERIC) as x UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(-2 AS BIGNUMERIC)     UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(2 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(0 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(1 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericAllValuesVar AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(1.1 AS BIGNUMERIC) as x UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(2.2 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(3.3 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(-4.4 AS BIGNUMERIC)     UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(-5.5 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericHighPrecValues AS
+            \\SELECT CAST(1 as int64) as row_id, CAST("1.0000000000000001" AS BIGNUMERIC) as x UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST("1.00000000000000001" AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericAllValuesBinaryStat AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(1.1 AS BIGNUMERIC) as x, CAST(2.2 AS BIGNUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(2.2 AS BIGNUMERIC)     , CAST(4.4 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(3.3 AS BIGNUMERIC)     , CAST(3.3 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(-4.4 AS BIGNUMERIC)    , CAST(-1.1 AS BIGNUMERIC)    UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(-5.5 AS BIGNUMERIC)    , CAST(5.5 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericAllValuesWithNullBinaryStat AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(2 AS BIGNUMERIC) as x, CAST(4 AS BIGNUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(1 AS BIGNUMERIC)     , CAST(-2 AS BIGNUMERIC)     UNION ALL
+            \\SELECT CAST(3 as int64)          , CAST(0 AS BIGNUMERIC)     , CAST(2 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64)          , CAST(2 AS BIGNUMERIC)     , CAST(0 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(0 AS BIGNUMERIC)     , CAST(1 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(6 as int64)          , CAST(0 AS BIGNUMERIC)     , CAST(NULL AS BIGNUMERIC)   UNION ALL
+            \\SELECT CAST(7 as int64)          , CAST(NULL AS BIGNUMERIC)  , CAST(1 AS BIGNUMERIC)   UNION ALL
+            \\SELECT CAST(8 as int64)          , CAST(0 AS BIGNUMERIC)     , CAST(NULL AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericBigValuesBinaryStat AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(0 AS BIGNUMERIC)              as x, CAST(9.9999999e+37 AS BIGNUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(-9.9999999e+37 AS BIGNUMERIC)     , CAST(0 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericSmallValuesBinaryStat AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(0 AS BIGNUMERIC)     as x, CAST(1e-29 AS BIGNUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(-1e-29 AS BIGNUMERIC)     , CAST(0 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericZeroCorrelation AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(0 AS BIGNUMERIC) as x, CAST(0 AS BIGNUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64) as row_id, CAST(1 AS BIGNUMERIC) as x, CAST(2 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(3 as int64) as row_id, CAST(2 AS BIGNUMERIC) as x, CAST(0 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(4 as int64) as row_id, CAST(3 AS BIGNUMERIC) as x, CAST(2 AS BIGNUMERIC)      UNION ALL
+            \\SELECT CAST(5 as int64)          , CAST(4 AS BIGNUMERIC)     , CAST(0 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericNanCorrelation AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(0 AS BIGNUMERIC) as x, CAST(2 AS BIGNUMERIC) as y UNION ALL
+            \\SELECT CAST(2 as int64)          , CAST(1 AS BIGNUMERIC)     , CAST(2 AS BIGNUMERIC)
+            ,
+        },
+        .{
+            .desc = "stddev_samp_empty_input",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_one_value",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableOneValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_one_non_null_value",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableOneNonNullValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_nulls",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_same_values",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_samp_same_distance_from_avg",
+            .sql = "SELECT STDDEV_SAMP(x) FROM UNNEST([10, 14, 18]) x",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "stddev_samp_positive_inf",
+            .sql = "SELECT STDDEV_SAMP(CAST('inf' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_samp_negative_inf",
+            .sql = "SELECT STDDEV_SAMP(CAST('-inf' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_samp_nan",
+            .sql = "SELECT STDDEV_SAMP(CAST('nan' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_samp_single_row_positive_inf",
+            .sql = "SELECT STDDEV_SAMP(CAST('inf' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_single_row_negative_inf",
+            .sql = "SELECT STDDEV_SAMP(CAST('-inf' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_single_row_nan",
+            .sql = "SELECT STDDEV_SAMP(CAST('nan' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_numeric_empty_input",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_numeric_one_value",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableNumericOneValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_numeric_one_non_null_value",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableNumericOneNonNullValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_numeric_nulls",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableNumericNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_numeric_same_values",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableNumericSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_samp_numeric_different_values",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableNumericAllValuesStddevSamp",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "stddev_samp_numeric_high_prec_values",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableNumericHighPrecValues",
+            .rows = .{
+                .{0.070710678118654752},
+            },
+        },
+        .{
+            .desc = "stddev_samp_bignumeric_empty_input",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableBigNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_bignumeric_one_value",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_bignumeric_one_non_null_value",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableBigNumericOneNonNullValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_bignumeric_nulls",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableBigNumericNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_samp_bignumeric_same_values",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableBigNumericSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_samp_bignumeric_different_values",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableBigNumericAllValuesStddevSamp",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "stddev_samp_bignumeric_high_prec_values",
+            .sql = "SELECT STDDEV_SAMP(x) FROM TableBigNumericHighPrecValues",
+            .rows = .{
+                .{6.3639610306789269e-17},
+            },
+        },
+        .{
+            .desc = "stddev_pop_empty_input",
+            .sql = "SELECT STDDEV_POP(x) FROM TableEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_pop_one_value",
+            .sql = "SELECT STDDEV_POP(x) FROM TableOneValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_one_non_null_value",
+            .sql = "SELECT STDDEV_POP(x) FROM TableOneNonNullValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_nulls",
+            .sql = "SELECT STDDEV_POP(x) FROM TableNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_pop_same_values",
+            .sql = "SELECT STDDEV_POP(x) FROM TableSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_nice",
+            .sql = "SELECT STDDEV_POP(x) FROM UNNEST([1, 9]) x",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "stddev_pop_positive_inf",
+            .sql = "SELECT STDDEV_POP(CAST('inf' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_pop_negative_inf",
+            .sql = "SELECT STDDEV_POP(CAST('-inf' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_pop_nan",
+            .sql = "SELECT STDDEV_POP(CAST('nan' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_pop_single_row_positive_inf",
+            .sql = "SELECT STDDEV_POP(CAST('inf' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_pop_single_row_negative_inf",
+            .sql = "SELECT STDDEV_POP(CAST('-inf' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_pop_single_row_nan",
+            .sql = "SELECT STDDEV_POP(CAST('nan' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "stddev_pop_numeric_empty_input",
+            .sql = "SELECT STDDEV_POP(x) FROM TableNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_pop_numeric_one_value",
+            .sql = "SELECT STDDEV_POP(x) FROM TableNumericOneValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_numeric_one_non_null_value",
+            .sql = "SELECT STDDEV_POP(x) FROM TableNumericOneNonNullValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_numeric_nulls",
+            .sql = "SELECT STDDEV_POP(x) FROM TableNumericNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_pop_numeric_same_values",
+            .sql = "SELECT STDDEV_POP(x) FROM TableNumericSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_numeric_different_values",
+            .sql = "SELECT STDDEV_POP(x) FROM TableNumericAllValuesStddevPop",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "stddev_pop_numeric_high_prec_values",
+            .sql = "SELECT STDDEV_POP(x) FROM TableNumericHighPrecValues",
+            .rows = .{
+                .{0.05},
+            },
+        },
+        .{
+            .desc = "stddev_pop_bignumeric_empty_input",
+            .sql = "SELECT STDDEV_POP(x) FROM TableBigNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_pop_bignumeric_one_value",
+            .sql = "SELECT STDDEV_POP(x) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_bignumeric_one_non_null_value",
+            .sql = "SELECT STDDEV_POP(x) FROM TableBigNumericOneNonNullValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_bignumeric_nulls",
+            .sql = "SELECT STDDEV_POP(x) FROM TableBigNumericNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "stddev_pop_bignumeric_same_values",
+            .sql = "SELECT STDDEV_POP(x) FROM TableBigNumericSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "stddev_pop_bignumeric_different_values",
+            .sql = "SELECT STDDEV_POP(x) FROM TableBigNumericAllValuesStddevPop",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "stddev_pop_bignumeric_high_prec_values",
+            .sql = "SELECT STDDEV_POP(x) FROM TableBigNumericHighPrecValues",
+            .rows = .{
+                .{4.5e-17},
+            },
+        },
+        .{
+            .desc = "var_samp_empty_input",
+            .sql = "SELECT VAR_SAMP(x) FROM TableEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_one_value",
+            .sql = "SELECT VAR_SAMP(x) FROM TableOneValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_one_non_null_value",
+            .sql = "SELECT VAR_SAMP(x) FROM TableOneNonNullValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_nulls",
+            .sql = "SELECT VAR_SAMP(x) FROM TableNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_same_values",
+            .sql = "SELECT VAR_SAMP(x) FROM TableSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_samp_same_distance_from_avg",
+            .sql = "SELECT VAR_SAMP(x) FROM UNNEST([50, 60, 70]) x",
+            .rows = .{
+                .{100},
+            },
+        },
+        .{
+            .desc = "var_samp_positive_inf",
+            .sql = "SELECT VAR_SAMP(CAST('inf' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_samp_negative_inf",
+            .sql = "SELECT VAR_SAMP(CAST('-inf' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_samp_nan",
+            .sql = "SELECT VAR_SAMP(CAST('nan' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_samp_single_row_positive_inf",
+            .sql = "SELECT VAR_SAMP(CAST('inf' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_single_row_negative_inf",
+            .sql = "SELECT VAR_SAMP(CAST('-inf' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_single_row_nan",
+            .sql = "SELECT VAR_SAMP(CAST('nan' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_numeric_empty_input",
+            .sql = "SELECT VAR_SAMP(x) FROM TableNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_numeric_one_value",
+            .sql = "SELECT VAR_SAMP(x) FROM TableNumericOneValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_numeric_one_non_null_value",
+            .sql = "SELECT VAR_SAMP(x) FROM TableNumericOneNonNullValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_numeric_nulls",
+            .sql = "SELECT VAR_SAMP(x) FROM TableNumericNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_numeric_same_values",
+            .sql = "SELECT VAR_SAMP(x) FROM TableNumericSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_samp_numeric_different_values",
+            .sql = "SELECT VAR_SAMP(x) FROM TableNumericAllValuesVar",
+            .rows = .{
+                .{16.093},
+            },
+        },
+        .{
+            .desc = "var_samp_numeric_high_prec_values",
+            .sql = "SELECT VAR_SAMP(x) FROM TableNumericHighPrecValues",
+            .rows = .{
+                .{0.005},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_empty_input",
+            .sql = "SELECT VAR_SAMP(x) FROM TableBigNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_one_value",
+            .sql = "SELECT VAR_SAMP(x) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_one_non_null_value",
+            .sql = "SELECT VAR_SAMP(x) FROM TableBigNumericOneNonNullValue",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_nulls",
+            .sql = "SELECT VAR_SAMP(x) FROM TableBigNumericNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_same_values",
+            .sql = "SELECT VAR_SAMP(x) FROM TableBigNumericSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_different_values",
+            .sql = "SELECT VAR_SAMP(x) FROM TableBigNumericAllValuesVar",
+            .rows = .{
+                .{16.093},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_high_prec_values",
+            .sql = "SELECT VAR_SAMP(x) FROM TableBigNumericHighPrecValues",
+            .rows = .{
+                .{4.0499999999999994e-33},
+            },
+        },
+        .{
+            .desc = "var_pop_empty_input",
+            .sql = "SELECT VAR_POP(x) FROM TableEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_pop_one_value",
+            .sql = "SELECT VAR_POP(x) FROM TableOneValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_one_non_null_value",
+            .sql = "SELECT VAR_POP(x) FROM TableOneNonNullValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_nulls",
+            .sql = "SELECT VAR_POP(x) FROM TableNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_pop_same_values",
+            .sql = "SELECT VAR_POP(x) FROM TableSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_nice",
+            .sql = "SELECT VAR_POP(x) FROM UNNEST([10, 20]) x",
+            .rows = .{
+                .{25},
+            },
+        },
+        .{
+            .desc = "var_pop_positive_inf",
+            .sql = "SELECT VAR_POP(CAST('inf' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_pop_negative_inf",
+            .sql = "SELECT VAR_POP(CAST('-inf' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_pop_nan",
+            .sql = "SELECT VAR_POP(CAST('nan' AS DOUBLE)) FROM UNNEST([1, 2]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_pop_single_row_positive_inf",
+            .sql = "SELECT VAR_POP(CAST('inf' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_pop_single_row_negative_inf",
+            .sql = "SELECT VAR_POP(CAST('-inf' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_pop_single_row_nan",
+            .sql = "SELECT VAR_POP(CAST('nan' AS DOUBLE)) FROM UNNEST([1]) x",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "var_pop_numeric_empty_input",
+            .sql = "SELECT VAR_POP(x) FROM TableNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_pop_numeric_one_value",
+            .sql = "SELECT VAR_POP(x) FROM TableNumericOneValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_numeric_one_non_null_value",
+            .sql = "SELECT VAR_POP(x) FROM TableNumericOneNonNullValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_numeric_nulls",
+            .sql = "SELECT VAR_POP(x) FROM TableNumericNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_pop_numeric_same_values",
+            .sql = "SELECT VAR_POP(x) FROM TableNumericSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_numeric_different_values",
+            .sql = "SELECT VAR_POP(x) FROM TableNumericAllValuesVar",
+            .rows = .{
+                .{12.8744},
+            },
+        },
+        .{
+            .desc = "var_pop_numeric_high_prec_values",
+            .sql = "SELECT VAR_POP(x) FROM TableNumericHighPrecValues",
+            .rows = .{
+                .{0.0025},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_empty_input",
+            .sql = "SELECT VAR_POP(x) FROM TableBigNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_one_value",
+            .sql = "SELECT VAR_POP(x) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_one_non_null_value",
+            .sql = "SELECT VAR_POP(x) FROM TableBigNumericOneNonNullValue",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_nulls",
+            .sql = "SELECT VAR_POP(x) FROM TableBigNumericNulls",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_same_values",
+            .sql = "SELECT VAR_POP(x) FROM TableBigNumericSameValues",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_different_values",
+            .sql = "SELECT VAR_POP(x) FROM TableBigNumericAllValuesVar",
+            .rows = .{
+                .{12.8744},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_high_prec_values",
+            .sql = "SELECT VAR_POP(x) FROM TableBigNumericHighPrecValues",
+            .rows = .{
+                .{2.0249999999999997e-33},
+            },
+        },
+        .{
+            .desc = "var_samp_double_extreme_inf",
+            .sql =
+            \\SELECT VAR_SAMP(x)
+            \\FROM UNNEST([1.0, 2.2e+304,-2.2e+304]) x
+            ,
+            .rows = .{
+                .{inf},
+            },
+        },
+        .{
+            .desc = "var_pop_double_extreme_inf",
+            .sql =
+            \\SELECT VAR_POP(x)
+            \\FROM UNNEST([1.0, 2.2e+304,-2.2e+304]) x
+            ,
+            .rows = .{
+                .{inf},
+            },
+        },
+        .{
+            .desc = "stddev_samp_double_extreme",
+            .sql =
+            \\SELECT STDDEV_SAMP(x)
+            \\FROM UNNEST([1.0, 2.2e+304,-2.2e+304]) x
+            ,
+            .rows = .{
+                .{2.2e+304},
+            },
+        },
+        .{
+            .desc = "stddev_pop_double_extreme",
+            .sql =
+            \\SELECT STDDEV_POP(x)
+            \\FROM UNNEST([1.0, 2.2e+304,-2.2e+304]) x
+            ,
+            .rows = .{
+                .{1.7962924780409973e+304},
+            },
+        },
+        .{
+            .desc = "cross_apply",
+            .sql =
+            \\select
+            \\ id,
+            \\ (select as struct
+            \\   avg(x),
+            \\   stddev(x), stddev_samp(x), stddev_pop(x),
+            \\   variance(x), var_pop(x), var_samp(x)
+            \\ from t.x x) from
+            \\ (
+            \\  (select 1 id, [] x)                       union all
+            \\  (select 2 id, cast(NULL as array<int64>)) union all
+            \\  (select 3 id, [NULL])                     union all
+            \\  (select 4 id, [1])                        union all
+            \\  (select 5 id, [4, 5])                     union all
+            \\  (select 6 id, [NULL, 1, NULL, 9, NULL])
+            \\ ) t
+            \\order by id
+            ,
+            .rows = .{
+                .{ 1, .{ null, null, null, null, null, null, null } },
+                .{ 2, .{ null, null, null, null, null, null, null } },
+                .{ 3, .{ null, null, null, null, null, null, null } },
+                .{ 4, .{ 1, null, null, 0, null, 0, null } },
+                .{ 5, .{ 4.5, 0.70710678118654757, 0.70710678118654757, 0.5, 0.5, 0.25, 0.5 } },
+                .{ 6, .{ 5, 5.6568542494923806, 5.6568542494923806, 4, 32, 16, 32 } },
+            },
+        },
+        .{
+            .desc = "covar_empty_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableEmpty
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "corr_empty_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableEmpty
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_one_pair",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 1.0 AS x)])
+            ,
+            .rows = .{
+                .{ null, 0 },
+            },
+        },
+        .{
+            .desc = "corr_one_pair",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 1.0 AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_same_column",
+            .sql =
+            \\SELECT COVAR_SAMP(row_id,row_id), COVAR_POP(row_id,row_id)
+            \\FROM TableSameValues
+            ,
+            .rows = .{
+                .{ 2.5, 2 },
+            },
+        },
+        .{
+            .desc = "corr_same_column",
+            .sql =
+            \\SELECT CORR(row_id,row_id)
+            \\FROM TableSameValues
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "covar_with_nulls",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, 1.0 AS x),
+            \\        (2.0, 2.0),
+            \\        (3.0, 3.0),
+            \\        (4.0, 4.0),
+            \\        (5.0, 5.0),
+            \\        (CAST(NULL as DOUBLE), 1000.0),
+            \\        (2000, CAST(NULL as DOUBLE)),
+            \\        (CAST(NULL as DOUBLE), CAST(NULL as DOUBLE))
+            \\])
+            ,
+            .rows = .{
+                .{ 2.5, 2 },
+            },
+        },
+        .{
+            .desc = "corr_with_nulls",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, 1.0 AS x),
+            \\        (2.0, 2.0),
+            \\        (3.0, 3.0),
+            \\        (4.0, 4.0),
+            \\        (5.0, 5.0),
+            \\        (CAST(NULL as DOUBLE), 1000.0),
+            \\        (2000, CAST(NULL as DOUBLE)),
+            \\        (CAST(NULL as DOUBLE), CAST(NULL as DOUBLE))
+            \\])
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "covar_samp_positive_inf",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 2.0 AS x), (CAST('inf' AS DOUBLE), 4.0)])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "covar_samp_positive_inf_too_few_args",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, CAST('inf' AS DOUBLE) AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_pop_positive_inf",
+            .sql =
+            \\SELECT COVAR_POP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 2.0 AS x), (3.0, CAST('inf' AS DOUBLE))])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "corr_positive_inf",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, 2.0 AS x),
+            \\        (CAST('inf' AS DOUBLE), CAST('inf' AS DOUBLE))
+            \\])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "corr_positive_inf_too_few_args",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, CAST('inf' AS DOUBLE) AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_samp_negative_inf",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 2.0 AS x), (CAST('-inf' AS DOUBLE), 4.0)])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "covar_samp_negative_inf_too_few_args",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, CAST('-inf' AS DOUBLE) AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_pop_negative_inf",
+            .sql =
+            \\SELECT COVAR_POP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 2.0 AS x), (3.0, CAST('-inf' AS DOUBLE))])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "corr_negative_inf",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([
+            \\    STRUCT(1.0 AS y, 2.0 AS x),
+            \\          (CAST('-inf' AS DOUBLE), CAST('-inf' AS DOUBLE))
+            \\])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "corr_negative_inf_too_few_args",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, CAST('-inf' AS DOUBLE) AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_samp_nan",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 2.0 AS x), (CAST('nan' AS DOUBLE), 4.0)])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "covar_samp_nan_too_few_args",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, CAST('nan' AS DOUBLE) AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_pop_nan",
+            .sql =
+            \\SELECT COVAR_POP(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 2.0 AS x), (3.0, CAST('nan' AS DOUBLE))])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "corr_nan",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, 2.0 AS x),
+            \\        (CAST('nan' AS DOUBLE), CAST('nan' AS DOUBLE))
+            \\])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "corr_nan_too_few_args",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, CAST('nan' AS DOUBLE) AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_normal_values",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, 5.0 AS x),
+            \\        (3.0, 9.0),
+            \\        (4.0, 7.0),
+            \\        (5.0, 1.0),
+            \\        (7.0, 13.0)
+            \\])
+            ,
+            .rows = .{
+                .{ 4, 3.2 },
+            },
+        },
+        .{
+            .desc = "corr_normal_values",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, 5.0 AS x),
+            \\        (3.0, 9.0),
+            \\        (4.0, 7.0),
+            \\        (5.0, 1.0),
+            \\        (7.0, 13.0)
+            \\])
+            ,
+            .rows = .{
+                .{0.4},
+            },
+        },
+        .{
+            .desc = "covar_samp_double_extreme_negative_slope",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, 1.0 AS x),
+            \\        (2.2e+304, -2.2e+304)
+            \\])
+            ,
+            .rows = .{
+                .{-inf},
+            },
+        },
+        .{
+            .desc = "covar_pop_double_extreme_negative_slope",
+            .sql =
+            \\SELECT COVAR_POP(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, 1.0 AS x),
+            \\        (2.2e+304, -2.2e+304)
+            \\])
+            ,
+            .rows = .{
+                .{-inf},
+            },
+        },
+        .{
+            .desc = "corr_double_extreme_negative_slope",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([
+            \\  STRUCT(1.0 AS y, -1.0 AS x),
+            \\        (2.2e+154, -2.2e+154)
+            \\])
+            ,
+            .rows = .{
+                .{-1},
+            },
+        },
+        .{
+            .desc = "covar_samp_double_max_non_overflow",
+            .sql =
+            \\# Repro b/267896406: When COVAR_* works with either a fixed X or Y, the returned
+            \\# value should be 0, instead of indeterministically generate overflow depending
+            \\# on the other value.
+            \\SELECT COVAR_SAMP(x, CAST('1.7317579696886923e+308' AS DOUBLE))
+            \\FROM UNNEST([10,1,2,9,3,4,5,6,7,8]) AS x
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "covar_pop_double_max_non_overflow",
+            .sql =
+            \\SELECT COVAR_POP(x, CAST('1.7317579696886923e+308' AS DOUBLE))
+            \\FROM UNNEST([10,1,2,9,3,4,5,6,7,8]) AS x
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "corr_double_max_non_overflow",
+            .sql =
+            \\# Repro b/268264381: When CORR works with either a fixed X or Y, the returned
+            \\# value should be NAN, instead of indeterministically generate overflow depending
+            \\# on the other value.
+            \\SELECT CORR(x, CAST('1.7317579696886923e+308' AS DOUBLE))
+            \\FROM UNNEST([10,1,2,9,3,4,5,6,7,8]) AS x
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "corr_zero_over_zero",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([STRUCT(1.0 AS y, 2.0 AS x), (1.0, 2.0)])
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "covar_numeric_empty_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableNumericEmpty
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "corr_numeric_empty_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableNumericEmpty
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_numeric_one_pair",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM UNNEST([STRUCT(CAST(1.0 AS NUMERIC) AS y, CAST(1.0 AS NUMERIC) AS x)])
+            ,
+            .rows = .{
+                .{ null, 0 },
+            },
+        },
+        .{
+            .desc = "corr_numeric_one_pair",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([STRUCT(CAST(1.0 AS NUMERIC) AS y, CAST(1.0 AS NUMERIC) AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_numeric_same_column",
+            .sql =
+            \\SELECT COVAR_SAMP(x,x), COVAR_POP(x,x)
+            \\FROM TableNumericSameColumn
+            ,
+            .rows = .{
+                .{ 2.5, 2 },
+            },
+        },
+        .{
+            .desc = "corr_numeric_same_column",
+            .sql =
+            \\SELECT CORR(x,x)
+            \\FROM TableNumericSameColumn
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "covar_numeric_normal_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableNumericAllValuesBinaryStat
+            ,
+            .rows = .{
+                .{ 1.7545, 1.4036 },
+            },
+        },
+        .{
+            .desc = "covar_numeric_normal_input_with_null",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableNumericAllValuesWithNullBinaryStat
+            ,
+            .rows = .{
+                .{ 0.25, 0.2 },
+            },
+        },
+        .{
+            .desc = "covar_numeric_big_values_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableNumericBigValuesBinaryStat
+            ,
+            .rows = .{
+                .{ 4.9999999000000009e+57, 2.4999999500000005e+57 },
+            },
+        },
+        .{
+            .desc = "corr_numeric_big_values_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableNumericBigValuesBinaryStat
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "covar_numeric_small_values_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableNumericSmallValuesBinaryStat
+            ,
+            .rows = .{
+                .{ 5e-19, 2.5e-19 },
+            },
+        },
+        .{
+            .desc = "corr_numeric_small_values_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableNumericSmallValuesBinaryStat
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "corr_numeric_zero_correlation_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableNumericZeroCorrelation
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "corr_numeric_zero_over_zero",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableNumericNanCorrelation
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "covar_bignumeric_empty_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableBigNumericEmpty
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "corr_bignumeric_empty_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableBigNumericEmpty
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_bignumeric_one_pair",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM UNNEST([STRUCT(CAST(1.0 AS BIGNUMERIC) AS y, CAST(1.0 AS BIGNUMERIC) AS x)])
+            ,
+            .rows = .{
+                .{ null, 0 },
+            },
+        },
+        .{
+            .desc = "corr_bignumeric_one_pair",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM UNNEST([STRUCT(CAST(1.0 AS BIGNUMERIC) AS y, CAST(1.0 AS BIGNUMERIC) AS x)])
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_bignumeric_same_column",
+            .sql =
+            \\SELECT COVAR_SAMP(x,x), COVAR_POP(x,x)
+            \\FROM TableBigNumericSameColumn
+            ,
+            .rows = .{
+                .{ 2.5, 2 },
+            },
+        },
+        .{
+            .desc = "corr_bignumeric_same_column",
+            .sql =
+            \\SELECT CORR(x,x)
+            \\FROM TableBigNumericSameColumn
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "covar_bignumeric_normal_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableBigNumericAllValuesBinaryStat
+            ,
+            .rows = .{
+                .{ 1.7545, 1.4036 },
+            },
+        },
+        .{
+            .desc = "covar_bignumeric_normal_input_with_null",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableBigNumericAllValuesWithNullBinaryStat
+            ,
+            .rows = .{
+                .{ 0.25, 0.19999999999999998 },
+            },
+        },
+        .{
+            .desc = "covar_bignumeric_big_values_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableBigNumericBigValuesBinaryStat
+            ,
+            .rows = .{
+                .{ 4.9999999e+75, 2.49999995e+75 },
+            },
+        },
+        .{
+            .desc = "corr_bignumeric_big_values_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableBigNumericBigValuesBinaryStat
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "covar_bignumeric_small_values_input",
+            .sql =
+            \\SELECT COVAR_SAMP(y,x), COVAR_POP(y,x)
+            \\FROM TableBigNumericSmallValuesBinaryStat
+            ,
+            .rows = .{
+                .{ 5e-59, 2.5e-59 },
+            },
+        },
+        .{
+            .desc = "corr_bignumeric_small_values_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableBigNumericSmallValuesBinaryStat
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "corr_bignumeric_zero_correlation_input",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableBigNumericZeroCorrelation
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "corr_bignumeric_zero_over_zero",
+            .sql =
+            \\SELECT CORR(y,x)
+            \\FROM TableBigNumericNanCorrelation
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "covar_samp_bignumeric_having_min",
+            .sql =
+            \\# COVAR_SAMP with BIGNUMERIC HAVING MIN regression in random query test. see b/168504879.
+            \\SELECT
+            \\  COVAR_SAMP(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC), CAST('8749926988538416617.75583429724016192953596326874503331195' AS BIGNUMERIC)
+            \\    HAVING MIN a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_samp_bignumeric_having_max",
+            .sql =
+            \\# COVAR_SAMP with BIGNUMERIC HAVING MAX regression in random query test. see b/168504879.
+            \\SELECT
+            \\  COVAR_SAMP(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC), CAST('8749926988538416617.75583429724016192953596326874503331195' AS BIGNUMERIC)
+            \\    HAVING MAX a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "covar_pop_bignumeric_having_min",
+            .sql =
+            \\# COVAR_POP with BIGNUMERIC HAVING MIN regression in random query test. see b/168504879.
+            \\SELECT
+            \\  COVAR_POP(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC), CAST('8749926988538416617.75583429724016192953596326874503331195' AS BIGNUMERIC)
+            \\    HAVING MIN a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "covar_pop_bignumeric_having_max",
+            .sql =
+            \\# COVAR_POP with BIGNUMERIC HAVING MAX regression in random query test. see b/168504879.
+            \\SELECT
+            \\  COVAR_POP(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC), CAST('8749926988538416617.75583429724016192953596326874503331195' AS BIGNUMERIC)
+            \\    HAVING MAX a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "corr_bignumeric_having_min",
+            .sql =
+            \\# CORR with BIGNUMERIC HAVING MIN regression in random query test. see b/168504879.
+            \\SELECT
+            \\  CORR(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC), CAST('8749926988538416617.75583429724016192953596326874503331195' AS BIGNUMERIC)
+            \\    HAVING MIN a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "corr_pop_bignumeric_having_max",
+            .sql =
+            \\# CORR with BIGNUMERIC HAVING MAX regression in random query test. see b/168504879.
+            \\SELECT
+            \\  CORR(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC), CAST('8749926988538416617.75583429724016192953596326874503331195' AS BIGNUMERIC)
+            \\    HAVING MAX a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_having_min",
+            .sql =
+            \\# VAR_SAMP with BIGNUMERIC HAVING MIN regression in random query test. see b/168504879.
+            \\SELECT
+            \\  VAR_SAMP(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC) HAVING MIN a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_samp_bignumeric_having_max",
+            .sql =
+            \\# VAR_SAMP with BIGNUMERIC HAVING MAX regression in random query test. see b/168504879.
+            \\SELECT
+            \\  VAR_SAMP(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC) HAVING MAX a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_having_min",
+            .sql =
+            \\# VAR_POP with BIGNUMERIC HAVING MIN regression in random query test. see b/168504879.
+            \\SELECT
+            \\  VAR_POP(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC) HAVING MIN a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "var_pop_bignumeric_having_max",
+            .sql =
+            \\# VAR_POP with BIGNUMERIC HAVING MAX regression in random query test. see b/168504879.
+            \\SELECT
+            \\  VAR_POP(CAST('4713206448799736516.72577184194899760761312056340229007059' AS BIGNUMERIC) HAVING MAX a_1) AS a_5
+            \\FROM
+            \\  UNNEST([-2345949651440631576,7328094592200505331,-8127752158740727339,3440194346519571781,-5047633812032876658,-687866878989264013,2986247173623817684,3064356682196609899,-4504796347206165351,-8056946152990664047,-5911223673602395496,-8948023665546729396,-1177289210605923554,3065520914909516851,-3360006490673737289]) AS a_1
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+    },
+}

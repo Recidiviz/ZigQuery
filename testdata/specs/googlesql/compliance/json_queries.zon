@@ -1,0 +1,976 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/json_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/json_queries.test",
+    .cases = .{
+        .{
+            .desc = "json_int_scalar",
+            .sql = "SELECT JSON '1'",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "json_string_scalar",
+            .sql = "SELECT JSON '\"foo\"'",
+            .rows = .{
+                .{"foo"},
+            },
+        },
+        .{
+            .desc = "json_array",
+            .sql = "SELECT JSON '[\"foo\", 12, null, 0.123]'",
+            .rows = .{
+                .{"[\"foo\",12,null,0.123]"},
+            },
+        },
+        .{
+            .desc = "json_object",
+            .sql = "SELECT JSON '{\"a\": \"foo\", \"b\": 12, \"c\": null, \"d\": 0.123}'",
+            .rows = .{
+                .{"{\"a\":\"foo\",\"b\":12,\"c\":null,\"d\":0.123}"},
+            },
+        },
+        .{
+            .desc = "json_object_and_array",
+            .sql = "SELECT JSON '{\"a\": \"foo\", \"b\": 12, \"c\": null, \"d\": [{\"f\": \"bar\"}, {\"d\": 1}, [null, 1]]}'",
+            .rows = .{
+                .{"{\"a\":\"foo\",\"b\":12,\"c\":null,\"d\":[{\"f\":\"bar\"},{\"d\":1},[null,1]]}"},
+            },
+        },
+        .{
+            .desc = "json_escaping",
+            .sql = "SELECT JSON '{\"a\\\\\"b\\\\\\\\c\": 12}'",
+            .rows = .{
+                .{"{\"a\\\"b\\\\c\":12}"},
+            },
+        },
+        .{
+            .desc = "json_null",
+            .sql =
+            \\SELECT JSON 'null' IS NULL, JSON_EXTRACT(JSON 'null', "$") IS NULL,
+            \\       JSON_EXTRACT(JSON 'null', "$.a") IS NULL
+            ,
+            .rows = .{
+                .{ false, false, true },
+            },
+        },
+        .{
+            .desc = "to_json_unordered",
+            .sql = "SELECT TO_JSON(ARRAY(SELECT e FROM UNNEST([1, 2, 3]) AS e))",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "to_json_unordered_struct",
+            .sql = "SELECT TO_JSON(STRUCT(ARRAY(SELECT e FROM UNNEST([1, 2, 3]) AS e) AS f1))",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "json_extract",
+            .sql = "SELECT JSON_EXTRACT(JSON '{\"a\": [1, {\"b.c\": [10, 20]}]}', \"$[a][1]['b.c']\")",
+            .rows = .{
+                .{"[10,20]"},
+            },
+        },
+        .{
+            .desc = "json_extract_scalar",
+            .sql =
+            \\SELECT JSON_EXTRACT_SCALAR(JSON '{"a": [1, {"b.c": [10, 20]}]}',
+            \\  "$[a][1]['b.c'][0]")
+            ,
+            .rows = .{
+                .{"10"},
+            },
+        },
+        .{
+            .desc = "json_query",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\": [1, {\"b.c\": [10, 20]}]}', \"$.a[1].\\\"b.c\\\"\")",
+            .rows = .{
+                .{"[10,20]"},
+            },
+        },
+        .{
+            .desc = "json_query_no_validation",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\": [1, {\"b.c\": [10, 20]}]}', '$.a[1].\"b.c\"')",
+            .rows = .{
+                .{"[10,20]"},
+            },
+        },
+        .{
+            .desc = "json_value",
+            .sql = "SELECT JSON_VALUE(JSON '{\"a\": [1, {\"b.c\": [10, 20]}]}', \"$.a[1].\\\"b.c\\\"[0]\")",
+            .rows = .{
+                .{"10"},
+            },
+        },
+        .{
+            .desc = "json_extract_scalar_json_value_one_argument",
+            .sql = "SELECT JSON_EXTRACT_SCALAR(JSON '\"hello there\"'), JSON_VALUE(JSON '\"my friend\"')",
+            .rows = .{
+                .{ "hello there", "my friend" },
+            },
+        },
+        .{
+            .desc = "json_extract_array",
+            .sql = "SELECT JSON_EXTRACT_ARRAY(JSON '{\"a.b\": [1, {\"c\": \"foo\"}, null]}', \"$['a.b']\")",
+            .rows = .{
+                .{.{ 1, "{\"c\":\"foo\"}", "null" }},
+            },
+        },
+        .{
+            .desc = "json_extract_string_array",
+            .sql = "SELECT JSON_EXTRACT_STRING_ARRAY(JSON '{\"a.b\": [1, \"foo\", null]}', \"$['a.b']\")",
+            .rows = .{
+                .{.{ "1", "foo", null }},
+            },
+        },
+        .{
+            .desc = "json_query_array",
+            .sql = "SELECT JSON_QUERY_ARRAY(JSON '{\"a.b\": [1, {\"c\": \"foo\"}, null]}', \"$.\\\"a.b\\\"\")",
+            .rows = .{
+                .{.{ 1, "{\"c\":\"foo\"}", "null" }},
+            },
+        },
+        .{
+            .desc = "json_query_array_no_validation",
+            .sql = "SELECT JSON_QUERY_ARRAY(JSON '{\"a.b\": [1, {\"c\": \"foo\"}, null]}', '$.\"a.b\"')",
+            .rows = .{
+                .{.{ 1, "{\"c\":\"foo\"}", "null" }},
+            },
+        },
+        .{
+            .desc = "json_value_array",
+            .sql = "SELECT JSON_VALUE_ARRAY(JSON '{\"a.b\": [1, \"foo\", null]}', \"$.\\\"a.b\\\"\")",
+            .rows = .{
+                .{.{ "1", "foo", null }},
+            },
+        },
+        .{
+            .desc = "json_dot_notation",
+            .sql = "SELECT (JSON '{\"a\": \"foo\"}').a",
+            .rows = .{
+                .{"foo"},
+            },
+        },
+        .{
+            .desc = "json_dot_notation_special_characters",
+            .sql = "SELECT (JSON '{\"a\\\\\"\\\\\\\\foo\\\\t@! \\'bar\": {\"b.c\": [10, 20]}}').`a\\\"\\\\foo\\t@! \\'bar`.`b.c`",
+            .rows = .{
+                .{"[10,20]"},
+            },
+        },
+        .{
+            .desc = "json_dot_notation_invalid_paths",
+            .sql =
+            \\SELECT json_val.field, json_val.fie, json_val.array, json_val.array.field2 FROM
+            \\(SELECT JSON '{"field": 1, "array": [{"field2": 20}, {"field2": 30}]}' AS json_val)
+            ,
+            .rows = .{
+                .{ 1, null, "[{\"field2\":20},{\"field2\":30}]", null },
+            },
+        },
+        .{
+            .desc = "json_subscript_int64_and_string",
+            .sql = "SELECT (JSON '[{\"a\": \"foo\"}, {\"a\": \"bar\"}]')[0][\"a\"]",
+            .rows = .{
+                .{"foo"},
+            },
+        },
+        .{
+            .desc = "json_subscript_invalid_index",
+            .sql = "SELECT (JSON '[{\"a\": \"foo\"}, {\"a\": \"bar\"}]')[2]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_subscript_null_json",
+            .sql = "SELECT (JSON 'null')[0]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_subscript_special_character",
+            .sql = "SELECT (JSON '{\"a\\\\\"\\\\\\\\foo\\\\t@! \\'bar\": {\"b.c\": [10, 20]}}')['a\"\\\\foo\\t@! \\'bar']['b.c']",
+            .rows = .{
+                .{"[10,20]"},
+            },
+        },
+        .{
+            .desc = "json_subscript_invalid_paths",
+            .sql =
+            \\SELECT json_val["field"], json_val["fie"], json_val.array[0]["field2"], json_val.array1[0]["field2"] FROM
+            \\(SELECT JSON '{"field": 1, "array": [{"field2": 20}, {"field2": 30}]}' AS json_val)
+            ,
+            .rows = .{
+                .{ 1, null, 20, null },
+            },
+        },
+        .{
+            .desc = "json_subscript_null",
+            .sql = "SELECT (JSON '[{\"a\": \"foo\"}, {\"a\": \"bar\"}]')[NULL]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_subscript_null_string",
+            .sql = "SELECT (JSON '[{\"a\": \"foo\"}, {\"a\": \"bar\"}]')[CAST(NULL AS STRING)]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_subscript_int64_null_string",
+            .sql = "SELECT (JSON '[{\"a\": \"foo\"}, {\"a\": \"bar\"}]')[0][CAST(NULL AS STRING)]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_subscript_computed_param",
+            .sql = "SELECT (JSON '{\"f1\": {\"f2\":\"foo\"}}')[CONCAT('f', '1')][CONCAT('f', '2')]",
+            .rows = .{
+                .{"foo"},
+            },
+        },
+        .{
+            .desc = "json_subscript_valid_json_test",
+            .sql = "SELECT (JSON '{\"f1\": {\"f2\":\"foo\"}}')['f1']['f2']",
+            .rows = .{
+                .{"foo"},
+            },
+        },
+        .{
+            .desc = "parse_json",
+            .sql =
+            \\WITH Round AS (SELECT "round" foo1),
+            \\Number AS (SELECT "2.75897182587158791241578135873519" foo3)
+            \\SELECT PARSE_JSON('1'), PARSE_JSON('[1, null, true]'),
+            \\PARSE_JSON('2.5', wide_number_mode=>'exact'),
+            \\PARSE_JSON('2.2412421353246235436', wide_number_mode=>'round'),
+            \\PARSE_JSON('18446744073709551615', wide_number_mode=>'exact'),
+            \\PARSE_JSON(foo3, wide_number_mode=>'round'),
+            \\PARSE_JSON('123', wide_number_mode=>foo1),
+            \\PARSE_JSON('456', wide_number_mode=>concat('ex', 'act'))
+            \\FROM Round, Number
+            ,
+            .rows = .{
+                .{ 1, "[1,null,true]", 2.5, 2.2412421353246237, 18446744073709551615, 2.758971825871588, 123, 456 },
+            },
+        },
+        .{
+            .desc = "json_bool",
+            .sql = "SELECT bool(JSON 'true')",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "json_bool_string_input",
+            .sql = "SELECT bool(JSON '\"true\"')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_int64",
+            .sql = "SELECT int64(JSON '1')",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "json_int64_double_with_fractional_part",
+            .sql = "SELECT int64(JSON '10.1')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_int64_double_without_fractional_part",
+            .sql = "SELECT int64(JSON '10.0')",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "json_int64_string_input",
+            .sql = "SELECT int64(JSON '\"4\"')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_string",
+            .sql = "SELECT string(JSON '\"test\"')",
+            .rows = .{
+                .{"test"},
+            },
+        },
+        .{
+            .desc = "json_string_string_num",
+            .sql = "SELECT string(JSON '\"123\"')",
+            .rows = .{
+                .{"123"},
+            },
+        },
+        .{
+            .desc = "json_string_num_input",
+            .sql = "SELECT string(JSON '123')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_type_string",
+            .sql = "SELECT json_type(JSON '\"test\"')",
+            .rows = .{
+                .{"string"},
+            },
+        },
+        .{
+            .desc = "json_double",
+            .sql = "SELECT double(JSON '1.0')",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "json_double_exact",
+            .sql = "SELECT double(JSON '1.0', wide_number_mode=>'exact')",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "json_double_2",
+            .sql = "SELECT double(JSON '1.1')",
+            .rows = .{
+                .{1.1},
+            },
+        },
+        .{
+            .desc = "json_negative_double",
+            .sql = "SELECT double(JSON '-1.0')",
+            .rows = .{
+                .{-1},
+            },
+        },
+        .{
+            .desc = "json_negative_double_2",
+            .sql = "SELECT double(JSON '-1.1')",
+            .rows = .{
+                .{-1.1},
+            },
+        },
+        .{
+            .desc = "json_double_round",
+            .unsupported_in_bigquery = "JSON conversion accessor is FLOAT64, not DOUBLE (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT double(JSON '-0.0000002414214151379150123', wide_number_mode=>'round')",
+            .rows = .{
+                .{-2.41421415137915e-07},
+            },
+        },
+        .{
+            .desc = "json_double_max_unsigned_64_exact",
+            .unsupported_in_bigquery = "JSON conversion accessor is FLOAT64, not DOUBLE (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT double(JSON '18446744073709551615', wide_number_mode=>'exact')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_double_max_unsigned_64_round",
+            .sql = "SELECT double(JSON '18446744073709551615', wide_number_mode=>'round')",
+            .rows = .{
+                .{1.8446744073709552e+19},
+            },
+        },
+        .{
+            .desc = "json_double_max_unsigned_64_implicit_round",
+            .sql = "SELECT double(JSON '18446744073709551615')",
+            .rows = .{
+                .{1.8446744073709552e+19},
+            },
+        },
+        .{
+            .desc = "json_double_invalid_wide_number_mode",
+            .sql = "SELECT double(JSON '18', wide_number_mode=>'roundish')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_safe_double_fail_resolve_to_null",
+            .unsupported_in_bigquery = "JSON conversion accessor is FLOAT64, not DOUBLE (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT SAFE.double(JSON '18446744073709551615', wide_number_mode=>'exact')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_safe_double",
+            .sql = "SELECT SAFE.double(JSON '-1.1')",
+            .rows = .{
+                .{-1.1},
+            },
+        },
+        .{
+            .desc = "json_float64",
+            .sql = "SELECT float64(JSON '1.0')",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "json_float64_exact",
+            .sql = "SELECT float64(JSON '1.0', wide_number_mode=>'exact')",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "json_float64_2",
+            .sql = "SELECT float64(JSON '1.1')",
+            .rows = .{
+                .{1.1},
+            },
+        },
+        .{
+            .desc = "json_negative_float64",
+            .sql = "SELECT float64(JSON '-1.0')",
+            .rows = .{
+                .{-1},
+            },
+        },
+        .{
+            .desc = "json_negative_float64_2",
+            .sql = "SELECT float64(JSON '-1.1')",
+            .rows = .{
+                .{-1.1},
+            },
+        },
+        .{
+            .desc = "json_float64_round",
+            .sql = "SELECT float64(JSON '-0.0000002414214151379150123', wide_number_mode=>'round')",
+            .rows = .{
+                .{-2.41421415137915e-07},
+            },
+        },
+        .{
+            .desc = "json_float64_max_unsigned_64_exact",
+            .sql = "SELECT float64(JSON '18446744073709551615', wide_number_mode=>'exact')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_float64_max_unsigned_64_round",
+            .sql = "SELECT float64(JSON '18446744073709551615', wide_number_mode=>'round')",
+            .rows = .{
+                .{1.8446744073709552e+19},
+            },
+        },
+        .{
+            .desc = "json_float64_max_unsigned_64_implicit_round",
+            .sql = "SELECT float64(JSON '18446744073709551615')",
+            .rows = .{
+                .{1.8446744073709552e+19},
+            },
+        },
+        .{
+            .desc = "json_float64_invalid_wide_number_mode",
+            .sql = "SELECT float64(JSON '18', wide_number_mode=>'roundish')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_safe_float64_fail_resolve_to_null",
+            .sql = "SELECT SAFE.float64(JSON '18446744073709551615', wide_number_mode=>'exact')",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_safe_float64",
+            .sql = "SELECT SAFE.float64(JSON '-1.1')",
+            .rows = .{
+                .{-1.1},
+            },
+        },
+        .{
+            .desc = "json_array_empty",
+            .sql = "SELECT JSON_ARRAY()",
+            .rows = .{
+                .{"[]"},
+            },
+        },
+        .{
+            .desc = "json_array_basic",
+            .sql = "SELECT JSON_ARRAY(10, \"foo\", NULL)",
+            .rows = .{
+                .{"[10,\"foo\",null]"},
+            },
+        },
+        .{
+            .desc = "json_array_complex",
+            .sql =
+            \\SELECT JSON_ARRAY(10, JSON '{"a": [10, true]}', STRUCT("foo" AS abc, [11, 21, 31] AS xyz),
+            \\                  ["foo", "bar"])
+            ,
+            .rows = .{
+                .{"[10,{\"a\":[10,true]},{\"abc\":\"foo\",\"xyz\":[11,21,31]},[\"foo\",\"bar\"]]"},
+            },
+        },
+        .{
+            .desc = "json_array_bignumeric",
+            .sql = "SELECT JSON_ARRAY(BIGNUMERIC '1.111111111111111111')",
+            .rows = .{
+                .{"[1.1111111111111112]"},
+            },
+        },
+        .{
+            .desc = "json_array_bignumeric_strict",
+            .sql = "SELECT JSON_ARRAY(BIGNUMERIC '1.111111111111111111')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_object_empty",
+            .sql = "SELECT JSON_OBJECT()",
+            .rows = .{
+                .{"{}"},
+            },
+        },
+        .{
+            .desc = "json_object_basic",
+            .sql = "SELECT JSON_OBJECT(\"a\", \"foo\", \"b\", true, \"c\", NULL)",
+            .rows = .{
+                .{"{\"a\":\"foo\",\"b\":true,\"c\":null}"},
+            },
+        },
+        .{
+            .desc = "json_object_arrays_basic",
+            .sql = "SELECT JSON_OBJECT([\"a\", \"b\", \"c\"], [10, 15, -20])",
+            .rows = .{
+                .{"{\"a\":10,\"b\":15,\"c\":-20}"},
+            },
+        },
+        .{
+            .desc = "json_object_complex",
+            .sql =
+            \\SELECT JSON_OBJECT("c", JSON '{"a": [10, true]}', "a", STRUCT("foo" AS abc, [11, 21, 31] AS xyz),
+            \\                   "c", 10, "b", ["foo", "bar"])
+            ,
+            .rows = .{
+                .{"{\"a\":{\"abc\":\"foo\",\"xyz\":[11,21,31]},\"b\":[\"foo\",\"bar\"],\"c\":{\"a\":[10,true]}}"},
+            },
+        },
+        .{
+            .desc = "json_object_bignumeric",
+            .sql = "SELECT JSON_OBJECT(\"a\", BIGNUMERIC '1.111111111111111111')",
+            .rows = .{
+                .{"{\"a\":1.1111111111111112}"},
+            },
+        },
+        .{
+            .desc = "json_object_bignumeric_strict",
+            .sql = "SELECT JSON_OBJECT(\"a\", BIGNUMERIC '1.111111111111111111')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_object_arrays_null_keys",
+            .sql = "SELECT JSON_OBJECT(CAST(NULL AS ARRAY<STRING>), [10, 20])",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_object_arrays_size_differs_with_null_key",
+            .sql = "SELECT JSON_OBJECT([\"a\", NULL], [10])",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_object_arrays_null_keys_safe",
+            .sql = "SELECT SAFE.JSON_OBJECT(CAST(NULL AS ARRAY<STRING>), [10, 20])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "json_object_arrays_null_values",
+            .sql = "SELECT JSON_OBJECT([\"a\", \"b\"], CAST(NULL AS ARRAY<INT64>))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_object_arrays_null_keys_and_values",
+            .sql = "SELECT JSON_OBJECT(CAST(NULL AS ARRAY<STRING>), CAST(NULL AS ARRAY<INT64>))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_object_arrays_complex_values",
+            .sql =
+            \\SELECT JSON_OBJECT(["a", "b"], [STRUCT([10, 20] AS d, "foo" AS e, JSON '{"g": true}' AS f),
+            \\                                STRUCT([1, -123, 2] AS d, NULL AS e, JSON '[[null]]' AS f)])
+            ,
+            .rows = .{
+                .{"{\"a\":{\"d\":[10,20],\"e\":\"foo\",\"f\":{\"g\":true}},\"b\":{\"d\":[1,-123,2],\"e\":null,\"f\":[[null]]}}"},
+            },
+        },
+        .{
+            .desc = "json_remove_null_jsonpath",
+            .sql = "SELECT JSON_REMOVE(JSON '[{\"a\": [10]}, null, {\"b\": 20, \"c\": \"foo\"}]', NULL)",
+            .rows = .{
+                .{"[{\"a\":[10]},null,{\"b\":20,\"c\":\"foo\"}]"},
+            },
+        },
+        .{
+            .desc = "json_remove_key",
+            .sql = "SELECT JSON_REMOVE(JSON '[{\"a\": [10]}, null, {\"b\": 20, \"c\": \"foo\"}]', \"$[0].a\")",
+            .rows = .{
+                .{"[{},null,{\"b\":20,\"c\":\"foo\"}]"},
+            },
+        },
+        .{
+            .desc = "json_remove_array_element",
+            .sql = "SELECT JSON_REMOVE(JSON '[{\"a\": [10]}, null, {\"b\": 20, \"c\": \"foo\"}]', \"$[2]\")",
+            .rows = .{
+                .{"[{\"a\":[10]},null]"},
+            },
+        },
+        .{
+            .desc = "json_remove_array_multiple_elements",
+            .sql = "SELECT JSON_REMOVE(JSON '[{\"a\": [10]}, null, {\"b\": 20, \"c\": \"foo\"}]', \"$[1]\", \"$[0].b\", \"$[0].a[0]\", \"$[4].b\", \"$[1].d\", \"$[1].c\")",
+            .rows = .{
+                .{"[{\"a\":[]},{\"b\":20}]"},
+            },
+        },
+        .{
+            .desc = "json_set_one_value",
+            .sql = "SELECT JSON_SET(JSON '{\"a\": 10}', \"$.b.c\", \"foo\")",
+            .rows = .{
+                .{"{\"a\":10,\"b\":{\"c\":\"foo\"}}"},
+            },
+        },
+        .{
+            .desc = "json_set_multiple_values",
+            .sql = "SELECT JSON_SET(JSON '{\"a\": 10}', \"$.b.c[2]\", \"foo\", \"$[1]\", 20, \"$.b.c[0]\", STRUCT(1 AS a, \"foo\" AS b))",
+            .rows = .{
+                .{"{\"a\":10,\"b\":{\"c\":[{\"a\":1,\"b\":\"foo\"},null,\"foo\"]}}"},
+            },
+        },
+        .{
+            .desc = "json_set_create_if_missing_false",
+            .sql = "SELECT JSON_SET(JSON '{\"a\": 10}', \"$.a\", \"foo\", \"$.b\", 20, create_if_missing=>false)",
+            .rows = .{
+                .{"{\"a\":\"foo\"}"},
+            },
+        },
+        .{
+            .desc = "json_strip_nulls_named_value_error",
+            .sql = "SELECT JSON_STRIP_NULLS(JSON '{\"a\": 10}', \"$\", include_arrays=>true, false)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_strip_nulls_only_include_arrays",
+            .sql = "SELECT JSON_STRIP_NULLS(JSON '{\"a\": [null], \"b\":null, \"c\":{}}', include_arrays=>false)",
+            .rows = .{
+                .{"{\"a\":[null],\"c\":{}}"},
+            },
+        },
+        .{
+            .desc = "json_strip_nulls_only_remove_empty",
+            .sql = "SELECT JSON_STRIP_NULLS(JSON '{\"a\": [null], \"b\":{}}', remove_empty=>true)",
+            .rows = .{
+                .{"null"},
+            },
+        },
+        .{
+            .desc = "json_strip_nulls_all_named_arguments",
+            .sql = "SELECT JSON_STRIP_NULLS(JSON '{\"a\": [null], \"b\":{}}', include_arrays=>false, remove_empty=>true)",
+            .rows = .{
+                .{"{\"a\":[null]}"},
+            },
+        },
+        .{
+            .desc = "json_strip_nulls_all_arguments",
+            .sql = "SELECT JSON_STRIP_NULLS(JSON '{\"a\": [null, [], {}], \"b\":{}}', \"$.a\", include_arrays=>true, remove_empty=>false)",
+            .rows = .{
+                .{"{\"a\":[[],{}],\"b\":{}}"},
+            },
+        },
+        .{
+            .desc = "json_array_insert_incorrect_number_of_args_with_optional",
+            .sql = "SELECT JSON_ARRAY_INSERT(JSON '{\"a\": [10, null]}', \"$.a\", 10, \"$.b\", insert_each_element=>true)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_array_insert_one_element",
+            .sql = "SELECT JSON_ARRAY_INSERT(JSON '{\"a\": [10, null]}', \"$.a[1]\", \"foo\")",
+            .rows = .{
+                .{"{\"a\":[10,\"foo\",null]}"},
+            },
+        },
+        .{
+            .desc = "json_array_insert_two_elements",
+            .sql = "SELECT JSON_ARRAY_INSERT(JSON '{\"a\": [10, null]}', \"$.a[1]\", \"foo\", \"$.a[0]\", 20)",
+            .rows = .{
+                .{"{\"a\":[20,10,\"foo\",null]}"},
+            },
+        },
+        .{
+            .desc = "json_array_insert_array_insert_each_element_true",
+            .sql = "SELECT JSON_ARRAY_INSERT(JSON '{\"a\": [10, null]}', \"$.a[1]\", [true, false], insert_each_element=>true)",
+            .rows = .{
+                .{"{\"a\":[10,true,false,null]}"},
+            },
+        },
+        .{
+            .desc = "json_array_insert_array_insert_each_element_false",
+            .sql = "SELECT JSON_ARRAY_INSERT(JSON '{\"a\": [10, null]}', \"$.a[1]\", [true, false], insert_each_element=>false)",
+            .rows = .{
+                .{"{\"a\":[10,[true,false],null]}"},
+            },
+        },
+        .{
+            .desc = "json_array_insert_three_elements",
+            .sql = "SELECT JSON_ARRAY_INSERT(JSON '{\"a\": [10, null]}', \"$.a[1]\", [10], \"$.a[1][5]\", true, \"$.a[3]\", \"foo\", insert_each_element=>false)",
+            .rows = .{
+                .{"{\"a\":[10,[10,null,null,null,null,true],null,\"foo\"]}"},
+            },
+        },
+        .{
+            .desc = "json_array_append_incorrect_number_of_args_with_optional",
+            .sql = "SELECT JSON_ARRAY_APPEND(JSON '{\"a\": [10, null]}', \"$.a\", 10, \"$.b\", append_each_element=>true)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_array_append_one_element",
+            .sql = "SELECT JSON_ARRAY_APPEND(JSON '{\"a\": [10, null]}', \"$.a\", \"foo\")",
+            .rows = .{
+                .{"{\"a\":[10,null,\"foo\"]}"},
+            },
+        },
+        .{
+            .desc = "json_array_append_two_elements",
+            .sql = "SELECT JSON_ARRAY_APPEND(JSON '{\"a\": [10, null]}', \"$.a\", \"foo\", \"$.a\", 20)",
+            .rows = .{
+                .{"{\"a\":[10,null,\"foo\",20]}"},
+            },
+        },
+        .{
+            .desc = "json_array_append_array_append_each_element_true",
+            .sql = "SELECT JSON_ARRAY_APPEND(JSON '{\"a\": [10, null]}', \"$.a\", [true, false], append_each_element=>true)",
+            .rows = .{
+                .{"{\"a\":[10,null,true,false]}"},
+            },
+        },
+        .{
+            .desc = "json_array_append_array_append_each_element_false",
+            .sql = "SELECT JSON_ARRAY_APPEND(JSON '{\"a\": [10, null]}', \"$.a\", [true, false], append_each_element=>false)",
+            .rows = .{
+                .{"{\"a\":[10,null,[true,false]]}"},
+            },
+        },
+        .{
+            .desc = "json_array_append_three_elements",
+            .sql = "SELECT JSON_ARRAY_APPEND(JSON '{\"a\": [10, null]}', \"$.a\", [10], \"$.a[2]\", true, \"$.a\", \"foo\", append_each_element=>false)",
+            .rows = .{
+                .{"{\"a\":[10,null,[10,true],\"foo\"]}"},
+            },
+        },
+        .{
+            .desc = "json_array_append_incorrect_optional_position_one_value",
+            .sql = "SELECT JSON_ARRAY_APPEND(JSON '{\"a\": [10, null]}', \"$.a\", append_each_element=>false, 10)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_array_append_incorrect_optional_position_two_values",
+            .sql = "SELECT JSON_ARRAY_APPEND(JSON '{\"a\": [10, null]}', \"$.a\", 10, append_each_element=>false, \"$.b\", 20)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_extract_path_constant_expression",
+            .sql = "SELECT JSON_EXTRACT(JSON '{\"a\": 1}', TRIM(\" $.a\"))",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "json_value_path_constant_expression",
+            .sql = "SELECT JSON_VALUE(JSON '{\"a\": 1}', TRIM(\" $.a\"))",
+            .rows = .{
+                .{"1"},
+            },
+        },
+        .{
+            .desc = "json_remove_path_constant_expression",
+            .sql = "SELECT JSON_REMOVE(JSON '{\"a\":1, \"b\":2}', TRIM(\" $.a\"), TRIM(\" $.b\"), \"$.c\")",
+            .rows = .{
+                .{"{}"},
+            },
+        },
+        .{
+            .desc = "json_query_lax_basic",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\":1}', \"lax $.a\")",
+            .rows = .{
+                .{"[1]"},
+            },
+        },
+        .{
+            .desc = "json_query_lax_recursive_basic",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\":1}', \"lax recursive $.a\")",
+            .rows = .{
+                .{"[1]"},
+            },
+        },
+        .{
+            .desc = "json_query_lax_mixed_nestedness",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\":[{\"b\":1}, [{\"b\":2}], [[{\"b\":3}]]]}', \"LAx   $.a.b\")",
+            .rows = .{
+                .{"[1]"},
+            },
+        },
+        .{
+            .desc = "json_query_lax_recursive_mixed_nestedness",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\":[{\"b\":1}, [{\"b\":2}], [[{\"b\":3}]]]}', \"Recursive  lax $.a.b\")",
+            .rows = .{
+                .{"[1,2,3]"},
+            },
+        },
+        .{
+            .desc = "json_query_lax_invalid_keywords_lax_duplicate",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\":1}', \"lax LAX $.a.b\")",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_query_lax_invalid_keywords_recursive_without_lax",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\":1}', \"recursive $.a.b\")",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_query_lax_invalid_keywords_recursive_duplicate",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\":1}', \"recursive lax RECURSIVE $.a.b\")",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_query_lax_no_feature_option",
+            .sql = "SELECT JSON_QUERY(JSON '{\"a\":1}', \"lax $.a.b\")",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_keys_basic",
+            .sql = "SELECT JSON_KEYS(JSON '{\"a\":{\"b\":1}}')",
+            .rows = .{
+                .{.{ "a", "a.b" }},
+            },
+        },
+        .{
+            .desc = "json_keys_basic_with_max_depth",
+            .sql = "SELECT JSON_KEYS(JSON '{\"a\":{\"b\":1}}', 1)",
+            .rows = .{
+                .{.{"a"}},
+            },
+        },
+        .{
+            .desc = "json_keys_basic_with_max_depth_and_strict_mode",
+            .sql = "SELECT JSON_KEYS(JSON '[{\"a\":{\"b\":1}}]', 1, mode => \"Strict\")",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "json_keys_basic_with_max_depth_and_lax_mode",
+            .sql = "SELECT JSON_KEYS(JSON '[{\"a\":{\"b\":1}}]', 1, mode => \"Lax\")",
+            .rows = .{
+                .{.{"a"}},
+            },
+        },
+        .{
+            .desc = "json_keys_basic_with_max_depth_and_lax_recursive_mode",
+            .sql = "SELECT JSON_KEYS(JSON '[[{\"a\":{\"b\":1}}]]', 1, mode => \"lax Recursive\")",
+            .rows = .{
+                .{.{"a"}},
+            },
+        },
+        .{
+            .desc = "json_keys_basic_with_max_depth_and_invalid_mode",
+            .sql = "SELECT JSON_KEYS(JSON '[[{\"a\":{\"b\":1}}]]', 1, mode => \"invalid\")",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_keys_basic_with_invalid_depth_and_mode",
+            .sql = "SELECT JSON_KEYS(JSON '[[{\"a\":{\"b\":1}}]]', -1, mode => \"invalid\")",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_keys_basic_with_mode_constant_expression",
+            .sql = "SELECT JSON_KEYS(JSON '[{\"a\":[{\"b\":1}]}]', mode => Trim(\" lax\"))",
+            .rows = .{
+                .{.{ "a", "a.b" }},
+            },
+        },
+        .{
+            .desc = "json_keys_basic_with_non_const_depth",
+            .sql = "SELECT JSON_KEYS(JSON '{\"a\":{\"b\":1}}', ABS(2))",
+            .rows = .{
+                .{.{ "a", "a.b" }},
+            },
+        },
+        .{
+            .desc = "json_empty_json_path_nonmatching",
+            .sql =
+            \\SELECT attributes
+            \\FROM ( SELECT JSON '{"key": "value"}' as attributes )
+            \\WHERE attributes[''] IS NOT NULL
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "json_empty_json_path_matching",
+            .sql =
+            \\SELECT attributes
+            \\FROM ( SELECT JSON '{"": "value"}' as attributes )
+            \\WHERE attributes[''] IS NOT NULL
+            ,
+            .rows = .{
+                .{"{\"\":\"value\"}"},
+            },
+        },
+        .{
+            .desc = "json_flatten_simple",
+            .sql = "SELECT JSON_FLATTEN(JSON '[1, 2, 3]')",
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "json_flatten_nested_arrays",
+            .sql = "SELECT JSON_FLATTEN(JSON '[[[1, 2], 3], 4]')",
+            .rows = .{
+                .{.{ 1, 2, 3, 4 }},
+            },
+        },
+        .{
+            .desc = "json_flatten_mixed_types",
+            .sql = "SELECT JSON_FLATTEN(JSON '[[[[1, 2], 3], 4], {\"a\":10}, [\"foo\", true]]')",
+            .rows = .{
+                .{.{ 1, 2, 3, 4, "{\"a\":10}", "foo", true }},
+            },
+        },
+        .{
+            .desc = "json_flatten_mixed_types_reversed",
+            .sql = "SELECT JSON_FLATTEN(JSON '[{\"a\":10}, [\"foo\", true], [[[1, 2], 3], 4]]')",
+            .rows = .{
+                .{.{ "{\"a\":10}", "foo", true, 1, 2, 3, 4 }},
+            },
+        },
+        .{
+            .desc = "json_flatten_empty_array",
+            .sql = "SELECT JSON_FLATTEN(JSON '[]')",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "json_flatten_nested_empty_arrays",
+            .sql = "SELECT JSON_FLATTEN(JSON '[[[], []]]')",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "json_flatten_null",
+            .sql = "SELECT JSON_FLATTEN(NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

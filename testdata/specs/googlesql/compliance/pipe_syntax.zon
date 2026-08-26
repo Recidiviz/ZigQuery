@@ -1,0 +1,184 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/pipe_syntax",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/pipe_syntax.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# This tests some interesting query structures and patterns that occur more
+            \\# frequently or only in pipe syntax.
+            \\#
+            \\# The operators themselves are tested in pipe_operators.test or
+            \\# operator-specific files.
+            \\CREATE TABLE KeyValue
+            \\AS
+            \\SELECT 1 AS key, "value1" AS value
+            \\UNION ALL
+            \\SELECT 2, "value2"
+            \\UNION ALL
+            \\SELECT 3, "value1"
+            ,
+        },
+        .{
+            .desc = "from_only",
+            .sql = "FROM KeyValue",
+            .unordered = true,
+            .rows = .{
+                .{ 1, "value1" },
+                .{ 2, "value2" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "from_in_parens",
+            .sql = "(((FROM KeyValue)))",
+            .unordered = true,
+            .rows = .{
+                .{ 1, "value1" },
+                .{ 2, "value2" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "from_comma_join",
+            .sql = "FROM KeyValue kv1, KeyValue kv2",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2", 2, "value2" },
+                .{ 2, "value2", 1, "value1" },
+                .{ 2, "value2", 3, "value1" },
+                .{ 1, "value1", 2, "value2" },
+                .{ 1, "value1", 1, "value1" },
+                .{ 1, "value1", 3, "value1" },
+                .{ 3, "value1", 2, "value2" },
+                .{ 3, "value1", 1, "value1" },
+                .{ 3, "value1", 3, "value1" },
+            },
+        },
+        .{
+            .desc = "from_join",
+            .sql = "FROM KeyValue kv1 JOIN KeyValue kv2 USING (key)",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2", "value2" },
+                .{ 1, "value1", "value1" },
+                .{ 3, "value1", "value1" },
+            },
+        },
+        .{
+            .desc = "from_unnest",
+            .sql = "FROM UNNEST([1,2,3])",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "from_unnest_with_offset",
+            .sql = "FROM UNNEST([1,2,3]) WITH OFFSET",
+            .unordered = true,
+            .rows = .{
+                .{ 1, 0 },
+                .{ 2, 1 },
+                .{ 3, 2 },
+            },
+        },
+        .{
+            .desc = "from_subquery_value_table",
+            .sql = "FROM (SELECT AS STRUCT 1 x, 2 y)",
+            .rows = .{
+                .{ 1, 2 },
+            },
+        },
+        .{
+            .desc = "from_subquery_value_table_scalar",
+            .sql = "FROM (SELECT AS value 1 x)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "pipe_after_select",
+            .sql =
+            \\SELECT * FROM KeyValue
+            \\|> WHERE key=1
+            ,
+            .rows = .{
+                .{ 1, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_after_select_constant",
+            .sql =
+            \\SELECT 1234 AS value
+            \\|> EXTEND value*2
+            ,
+            .rows = .{
+                .{ 1234, 2468 },
+            },
+        },
+        .{
+            .desc = "pipe_in_subquery",
+            .sql =
+            \\SELECT *
+            \\FROM KeyValue
+            \\JOIN (
+            \\  FROM KeyValue
+            \\  |> SELECT key+1 AS key, 'new' column
+            \\) USING (key)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2", "new" },
+                .{ 3, "value1", "new" },
+            },
+        },
+        .{
+            .desc = "pipe_in_with",
+            .sql =
+            \\WITH t AS (
+            \\  FROM KeyValue
+            \\  |> WHERE key=1
+            \\)
+            \\FROM t
+            ,
+            .rows = .{
+                .{ 1, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_after_with",
+            .sql =
+            \\WITH t AS (SELECT * from KeyValue where key=1)
+            \\FROM t
+            \\|> SELECT key+1
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "drop_in_union",
+            .sql =
+            \\# This can cause confusion because of how the ProjectScans look.
+            \\(SELECT value FROM KeyValue)
+            \\UNION ALL
+            \\(FROM KeyValue |> DROP key)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"value2"},
+                .{"value1"},
+                .{"value1"},
+                .{"value2"},
+                .{"value1"},
+                .{"value1"},
+            },
+        },
+    },
+}

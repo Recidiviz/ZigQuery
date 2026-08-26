@@ -1,0 +1,601 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/approx_aggregation",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/approx_aggregation.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableAllTypes AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(1 AS double) as double_val,
+            \\       CAST(1 AS float) as float_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(1 AS int32) as int32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST(1 AS int64) as int64_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST('2001-01-01' AS DATE) as date_val,
+            \\       CAST('2001-01-01 00:00:00 UTC' AS TIMESTAMP) as timestamp_val,
+            \\       CAST([1,2,3] AS ARRAY<INT64>) as array_int64_val,
+            \\       STRUCT<INT64 INT64, STRING STRING>(1, "a") as struct_val
+            ,
+        },
+        .{
+            .desc = "approx_count_distinct_empty",
+            .sql = "SELECT APPROX_COUNT_DISTINCT(x) FROM (SELECT 1 as x) WHERE x < 0",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "approx_count_distinct_ignores_nulls",
+            .sql =
+            \\SELECT APPROX_COUNT_DISTINCT(x)
+            \\FROM UNNEST([NULL, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "approx_count_distinct_is_positive",
+            .sql =
+            \\SELECT APPROX_COUNT_DISTINCT(x) > 0
+            \\FROM UNNEST([1,2,3,3,2,1]) x
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "approx_count_distinct_is_reasonale",
+            .sql =
+            \\SELECT approx_dc BETWEEN exact_dc / 2 AND exact_dc * 2 FROM (
+            \\SELECT COUNT(DISTINCT x) exact_dc, APPROX_COUNT_DISTINCT(x) approx_dc
+            \\FROM UNNEST([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]) x)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "approx_count_distinct_all_types",
+            .sql =
+            \\SELECT
+            \\  APPROX_COUNT_DISTINCT(bool_val),
+            \\  APPROX_COUNT_DISTINCT(uint32_val),
+            \\  APPROX_COUNT_DISTINCT(int32_val),
+            \\  APPROX_COUNT_DISTINCT(uint64_val),
+            \\  APPROX_COUNT_DISTINCT(int64_val),
+            \\  APPROX_COUNT_DISTINCT(str_val),
+            \\  APPROX_COUNT_DISTINCT(bytes_val),
+            \\  APPROX_COUNT_DISTINCT(float_val),
+            \\  APPROX_COUNT_DISTINCT(double_val),
+            \\  APPROX_COUNT_DISTINCT(date_val),
+            \\  APPROX_COUNT_DISTINCT(timestamp_val)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+            },
+        },
+        .{
+            .desc = "approx_count_distinct_numeric",
+            .sql =
+            \\SELECT APPROX_COUNT_DISTINCT(x)
+            \\FROM UNNEST([NUMERIC "1.23", NUMERIC "1.23", NUMERIC "3.14"]) x
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "approx_count_distinct_bignumeric",
+            .sql =
+            \\SELECT APPROX_COUNT_DISTINCT(x)
+            \\FROM UNNEST([BIGNUMERIC "1.23", BIGNUMERIC "1.23", BIGNUMERIC "3.14"]) x
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "approx_count_distinct_array",
+            .sql =
+            \\SELECT APPROX_COUNT_DISTINCT(array_int64_val)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "approx_count_distinct_struct",
+            .sql =
+            \\SELECT APPROX_COUNT_DISTINCT(struct_val)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_empty",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# APPROX_QUANTILES
+            \\# ----------------------------------------------------------------------------
+            \\SELECT APPROX_QUANTILES(x,3) FROM (SELECT 1 as x) WHERE x < 0
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_bool",
+            .sql =
+            \\# Support of bool is easy to miss. If an implementation doesn't calculate
+            \\# the min and the max of boolean values, the algorithm is probably faulty.
+            \\SELECT APPROX_QUANTILES(x,1) FROM UNNEST([true, false, true, false, true]) x
+            ,
+            .rows = .{
+                .{.{ false, true }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_ignores_nulls",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x,1)
+            \\FROM UNNEST([NULL, NULL, NULL, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_with_ignore_nulls",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x,1 IGNORE NULLS)
+            \\FROM UNNEST([NULL, NULL, NULL, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_with_respect_nulls",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x,1 RESPECT NULLS)
+            \\FROM UNNEST([NULL, NULL, NULL, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_ignores_nulls2",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x,1)
+            \\FROM UNNEST([1, NULL, 1, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{.{ 1, 1 }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_with_ignore_nulls2",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x,1 IGNORE NULLS)
+            \\FROM UNNEST([1, NULL, 1, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{.{ 1, 1 }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_with_respect_nulls2",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x,1 RESPECT NULLS)
+            \\FROM UNNEST([1, NULL, 1, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{.{ null, 1 }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_are_ordered",
+            .sql =
+            \\SELECT
+            \\ (SELECT LOGICAL_AND(IF(offset > 0, a[offset(offset)] >= a[offset(offset-1)], true)) FROM UNNEST(a) WITH OFFSET)
+            \\FROM (SELECT APPROX_QUANTILES(x,5) a
+            \\FROM UNNEST([9,3,6,1,5,7,10,0,3,6,9,2,2,4,5,6,8,2,7,4,13,1,22]) x)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_same_inputs",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x, 3)
+            \\FROM UNNEST(['foo', 'foo', 'foo', 'foo', 'foo', 'foo', 'foo', 'foo', 'foo']) x
+            ,
+            .rows = .{
+                .{.{ "foo", "foo", "foo", "foo" }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_boundaries_are_same_as_min_max",
+            .sql =
+            \\select
+            \\  q[offset(0)],
+            \\  min,
+            \\  q[ordinal(array_length(q))],
+            \\  max
+            \\from (
+            \\  select approx_quantiles(x+y, 7) q, min(x+y) min, max(x+y) max
+            \\    from
+            \\      (select x from unnest([0,1,2,3,4,5,6,7,8,9]) x)
+            \\      cross join
+            \\      (select y from unnest([-50,-40,-30,-20,-10,0,10,20,30,40,50]) y)
+            \\)
+            ,
+            .rows = .{
+                .{ -50, -50, 59, 59 },
+            },
+        },
+        .{
+            .desc = "approx_quantiles_all_types",
+            .sql =
+            \\SELECT
+            \\  APPROX_QUANTILES(double_val, 1),
+            \\  APPROX_QUANTILES(float_val, 1),
+            \\  APPROX_QUANTILES(uint32_val, 1),
+            \\  APPROX_QUANTILES(int32_val, 1),
+            \\  APPROX_QUANTILES(uint64_val, 1),
+            \\  APPROX_QUANTILES(int64_val, 1),
+            \\  APPROX_QUANTILES(str_val, 1),
+            \\  APPROX_QUANTILES(bytes_val, 1),
+            \\  APPROX_QUANTILES(date_val, 1),
+            \\  APPROX_QUANTILES(timestamp_val, 1)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ .{ 1, 1 }, .{ 1, 1 }, .{ 1, 1 }, .{ 1, 1 }, .{ 1, 1 }, .{ 1, 1 }, .{ "1", "1" }, .{ "\x31", "\x31" }, .{ "2001-01-01", "2001-01-01" }, .{ "2001-01-01 00:00:00+00", "2001-01-01 00:00:00+00" } },
+            },
+        },
+        .{
+            .desc = "approx_quantiles_numeric",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x, 1)
+            \\FROM UNNEST([NUMERIC "1.23", NUMERIC "1.23", NUMERIC "1.23"]) x
+            ,
+            .rows = .{
+                .{.{ 1.23, 1.23 }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_bignumeric",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x, 1)
+            \\FROM UNNEST([BIGNUMERIC "1.23", BIGNUMERIC "1.23", BIGNUMERIC "1.23"]) x
+            ,
+            .rows = .{
+                .{.{ 1.23, 1.23 }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_range_dates",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x, 1)
+            \\FROM UNNEST([
+            \\  RANGE<DATE> '[2014-01-01, 2015-01-01)',
+            \\  RANGE<DATE> '[2014-01-01, 2015-01-01)',
+            \\  RANGE<DATE> '[2014-01-01, 2015-01-01)']) x
+            ,
+            .rows = .{
+                .{.{ "[2014-01-01, 2015-01-01)", "[2014-01-01, 2015-01-01)" }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_range_datetimes",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x, 1)
+            \\FROM UNNEST([
+            \\  RANGE<DATETIME> '[2016-01-01 12:00:00, 2017-01-01 12:00:00)',
+            \\  RANGE<DATETIME> '[2016-01-01 12:00:00, 2017-01-01 12:00:00)',
+            \\  RANGE<DATETIME> '[2016-01-01 12:00:00, 2017-01-01 12:00:00)']) x
+            ,
+            .rows = .{
+                .{.{ "[2016-01-01 12:00:00, 2017-01-01 12:00:00)", "[2016-01-01 12:00:00, 2017-01-01 12:00:00)" }},
+            },
+        },
+        .{
+            .desc = "approx_quantiles_range_timestamps",
+            .sql =
+            \\SELECT APPROX_QUANTILES(x, 1)
+            \\FROM UNNEST([
+            \\  RANGE<TIMESTAMP> '[2018-10-01 12:00:00+00, 2019-01-01 12:00:00+00)',
+            \\  RANGE<TIMESTAMP> '[2018-10-01 12:00:00+00, 2019-01-01 12:00:00+00)',
+            \\  RANGE<TIMESTAMP> '[2018-10-01 12:00:00+00, 2019-01-01 12:00:00+00)']) x
+            ,
+            .rows = .{
+                .{.{ "[2018-10-01 12:00:00+00, 2019-01-01 12:00:00+00)", "[2018-10-01 12:00:00+00, 2019-01-01 12:00:00+00)" }},
+            },
+        },
+        .{
+            .desc = "approx_top_count_empty",
+            .sql = "SELECT APPROX_TOP_COUNT(x, 3) FROM (SELECT 1 as x) WHERE x < 0",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "approx_top_count_includes_nulls",
+            .sql =
+            \\SELECT APPROX_TOP_COUNT(x, 2)
+            \\FROM UNNEST([NULL, NULL, NULL, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{.{.{ null, 5 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_count_ordered",
+            .sql =
+            \\SELECT
+            \\ (SELECT LOGICAL_AND(IF(offset > 0, top[offset(offset)].count <= top[offset(offset-1)].count, true)) FROM UNNEST(top) WITH OFFSET)
+            \\FROM (SELECT APPROX_TOP_COUNT(x,5) top
+            \\FROM UNNEST([9,3,6,1,5,7,10,0,3,6,9,2,2,4,5,6,8,2,7,4,13,1,22]) x)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "approx_top_count_top_1",
+            .sql =
+            \\SELECT APPROX_TOP_COUNT(x,1)[offset(0)].value
+            \\FROM UNNEST(['bar', 'baz', 'zoo', 'foo', 'foo', 'foo', 'foo', 'foo', 'foo']) x
+            ,
+            .rows = .{
+                .{"foo"},
+            },
+        },
+        .{
+            .desc = "approx_top_count_all_types",
+            .sql =
+            \\SELECT
+            \\  APPROX_TOP_COUNT(double_val, 1),
+            \\  APPROX_TOP_COUNT(float_val, 1),
+            \\  APPROX_TOP_COUNT(uint32_val, 1),
+            \\  APPROX_TOP_COUNT(int32_val, 1),
+            \\  APPROX_TOP_COUNT(uint64_val, 1),
+            \\  APPROX_TOP_COUNT(int64_val, 1),
+            \\  APPROX_TOP_COUNT(str_val, 1),
+            \\  APPROX_TOP_COUNT(bytes_val, 1),
+            \\  APPROX_TOP_COUNT(date_val, 1),
+            \\  APPROX_TOP_COUNT(timestamp_val, 1)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ "1", 1 }}, .{.{ "\x31", 1 }}, .{.{ "2001-01-01", 1 }}, .{.{ "2001-01-01 00:00:00+00", 1 }} },
+            },
+        },
+        .{
+            .desc = "approx_top_count_numeric",
+            .sql =
+            \\SELECT APPROX_TOP_COUNT(x, 1)
+            \\FROM UNNEST([NUMERIC "1.23", NUMERIC "1.23", NUMERIC "3.14"]) x
+            ,
+            .rows = .{
+                .{.{.{ 1.23, 2 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_count_bignumeric",
+            .sql =
+            \\SELECT APPROX_TOP_COUNT(x, 1)
+            \\FROM UNNEST([BIGNUMERIC "1.23", BIGNUMERIC "1.23", BIGNUMERIC "3.14"]) x
+            ,
+            .rows = .{
+                .{.{.{ 1.23, 2 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_count_array",
+            .sql =
+            \\SELECT APPROX_TOP_COUNT(array_int64_val, 1)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{.{.{ .{ 1, 2, 3 }, 1 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_count_struct",
+            .sql =
+            \\SELECT APPROX_TOP_COUNT(struct_val, 1)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{.{.{ .{ 1, "a" }, 1 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_empty",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# APPROX_TOP_SUM
+            \\# ----------------------------------------------------------------------------
+            \\SELECT APPROX_TOP_SUM(x, y, 3) FROM (SELECT 1 as x, 2.0 as y) WHERE x < 0
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_includes_nulls",
+            .sql =
+            \\SELECT APPROX_TOP_SUM(x, x, 2)
+            \\FROM UNNEST([NULL, NULL, NULL, NULL, NULL]) x
+            ,
+            .rows = .{
+                .{.{.{ null, null }}},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_ordered",
+            .sql =
+            \\SELECT
+            \\ (SELECT LOGICAL_AND(IF(offset > 0, top[offset(offset)].sum <= top[offset(offset-1)].sum, true)) FROM UNNEST(top) WITH OFFSET)
+            \\FROM (SELECT APPROX_TOP_SUM(-x, x, 5) top
+            \\FROM UNNEST([9,3,6,1,5,7,10,0,3,6,9,2,2,4,5,6,8,2,7,4,13,1,22]) x)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_top_2",
+            .sql =
+            \\SELECT APPROX_TOP_SUM(x, y, 2)
+            \\FROM (
+            \\  SELECT "null+inf" AS x, CAST(NULL AS DOUBLE) AS y
+            \\  UNION ALL SELECT "null+80", CAST(NULL AS DOUBLE)
+            \\  UNION ALL SELECT "null", CAST(NULL AS DOUBLE)
+            \\  UNION ALL SELECT "null+inf", CAST("inf" AS DOUBLE)
+            \\  UNION ALL SELECT "70+50", 70.0
+            \\  UNION ALL SELECT "null+null", CAST(NULL AS DOUBLE)
+            \\  UNION ALL SELECT "null+80", 80.0
+            \\  UNION ALL SELECT "100", 100.0
+            \\  UNION ALL SELECT "null+null", CAST(NULL AS DOUBLE)
+            \\  UNION ALL SELECT "70+50", 50.0
+            \\  UNION ALL SELECT "0", 0.0
+            \\  UNION ALL SELECT "-0", -0.0
+            \\)
+            ,
+            .rows = .{
+                .{.{ .{ "null+inf", inf }, .{ "70+50", 120 } }},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_negative_const_int64_weight",
+            .sql = "SELECT APPROX_TOP_SUM(x, -1, 1) FROM UNNEST([1]) x",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "approx_top_sum_negative_int64_weight_expr",
+            .sql = "SELECT APPROX_TOP_SUM(x, -x, 1) FROM UNNEST([2]) x",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "approx_top_sum_negative_double_weight",
+            .sql = "SELECT APPROX_TOP_SUM(x, x, 1) FROM UNNEST([-0.1]) x",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "approx_top_sum_negative_inf_weight",
+            .sql = "SELECT APPROX_TOP_SUM(x, x / 10, 1) FROM UNNEST([-CAST(\"inf\" AS DOUBLE)]) x",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "approx_top_sum_nan_weight",
+            .sql = "SELECT APPROX_TOP_SUM(x, x, 1) from UNNEST([CAST(\"nan\" AS DOUBLE)]) x",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "approx_top_sum_top_weight_overflow",
+            .sql =
+            \\SELECT APPROX_TOP_SUM("", x, 1)
+            \\FROM UNNEST([~(1 << 63), 1]) x
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "approx_top_sum_all_types",
+            .sql =
+            \\SELECT
+            \\  APPROX_TOP_SUM(double_val, double_val, 1),
+            \\  APPROX_TOP_SUM(float_val, double_val, 1),
+            \\  APPROX_TOP_SUM(uint32_val, int64_val, 1),
+            \\  APPROX_TOP_SUM(int32_val, uint64_val, 1),
+            \\  APPROX_TOP_SUM(uint64_val, int64_val, 1),
+            \\  APPROX_TOP_SUM(int64_val, uint64_val, 1),
+            \\  APPROX_TOP_SUM(str_val, int64_val, 1),
+            \\  APPROX_TOP_SUM(bytes_val, double_val, 1),
+            \\  APPROX_TOP_SUM(date_val, uint64_val, 1),
+            \\  APPROX_TOP_SUM(timestamp_val, int64_val, 1)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ 1, 1 }}, .{.{ "1", 1 }}, .{.{ "\x31", 1 }}, .{.{ "2001-01-01", 1 }}, .{.{ "2001-01-01 00:00:00+00", 1 }} },
+            },
+        },
+        .{
+            .desc = "approx_top_sum_numeric",
+            .sql =
+            \\SELECT APPROX_TOP_SUM(x, w, 1)
+            \\FROM (SELECT NUMERIC "1.23" as x, 2 as w)
+            ,
+            .rows = .{
+                .{.{.{ 1.23, 2 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_numeric_with_numeric_weight",
+            .sql =
+            \\SELECT APPROX_TOP_SUM(x, w, 1)
+            \\FROM (SELECT NUMERIC "1.23" as x, NUMERIC "2.11" as w)
+            ,
+            .rows = .{
+                .{.{.{ 1.23, 2.11 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_bignumeric",
+            .sql =
+            \\SELECT APPROX_TOP_SUM(x, w, 1)
+            \\FROM (SELECT BIGNUMERIC "1.23" as x, 2 as w)
+            ,
+            .rows = .{
+                .{.{.{ 1.23, 2 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_bignumeric_with_bignumeric_weight",
+            .sql =
+            \\SELECT APPROX_TOP_SUM(x, w, 1)
+            \\FROM (SELECT BIGNUMERIC "1.23" as x, BIGNUMERIC "2.11" as w)
+            ,
+            .rows = .{
+                .{.{.{ 1.23, 2.11 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_array",
+            .sql =
+            \\SELECT APPROX_TOP_SUM(array_int64_val, double_val, 1)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{.{.{ .{ 1, 2, 3 }, 1 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_sum_struct",
+            .sql =
+            \\SELECT APPROX_TOP_SUM(struct_val, double_val, 1)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{.{.{ .{ 1, "a" }, 1 }}},
+            },
+        },
+    },
+}

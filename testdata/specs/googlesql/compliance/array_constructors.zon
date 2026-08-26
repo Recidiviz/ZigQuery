@@ -1,0 +1,941 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/array_constructors",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/array_constructors.test",
+    .cases = .{
+        .{
+            .desc = "construct_BOOL_array_basic",
+            .sql = "SELECT ARRAY<BOOL>[true, false, true]",
+            .rows = .{
+                .{.{ true, false, true }},
+            },
+        },
+        .{
+            .desc = "construct_INT32_array_basic",
+            .sql = "SELECT ARRAY<INT32>[1, 0, -1]",
+            .rows = .{
+                .{.{ 1, 0, -1 }},
+            },
+        },
+        .{
+            .desc = "construct_UINT32_array_basic",
+            .sql = "SELECT ARRAY<UINT32>[2, 1, 0]",
+            .rows = .{
+                .{.{ 2, 1, 0 }},
+            },
+        },
+        .{
+            .desc = "construct_INT64_array_basic",
+            .sql = "SELECT ARRAY<INT64>[8589934592, 0, -8589934592]",
+            .rows = .{
+                .{.{ 8589934592, 0, -8589934592 }},
+            },
+        },
+        .{
+            .desc = "construct_UINT64_array_basic",
+            .sql = "SELECT ARRAY<UINT64>[8589934592, 1, 0]",
+            .rows = .{
+                .{.{ 8589934592, 1, 0 }},
+            },
+        },
+        .{
+            .desc = "construct_FLOAT_array_basic",
+            .sql = "SELECT ARRAY<FLOAT>[1.1, 0.0, -1.1]",
+            .rows = .{
+                .{.{ 1.1, 0, -1.1 }},
+            },
+        },
+        .{
+            .desc = "construct_DOUBLE_array_basic",
+            .sql = "SELECT ARRAY<DOUBLE>[1.1, 0.0, -1.1]",
+            .rows = .{
+                .{.{ 1.1, 0, -1.1 }},
+            },
+        },
+        .{
+            .desc = "construct_STRING_array_basic",
+            .sql = "SELECT ARRAY<STRING>['σ', 'π', '⨝']",
+            .rows = .{
+                .{.{ "σ", "π", "⨝" }},
+            },
+        },
+        .{
+            .desc = "construct_BYTES_array_basic",
+            .sql = "SELECT ARRAY<BYTES>[b\"a\", b\"b\", b\"c\"]",
+            .rows = .{
+                .{.{ "\x61", "\x62", "\x63" }},
+            },
+        },
+        .{
+            .desc = "construct_DATE_array_basic",
+            .sql = "SELECT ARRAY<DATE>[\"1984-08-02\", \"2000-01-01\", \"2014-09-11\"]",
+            .rows = .{
+                .{.{ "1984-08-02", "2000-01-01", "2014-09-11" }},
+            },
+        },
+        .{
+            .desc = "construct_TIMESTAMP_array_basic",
+            .sql =
+            \\SELECT ARRAY<TIMESTAMP>["1984-08-02 01:01:01.001001 UTC",
+            \\                        "2000-01-01 01:01:01.001001 UTC",
+            \\                        "2014-09-11 01:01:01.001001 UTC"]
+            ,
+            .rows = .{
+                .{.{ "1984-08-02 01:01:01.001001+00", "2000-01-01 01:01:01.001001+00", "2014-09-11 01:01:01.001001+00" }},
+            },
+        },
+        .{
+            .desc = "construct_enum_array_basic",
+            .sql = "SELECT ARRAY<googlesql_test.TestEnum>[\"TESTENUM0\", \"TESTENUM1\", \"TESTENUM2\"]",
+            .rows = .{
+                .{.{ "TESTENUM0", "TESTENUM1", "TESTENUM2" }},
+            },
+        },
+        .{
+            .desc = "construct_STRUCT_array_basic",
+            .sql = "SELECT ARRAY<STRUCT<int64, int64>>[(11, 12), (21, 22), (31, 32)]",
+            .rows = .{
+                .{.{ .{ 11, 12 }, .{ 21, 22 }, .{ 31, 32 } }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATE_array_basic",
+            .sql =
+            \\SELECT ARRAY<RANGE<DATE>>[
+            \\  RANGE<DATE> '[2014-01-01, 2015-01-01)',
+            \\  RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            \\]
+            ,
+            .rows = .{
+                .{.{ "[2014-01-01, 2015-01-01)", "[NULL, NULL)" }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATETIME_array_basic",
+            .sql =
+            \\SELECT ARRAY<RANGE<DATETIME>>[
+            \\  RANGE<DATETIME> '[2016-01-01 12:00:00, 2017-01-01 12:00:00)',
+            \\  RANGE<DATETIME> '[2016-01-01 12:00:00, UNBOUNDED)',
+            \\  RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)'
+            \\]
+            ,
+            .rows = .{
+                .{.{ "[2016-01-01 12:00:00, 2017-01-01 12:00:00)", "[2016-01-01 12:00:00, NULL)", "[NULL, 2017-01-01 12:00:00)" }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_TIMESTAMP_array_basic",
+            .sql =
+            \\SELECT ARRAY<RANGE<TIMESTAMP>>[
+            \\  RANGE<TIMESTAMP> '[2018-10-01 12:00:00+00, UNBOUNDED)',
+            \\  RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+00)'
+            \\]
+            ,
+            .rows = .{
+                .{.{ "[2018-10-01 12:00:00+00, NULL)", "[NULL, 2019-01-01 12:00:00+00)" }},
+            },
+        },
+        .{
+            .desc = "construct_BOOL_array_from_non_literals",
+            .sql = "SELECT ARRAY<BOOL>[1 IS NULL, true OR false, a] FROM (SELECT true a)",
+            .rows = .{
+                .{.{ false, true, true }},
+            },
+        },
+        .{
+            .desc = "construct_INT32_array_from_non_literals",
+            .sql = "SELECT ARRAY<INT32>[CAST(1 + 1 AS INT32), a] FROM (SELECT cast(1 as int32) a)",
+            .rows = .{
+                .{.{ 2, 1 }},
+            },
+        },
+        .{
+            .desc = "construct_UINT32_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<UINT32>[CAST(0 * 0 AS UINT32), CAST(99 + 1 - 100 AS UINT32), a]
+            \\FROM (SELECT cast(1 as uint32) a)
+            ,
+            .rows = .{
+                .{.{ 0, 0, 1 }},
+            },
+        },
+        .{
+            .desc = "construct_INT64_array_from_non_literals",
+            .sql = "SELECT ARRAY<INT64>[4000 * 4000, 1000000 + 5000000, a] FROM (SELECT 100 a)",
+            .rows = .{
+                .{.{ 16000000, 6000000, 100 }},
+            },
+        },
+        .{
+            .desc = "construct_UINT64_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<UINT64>[CAST(0 * 0 AS UINT64),
+            \\                     CAST(99000000 + 1000000 - 100000000 AS UINT64), a]
+            \\FROM (SELECT cast(100 as uint64) a)
+            ,
+            .rows = .{
+                .{.{ 0, 0, 100 }},
+            },
+        },
+        .{
+            .desc = "construct_FLOAT_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<FLOAT>[CAST(1.1 * 1000 AS FLOAT), a]
+            \\FROM (SELECT cast(100.1 as float) a)
+            ,
+            .rows = .{
+                .{.{ 1100, 100.1 }},
+            },
+        },
+        .{
+            .desc = "construct_DOUBLE_array_from_non_literals",
+            .sql = "SELECT ARRAY<DOUBLE>[1.1 * 1000, 1000 / 1.1, a] FROM (SELECT 2.2 a)",
+            .rows = .{
+                .{.{ 1100, 909.090909090909, 2.2 }},
+            },
+        },
+        .{
+            .desc = "construct_STRING_array_from_non_literals",
+            .sql = "SELECT ARRAY<STRING>[SUBSTR('σπ⨝', 3), a] FROM (SELECT 'σ' a)",
+            .rows = .{
+                .{.{ "⨝", "σ" }},
+            },
+        },
+        .{
+            .desc = "construct_BYTES_array_from_non_literals",
+            .sql = "SELECT ARRAY<BYTES>[SUBSTR(b\"abc\", 2), a] FROM (SELECT b'def' a)",
+            .rows = .{
+                .{.{ "\x62\x63", "\x64\x65\x66" }},
+            },
+        },
+        .{
+            .desc = "construct_DATE_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<DATE>[CAST(SUBSTR("1984-08-02", 0) AS DATE), a]
+            \\FROM (SELECT cast("1984-08-02" AS DATE) a)
+            ,
+            .rows = .{
+                .{.{ "1984-08-02", "1984-08-02" }},
+            },
+        },
+        .{
+            .desc = "construct_TIMESTAMP_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<TIMESTAMP>[a]
+            \\FROM (SELECT cast("1984-08-02 01:01:01.001001 UTC" AS TIMESTAMP) a)
+            ,
+            .rows = .{
+                .{.{"1984-08-02 01:01:01.001001+00"}},
+            },
+        },
+        .{
+            .desc = "construct_enum_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<googlesql_test.TestEnum>[
+            \\    cast(SUBSTR("TESTENUM0", 0) AS googlesql_test.TestEnum), a]
+            \\FROM (SELECT cast("TESTENUM1" AS googlesql_test.TestEnum) a)
+            ,
+            .rows = .{
+                .{.{ "TESTENUM0", "TESTENUM1" }},
+            },
+        },
+        .{
+            .desc = "construct_proto_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<googlesql_test.KitchenSinkPB>[
+            \\  IF(1 IS NULL,
+            \\  CAST('''
+            \\         int64_key_1: 21
+            \\         int64_key_2: 22
+            \\       ''' AS googlesql_test.KitchenSinkPB),
+            \\  CAST('''
+            \\         int64_key_1: 31
+            \\         int64_key_2: 32
+            \\       ''' AS googlesql_test.KitchenSinkPB)), a]
+            \\FROM (SELECT cast('''
+            \\         int64_key_1: 21
+            \\         int64_key_2: 22
+            \\       ''' AS googlesql_test.KitchenSinkPB) a)
+            ,
+            .rows = .{
+                .{.{ .{"int64_key_1: 31 int64_key_2: 32"}, .{"int64_key_1: 21 int64_key_2: 22"} }},
+            },
+        },
+        .{
+            .desc = "construct_STRUCT_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<STRUCT<int64, int64>>[IF ((11, 12) IS NULL, (21, 22), (31, 32)), a]
+            \\FROM (SELECT (41, 42) AS a)
+            ,
+            .rows = .{
+                .{.{ .{ 31, 32 }, .{ 41, 42 } }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATE_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<RANGE<DATE>>[
+            \\  RANGE<DATE> '[2014-01-01, 2015-01-01)',
+            \\  a
+            \\] FROM (
+            \\  SELECT RANGE<DATE> '[UNBOUNDED, UNBOUNDED)' a
+            \\)
+            ,
+            .rows = .{
+                .{.{ "[2014-01-01, 2015-01-01)", "[NULL, NULL)" }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATETIME_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<RANGE<DATETIME>>[
+            \\  RANGE<DATETIME> '[2016-01-01 12:00:00, 2017-01-01 12:00:00)',
+            \\  RANGE<DATETIME> '[2016-01-01 12:00:00, UNBOUNDED)',
+            \\  a
+            \\] FROM (
+            \\  SELECT RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)' a
+            \\)
+            ,
+            .rows = .{
+                .{.{ "[2016-01-01 12:00:00, 2017-01-01 12:00:00)", "[2016-01-01 12:00:00, NULL)", "[NULL, 2017-01-01 12:00:00)" }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_TIMESTAMP_array_from_non_literals",
+            .sql =
+            \\SELECT ARRAY<RANGE<TIMESTAMP>>[
+            \\  RANGE<TIMESTAMP> '[2018-10-01 12:00:00+00, UNBOUNDED)',
+            \\  a
+            \\] FROM (
+            \\  SELECT RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+00)' a
+            \\)
+            ,
+            .rows = .{
+                .{.{ "[2018-10-01 12:00:00+00, NULL)", "[NULL, 2019-01-01 12:00:00+00)" }},
+            },
+        },
+        .{
+            .desc = "construct_BOOL_array_with_null",
+            .sql = "SELECT ARRAY<BOOL>[true, NULL, true]",
+            .rows = .{
+                .{.{ true, null, true }},
+            },
+        },
+        .{
+            .desc = "construct_INT32_array_with_null",
+            .sql = "SELECT ARRAY<INT32>[1, NULL, -1]",
+            .rows = .{
+                .{.{ 1, null, -1 }},
+            },
+        },
+        .{
+            .desc = "construct_UINT32_array_with_null",
+            .sql = "SELECT ARRAY<UINT32>[2, NULL, 0]",
+            .rows = .{
+                .{.{ 2, null, 0 }},
+            },
+        },
+        .{
+            .desc = "construct_INT64_array_with_null",
+            .sql = "SELECT ARRAY<INT64>[8589934592, NULL, -8589934592]",
+            .rows = .{
+                .{.{ 8589934592, null, -8589934592 }},
+            },
+        },
+        .{
+            .desc = "construct_UINT64_array_with_null",
+            .sql = "SELECT ARRAY<UINT64>[8589934592, NULL, 0]",
+            .rows = .{
+                .{.{ 8589934592, null, 0 }},
+            },
+        },
+        .{
+            .desc = "construct_FLOAT_array_with_null",
+            .sql = "SELECT ARRAY<FLOAT>[1.1, NULL, -1.1]",
+            .rows = .{
+                .{.{ 1.1, null, -1.1 }},
+            },
+        },
+        .{
+            .desc = "construct_DOUBLE_array_with_null",
+            .sql = "SELECT ARRAY<DOUBLE>[1.1, NULL, -1.1]",
+            .rows = .{
+                .{.{ 1.1, null, -1.1 }},
+            },
+        },
+        .{
+            .desc = "construct_STRING_array_with_null",
+            .sql = "SELECT ARRAY<STRING>['σ', NULL, '⨝']",
+            .rows = .{
+                .{.{ "σ", null, "⨝" }},
+            },
+        },
+        .{
+            .desc = "construct_BYTES_array_with_null",
+            .sql = "SELECT ARRAY<BYTES>[b\"a\", NULL, b\"c\"]",
+            .rows = .{
+                .{.{ "\x61", null, "\x63" }},
+            },
+        },
+        .{
+            .desc = "construct_DATE_array_with_null",
+            .sql = "SELECT ARRAY<DATE>[\"1984-08-02\", NULL, \"2014-09-11\"]",
+            .rows = .{
+                .{.{ "1984-08-02", null, "2014-09-11" }},
+            },
+        },
+        .{
+            .desc = "construct_TIMESTAMP_array_with_null",
+            .sql =
+            \\SELECT ARRAY<TIMESTAMP>["1984-08-02 01:01:01.001001 UTC", NULL,
+            \\                        "2014-09-11 01:01:01.001001 UTC"]
+            ,
+            .rows = .{
+                .{.{ "1984-08-02 01:01:01.001001+00", null, "2014-09-11 01:01:01.001001+00" }},
+            },
+        },
+        .{
+            .desc = "construct_enum_array_with_null",
+            .sql = "SELECT ARRAY<googlesql_test.TestEnum>[\"TESTENUM0\", NULL, \"TESTENUM2\"]",
+            .rows = .{
+                .{.{ "TESTENUM0", null, "TESTENUM2" }},
+            },
+        },
+        .{
+            .desc = "construct_STRUCT_array_with_null",
+            .sql = "SELECT ARRAY<STRUCT<int64, int64>>[(11, 12), NULL, (31, 32)]",
+            .rows = .{
+                .{.{ .{ 11, 12 }, null, .{ 31, 32 } }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATE_array_with_null",
+            .sql =
+            \\SELECT ARRAY<RANGE<DATE>>[
+            \\  RANGE<DATE> '[2014-01-01, 2015-01-01)',
+            \\  NULL
+            \\]
+            ,
+            .rows = .{
+                .{.{ "[2014-01-01, 2015-01-01)", null }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATETIME_array_with_null",
+            .sql =
+            \\SELECT ARRAY<RANGE<DATETIME>>[
+            \\  RANGE<DATETIME> '[2016-01-01 12:00:00, 2017-01-01 12:00:00)',
+            \\  NULL,
+            \\  RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)'
+            \\]
+            ,
+            .rows = .{
+                .{.{ "[2016-01-01 12:00:00, 2017-01-01 12:00:00)", null, "[NULL, 2017-01-01 12:00:00)" }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_TIMESTAMP_array_with_null",
+            .sql =
+            \\SELECT ARRAY<RANGE<TIMESTAMP>>[
+            \\  NULL,
+            \\  RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+00)'
+            \\]
+            ,
+            .rows = .{
+                .{.{ null, "[NULL, 2019-01-01 12:00:00+00)" }},
+            },
+        },
+        .{
+            .desc = "select_BOOL_array_all_null",
+            .sql = "SELECT ARRAY<BOOL>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_INT32_array_all_null",
+            .sql = "SELECT ARRAY<INT32>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_UINT32_array_all_null",
+            .sql = "SELECT ARRAY<UINT32>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_INT64_array_all_null",
+            .sql = "SELECT ARRAY<INT64>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_UINT64_array_all_null",
+            .sql = "SELECT ARRAY<UINT64>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_FLOAT_array_all_null",
+            .sql = "SELECT ARRAY<FLOAT>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_DOUBLE_array_all_null",
+            .sql = "SELECT ARRAY<DOUBLE>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_STRING_array_all_null",
+            .sql = "SELECT ARRAY<STRING>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_BYTES_array_all_null",
+            .sql = "SELECT ARRAY<BYTES>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_DATE_array_all_null",
+            .sql = "SELECT ARRAY<DATE>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_TIMESTAMP_array_all_null",
+            .sql = "SELECT ARRAY<TIMESTAMP>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "construct_enum_array_all_null",
+            .sql = "SELECT ARRAY<googlesql_test.TestEnum>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_STRUCT_array_all_null",
+            .sql = "SELECT ARRAY<STRUCT<int64, int64>>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATE_array_all_null",
+            .sql = "SELECT ARRAY<RANGE<DATE>>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATETIME_array_all_null",
+            .sql = "SELECT ARRAY<RANGE<DATETIME>>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_TIMESTAMP_array_all_null",
+            .sql = "SELECT ARRAY<RANGE<TIMESTAMP>>[NULL, NULL]",
+            .rows = .{
+                .{.{ null, null }},
+            },
+        },
+        .{
+            .desc = "select_BOOL_array_empty",
+            .sql = "SELECT ARRAY<BOOL>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_INT32_array_empty",
+            .sql = "SELECT ARRAY<INT32>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_UINT32_array_empty",
+            .sql = "SELECT ARRAY<UINT32>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_INT64_array_empty",
+            .sql = "SELECT ARRAY<INT64>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_UINT64_array_empty",
+            .sql = "SELECT ARRAY<UINT64>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_FLOAT_array_empty",
+            .sql = "SELECT ARRAY<FLOAT>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_DOUBLE_array_empty",
+            .sql = "SELECT ARRAY<DOUBLE>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_STRING_array_empty",
+            .sql = "SELECT ARRAY<STRING>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_BYTES_array_empty",
+            .sql = "SELECT ARRAY<BYTES>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_DATE_array_empty",
+            .sql = "SELECT ARRAY<DATE>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_TIMESTAMP_array_empty",
+            .sql = "SELECT ARRAY<TIMESTAMP>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "construct_enum_array_empty",
+            .sql = "SELECT ARRAY<googlesql_test.TestEnum>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_STRUCT_array_empty",
+            .sql = "SELECT ARRAY<STRUCT<int64, int64>>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATE_array_empty",
+            .sql = "SELECT ARRAY<RANGE<DATE>>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATETIME_array_empty",
+            .sql = "SELECT ARRAY<RANGE<DATETIME>>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_TIMESTAMP_array_empty",
+            .sql = "SELECT ARRAY<RANGE<TIMESTAMP>>[]",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_BOOL_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<BOOL>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_INT32_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<INT32>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_UINT32_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<UINT32>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_INT64_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<INT64>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_UINT64_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<UINT64>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_FLOAT_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<FLOAT>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_DOUBLE_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<DOUBLE>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_STRING_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<STRING>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_BYTES_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<BYTES>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_DATE_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<DATE>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_TIMESTAMP_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<TIMESTAMP>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "construct_cast_null_to_enum_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<googlesql_test.TestEnum>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_cast_null_to_STRUCT_array",
+            .sql = "SELECT CAST(NULL AS ARRAY<STRUCT<int64, int64>>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATE_array_cast_from_null",
+            .sql = "SELECT CAST(NULL AS ARRAY<RANGE<DATE>>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_DATETIME_array_cast_from_null",
+            .sql = "SELECT CAST(NULL AS ARRAY<RANGE<DATETIME>>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "construct_RANGE_TIMESTAMP_array_cast_from_null",
+            .sql = "SELECT CAST(NULL AS ARRAY<RANGE<TIMESTAMP>>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "select_string_array_constructed_unnest_explicit",
+            .sql =
+            \\##
+            \\## Queries that tests explicit unnest. This time we do not require a full
+            \\## matrix.
+            \\##
+            \\SELECT elem FROM UNNEST(ARRAY<STRING>["σ", NULL, "⨝"]) AS elem
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"σ"},
+                .{null},
+                .{"⨝"},
+            },
+        },
+        .{
+            .desc = "select_unnest_explicit_of_empty_array",
+            .sql = "SELECT elem FROM UNNEST(ARRAY<STRING>[]) AS elem",
+            .rows = .{},
+        },
+        .{
+            .desc = "select_unnest_explicit_of_null_array",
+            .sql = "SELECT elem FROM UNNEST(CAST(NULL AS ARRAY<STRING>)) AS elem",
+            .rows = .{},
+        },
+        .{
+            .desc = "select_string_array_constructed_unnest_with_offset",
+            .sql =
+            \\##
+            \\## From here, several queries to test offset/ordinality without joins.
+            \\##
+            \\SELECT elem, offset FROM UNNEST(ARRAY<STRING>["σ", NULL, "⨝"]) elem WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "σ", 0 },
+                .{ null, 1 },
+                .{ "⨝", 2 },
+            },
+        },
+        .{
+            .desc = "select_string_array_constructed_unnest_with_offset_aliased",
+            .sql = "SELECT elem, off FROM UNNEST(ARRAY<STRING>[\"σ\", NULL, \"⨝\"]) elem WITH OFFSET off",
+            .unordered = true,
+            .rows = .{
+                .{ "σ", 0 },
+                .{ null, 1 },
+                .{ "⨝", 2 },
+            },
+        },
+        .{
+            .desc = "select_string_array_constructed_unnest_with_offset_sorted",
+            .sql =
+            \\SELECT elem, offset
+            \\FROM UNNEST(ARRAY<STRING>["σ", NULL, "⨝"]) elem WITH OFFSET
+            \\ORDER BY offset desc
+            ,
+            .rows = .{
+                .{ "⨝", 2 },
+                .{ null, 1 },
+                .{ "σ", 0 },
+            },
+        },
+        .{
+            .desc = "select_string_array_constructed_unnest_with_offset_alaised_sorted",
+            .sql =
+            \\SELECT elem, off
+            \\FROM UNNEST(ARRAY<STRING>["σ", NULL, "⨝"]) elem WITH OFFSET off
+            \\ORDER BY off desc
+            ,
+            .rows = .{
+                .{ "⨝", 2 },
+                .{ null, 1 },
+                .{ "σ", 0 },
+            },
+        },
+        .{
+            .desc = "string_with_length_and_collation",
+            // A parameterized type (STRING(5)) can't head an ARRAY literal's element
+            // type: "Parameterized types are not supported in literal value
+            // construction" (recidiviz-bigquery-sandbox, 2026-08-25).
+            .unsupported_in_bigquery = "parameterized types in literals (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\select
+            \\  distinct str
+            \\FROM
+            \\  UNNEST(ARRAY<STRING(5) COLLATE "und:ci">["abc", "ABC", "def"]) as str
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"ABC"},
+                .{"def"},
+            },
+        },
+        .{
+            .desc = "string_with_length_and_collation_error_case",
+            .unsupported_in_bigquery = "parameterized types in literals (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\select
+            \\  ARRAY<STRING(5) COLLATE "und:ci">["123456"]
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "numeric_with_parameters",
+            .unsupported_in_bigquery = "parameterized types in literals (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "select ARRAY<NUMERIC(10, 1)>[NUMERIC \"1234.12\", NUMERIC \"1234.2345\", 1234.3456]",
+            .rows = .{
+                .{.{ 1234.1, 1234.2, 1234.3 }},
+            },
+        },
+        .{
+            .desc = "timestamp_with_parameters",
+            .unsupported_in_bigquery = "parameterized types in literals (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\select ARRAY<TIMESTAMP(6)>[
+            \\  TIMESTAMP "2020-01-01 1:2:3.123",
+            \\  TIMESTAMP "2020-01-02 1:2:3.123456",
+            \\  TIMESTAMP "2020-01-03 1:2:3.123456789012"]
+            ,
+            .rows = .{
+                .{.{ "2020-01-01 09:02:03.123+00", "2020-01-02 09:02:03.123456+00", "2020-01-03 09:02:03.123456+00" }},
+            },
+        },
+        .{
+            .desc = "struct_with_type_modifiers",
+            .unsupported_in_bigquery = "parameterized types in literals (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT distinct v
+            \\FROM
+            \\  UNNEST(ARRAY<STRUCT<STRING(5) COLLATE "und:ci", NUMERIC(10, 1), TIMESTAMP(6)>>[
+            \\    ("abc", NUMERIC "123.12", TIMESTAMP "2020-01-01 1:2:3.123456789012"),
+            \\    ("ABC", NUMERIC "123.13", TIMESTAMP "2020-01-01 1:2:3.123456789"),
+            \\    ("def", NUMERIC "123.23", TIMESTAMP "2020-01-02 1:2:3.123456789012")
+            \\    ]) as v
+            ,
+            .unordered = true,
+            .rows = .{
+                .{.{ "ABC", 123.1, "2020-01-01 09:02:03.123456+00" }},
+                .{.{ "def", 123.2, "2020-01-02 09:02:03.123456+00" }},
+            },
+        },
+        .{
+            .desc = "struct_with_type_modifiers_cannot_truncate_string",
+            .unsupported_in_bigquery = "parameterized types in literals (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY<STRUCT<STRING(5)>>[
+            \\    STRUCT("123456")
+            \\  ]
+            ,
+            .expect_error_any = true,
+        },
+    },
+}
