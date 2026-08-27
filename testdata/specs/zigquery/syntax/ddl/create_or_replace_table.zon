@@ -1,0 +1,157 @@
+.{
+    .spec = "zigquery/syntax/ddl/create_or_replace_table",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        // OR REPLACE materializes the query result under the existing name; the old
+        // schema and rows are gone, not merged with the new ones.
+        // data-definition-language.md#create_table_statement
+        .{
+            .desc = "OR REPLACE ... AS SELECT swaps the schema and clears prior rows",
+            .setup = .{
+                "CREATE TABLE cor_tbl (a INT64)",
+                "INSERT INTO cor_tbl VALUES (1), (2), (3)",
+                \\CREATE OR REPLACE TABLE cor_tbl AS SELECT 'x' AS b, 1.5 AS c
+                \\UNION ALL SELECT 'y', 2.5
+                ,
+            },
+            .sql = "SELECT b, c FROM cor_tbl ORDER BY b",
+            .rows = .{
+                .{ "x", 1.5 },
+                .{ "y", 2.5 },
+            },
+        },
+        // The query runs to completion against the table being replaced before the
+        // swap happens, so filtering the destination's own rows is a valid CTAS.
+        // data-definition-language.md#using-create-table-as
+        .{
+            .desc = "OR REPLACE ... AS SELECT can read the table it replaces",
+            .setup = .{
+                "CREATE TABLE metrics (job_id STRING, n INT64)",
+                "INSERT INTO metrics VALUES ('keep', 1), ('drop', 2), ('keep', 3)",
+                \\CREATE OR REPLACE TABLE metrics AS
+                \\SELECT job_id, n FROM metrics WHERE job_id = 'keep'
+                ,
+            },
+            .sql = "SELECT n FROM metrics ORDER BY n",
+            .rows = .{
+                .{1},
+                .{3},
+            },
+        },
+        // OR REPLACE tolerates a name that does not exist yet.
+        // data-definition-language.md#create_table_statement
+        .{
+            .desc = "OR REPLACE ... AS SELECT on a name that does not exist yet",
+            .sql =
+            \\CREATE OR REPLACE TABLE fresh_tbl AS SELECT 7 AS n;
+            \\SELECT n FROM fresh_tbl
+            ,
+            .rows = .{
+                .{7},
+            },
+        },
+        // CREATE TABLE AS SELECT takes its schema from the query; a column
+        // definition list, needed to declare a primary key, cannot appear alongside
+        // AS SELECT.
+        .{
+            .desc = "a column definition list cannot appear with AS SELECT",
+            .setup = .{
+                "CREATE TABLE pk_src (id INT64)",
+            },
+            .sql =
+            \\CREATE OR REPLACE TABLE pk_tbl (id INT64 PRIMARY KEY NOT ENFORCED)
+            \\AS SELECT id FROM pk_src
+            ,
+            .expect_error = "CREATE TABLE AS SELECT with column definition list is unsupported",
+            .rows = .{},
+        },
+        // A query error during OR REPLACE ... AS SELECT is raised before the
+        // destination table is touched: the replacement is built in a scratch table
+        // and swapped in only once the query succeeds.
+        //
+        // These three cases share one connection (no `.setup`, see
+        // harness/spec_runner.zig) so the failed statement in the middle and the
+        // read afterward see the same table the first case created.
+        .{
+            .desc = "intact: table exists with one row",
+            .sql = "CREATE TABLE intact_tbl (a INT64); INSERT INTO intact_tbl VALUES (7)",
+            .rows = .{},
+        },
+        .{
+            .desc = "intact: OR REPLACE ... AS SELECT fails on an unresolved column",
+            .sql = "CREATE OR REPLACE TABLE intact_tbl AS SELECT no_such_column FROM intact_tbl",
+            .expect_error = "no_such_column",
+            .rows = .{},
+        },
+        .{
+            .desc = "intact: the failed replace left the original row in place",
+            .sql = "SELECT a FROM intact_tbl",
+            .rows = .{
+                .{7},
+            },
+        },
+        // PARTITION BY, CLUSTER BY and OPTIONS all precede AS query
+        // (data-definition-language.md#create_table_statement) and do not change what
+        // the query materializes: the destination holds exactly the SELECT's rows.
+        .{
+            .desc = "OR REPLACE ... PARTITION BY ... CLUSTER BY ... OPTIONS(...) AS SELECT",
+            .setup = .{
+                "CREATE TABLE cor_full (d DATE, x INT64, y STRING)",
+                "INSERT INTO cor_full VALUES (DATE '2024-01-01', 1, 'old')",
+                \\CREATE OR REPLACE TABLE cor_full
+                \\PARTITION BY d
+                \\CLUSTER BY x, y
+                \\OPTIONS(description = 'full syntax demo')
+                \\AS SELECT DATE '2024-06-01' AS d, 2 AS x, 'new' AS y
+                ,
+            },
+            .sql = "SELECT d, x, y FROM cor_full",
+            .rows = .{
+                .{ "2024-06-01", 2, "new" },
+            },
+        },
+        // OPTIONS is recorded on the destination table like any other CREATE TABLE
+        // OPTIONS, independent of PARTITION BY / CLUSTER BY appearing alongside it.
+        // https://cloud.google.com/bigquery/docs/information-schema-table-options
+        .{
+            .desc = "OPTIONS(...) AS SELECT records options, queryable via TABLE_OPTIONS",
+            .setup = .{
+                "CREATE TABLE optd.opt_src (d DATE, n INT64, tag STRING)",
+                \\INSERT INTO optd.opt_src VALUES
+                \\  (DATE '2024-01-01', 1, 'a'), (DATE '2024-01-02', 2, 'b')
+                ,
+                \\CREATE OR REPLACE TABLE optd.opt_full
+                \\PARTITION BY d
+                \\CLUSTER BY tag
+                \\OPTIONS(description = 'clustered demo')
+                \\AS SELECT d, n, tag FROM optd.opt_src
+                ,
+            },
+            .sql =
+            \\SELECT option_name, option_value FROM optd.INFORMATION_SCHEMA.TABLE_OPTIONS
+            \\WHERE table_name = 'opt_full'
+            ,
+            .rows = .{
+                .{ "description", "\"clustered demo\"" },
+            },
+        },
+        // OR REPLACE tolerates a name that does not exist yet even with the full
+        // PARTITION BY / CLUSTER BY / OPTIONS syntax attached.
+        // data-definition-language.md#create_table_statement
+        .{
+            .desc = "OR REPLACE ... PARTITION BY ... CLUSTER BY ... OPTIONS(...) on a fresh name",
+            .sql =
+            \\CREATE OR REPLACE TABLE fresh_full
+            \\PARTITION BY d
+            \\CLUSTER BY n
+            \\OPTIONS(description = 'fresh full syntax')
+            \\AS SELECT DATE '2024-03-04' AS d, 9 AS n;
+            \\SELECT d, n FROM fresh_full
+            ,
+            .rows = .{
+                .{ "2024-03-04", 9 },
+            },
+        },
+    },
+}
