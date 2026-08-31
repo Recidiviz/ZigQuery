@@ -21,18 +21,38 @@
 //!   - **Text rendering is the fallback, not the rule.** Only arrays and structs
 //!     compared against a string want go through `renderCell`.
 //!
+//! A third corpus, `testdata/specs/googlesql/compliance/**` (imported by
+//! `tools/spec_import_compliance.py`, triaged in `docs/COMPLIANCE_TRIAGE.md`),
+//! carries want values in ZetaSQL's own compliance-testdata conventions rather
+//! than the reference docs' — raw BYTES instead of base64, `NULL` instead of
+//! `UNBOUNDED` for an open RANGE bound, canonical instead of API-wire-format
+//! date/time text. `Options.corpus` selects `stringMatch` or
+//! `complianceStringMatch` accordingly, so those conventions apply only where
+//! they are known to hold.
+//!
 //! This lives in the library rather than the harness because it is pure and it
 //! is the only part of the spec pipeline that genuinely needs unit tests.
 
 const std = @import("std");
 const Zoir = std.zig.Zoir;
 const driver = @import("../driver.zig");
+const value_mod = @import("value.zig");
+
+pub const Corpus = enum {
+    /// testdata/specs/** outside googlesql/compliance: want values are the
+    /// GoogleSQL reference docs' own published tables.
+    doc,
+    /// testdata/specs/googlesql/compliance/**: want values follow ZetaSQL's
+    /// own compliance-testdata conventions. docs/COMPLIANCE_TRIAGE.md.
+    compliance,
+};
 
 pub const Options = struct {
     /// Absolute-or-relative float tolerance. Tighter than the corpus runner's
     /// relative 1e-5: these are published, doc-exact values, not the output of
     /// a differing float pipeline.
     tolerance: f64 = 1e-9,
+    corpus: Corpus = .doc,
 };
 
 pub const Error = error{OutOfMemory};
@@ -75,7 +95,10 @@ pub fn matches(
         },
         .float_literal => |f| numericMatch(@floatCast(f), got, opts),
 
-        .string_literal => |want| stringMatch(gpa, want, got, opts),
+        .string_literal => |want| switch (opts.corpus) {
+            .doc => stringMatch(gpa, want, got, opts),
+            .compliance => complianceStringMatch(gpa, want, got, opts),
+        },
 
         // `.{}` in value position is an empty array; at row level the caller
         // handles it before reaching here.
@@ -145,10 +168,7 @@ fn stringMatch(
         // the doc tables print.
         .string, .json, .date, .timestamp, .datetime, .time, .interval, .range => |s| {
             if (std.mem.eql(u8, want, s)) return true;
-            // A quoted number in the docs against a NUMERIC-as-string cell.
-            const w = std.fmt.parseFloat(f64, want) catch return false;
-            const h = std.fmt.parseFloat(f64, s) catch return false;
-            return floatNear(w, h, opts.tolerance);
+            return numericStringMatch(want, s, opts);
         },
         // The docs quote numbers as often as not.
         .int, .float, .bool => {
@@ -163,6 +183,111 @@ fn stringMatch(
         },
         .null => return false,
     }
+}
+
+/// `stringMatch`'s counterpart for `testdata/specs/googlesql/compliance/**`,
+/// whose want values follow ZetaSQL's compliance-testdata conventions instead
+/// of the reference docs'.
+fn complianceStringMatch(
+    gpa: std.mem.Allocator,
+    want: []const u8,
+    got: driver.Cell,
+    opts: Options,
+) Error!bool {
+    switch (got) {
+        // cellFromValue's TYPE_BYTES arm renders BYTES as base64 (the
+        // BigQuery REST wire format — see repository.zig's contentdata BYTES
+        // comment); the compliance corpus's want carries the raw bytes.
+        .string, .json => |s| {
+            if (std.mem.eql(u8, want, s)) return true;
+            if (numericStringMatch(want, s, opts)) return true;
+            return base64Match(gpa, want, s);
+        },
+        .date, .interval => |s| {
+            if (std.mem.eql(u8, want, s)) return true;
+            return numericStringMatch(want, s, opts);
+        },
+        // RangeValue.ToString spells an unbounded endpoint "UNBOUNDED" (real
+        // BigQuery's own convention); the compliance corpus's want spells the
+        // same bound "NULL" (ZetaSQL's own debug-string convention for RANGE
+        // — see COMPLIANCE_TRIAGE.md's range.zon entry). Coerce before the
+        // exact-text compare.
+        .range => |s| {
+            if (std.mem.eql(u8, want, s)) return true;
+            const coerced = try std.mem.replaceOwned(u8, gpa, want, "NULL", "UNBOUNDED");
+            defer gpa.free(coerced);
+            if (std.mem.eql(u8, coerced, s)) return true;
+            return numericStringMatch(want, s, opts);
+        },
+        // ToApiString renders TIMESTAMP as "sec.microRemainder" (the
+        // BigQuery REST wire format) rather than a canonical display string;
+        // the compliance corpus's want is the latter. Compare instants when
+        // both sides parse as one, falling back to the plain/numeric text
+        // comparison otherwise.
+        .timestamp => |s| {
+            if (std.mem.eql(u8, want, s)) return true;
+            if (value_mod.parseTimestampApi(s)) |got_us| {
+                if (value_mod.parseTimestampMicros(want)) |want_us| {
+                    return got_us == want_us;
+                } else |_| {}
+            } else |_| {}
+            return numericStringMatch(want, s, opts);
+        },
+        // ToApiString renders DATETIME with a 'T' separator; the compliance
+        // corpus's want uses ZetaSQL's space-separated form. parseDatetimeMicros
+        // accepts either, so compare the parsed civil microseconds.
+        .datetime => |s| {
+            if (std.mem.eql(u8, want, s)) return true;
+            if (value_mod.parseDatetimeMicros(s)) |got_us| {
+                if (value_mod.parseDatetimeMicros(want)) |want_us| {
+                    return got_us == want_us;
+                } else |_| {}
+            } else |_| {}
+            return numericStringMatch(want, s, opts);
+        },
+        // ToApiString trims a TIME's trailing fractional zeros; the
+        // compliance corpus's want does not. Compare parsed time-of-day.
+        .time => |s| {
+            if (std.mem.eql(u8, want, s)) return true;
+            if (value_mod.parseTimeMicros(s)) |got_us| {
+                if (value_mod.parseTimeMicros(want)) |want_us| {
+                    return got_us == want_us;
+                } else |_| {}
+            } else |_| {}
+            return numericStringMatch(want, s, opts);
+        },
+        .int, .float, .bool => {
+            const w = std.fmt.parseFloat(f64, want) catch return false;
+            return numericMatch(w, got, opts);
+        },
+        .bytes => |b| return std.mem.eql(u8, want, b),
+        .array, .struct_ => {
+            const rendered = try renderCell(gpa, got);
+            defer gpa.free(rendered);
+            return std.mem.eql(u8, want, rendered);
+        },
+        .null => return false,
+    }
+}
+
+/// A quoted number in the docs against a NUMERIC/JSON-as-string (or similar)
+/// cell — compared numerically, not textually, for the same reason
+/// `numericMatch` is.
+fn numericStringMatch(want: []const u8, got: []const u8, opts: Options) bool {
+    const w = std.fmt.parseFloat(f64, want) catch return false;
+    const h = std.fmt.parseFloat(f64, got) catch return false;
+    return floatNear(w, h, opts.tolerance);
+}
+
+/// BYTES columns render as base64 STRING cells (cellFromValue's TYPE_BYTES
+/// arm); the compliance corpus's want carries the raw bytes instead.
+fn base64Match(gpa: std.mem.Allocator, want: []const u8, got: []const u8) Error!bool {
+    const dec = std.base64.standard.Decoder;
+    const n = dec.calcSizeForSlice(got) catch return false;
+    const buf = try gpa.alloc(u8, n);
+    defer gpa.free(buf);
+    dec.decode(buf, got) catch return false;
+    return std.mem.eql(u8, want, buf);
 }
 
 /// A cell as the reference docs print it: arrays `[a, b]`, structs `{1 a}`.
@@ -214,19 +339,69 @@ fn writeCell(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), cell: driver.Cell)
     }
 }
 
+/// A ZON "want" literal rendered the same way `renderCell` renders a
+/// `driver.Cell` — `[a, b]`, NULL spelled out, no quotes around a string —
+/// so the spec-corpus UI's expected/received panes are visually comparable.
+/// Purely a display concern: `matches()` above is still the only source of
+/// truth for whether a case passes. A want array renders positionally
+/// regardless of whether it will end up compared against an array or a
+/// struct cell — same fact `matches()`'s `.array_literal` arm relies on
+/// ("a struct rendered by the docs as a positional list") — there is no way
+/// to tell which from the ZON literal alone, without the got-cell it would
+/// be matched against.
+pub fn renderWant(gpa: std.mem.Allocator, zoir: Zoir, node: Zoir.Node.Index) Error![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(gpa);
+    try writeWant(gpa, &buf, zoir, node);
+    return buf.toOwnedSlice(gpa);
+}
+
+fn writeWant(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), zoir: Zoir, node: Zoir.Node.Index) Error!void {
+    switch (node.get(zoir)) {
+        .null => try buf.appendSlice(gpa, "NULL"),
+        .true => try buf.appendSlice(gpa, "true"),
+        .false => try buf.appendSlice(gpa, "false"),
+        .nan => try buf.appendSlice(gpa, "nan"),
+        .pos_inf => try buf.appendSlice(gpa, "inf"),
+        .neg_inf => try buf.appendSlice(gpa, "-inf"),
+        .int_literal => |i| switch (i) {
+            .small => |v| try buf.print(gpa, "{d}", .{v}),
+            .big => |v| try buf.print(gpa, "{d}", .{v}),
+        },
+        .float_literal => |f| try buf.print(gpa, "{d}", .{f}),
+        .string_literal => |s| try buf.appendSlice(gpa, s),
+        .empty_literal => try buf.appendSlice(gpa, "[]"),
+        .array_literal => |range| {
+            try buf.append(gpa, '[');
+            var i: u32 = 0;
+            while (i < range.len) : (i += 1) {
+                if (i > 0) try buf.appendSlice(gpa, ", ");
+                try writeWant(gpa, buf, zoir, range.at(i));
+            }
+            try buf.append(gpa, ']');
+        },
+        // Corpus-bug guards in matches() above; never legitimately emitted.
+        .char_literal, .enum_literal, .struct_literal => try buf.appendSlice(gpa, "<unsupported literal>"),
+    }
+}
+
 // ---- tests ----
 
 const testing = std.testing;
 
 /// Parses a ZON value and matches it against `got`, the way the runner will.
 fn check(src: [:0]const u8, got: driver.Cell) !bool {
+    return checkOpts(src, got, .{});
+}
+
+fn checkOpts(src: [:0]const u8, got: driver.Cell, opts: Options) !bool {
     const gpa = testing.allocator;
     var ast = try std.zig.Ast.parse(gpa, src, .zon);
     defer ast.deinit(gpa);
     var zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
     defer zoir.deinit(gpa);
     try testing.expect(zoir.compile_errors.len == 0);
-    return matches(gpa, zoir, .root, got, .{});
+    return matches(gpa, zoir, .root, got, opts);
 }
 
 test "scalars match their own kind" {
@@ -280,6 +455,84 @@ test "a string want matches every date/time cell kind" {
     try testing.expect(try check("\"2024-03-15T12:30:45\"", .{ .datetime = "2024-03-15T12:30:45" }));
     try testing.expect(try check("\"12:30:45\"", .{ .time = "12:30:45" }));
     try testing.expect(try check("\"1-2 3 4:5:6\"", .{ .interval = "1-2 3 4:5:6" }));
+}
+
+test "compliance corpus: a base64 STRING cell (BYTES rendering) matches a raw-bytes want" {
+    const opts: Options = .{ .corpus = .compliance };
+    try testing.expect(try checkOpts("\"abc\"", .{ .string = "YWJj" }, opts)); // base64("abc")
+    try testing.expect(try checkOpts("\"\\x39\"", .{ .string = "OQ==" }, opts)); // base64("\x39")
+    try testing.expect(!try checkOpts("\"abd\"", .{ .string = "YWJj" }, opts));
+    // Not applied outside the compliance corpus.
+    try testing.expect(!try check("\"abc\"", .{ .string = "YWJj" }));
+}
+
+test "compliance corpus: a canonical timestamp want matches an API-format cell" {
+    const opts: Options = .{ .corpus = .compliance };
+    // "sec.microRemainder" (the API form) vs. ZetaSQL's canonical text.
+    try testing.expect(try checkOpts(
+        "\"2014-07-18 00:00:00.000013+00\"",
+        .{ .timestamp = "1405641600.13" },
+        opts,
+    ));
+    try testing.expect(!try checkOpts(
+        "\"2014-07-18 00:00:00.000014+00\"",
+        .{ .timestamp = "1405641600.13" },
+        opts,
+    ));
+    // Not applied outside the compliance corpus.
+    try testing.expect(!try check(
+        "\"2014-07-18 00:00:00.000013+00\"",
+        .{ .timestamp = "1405641600.13" },
+    ));
+}
+
+test "compliance corpus: a space-separated datetime want matches a 'T'-separated cell" {
+    try testing.expect(try checkOpts(
+        "\"2024-03-15 12:30:45\"",
+        .{ .datetime = "2024-03-15T12:30:45" },
+        .{ .corpus = .compliance },
+    ));
+    // Not applied outside the compliance corpus.
+    try testing.expect(!try check(
+        "\"2024-03-15 12:30:45\"",
+        .{ .datetime = "2024-03-15T12:30:45" },
+    ));
+}
+
+test "compliance corpus: an untrimmed time fraction want matches a trimmed cell" {
+    const opts: Options = .{ .corpus = .compliance };
+    try testing.expect(try checkOpts("\"12:34:56.790\"", .{ .time = "12:34:56.79" }, opts));
+    try testing.expect(!try checkOpts("\"12:34:56.791\"", .{ .time = "12:34:56.79" }, opts));
+    // Not applied outside the compliance corpus.
+    try testing.expect(!try check("\"12:34:56.790\"", .{ .time = "12:34:56.79" }));
+}
+
+test "compliance corpus: a NULL range bound want matches an UNBOUNDED cell" {
+    const opts: Options = .{ .corpus = .compliance };
+    try testing.expect(try checkOpts("\"[NULL, NULL)\"", .{ .range = "[UNBOUNDED, UNBOUNDED)" }, opts));
+    try testing.expect(try checkOpts(
+        "\"[2020-01-01, NULL)\"",
+        .{ .range = "[2020-01-01, UNBOUNDED)" },
+        opts,
+    ));
+    try testing.expect(try checkOpts(
+        "\"[NULL, 2020-01-01)\"",
+        .{ .range = "[UNBOUNDED, 2020-01-01)" },
+        opts,
+    ));
+    try testing.expect(!try checkOpts(
+        "\"[2020-01-01, NULL)\"",
+        .{ .range = "[2020-01-02, UNBOUNDED)" },
+        opts,
+    ));
+    // A bounded range still matches directly, with no coercion involved.
+    try testing.expect(try checkOpts(
+        "\"[2020-01-01, 2021-01-01)\"",
+        .{ .range = "[2020-01-01, 2021-01-01)" },
+        opts,
+    ));
+    // Not applied outside the compliance corpus.
+    try testing.expect(!try check("\"[NULL, NULL)\"", .{ .range = "[UNBOUNDED, UNBOUNDED)" }));
 }
 
 test "arrays compare elementwise" {

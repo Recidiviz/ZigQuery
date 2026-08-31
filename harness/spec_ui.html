@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>spec-ui</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6b7280;
+    --border: #d8dce1;
+    --row-hover: #f2f4f7;
+    --row-selected: #e2ecff;
+    --pre-bg: #f6f7f9;
+    --pass: #1a7f37;
+    --fail: #b91c1c;
+    --not-implemented: #92640a;
+    --unsupported: #6d28d9;
+    --skip: #6b7280;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17191d;
+      --fg: #e6e8eb;
+      --muted: #9aa1ac;
+      --border: #33383f;
+      --row-hover: #22262c;
+      --row-selected: #1f3357;
+      --pre-bg: #1d2024;
+      --pass: #4ade80;
+      --fail: #f87171;
+      --not-implemented: #f5b942;
+      --unsupported: #c4b5fd;
+      --skip: #9aa1ac;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 14px; margin: 0; white-space: nowrap; }
+  #count { color: var(--muted); white-space: nowrap; }
+  #filter {
+    flex: 1 1 240px;
+    min-width: 160px;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+  }
+  .outcomes { display: flex; gap: 10px; white-space: nowrap; }
+  .outcomes label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #table-wrap { flex: 1 1 55%; overflow: auto; border-right: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead th {
+    position: sticky; top: 0;
+    background: var(--bg);
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    cursor: default;
+  }
+  tbody td { padding: 5px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr.selected { background: var(--row-selected); }
+  .spec-col { color: var(--muted); white-space: nowrap; }
+  .spec-col .desc-line { color: var(--fg); white-space: normal; margin-top: 2px; }
+  .badge { font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .02em; }
+  .badge.pass { color: var(--pass); }
+  .badge.fail { color: var(--fail); }
+  .badge.not_implemented { color: var(--not-implemented); }
+  .badge.unsupported { color: var(--unsupported); }
+  .badge.skip { color: var(--skip); }
+  .detail-col { color: var(--muted); }
+  .stale-marker { color: var(--fail); font-weight: 600; }
+  #detail {
+    flex: 1 1 45%;
+    overflow: auto;
+    padding: 14px;
+  }
+  #detail .placeholder { color: var(--muted); }
+  #detail h2 { font-size: 13px; margin: 0 0 2px; }
+  #detail .sub { color: var(--muted); margin-bottom: 14px; }
+  #detail section { margin-bottom: 16px; }
+  #detail section h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
+    margin: 0 0 4px;
+  }
+  #detail pre {
+    background: var(--pre-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    max-height: 260px;
+    overflow: auto;
+  }
+  .side-by-side { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .empty { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>spec-ui</h1>
+  <span id="count"></span>
+  <input id="filter" type="text" placeholder="filter by spec / desc substring&hellip;">
+  <div class="outcomes">
+    <label><input type="checkbox" data-outcome="pass" checked> pass</label>
+    <label><input type="checkbox" data-outcome="fail" checked> fail</label>
+    <label><input type="checkbox" data-outcome="not_implemented" checked> not_implemented</label>
+    <label><input type="checkbox" data-outcome="unsupported" checked> unsupported</label>
+    <label><input type="checkbox" data-outcome="skip" checked> skip</label>
+  </div>
+</header>
+<main>
+  <div id="table-wrap">
+    <table>
+      <thead>
+        <tr><th>spec</th><th>outcome</th><th>detail</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="detail"><div class="placeholder">Click a row to see its input SQL, analyzed AST, transformed SQL, and expected vs. received values.</div></div>
+</main>
+<script>
+let all = [];
+let selectedIndex = null;
+
+function outcomeFilters() {
+  const set = new Set();
+  document.querySelectorAll('.outcomes input[type=checkbox]').forEach(cb => {
+    if (cb.checked) set.add(cb.dataset.outcome);
+  });
+  return set;
+}
+
+function matches(r, text, outcomes) {
+  if (!outcomes.has(r.outcome)) return false;
+  if (!text) return true;
+  return r.spec.toLowerCase().includes(text) || r.desc.toLowerCase().includes(text);
+}
+
+function render() {
+  const text = document.getElementById('filter').value.trim().toLowerCase();
+  const outcomes = outcomeFilters();
+  const rows = document.getElementById('rows');
+  rows.innerHTML = '';
+  let shown = 0;
+  for (const r of all) {
+    if (!matches(r, text, outcomes)) continue;
+    shown++;
+    const tr = document.createElement('tr');
+    tr.dataset.index = r.index;
+    if (r.index === selectedIndex) tr.className = 'selected';
+    tr.innerHTML =
+      '<td class="spec-col">' + escapeHtml(r.spec) +
+        '<div class="desc-line">' + escapeHtml(r.desc) + '</div></td>' +
+      '<td><span class="badge ' + r.outcome + '">' + r.outcome + '</span>' +
+        (r.stale ? ' <span class="stale-marker">STALE</span>' : '') + '</td>' +
+      '<td class="detail-col">' + escapeHtml(r.detail) +
+        (r.unsupported_in_bigquery ? '<div>' + escapeHtml(r.unsupported_in_bigquery) + '</div>' : '') + '</td>';
+    tr.addEventListener('click', () => selectCase(r.index));
+    rows.appendChild(tr);
+  }
+  document.getElementById('count').textContent = shown + ' / ' + all.length + ' cases';
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+async function selectCase(index) {
+  selectedIndex = index;
+  render();
+  const detail = document.getElementById('detail');
+  detail.innerHTML = '<div class="placeholder">loading&hellip;</div>';
+  const res = await fetch('/api/case/' + index);
+  if (!res.ok) {
+    detail.innerHTML = '<div class="placeholder">failed to load case</div>';
+    return;
+  }
+  const c = await res.json();
+  detail.innerHTML = renderDetail(c);
+}
+
+function pre(text) {
+  return text ? '<pre>' + escapeHtml(text) + '</pre>' : '<div class="empty">(not applicable)</div>';
+}
+
+function renderDetail(c) {
+  let setup = '';
+  if (c.setup_sql && c.setup_sql.length) {
+    setup = '<section><h3>Setup SQL</h3>' + c.setup_sql.map(pre).join('') + '</section>';
+  }
+  return (
+    '<h2>' + escapeHtml(c.spec) + ' :: ' + escapeHtml(c.desc) + '</h2>' +
+    '<div class="sub"><span class="badge ' + c.outcome + '">' + c.outcome + '</span>' +
+    (c.stale ? ' <span class="stale-marker">STALE</span>' : '') +
+    (c.detail ? ' &mdash; ' + escapeHtml(c.detail) : '') + '</div>' +
+    (c.unsupported_in_bigquery ?
+      '<section><h3>BigQuery verdict</h3>' + pre(c.unsupported_in_bigquery) + '</section>' : '') +
+    '<section><h3>Input SQL</h3>' + pre(c.input_sql) + '</section>' +
+    setup +
+    '<section><h3>Analyzed AST</h3>' + pre(c.ast_text) + '</section>' +
+    '<section><h3>Transformed SQL</h3>' + pre(c.transformed_sql) + '</section>' +
+    '<section><h3>Expected vs. Received</h3>' +
+    '<div class="side-by-side">' +
+    '<div><h3>Expected</h3>' + pre(c.expected_text) + '</div>' +
+    '<div><h3>Received</h3>' + pre(c.received_text) + '</div>' +
+    '</div></section>'
+  );
+}
+
+document.getElementById('filter').addEventListener('input', render);
+document.querySelectorAll('.outcomes input[type=checkbox]').forEach(cb => cb.addEventListener('change', render));
+
+fetch('/api/results').then(r => r.json()).then(data => {
+  all = data;
+  render();
+});
+</script>
+</body>
+</html>

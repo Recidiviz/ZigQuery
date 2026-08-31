@@ -407,6 +407,27 @@ pub fn build(b: *std.Build) void {
     b.step("insert-bench", "Profile a tabledata.insertAll request body")
         .dependOn(&run_insertbench.step);
 
+    // Browsable UI over the spec corpus
+    const spec_ui_exe = b.addExecutable(.{
+        .name = "spec-ui",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("harness/spec_ui.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "bqserver", .module = server_mod },
+                .{ .name = "zetasqlite", .module = mod },
+            },
+        }),
+    });
+    if (maybe_bazel) |bz| spec_ui_exe.step.dependOn(&bz.step);
+    b.installArtifact(spec_ui_exe);
+    const run_spec_ui = b.addRunArtifact(spec_ui_exe);
+    run_spec_ui.setCwd(.{ .cwd_relative = b.build_root.path.? }); // reads testdata/specs
+    if (b.args) |args| run_spec_ui.addArgs(args);
+    b.step("spec-ui", "Browse the spec corpus results in a local web UI")
+        .dependOn(&run_spec_ui.step);
+
     // ---- dist ----
     //
     // `install` writes all ten artifacts to zig-out/bin, eight of which are
