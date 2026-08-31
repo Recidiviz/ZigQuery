@@ -54,6 +54,7 @@ SHIM_EXPORTS = [
     "GoogleSQL_RegexpReplace",
     "GoogleSQL_Normalize",
     "GoogleSQL_CaseMap",
+    "GoogleSQL_TimeZoneOffsetSeconds",
 ]
 
 cc_binary(

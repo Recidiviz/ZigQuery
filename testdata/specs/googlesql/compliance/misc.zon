@@ -1,0 +1,96 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/misc",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/misc.test",
+    .cases = .{
+        .{
+            .desc = "default_error_int64",
+            .sql = "SELECT ERROR(\"message\")",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "default_safe_error_int64",
+            .sql = "SELECT SAFE.ERROR(\"message\")",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "default_error_no_rows",
+            .sql = "SELECT ERROR(\"message\") FROM UNNEST([])",
+            .rows = .{},
+        },
+        .{
+            .desc = "cast_error_as_string",
+            .sql =
+            \\# Tests that an engine can properly handle ERROR() with a non-INT64 return type.
+            \\# (The tests for INT64 are in the code-based tests.)
+            \\SELECT CAST(ERROR("message") AS BYTES)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_safe_error_as_string",
+            .sql = "SELECT CAST(SAFE.ERROR(\"message\") AS STRING)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "if_error",
+            .sql = "SELECT IF(TRUE, ERROR(\"message\"), \"foo\")",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "if_no_error",
+            .sql = "SELECT IF(FALSE, ERROR(\"message\"), \"foo\")",
+            .rows = .{
+                .{"foo"},
+            },
+        },
+        .{
+            .desc = "safe_error_fn_with_division_by_zero",
+            .sql = "SELECT SAFE.ERROR(IF(1/0 = 0, \"abc\", \"\"))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_error_fn_with_error",
+            .sql = "SELECT SAFE.ERROR(ERROR(\"custom error message\"))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "error_as_interval",
+            .sql = "SELECT IF(FALSE, MAKE_INTERVAL(0, 10, 2), ERROR(\"error\"))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "interval_to_interval_cast",
+            .sql =
+            \\# This query is useful because it doesn't fold the INTERVAL -> INTERVAL cast
+            \\# on the THEN side.
+            \\SELECT IF(TRUE, MAKE_INTERVAL(0, 10, 2), ERROR("error"))
+            ,
+            .rows = .{
+                .{"0-10 2 0:0:0"},
+            },
+        },
+        .{
+            .desc = "error_as_json",
+            .sql = "SELECT IF(FALSE, JSON '1', ERROR(\"error\"))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_cast_to_json",
+            .sql =
+            \\# The IF expression is one way to get a self-cast to appear in the
+            \\# ResolvedAST that wont be removed by the Resolver.
+            \\SELECT IF(TRUE, JSON '1', ERROR("error"))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+    },
+}

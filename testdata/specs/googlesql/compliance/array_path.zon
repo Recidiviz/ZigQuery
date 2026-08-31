@@ -1,0 +1,765 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/array_path",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/array_path.test",
+    .cases = .{
+        .{
+            .desc = "array_path_top_level_struct_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([STRUCT(1 AS x), STRUCT(2), STRUCT(3)].x) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "array_path_top_level_proto_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([CAST('int64_val: 1' AS googlesql_test.RecursivePB),
+            \\             CAST('int64_val: 2' AS googlesql_test.RecursivePB)].int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_path_through_struct_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST(STRUCT([STRUCT(1 AS y), STRUCT(2), STRUCT(3)] AS x).x.y) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "array_path_through_proto_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  CAST('recursive_pb { int64_val: 1 }' AS googlesql_test.RecursivePB),
+            \\  CAST('recursive_pb { int64_val: 2 }' AS googlesql_test.RecursivePB)
+            \\].recursive_pb.int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_path_through_two_struct_arrays",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  STRUCT([STRUCT(2 AS y), STRUCT(1)] AS x),
+            \\  STRUCT([STRUCT(4 AS y)] AS x),
+            \\  STRUCT([STRUCT(3 AS y)] AS x)
+            \\].x.y) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+                .{4},
+            },
+        },
+        .{
+            .desc = "array_path_through_two_struct_arrays_order_by_offset",
+            .sql =
+            \\SELECT v, o
+            \\FROM UNNEST([
+            \\  STRUCT([STRUCT(2 AS y), STRUCT(1)] AS x),
+            \\  STRUCT([STRUCT(4 AS y)] AS x),
+            \\  STRUCT([STRUCT(3 AS y)] AS x)
+            \\].x.y) AS v WITH OFFSET o
+            \\ORDER BY o
+            ,
+            .rows = .{
+                .{ 2, 0 },
+                .{ 1, 1 },
+                .{ 4, 2 },
+                .{ 3, 3 },
+            },
+        },
+        .{
+            .desc = "array_path_through_two_struct_arrays_select_offset",
+            .sql =
+            \\SELECT v, o
+            \\FROM UNNEST([
+            \\  STRUCT([STRUCT(2 AS y), STRUCT(1)] AS x),
+            \\  STRUCT([STRUCT(4 AS y)] AS x),
+            \\  STRUCT([STRUCT(3 AS y)] AS x)
+            \\].x.y) AS v WITH OFFSET o
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 0 },
+                .{ 3, 3 },
+                .{ 4, 2 },
+            },
+        },
+        .{
+            .desc = "array_path_through_two_proto_arrays",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  CAST('repeated_recursive_pb { int64_val: 1 }' AS googlesql_test.RecursivePB),
+            \\  CAST('repeated_recursive_pb { int64_val: 2 } repeated_recursive_pb { int64_val: 3 }' AS googlesql_test.RecursivePB)
+            \\].repeated_recursive_pb.int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "array_path_through_intermediate_empty_repeat",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  CAST('int64_val: 3' AS googlesql_test.RecursivePB),
+            \\  CAST('repeated_recursive_pb { repeated_recursive_pb { int64_val: 1 }}' AS googlesql_test.RecursivePB)
+            \\].repeated_recursive_pb.repeated_recursive_pb.int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_path_through_struct_and_proto_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  STRUCT([CAST('repeated_recursive_pb { int64_val: 1 } repeated_recursive_pb { int64_val: 2 }' AS googlesql_test.RecursivePB),
+            \\          CAST('repeated_recursive_pb { int64_val: 3 }' AS googlesql_test.RecursivePB)] AS x),
+            \\  STRUCT([CAST('repeated_recursive_pb { int64_val: 4 }' AS googlesql_test.RecursivePB),
+            \\          CAST('repeated_recursive_pb { int64_val: 5 } repeated_recursive_pb { int64_val: 6 }' AS googlesql_test.RecursivePB)])
+            \\].x.repeated_recursive_pb.int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+                .{4},
+                .{5},
+                .{6},
+            },
+        },
+        .{
+            .desc = "array_path_with_leaf_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST(
+            \\  CAST('int64_key_1: 1 int64_key_2: 2 repeated_holder { repeated_field { str_value: "a" str_value: "b" } repeated_field { str_value: "c" } } repeated_holder { repeated_field { str_value: "d" } }'
+            \\       AS googlesql_test.KitchenSinkPB)
+            \\  .repeated_holder.repeated_field.str_value) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{"a"},
+                .{"b"},
+                .{"c"},
+                .{"d"},
+            },
+        },
+        .{
+            .desc = "array_path_to_has_field",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([CAST('int64_val: 1' AS googlesql_test.RecursivePB),
+            \\             CAST('int64_val: 2' AS googlesql_test.RecursivePB)].has_int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "flatten_as_a_function",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  CAST('repeated_recursive_pb { int64_val: 1 }' AS googlesql_test.RecursivePB),
+            \\  CAST('repeated_recursive_pb { int64_val: 2 } repeated_recursive_pb { int64_val: 3 }' AS googlesql_test.RecursivePB)
+            \\].repeated_recursive_pb.int64_val) AS v
+            ,
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "array_path_unnest_null_flatten_path",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST(
+            \\  CAST('' AS googlesql_test.RecursivePB).recursive_pb.repeated_recursive_pb.int64_val
+            \\) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "array_path_flatten_null_flatten_path",
+            .sql =
+            \\SELECT FLATTEN(
+            \\  CAST('' AS googlesql_test.RecursivePB).recursive_pb.repeated_recursive_pb.int64_val
+            \\) AS my_array
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_path_empty_proto_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST(CAST([] AS ARRAY<googlesql_test.RecursivePB>).int64_val) AS v
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "array_path_flatten_generalized_dot_operator",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  CAST("""[googlesql_test.TestExtraPBExtensionHolder.test_extra_proto_extension] {
+            \\            ext_value: 1
+            \\            ext_value: 2
+            \\          }""" AS googlesql_test.TestExtraPB),
+            \\  CAST("" AS googlesql_test.TestExtraPB),
+            \\  CAST("""[googlesql_test.TestExtraPBExtensionHolder.test_extra_proto_extension] {
+            \\            ext_value: 3
+            \\          }""" AS googlesql_test.TestExtraPB)
+            \\].(googlesql_test.TestExtraPBExtensionHolder.test_extra_proto_extension).ext_value)
+            ,
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "array_path_null_proto_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST(CAST(NULL AS ARRAY<googlesql_test.RecursivePB>).int64_val) AS v
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "array_path_top_level_struct_array_with_nulls_in_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([STRUCT(1 AS x), STRUCT(2), NULL, STRUCT(3), STRUCT(NULL as x)].x) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{null},
+                .{null},
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+        .{
+            .desc = "array_path_top_level_proto_array_with_nulls_in_array",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([CAST('int64_val: 1' AS googlesql_test.RecursivePB),
+            \\             CAST(NULL AS googlesql_test.RecursivePB),
+            \\             CAST('int64_val: 2' AS googlesql_test.RecursivePB)].int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{null},
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_1",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  STRUCT( STRUCT(5 AS y) AS x ),
+            \\  STRUCT( NULL ),
+            \\  STRUCT( STRUCT(6) )
+            \\  ].x.y) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{null},
+                .{5},
+                .{6},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_from_flatten_1",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  STRUCT( STRUCT(5 AS y) AS x ),
+            \\  STRUCT( NULL ),
+            \\  STRUCT( STRUCT(6) )
+            \\  ].x.y) AS my_array
+            ,
+            .rows = .{
+                .{.{ 5, null, 6 }},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_2",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  STRUCT( [STRUCT(5 AS y)] AS x ),
+            \\  STRUCT( [STRUCT(NULL AS y)] ),
+            \\  STRUCT( [STRUCT(6)] )
+            \\  ].x.y) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{null},
+                .{5},
+                .{6},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_from_flatten_2",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  STRUCT( [STRUCT(5 AS y)] AS x ),
+            \\  STRUCT( [STRUCT(NULL AS y)] ),
+            \\  STRUCT( [STRUCT(6)] )
+            \\  ].x.y) AS my_array
+            ,
+            .rows = .{
+                .{.{ 5, null, 6 }},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_3",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  STRUCT( [STRUCT(5 AS y)] AS x ),
+            \\  STRUCT( CAST(NULL AS ARRAY<STRUCT<y INT64>>) AS x ),
+            \\  STRUCT( [STRUCT(6)] )
+            \\  ].x.y) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{5},
+                .{6},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_from_flatten_3",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  STRUCT( [STRUCT(5 AS y)] AS x ),
+            \\  STRUCT( CAST(NULL AS ARRAY<STRUCT<y INT64>>) AS x ),
+            \\  STRUCT( [STRUCT(6)] )
+            \\  ].x.y) AS my_array
+            ,
+            .rows = .{
+                .{.{ 5, 6 }},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_4",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  STRUCT( [STRUCT(STRUCT([STRUCT(5 AS zz)] AS z) AS y)] AS x ),
+            \\  STRUCT( [STRUCT(CAST(NULL AS STRUCT<z ARRAY<STRUCT<zz INT64>>>))] ),
+            \\  STRUCT( [STRUCT(STRUCT([STRUCT(6)]))] )
+            \\  ].x.y.z.zz) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{5},
+                .{6},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_from_flatten_4",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  STRUCT( [STRUCT(STRUCT([STRUCT(5 AS zz)] AS z) AS y)] AS x ),
+            \\  STRUCT( [STRUCT(CAST(NULL AS STRUCT<z ARRAY<STRUCT<zz INT64>>>))] ),
+            \\  STRUCT( [STRUCT(STRUCT([STRUCT(6)]))] )
+            \\  ].x.y.z.zz) AS my_array
+            ,
+            .rows = .{
+                .{.{ 5, 6 }},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_5",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  CAST('''repeated_recursive_pb { recursive_pb { int64_val: 1 } }
+            \\          repeated_recursive_pb { recursive_pb { } }
+            \\          repeated_recursive_pb { }''' AS googlesql_test.RecursivePB)
+            \\  ].repeated_recursive_pb.recursive_pb.int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{null},
+                .{0},
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_from_flatten_5",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  CAST('''repeated_recursive_pb { recursive_pb { int64_val: 1 } }
+            \\          repeated_recursive_pb { recursive_pb { } }
+            \\          repeated_recursive_pb { }''' AS googlesql_test.RecursivePB)
+            \\  ].repeated_recursive_pb.recursive_pb.int64_val) AS my_array
+            ,
+            .rows = .{
+                .{.{ 1, 0, null }},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_6",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  CAST('''repeated_recursive_pb { recursive_pb { repeated_recursive_pb { int64_val: 1 } } }
+            \\          repeated_recursive_pb { recursive_pb { repeated_recursive_pb { } } }
+            \\          repeated_recursive_pb { recursive_pb { } }
+            \\          repeated_recursive_pb { }''' AS googlesql_test.RecursivePB)
+            \\  ].repeated_recursive_pb.recursive_pb.repeated_recursive_pb.int64_val) AS v
+            \\ORDER BY v
+            ,
+            .rows = .{
+                .{0},
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_from_flatten_6",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  CAST('''repeated_recursive_pb { recursive_pb { repeated_recursive_pb { int64_val: 1 } } }
+            \\          repeated_recursive_pb { recursive_pb { repeated_recursive_pb { } } }
+            \\          repeated_recursive_pb { recursive_pb { } }
+            \\          repeated_recursive_pb { }''' AS googlesql_test.RecursivePB)
+            \\  ].repeated_recursive_pb.recursive_pb.repeated_recursive_pb.int64_val) AS my_array
+            ,
+            .rows = .{
+                .{.{ 1, 0 }},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_7",
+            .sql =
+            \\SELECT v
+            \\FROM UNNEST([
+            \\  CAST('''int64_key_1: 1 int64_key_2: 2
+            \\          nested_value { nested_repeated_int32: 1 nested_repeated_int32: 2 }
+            \\       ''' AS googlesql_test.KitchenSinkPB),
+            \\  CAST('''int64_key_1: 3 int64_key_2: 4''' AS googlesql_test.KitchenSinkPB)
+            \\  ].nested_value.nested_repeated_int32) AS v
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_path_nulls_from_flatten_7",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  CAST('''int64_key_1: 1 int64_key_2: 2
+            \\          nested_value { nested_repeated_int32: 1 nested_repeated_int32: 2 }
+            \\       ''' AS googlesql_test.KitchenSinkPB),
+            \\  CAST('''int64_key_1: 3 int64_key_2: 4''' AS googlesql_test.KitchenSinkPB)
+            \\  ].nested_value.nested_repeated_int32) AS my_array
+            ,
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_on_offset",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  STRUCT([1, 2, 3] AS a),
+            \\  STRUCT([4, 5] AS a)
+            \\][OFFSET(1)].a)
+            ,
+            .rows = .{
+                .{.{ 4, 5 }},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_on_offset_2",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN(
+            \\  (STRUCT([
+            \\     STRUCT([1, 2, 3] AS b),
+            \\     STRUCT([4, 5] AS b)
+            \\  ] AS a).a[OFFSET(0)]).b
+            \\) AS v
+            ,
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_on_offset_3",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN(
+            \\  STRUCT([
+            \\     STRUCT([1, 2, 3] AS b),
+            \\     STRUCT([4, 5] AS b)
+            \\  ] AS a).a[OFFSET(0)].b
+            \\) AS v
+            ,
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_in_flatten",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN(
+            \\    ARRAY_CONCAT(FLATTEN([STRUCT([STRUCT(1 AS b)] AS a)].a),
+            \\                 FLATTEN([STRUCT([STRUCT(2 AS b)] AS a)].a)).b)
+            ,
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_path_empty_array",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT FLATTEN(ARRAY<STRUCT<int64_val INT64>>[].int64_val)",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "array_path_through_struct_array_and_json_field",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT FLATTEN([STRUCT(JSON '1' AS x, 2 AS y), (JSON '11', 22)].x)",
+            .rows = .{
+                .{.{ 1, 11 }},
+            },
+        },
+        .{
+            .desc = "array_path_through_struct_array_and_nested_json_fields",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT FLATTEN([STRUCT(JSON '{\"field\": 1}' AS x, 2 AS y), (JSON '{\"field\": \"foo\"}', 22), (JSON '\"test\"', 33)].x.field)",
+            .rows = .{
+                .{.{ 1, "foo", null }},
+            },
+        },
+        .{
+            .desc = "array_path_through_struct_array_and_json_array_leaf",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT FLATTEN([STRUCT(JSON '[\"foo\", \"bar\"]' AS x, 2 AS y), (JSON '[\"baz\"]', 22)].x)",
+            .rows = .{
+                .{.{ "[\"foo\",\"bar\"]", "[\"baz\"]" }},
+            },
+        },
+        .{
+            .desc = "array_path_through_struct_array_and_json_arrays",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT FLATTEN([STRUCT(JSON '[{\"field\": 1}]' AS x, 2 AS y), (JSON '{\"field\": 11}', 22)].x.field)",
+            .rows = .{
+                .{.{ null, 11 }},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_with_offset_at_end",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\    STRUCT([1, 2, 3] AS a),
+            \\    STRUCT([4, 5] AS a)
+            \\  ].a[OFFSET(1)]
+            \\)
+            ,
+            .rows = .{
+                .{.{ 2, 5 }},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_with_offset_after",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\    STRUCT([1, 2, 3] AS a),
+            \\    STRUCT([4, 5] AS a)
+            \\  ].a
+            \\)[OFFSET(0)]
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_with_offset_at_end_and_after",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\    STRUCT([1, 2, 3] AS a),
+            \\    STRUCT([4, 5] AS a)
+            \\  ].a[OFFSET(1)]
+            \\)[OFFSET(0)]
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_with_partially_invalid_internal_offset",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\    STRUCT([1, 2, 3] AS a),
+            \\    STRUCT([4, 5] AS a)
+            \\  ].a[OFFSET(2)]
+            \\)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_path_flatten_with_partially_invalid_internal_safe_offset",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT FLATTEN([
+            \\    STRUCT([1, 2, 3] AS a),
+            \\    STRUCT([4, 5] AS a)
+            \\  ].a[SAFE_OFFSET(2)]
+            \\)
+            ,
+            .rows = .{
+                .{.{ 3, null }},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_with_offset_at_end_proto",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  CAST('''repeated_recursive_pb { int64_val: 1 }
+            \\          repeated_recursive_pb { int64_val: 2 }''' AS googlesql_test.RecursivePB),
+            \\  CAST('''repeated_recursive_pb { int64_val: 3 }
+            \\          repeated_recursive_pb { int64_val: 4 }''' AS googlesql_test.RecursivePB)
+            \\  ].repeated_recursive_pb[OFFSET(1)].int64_val) AS my_array
+            ,
+            .rows = .{
+                .{.{ 2, 4 }},
+            },
+        },
+        .{
+            .desc = "array_path_flatten_with_offset_in_middle_proto",
+            .sql =
+            \\SELECT FLATTEN([
+            \\  CAST('''repeated_recursive_pb { repeated_recursive_pb { int64_val: 1 } }
+            \\          repeated_recursive_pb { repeated_recursive_pb { int64_val: 2 } }''' AS googlesql_test.RecursivePB),
+            \\  CAST('''repeated_recursive_pb { repeated_recursive_pb { int64_val: 3 } }
+            \\          repeated_recursive_pb { repeated_recursive_pb { int64_val: 4 } }''' AS googlesql_test.RecursivePB)
+            \\  ].repeated_recursive_pb[OFFSET(1)].repeated_recursive_pb.int64_val) AS my_array
+            ,
+            .rows = .{
+                .{.{ 2, 4 }},
+            },
+        },
+        .{
+            .desc = "array_path_in_unnest",
+            .sql = "SELECT 3 IN UNNEST([STRUCT([1, 2] AS a), STRUCT([3, 4, 5] AS a)].a)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "flatten_in_flatten",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  FLATTEN((SELECT [STRUCT(['A','B'] AS f11)])
+            \\    .f11[ORDINAL(FLATTEN([STRUCT([3,4] AS f21), STRUCT([1,2] AS f21)].f21)
+            \\      [OFFSET(3)])]) AS col
+            ,
+            .rows = .{
+                .{.{"B"}},
+            },
+        },
+        .{
+            .desc = "flatten_inner_join",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  a, b
+            \\FROM
+            \\  (SELECT 1 AS a, ARRAY<STRUCT<int64_val INT64>>[] AS b)
+            \\INNER JOIN
+            \\  UNNEST(FLATTEN(b.int64_val)) b
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "flatten_left_join",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  a, b
+            \\FROM
+            \\  (SELECT 1 AS a, ARRAY<STRUCT<int64_val INT64>>[] AS b)
+            \\LEFT JOIN
+            \\  UNNEST(FLATTEN(b.int64_val)) b
+            ,
+            .rows = .{
+                .{ 1, null },
+            },
+        },
+        .{
+            .desc = "flatten_left_join_with_offset",
+            .unsupported_in_bigquery = "Function not found: FLATTEN (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  a, b
+            \\FROM
+            \\  (SELECT 1 AS a, ARRAY<STRUCT<int64_val INT64>>[] AS b)
+            \\LEFT JOIN
+            \\  UNNEST(FLATTEN(b.int64_val)) b WITH OFFSET o
+            \\ORDER BY o
+            ,
+            .rows = .{
+                .{ 1, null },
+            },
+        },
+    },
+}

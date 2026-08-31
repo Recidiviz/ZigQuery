@@ -1,0 +1,605 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/call_sql_udf",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/call_sql_udf.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION Thousand() AS ( 1000 )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION TimesThousand(value INT64) AS ( value * Thousand() )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION StringIdentity(value STRING) AS ( value )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION MyStringIsNull(value STRING) AS ( value IS NULL )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION IntegerToDouble(value INT64) RETURNS FLOAT64 AS ( value )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION IntegerEquals(a INT64, b INT64) AS ( a = b )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION FloatReflexiveEquals(a FLOAT64) AS ( a = a )",
+        },
+        .{
+            .desc = "skip_failed_reference_setup",
+            .sql =
+            \\# This function definition is invalid, but since [prepare_database] statements
+            \\# are not tests, this should not cause compliance test failures. Engine test
+            \\# drivers should make sure this and any other functions that do not compile do
+            \\# not pollute any maintained session state.
+            \\CREATE TEMP FUNCTION ThisShouldNotCompile() RETURNS INT64 AS ( garbage )
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION OneOverArg(a FLOAT64) AS ( 1 / a )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION StringIdentityCorrelated(value STRING)
+            \\AS ( (SELECT value) )
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION AggregateArray(value ARRAY<INT64>)
+            \\AS ( ARRAY(SELECT elem + 1
+            \\           FROM UNNEST(value) elem WITH OFFSET
+            \\           ORDER BY OFFSET) )
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_TRANSFORM\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\CREATE TEMP FUNCTION AggregateArrayLambda(value ARRAY<INT64>)
+            \\AS ( ARRAY_TRANSFORM(value, e -> e + 1) )
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION IdentityTemplate(value ANY TYPE) AS (value)",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION MyValueIsNull(value ANY TYPE) AS ( value IS NULL )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Poor implementation of Element function doesn't check array length.
+            \\CREATE TEMP FUNCTION Element(a ANY TYPE) AS (
+            \\  (SELECT e FROM UNNEST(a) e)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION WithOnSubquery()
+            \\AS ((WITH t AS (SELECT 1 a) SELECT a FROM t))
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION b290673529(thing_id ANY TYPE) RETURNS BOOL
+            \\AS (
+            \\  thing_id IN (SELECT thing_id FROM (SELECT 1 AS thing_id))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION EmptySubqueryFunction() AS (
+            \\  ARRAY(SELECT a FROM (SELECT 1 AS a) WHERE false)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION ErrorSubqueryFunction() AS (
+            \\  /* Putting the ERROR in the WHERE clause means it can't be skipped. */
+            \\  ARRAY(SELECT a FROM (SELECT 1 AS a) WHERE ERROR('oops'))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION NonDeterministicFunction() AS (
+            \\  ARRAY(SELECT e FROM UNNEST([1, 2, 3]) AS e LIMIT 1)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION CurrentTimestampFunction() AS (
+            \\  CURRENT_TIMESTAMP()
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION templated_with_any_string(a ANY STRING)
+            \\AS (
+            \\  (a, a)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION MyAggregateFunc(x NUMERIC(10, 2)) RETURNS NUMERIC(10, 2) AS ( SUM(x) )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION MyNumericFunc(x STRUCT<a NUMERIC, b NUMERIC(10, 2), c ARRAY<NUMERIC(11, 3)>>) AS ( x )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP FUNCTION fn_optional_numeric_10_2_default(x NUMERIC(10, 2) DEFAULT 1.238) AS ( x )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION MyUdaStruct(s STRUCT<x NUMERIC(10, 2), y STRING(10) COLLATE 'und:ci'>) RETURNS NUMERIC(10, 2) AS ( SUM(s.x + IF(s.y = 'abc', 1, 0)) )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION MyUdaArray(a ARRAY<STRING(10) COLLATE 'und:ci'>) RETURNS INT64 AS ( COUNTIF(a[OFFSET(0)] = 'abc') )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION MyUdaMap(m MAP<STRING(10), NUMERIC(10, 2)>) RETURNS NUMERIC(10, 2) AS ( SUM(m['a']) )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TABLE FUNCTION MyTvfStruct(s STRUCT<x NUMERIC(10, 2), y STRING(10) COLLATE 'und:ci'>) RETURNS TABLE<x NUMERIC(10, 2), is_match BOOL> AS ( SELECT s.x AS x, s.y = 'abc' AS is_match )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TABLE FUNCTION MyTvfArray(a ARRAY<STRING(10) COLLATE 'und:ci'>) RETURNS TABLE<is_match BOOL> AS ( SELECT x = 'abc' AS is_match FROM UNNEST(a) AS x )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TABLE FUNCTION MyTvfMap(m MAP<STRING(10), NUMERIC(10, 2)>) RETURNS TABLE<x NUMERIC(10, 2)> AS ( SELECT m['a'] AS x )",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TABLE FUNCTION MyTvfTable(t TABLE<x NUMERIC(10, 2), y STRING(10) COLLATE 'und:ci'>) RETURNS TABLE<x NUMERIC(10, 2), is_match BOOL> AS ( SELECT x, y = 'abc' AS is_match FROM t )",
+        },
+        .{
+            .desc = "call_nullary_function",
+            .sql =
+            \\SELECT Thousand() + Thousand()
+            \\UNION ALL
+            \\SELECT 10 * Thousand()
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2000},
+                .{10000},
+            },
+        },
+        .{
+            .desc = "call_unary_function_wit_literal",
+            .sql =
+            \\SELECT StringIdentity('a')
+            \\UNION ALL
+            \\SELECT StringIdentity('b')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"a"},
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "function_expects_null_inputs_literal",
+            .sql =
+            \\SELECT MyStringIsNull('a')
+            \\UNION ALL
+            \\SELECT MyStringIsNull(NULL)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{false},
+                .{true},
+            },
+        },
+        .{
+            .desc = "function_expects_null_inputs_non_literal",
+            .sql =
+            \\SELECT MyStringIsNull(CAST(CURRENT_DATE() AS STRING))
+            \\UNION ALL
+            \\SELECT MyStringIsNull(CAST(SAFE_CAST('garbage' AS DATE) AS STRING))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{false},
+                .{true},
+            },
+        },
+        .{
+            .desc = "call_udf_with_explicit_return_type",
+            .sql =
+            \\SELECT IntegerToDouble(0)
+            \\UNION ALL
+            \\SELECT IntegerToDouble(1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{0},
+                .{1},
+            },
+        },
+        .{
+            .desc = "call_binary_functions_with_literals",
+            .sql =
+            \\SELECT IntegerEquals(1, 2)
+            \\UNION ALL
+            \\SELECT IntegerEquals(2, 2)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{false},
+                .{true},
+            },
+        },
+        .{
+            .desc = "call_binary_functions_with_column",
+            .sql =
+            \\WITH t AS (SELECT a, 4 - a AS b, offset
+            \\           FROM UNNEST([0, 1, 2, 3, 4]) AS a WITH OFFSET)
+            \\SELECT IntegerEquals(a, b) FROM t ORDER BY offset
+            ,
+            .rows = .{
+                .{false},
+                .{false},
+                .{true},
+                .{false},
+                .{false},
+            },
+        },
+        .{
+            .desc = "call_binary_functions_with_same_column_twice",
+            .sql =
+            \\# Regression test for b/234774120
+            \\WITH t AS (SELECT a, 4 - a AS b, offset
+            \\           FROM UNNEST([0, 1, 2, 3, 4]) AS a WITH OFFSET)
+            \\SELECT IntegerEquals(a, a) FROM t ORDER BY offset
+            ,
+            .rows = .{
+                .{true},
+                .{true},
+                .{true},
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "sql_udf_arguments_as_if_once",
+            .sql = "SELECT FloatReflexiveEquals(rand())",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "call_function_with_coorelated_argument_ref",
+            .sql =
+            \\SELECT StringIdentityCorrelated('a')
+            \\UNION ALL
+            \\SELECT StringIdentityCorrelated('b')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"a"},
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "array_aggregating_function_call",
+            .sql = "SELECT AggregateArray([1, 2, 3])",
+            .rows = .{
+                .{.{ 2, 3, 4 }},
+            },
+        },
+        .{
+            .desc = "call_sql_udf_calling_sql_udf",
+            .sql =
+            \\SELECT TimesThousand(2)
+            \\UNION ALL
+            \\SELECT TimesThousand(10)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2000},
+                .{10000},
+            },
+        },
+        .{
+            .desc = "array_transform_called_inside_udf",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_TRANSFORM\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT AggregateArrayLambda([1, 2, 3])",
+            .rows = .{
+                .{.{ 2, 3, 4 }},
+            },
+        },
+        .{
+            .desc = "udf_called_inside_array_transform_lambda",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_TRANSFORM\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_TRANSFORM([1, 2, 3], e->e*Thousand())",
+            .rows = .{
+                .{.{ 1000, 2000, 3000 }},
+            },
+        },
+        .{
+            .desc = "call_templated_udf",
+            .sql = "SELECT IdentityTemplate(DATE '2020-01-01')",
+            .rows = .{
+                .{"2020-01-01"},
+            },
+        },
+        .{
+            .desc = "call_templated_udf_with_different_types",
+            .sql =
+            \\SELECT IdentityTemplate('abc'),
+            \\       IdentityTemplate(b'abc'),
+            \\       IdentityTemplate(1),
+            \\       IdentityTemplate(false)
+            ,
+            .rows = .{
+                .{ "abc", "\x61\x62\x63", 1, false },
+            },
+        },
+        .{
+            .desc = "call_templated_udf_expecting_null_values",
+            .sql =
+            \\SELECT MyValueIsNull('a'),
+            \\       MyValueIsNull(EXTRACT(DAY FROM CURRENT_DATE())),
+            \\       MyValueIsNull(NULL),
+            \\       MyValueIsNull(SAFE_DIVIDE(1, 0))
+            ,
+            .rows = .{
+                .{ false, false, true, true },
+            },
+        },
+        .{
+            .desc = "unsafe_call_sql_udf_division",
+            .sql = "SELECT OneOverArg(0)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_call_sql_udf_division",
+            .unsupported_in_bigquery = "\"SAFE with function OneOverArg is not supported.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT SAFE.OneOverArg(0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_call_sql_udf_error_argument",
+            .unsupported_in_bigquery = "\"SAFE with function OneOverArg is not supported.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\# This checks that safety doesn't cover the argument evaluation.
+            \\SELECT SAFE.OneOverArg(1/(1-1))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "ok_call_to_element",
+            .sql = "SELECT Element(['a'])",
+            .rows = .{
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "unsafe_call_to_element",
+            .sql = "SELECT Element(['a', 'b'])",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_call_to_element",
+            .unsupported_in_bigquery = "\"SAFE with function Element is not supported.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT SAFE.Element(['a', 'b'])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "with_on_subquery_inside_function",
+            .sql = "SELECT WithOnSubquery()",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "repro_b290673529",
+            .sql =
+            \\SELECT *
+            \\FROM (SELECT 1 AS thing_id)
+            \\WHERE b290673529(thing_id)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "empty_subquery_function",
+            .sql =
+            \\SELECT
+            \\  EmptySubqueryFunction(),
+            \\  ARRAY(SELECT a FROM (SELECT 1 AS a) WHERE false)
+            ,
+            .rows = .{
+                .{ .{}, .{} },
+            },
+        },
+        .{
+            .desc = "error_subquery_function",
+            .sql = "SELECT ErrorSubqueryFunction()",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_error_subquery_function",
+            .unsupported_in_bigquery = "\"SAFE with function ErrorSubqueryFunction is not supported.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT SAFE.ErrorSubqueryFunction()",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "call_non_deterministic_sql_udf",
+            .sql = "SELECT NonDeterministicFunction() IS NOT NULL",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "call_current_timestamp_sql_udf",
+            .sql = "SELECT CurrentTimestampFunction()=CURRENT_TIMESTAMP() AS result",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "templated_types_with_various_bounds",
+            .unsupported_in_bigquery = "\"Templated arguments with ANY STRING are not supported\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT templated_with_any_string(\"A\")",
+            .rows = .{
+                .{.{ "A", "A" }},
+            },
+        },
+        .{
+            .desc = "call_aggregate_picos_udf",
+            .unsupported_in_bigquery = "\"Parameterized types are not supported in function arguments\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\WITH t AS (
+            \\  SELECT NUMERIC "1.123456" as n
+            \\  UNION ALL
+            \\  SELECT NUMERIC "1.128"
+            \\)
+            \\SELECT MyAggregateFunc(n)
+            \\FROM t
+            ,
+            .rows = .{
+                .{2.25},
+            },
+        },
+        .{
+            .desc = "call_my_numeric_udf",
+            .unsupported_in_bigquery = "\"Parameterized types are not supported in function arguments\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT MyNumericFunc(STRUCT(NUMERIC \"1.23456789\" AS a, NUMERIC \"1.238\" AS b, [NUMERIC \"1.2348\"] AS c))",
+            .rows = .{
+                .{.{ 1.23456789, 1.24, .{1.235} }},
+            },
+        },
+        .{
+            .desc = "call_fn_optional_numeric_10_2_default",
+            .unsupported_in_bigquery = "\"Function arguments with DEFAULT values are not supported\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT fn_optional_numeric_10_2_default(), fn_optional_numeric_10_2_default(4.567)",
+            .rows = .{
+                .{ 1.24, 4.57 },
+            },
+        },
+        .{
+            .desc = "call_uda_struct",
+            .unsupported_in_bigquery = "\"Parameterized types are not supported in function arguments\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\WITH t AS (
+            \\  SELECT STRUCT(NUMERIC "1.123456" AS x, "ABC" AS y) AS s
+            \\  UNION ALL
+            \\  SELECT STRUCT(NUMERIC "1.128" AS x, "ABC" AS y)
+            \\)
+            \\SELECT MyUdaStruct(s) FROM t
+            ,
+            .rows = .{
+                .{4.25},
+            },
+        },
+        .{
+            .desc = "call_uda_array",
+            .unsupported_in_bigquery = "\"Parameterized types are not supported in function arguments\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\WITH t AS (
+            \\  SELECT ["ABC"] AS a
+            \\  UNION ALL
+            \\  SELECT ["ABC"]
+            \\)
+            \\SELECT MyUdaArray(a) FROM t
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "call_uda_map",
+            .unsupported_in_bigquery = "\"Parameterized types are not supported in function arguments\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\WITH t AS (
+            \\  SELECT MAP_FROM_ARRAY([('a', NUMERIC "1.123456")]) AS m
+            \\  UNION ALL
+            \\  SELECT MAP_FROM_ARRAY([('a', NUMERIC "1.128")])
+            \\)
+            \\SELECT MyUdaMap(m) FROM t
+            ,
+            .rows = .{
+                .{2.25},
+            },
+        },
+        .{
+            .desc = "call_tvf_struct",
+            .sql = "SELECT x, is_match FROM MyTvfStruct(STRUCT(NUMERIC \"1.123456\" AS x, \"ABC\" AS y))",
+            .rows = .{
+                .{ 1.12, true },
+            },
+        },
+        .{
+            .desc = "call_tvf_array",
+            .sql = "SELECT is_match FROM MyTvfArray([\"ABC\", \"ABC\"])",
+            .unordered = true,
+            .rows = .{
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "call_tvf_map",
+            .sql = "SELECT x FROM MyTvfMap(MAP_FROM_ARRAY([('a', NUMERIC \"1.123456\")]))",
+            .rows = .{
+                .{1.12},
+            },
+        },
+        .{
+            .desc = "call_tvf_table",
+            .sql =
+            \\WITH tmp AS (
+            \\  SELECT NUMERIC "1.123456" AS x, "ABC" AS y
+            \\  UNION ALL
+            \\  SELECT NUMERIC "1.128", "ABC"
+            \\)
+            \\SELECT x, is_match FROM MyTvfTable(TABLE tmp) ORDER BY x
+            ,
+            .rows = .{
+                .{ 1.12, true },
+                .{ 1.13, true },
+            },
+        },
+    },
+}

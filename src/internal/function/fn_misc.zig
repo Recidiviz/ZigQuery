@@ -141,6 +141,37 @@ fn typeKindOf(t: std.json.Value) Error!pb.TypeKind {
     return @enumFromInt(@as(i32, @intCast(kind.integer)));
 }
 
+/// CAST(STRING AS BOOL): only 'true'/'false', case-insensitively; every other
+/// string is an error rather than a value. This is stricter than toBool's
+/// other callers (query-parameter coercion, driver value assignment), which
+/// also accept "1"/"0"/"t"/"f" and NULL-string-as-false the way a Go database
+/// driver's Scan would. conversion_functions.md#cast_bool.
+fn boolForCast(v: Value) Error!bool {
+    return switch (v) {
+        .string => |s| strictBool(s),
+        .bytes => |b| strictBool(b),
+        else => v.toBool(),
+    };
+}
+
+fn strictBool(s: []const u8) Error!bool {
+    if (std.ascii.eqlIgnoreCase(s, "true")) return true;
+    if (std.ascii.eqlIgnoreCase(s, "false")) return false;
+    return bind.fail("failed to parse bool from string", .{}, error.FailedConversion);
+}
+
+/// CAST(STRING AS NUMERIC/BIGNUMERIC): unlike numericValue's other callers
+/// (query-parameter coercion, arithmetic operand coercion, where an
+/// unparseable operand silently contributes zero — see toUnscaled), an
+/// unparseable string is an error here. conversion_functions.md#cast_numeric.
+fn numericForCast(alloc: std.mem.Allocator, v: Value, is_bignumeric: bool) Error!Value {
+    return switch (v) {
+        .string => |s| value_mod.numericFromString(alloc, s, is_bignumeric),
+        .bytes => |b| value_mod.numericFromString(alloc, b, is_bignumeric),
+        else => value_mod.numericValue(alloc, v, is_bignumeric),
+    };
+}
+
 /// Go encoder.go CastValue, foundation kinds. NULL input stays NULL.
 fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value {
     if (v == .null) return null_v;
@@ -149,7 +180,7 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
         .TYPE_INT32, .TYPE_INT64, .TYPE_UINT32, .TYPE_UINT64 => {
             return Value{ .int = try v.toInt64() };
         },
-        .TYPE_BOOL => return Value{ .bool = try v.toBool() },
+        .TYPE_BOOL => return Value{ .bool = try boolForCast(v) },
         .TYPE_FLOAT, .TYPE_DOUBLE => return Value{ .float = try v.toFloat64() },
         .TYPE_STRING, .TYPE_ENUM => {
             // Go formats date/time kinds with dedicated layouts; for the
@@ -187,8 +218,8 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
         },
         // Go castValueInternal: NumericValue{Rat: v.ToRat()}, isBigNumeric per
         // the target kind (a numeric input is rewrapped under the new kind).
-        .TYPE_NUMERIC => return value_mod.numericValue(alloc, v, false),
-        .TYPE_BIGNUMERIC => return value_mod.numericValue(alloc, v, true),
+        .TYPE_NUMERIC => return numericForCast(alloc, v, false),
+        .TYPE_BIGNUMERIC => return numericForCast(alloc, v, true),
         .TYPE_ARRAY => {
             const arr = try v.toArray();
             const elem_type = if (t == .object)

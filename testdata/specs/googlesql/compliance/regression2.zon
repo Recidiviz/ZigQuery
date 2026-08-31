@@ -1,0 +1,60 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/regression2",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/regression2.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# This file is an addition to 'regression.test.'
+            \\# IMPORTANT: Please see the comments at the top 'regression.test' as those
+            \\# guidelines need to be respected here as well.
+            \\#
+            \\# This file is separate from 'regression.test' because the [prepare_database]
+            \\# below fails with Spandex and Mini-spandex, which leads to all regression tests
+            \\# failing for them.
+            \\#
+            \\# Table used for b/19300607
+            \\CREATE TABLE UnsupportedTypesTable AS
+            \\SELECT CAST('2014-01-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC' as
+            \\           timestamp_val,
+            \\       ARRAY<INT32>[0] as array_val,
+            \\       STRUCT("abc" as a) as struct_val
+            ,
+        },
+        .{
+            .desc = "b/19300607_1",
+            .sql =
+            \\# Tests for b/19300607
+            \\SELECT date_val FROM UnsupportedTypesTable t
+            ,
+            .rows = .{
+                .{"2014-01-01"},
+            },
+        },
+        .{
+            .desc = "b/19300607_4",
+            .sql = "SELECT timestamp_val FROM UnsupportedTypesTable t",
+            .rows = .{
+                .{"2014-01-01 00:00:01.011011+00"},
+            },
+        },
+        .{
+            .desc = "b/19300607_5",
+            .sql = "SELECT array_val FROM UnsupportedTypesTable t",
+            .rows = .{
+                .{.{0}},
+            },
+        },
+        .{
+            .desc = "b/19300607_6",
+            .sql = "SELECT struct_val FROM UnsupportedTypesTable t",
+            .rows = .{
+                .{.{"abc"}},
+            },
+        },
+    },
+}

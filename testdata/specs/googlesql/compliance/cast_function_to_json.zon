@@ -1,0 +1,333 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/cast_function_to_json",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/cast_function_to_json.test",
+    .cases = .{
+        .{
+            .desc = "cast_json_to_json_no_ops",
+            .sql = "SELECT CAST((JSON '{\"a\": 1, \"b\": 2}') AS JSON)",
+            .rows = .{
+                .{"{\"a\":1,\"b\":2}"},
+            },
+        },
+        .{
+            .desc = "cast_sql_null_to_json",
+            .sql =
+            \\# SQL null to JSON
+            \\SELECT CAST(NULL AS JSON)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_sql_null_array_or_struct_to_json",
+            .sql = "SELECT CAST([1,null] AS JSON), CAST(STRUCT(1 AS a, NULL AS b) AS JSON)",
+            .rows = .{
+                .{ "[1,null]", "{\"a\":1,\"b\":null}" },
+            },
+        },
+        .{
+            .desc = "cast_simple_sql_literals_to_json",
+            .sql =
+            \\# Cast SQL types to JSON.
+            \\# BOOL, INT64, UINT64, INT32, UINT32, FLOAT, DOUBLE, NUMERIC, BIGNUMERIC, STRING, BYTES, DATE, DATETIME, TIME, TIMESTAMP.
+            \\SELECT CAST(true AS JSON),
+            \\       CAST(1 AS JSON),
+            \\       CAST(CAST(1 AS UINT64) AS JSON),
+            \\       CAST(CAST(1 AS INT32) AS JSON),
+            \\       CAST(CAST(1 AS UINT32) AS JSON),
+            \\       CAST(CAST(1.5 AS FLOAT) AS JSON),
+            \\       CAST(CAST(1.5 AS DOUBLE) AS JSON),
+            \\       CAST(CAST("abc" AS JSON) AS JSON),
+            \\       CAST(CAST(b"abc" AS JSON) AS JSON),
+            \\       CAST(CAST(DATE '1970-01-02' AS JSON) AS JSON),
+            \\       CAST(CAST(TIMESTAMP_MICROS(1) AS JSON) AS JSON)
+            ,
+            .rows = .{
+                .{ true, 1, 1, 1, 1, 1.5, 1.5, "abc", "YWJj", "1970-01-02", "1970-01-01T00:00:00.000001Z" },
+            },
+        },
+        .{
+            .desc = "cast_double_nan_to_json",
+            .sql =
+            \\# DOUBLE nan value to JSON
+            \\SELECT CAST(CAST('nan' AS DOUBLE) AS JSON)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_double_positive_inf_to_json",
+            .sql =
+            \\# DOUBLE positive inf value to JSON
+            \\SELECT CAST(CAST('inf' AS DOUBLE) AS JSON)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_double_negative_inf_to_json",
+            .sql =
+            \\# DOUBLE negative inf value to JSON
+            \\SELECT CAST(CAST('-inf' AS DOUBLE) AS JSON)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_double_nan_to_json",
+            .sql =
+            \\# SAFE_CAST DOUBLE nan value to JSON
+            \\SELECT SAFE_CAST(CAST('nan' AS DOUBLE) AS JSON)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_cast_double_positive_inf_to_json",
+            .sql =
+            \\# SAFE_CAST DOUBLE positive inf value to JSON
+            \\SELECT SAFE_CAST(CAST('inf' AS DOUBLE) AS JSON)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_cast_double_negative_inf_to_json",
+            .sql =
+            \\# SAFE_CAST DOUBLE negative inf value to JSON
+            \\SELECT SAFE_CAST(CAST('-inf' AS DOUBLE) AS JSON)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "to_json_double_values_differences_from_cast_to_json",
+            .sql =
+            \\SELECT TO_JSON(CAST('inf' AS DOUBLE)),
+            \\       TO_JSON(CAST('-inf' AS DOUBLE)),
+            \\       TO_JSON(CAST('nan' AS DOUBLE))
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_numeric_to_json",
+            .sql =
+            \\# NUMERIC to JSON
+            \\SELECT CAST(NUMERIC '1.0' AS JSON)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "cast_bignumeric_to_json",
+            .sql =
+            \\# BIGNUMERIC to JSON
+            \\SELECT CAST(BIGNUMERIC '1.0' AS JSON)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "cast_datetime_to_json",
+            .sql =
+            \\# DATETIME to JSON
+            \\SELECT CAST(DATETIME '2024-01-02 03:04:05' AS JSON)
+            ,
+            .rows = .{
+                .{"2024-01-02T03:04:05"},
+            },
+        },
+        .{
+            .desc = "cast_time_to_json",
+            .sql =
+            \\# TIME to JSON
+            \\SELECT CAST(TIME '03:04:05' AS JSON)
+            ,
+            .rows = .{
+                .{"03:04:05"},
+            },
+        },
+        .{
+            .desc = "cast_uuid_to_json",
+            .sql =
+            \\# UUID to JSON
+            \\SELECT CAST(CAST("00000000-0000-0000-0000-000000000000" AS UUID) AS JSON)
+            ,
+            .rows = .{
+                .{"00000000-0000-0000-0000-000000000000"},
+            },
+        },
+        .{
+            .desc = "cast_interval_to_json",
+            .sql =
+            \\# INTERVAL to JSON
+            \\SELECT CAST(INTERVAL 1 MONTH AS JSON)
+            ,
+            .rows = .{
+                .{"P1M"},
+            },
+        },
+        .{
+            .desc = "cast_range_to_json",
+            .sql =
+            \\# RANGE to JSON
+            \\SELECT CAST(RANGE<DATE> '[2020-01-01, 2020-01-11)' AS JSON)
+            ,
+            .rows = .{
+                .{"{\"end\":\"2020-01-11\",\"start\":\"2020-01-01\"}"},
+            },
+        },
+        .{
+            .desc = "cast_array_to_json",
+            .sql =
+            \\# ARRAY to JSON
+            \\SELECT CAST([1, 2, 3] AS JSON),
+            \\       CAST(ARRAY<INT64>[] AS JSON),
+            \\       CAST([1, NULL, 3] AS JSON)
+            ,
+            .rows = .{
+                .{ "[1,2,3]", "[]", "[1,null,3]" },
+            },
+        },
+        .{
+            .desc = "cast_array_with_inf_to_json",
+            .sql =
+            \\# ARRAY with inf to JSON
+            \\SELECT CAST([1.0, CAST('inf' AS DOUBLE)] AS JSON)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_array_with_inf_to_json",
+            .sql =
+            \\# SAFE_CAST ARRAY with inf to JSON
+            \\SELECT SAFE_CAST([1.0, CAST('inf' AS DOUBLE)] AS JSON)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_select_unordered_unique_elements_array_to_json",
+            .sql = "SELECT CAST((SELECT ARRAY(SELECT x FROM UNNEST([1,1,1]) AS x)) AS JSON)",
+            .rows = .{
+                .{"[1,1,1]"},
+            },
+        },
+        .{
+            .desc = "cast_array_agg_with_no_input_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([]) AS x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_array_agg_with_single_element_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([2]) AS x",
+            .rows = .{
+                .{"[2]"},
+            },
+        },
+        .{
+            .desc = "cast_array_agg_with_single_element_null_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([NULL]) AS x",
+            .rows = .{
+                .{"[null]"},
+            },
+        },
+        .{
+            .desc = "cast_array_agg_with_multiple_nulls_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([NULL, NULL, NULL]) AS x",
+            .rows = .{
+                .{"[null,null,null]"},
+            },
+        },
+        .{
+            .desc = "cast_array_agg_with_multiple_nan_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([CAST('nan' AS DOUBLE), CAST('nan' AS DOUBLE), CAST('nan' AS DOUBLE)]) AS x",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_array_agg_with_multiple_nan_to_json",
+            .sql = "SELECT SAFE_CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([CAST('nan' AS DOUBLE), CAST('nan' AS DOUBLE), CAST('nan' AS DOUBLE)]) AS x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_array_agg_with_multiple_inf_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([CAST('inf' AS DOUBLE), CAST('inf' AS DOUBLE), CAST('inf' AS DOUBLE)]) AS x",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_array_agg_with_multiple_inf_to_json",
+            .sql = "SELECT SAFE_CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([CAST('inf' AS DOUBLE), CAST('inf' AS DOUBLE), CAST('inf' AS DOUBLE)]) AS x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_array_agg_with_nan_and_null_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([CAST('nan' AS DOUBLE), null]) AS x",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_array_agg_with_nan_and_null_to_json",
+            .sql = "SELECT SAFE_CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([CAST('nan' AS DOUBLE), null]) AS x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_ordered_array_agg_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x ORDER BY x) AS JSON) FROM UNNEST([3,1,2]) AS x",
+            .rows = .{
+                .{"[1,2,3]"},
+            },
+        },
+        .{
+            .desc = "cast_array_agg_with_only_one_distinct_element_to_json",
+            .sql = "SELECT CAST(ARRAY_AGG(x) AS JSON) FROM UNNEST([1, 1, 1]) AS x",
+            .rows = .{
+                .{"[1,1,1]"},
+            },
+        },
+        .{
+            .desc = "cast_struct_to_json",
+            .sql =
+            \\# STRUCT to JSON
+            \\SELECT CAST(STRUCT(1 AS a, 2 AS b) AS JSON),
+            \\       CAST(STRUCT(2 AS b, 1 AS a) AS JSON),
+            \\       CAST(STRUCT(1, 2 AS b) AS JSON),
+            \\       CAST(STRUCT(1 AS a, NULL AS b) AS JSON)
+            ,
+            .rows = .{
+                .{ "{\"a\":1,\"b\":2}", "{\"a\":1,\"b\":2}", "{\"\":1,\"b\":2}", "{\"a\":1,\"b\":null}" },
+            },
+        },
+        .{
+            .desc = "cast_struct_with_inf_to_json",
+            .sql =
+            \\# STRUCT with inf to JSON
+            \\SELECT CAST(STRUCT(1.0 AS a, CAST('inf' AS DOUBLE) AS b) AS JSON)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_struct_with_inf_to_json",
+            .sql =
+            \\# SAFE_CAST STRUCT with inf to JSON
+            \\SELECT SAFE_CAST(STRUCT(1.0 AS a, CAST('inf' AS DOUBLE) AS b) AS JSON)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

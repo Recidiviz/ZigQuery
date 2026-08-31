@@ -1,0 +1,108 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_update_proto",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_update_proto.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# For testing long paths of array accesses.
+            \\CREATE Table RecursiveArrayProtoTable AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast('''repeated_recursive_pb {
+            \\                 repeated_recursive_pb {}
+            \\                 repeated_recursive_pb {
+            \\                   repeated_recursive_pb {}
+            \\                   repeated_recursive_pb {}
+            \\                   repeated_recursive_pb {
+            \\                     repeated_recursive_pb {}
+            \\                     repeated_recursive_pb {}
+            \\                     repeated_recursive_pb {}
+            \\                     repeated_recursive_pb {
+            \\                       int64_val: 100
+            \\                     }
+            \\                   }
+            \\                 }
+            \\               }''' as googlesql_test.RecursivePB) as proto_value
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# For testing long paths of array/proto accesses.
+            \\CREATE Table RecursiveArrayProtoTable2 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast('''recursive_pb {
+            \\                 repeated_recursive_pb {
+            \\                   recursive_pb {
+            \\                     repeated_recursive_pb {}
+            \\                     repeated_recursive_pb {
+            \\                       recursive_pb {
+            \\                         repeated_recursive_pb {}
+            \\                         repeated_recursive_pb {}
+            \\                         repeated_recursive_pb {
+            \\                           recursive_pb {
+            \\                             repeated_recursive_pb {}
+            \\                             repeated_recursive_pb {}
+            \\                             repeated_recursive_pb {}
+            \\                             repeated_recursive_pb {
+            \\                               int64_val: 100
+            \\                             }
+            \\                           }
+            \\                         }
+            \\                       }
+            \\                     }
+            \\                   }
+            \\                 }
+            \\               }''' as googlesql_test.RecursivePB) as proto_value
+            ,
+        },
+        .{
+            .desc = "clear_required_proto_field",
+            .sql =
+            \\# Attempting to clear a required field is an error.
+            \\UPDATE BasicProtoTable SET proto_value.int64_key_1 = NULL WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "assign_required_proto_field_default",
+            .sql =
+            \\# Assigning DEFAULT to a proto field clears it (same as assigning NULL).
+            \\UPDATE BasicProtoTable SET proto_value.int64_key_1 = DEFAULT WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "assign_repeated_proto_field_with_null_element",
+            .sql =
+            \\# Repeated fields cannot represent NULL elements.
+            \\UPDATE BasicProtoTable
+            \\SET proto_value.repeated_int64_val = [1, NULL, 3]
+            \\WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_repeated_proto_field_first_element_to_null_with_set",
+            .sql =
+            \\# Repeated fields cannot represent NULL elements.
+            \\UPDATE BasicProtoTable SET proto_value.repeated_int64_val[OFFSET(0)] = NULL
+            \\WHERE primary_key = 2
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_duplicate_elements_of_repeated_proto_field_with_set",
+            .sql =
+            \\UPDATE BasicProtoTable
+            \\SET proto_value.repeated_int64_val[OFFSET(0)] = 1000,
+            \\    proto_value.repeated_int64_val[OFFSET(0)] = 2000
+            \\WHERE primary_key = 2
+            ,
+            .expect_error_any = true,
+        },
+    },
+}

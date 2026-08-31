@@ -7,6 +7,8 @@
 
 const std = @import("std");
 const value = @import("../value.zig");
+const shim_ffi = @import("../../shim_ffi.zig");
+const bind = @import("bind.zig");
 
 pub const Value = value.Value;
 pub const Error = value.ValueError;
@@ -192,54 +194,13 @@ pub fn timestampValue(bt: BrokenTime) Value {
 }
 
 // ----------------------------------------------------------------------
-// Timezone offset resolution. UTC-only engine: fixed offsets are honored
-// exactly; a few named zones the corpus needs are hardcoded with their DST
-// rules. Unknown named zones error (caller reports expected-fail).
+// Timezone offset resolution. Fixed offsets are parsed directly; named zones resolve through ICU
+// (GoogleSQL_TimeZoneOffsetSeconds in the shim, shim_ffi.zig), which has the full IANA database.
+// Unknown zone names error (caller reports expected-fail).
 // ----------------------------------------------------------------------
 
-/// day-of-month of the nth (1-based) given weekday in a month. weekday: 0=Sun.
-fn nthWeekday(year: i64, month: i64, wday: i64, n: i64) i64 {
-    const first_days = value.daysFromCivil(year, month, 1);
-    const first_wd = @mod(first_days + 4, 7); // weekday of the 1st
-    const first_match = 1 + @mod(wday - first_wd + 7, 7);
-    return first_match + (n - 1) * 7;
-}
-
-fn lastWeekday(year: i64, month: i64, wday: i64) i64 {
-    const dim = daysInMonth(year, month);
-    const last_days = value.daysFromCivil(year, month, dim);
-    const last_wd = @mod(last_days + 4, 7);
-    return dim - @mod(last_wd - wday + 7, 7);
-}
-
-fn daysInMonth(y: i64, m: i64) i64 {
-    return switch (m) {
-        1, 3, 5, 7, 8, 10, 12 => 31,
-        4, 6, 9, 11 => 30,
-        2 => if ((@mod(y, 4) == 0 and @mod(y, 100) != 0) or @mod(y, 400) == 0) @as(i64, 29) else 28,
-        else => 30,
-    };
-}
-
-/// US Pacific DST: 2nd Sunday of March 02:00 .. 1st Sunday of November 02:00.
-fn usPacificIsDst(year: i64, month: i64, day: i64) bool {
-    if (month < 3 or month > 11) return false;
-    if (month > 3 and month < 11) return true;
-    if (month == 3) return day >= nthWeekday(year, 3, 0, 2);
-    return day < nthWeekday(year, 11, 0, 1); // November
-}
-
-/// NZ Auckland DST: last Sunday of September .. first Sunday of April.
-fn nzIsDst(year: i64, month: i64, day: i64) bool {
-    if (month > 4 and month < 9) return false; // May-Aug (winter)
-    if (month < 4 or month > 9) return true; // Oct-Mar (summer)
-    if (month == 4) return day < nthWeekday(year, 4, 0, 1);
-    return day >= lastWeekday(year, 9, 0); // September
-}
-
-/// Offset (seconds east of UTC) for `zone` at the given civil micros. The civil
-/// value is used to pick DST; for corpus instants (never near a transition)
-/// this matches Go's zoneinfo lookup regardless of parse/format direction.
+/// Offset (seconds east of UTC) for `zone` at the given civil micros. The civil value is used as if
+///  it were the UTC instant; for corpus instants (never near a transition).
 pub fn zoneOffsetSeconds(zone: []const u8, civ: i64) Error!i64 {
     if (zone.len == 0) return 0;
     if (std.mem.eql(u8, zone, "UTC") or std.mem.eql(u8, zone, "Z")) return 0;
@@ -259,18 +220,12 @@ pub fn zoneOffsetSeconds(zone: []const u8, civ: i64) Error!i64 {
         return sign * (h * 3600 + m * 60);
     }
 
-    const c = decompose(civ);
-    if (std.mem.eql(u8, zone, "Asia/Tokyo")) return 9 * 3600;
-    if (std.mem.eql(u8, zone, "America/Los_Angeles")) {
-        return if (usPacificIsDst(c.year, c.month, c.day)) -7 * 3600 else -8 * 3600;
-    }
-    if (std.mem.eql(u8, zone, "America/New_York")) {
-        return if (usPacificIsDst(c.year, c.month, c.day)) -4 * 3600 else -5 * 3600;
-    }
-    if (std.mem.eql(u8, zone, "Pacific/Auckland")) {
-        return if (nzIsDst(c.year, c.month, c.day)) 13 * 3600 else 12 * 3600;
-    }
-    return error.FailedConversion; // unsupported named zone
+    const millis = @divFloor(civ, 1000);
+    const off: i32 = shim_ffi.timeZoneOffsetSeconds(zone, millis) catch |err| switch (err) {
+        error.InvalidTimeZone => return bind.fail("invalid time zone: {s}", .{zone}, error.FailedConversion),
+        else => return error.FailedConversion,
+    };
+    return off;
 }
 
 test "compose/decompose round trip and normalization" {
@@ -301,4 +256,9 @@ test "zone offsets" {
     const aug = compose(2022, 8, 1, 0, 0, 0, 0);
     try std.testing.expectEqual(@as(i64, -8 * 3600), try zoneOffsetSeconds("America/Los_Angeles", dec));
     try std.testing.expectEqual(@as(i64, -7 * 3600), try zoneOffsetSeconds("America/Los_Angeles", aug));
+    // A zone outside the old hardcoded four (Chicago, CST in December).
+    try std.testing.expectEqual(@as(i64, -6 * 3600), try zoneOffsetSeconds("America/Chicago", dec));
+    // A half-hour, no-DST offset.
+    try std.testing.expectEqual(@as(i64, 5 * 3600 + 1800), try zoneOffsetSeconds("Asia/Kolkata", dec));
+    try std.testing.expectError(error.FailedConversion, zoneOffsetSeconds("Not/AZone", 0));
 }

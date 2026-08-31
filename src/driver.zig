@@ -32,6 +32,7 @@ const function = @import("internal/function/register.zig");
 const catalog_mod = @import("internal/catalog.zig");
 const shared_catalog = @import("internal/shared_catalog.zig");
 const phase = @import("internal/phase.zig");
+const ast_text = @import("internal/ast_text.zig");
 
 pub const Error = error{
     Unimplemented,
@@ -131,6 +132,30 @@ pub const QueryOptions = struct {
     /// the statement does reference something, analysis fails and the caller
     /// can retry with `.full`.
     catalog_scope: enum { full, none } = .full,
+    /// Renders the resolved AST and transformed SQL text that
+    /// `transformStatementFragment` computes anyway, for a caller that wants
+    /// to inspect them (the spec-corpus UI) — null everywhere else, so this
+    /// costs one pointer check and nothing else on the server/CLI/every
+    /// other path. Populated for whichever statement kind actually reaches
+    /// `transformStatementFragment` (SELECT, DML, MERGE, CREATE TABLE AS
+    /// SELECT, CREATE VIEW, DROP TABLE/VIEW); left untouched — not zeroed —
+    /// for one that doesn't (plain CREATE TABLE, CREATE FUNCTION, TRUNCATE),
+    /// so the caller's own zero-initialized `Capture` reads as "not
+    /// applicable" rather than stale data from an earlier statement in the
+    /// same multi-statement call.
+    capture: ?*Capture = null,
+};
+
+pub const Capture = struct {
+    /// Where `ast_text`/`sql` are rendered, not `query()`'s own per-call
+    /// arena: a query that fails after analysis (a runtime error during
+    /// execution, not just analyze/transform) returns through `query()`'s
+    /// `errdefer arena_state.deinit()` before ever handing back a `Rows` —
+    /// so a pointer into that arena would already dangle by the time the
+    /// caller reads it. Must outlive the `query()` call.
+    arena: std.mem.Allocator,
+    ast_text: []const u8 = "",
+    sql: []const u8 = "",
 };
 
 /// Connection-level SQLite configuration for Db.openWith. Defaults reproduce
@@ -636,6 +661,21 @@ pub const Db = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// Tells the GoogleSQL catalog that `project.dataset` exists, so
+    /// `<project>.INFORMATION_SCHEMA.SCHEMATA` reports it even before it holds
+    /// a table. Idempotent. The metadata store gets the same news through its
+    /// own `addDataset`; this is the SQL-analysis side's copy of it — see
+    /// `Catalog.ensureDataset`.
+    pub fn ensureDataset(
+        db: *Db,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) error{OutOfMemory}!void {
+        var g = db.lockCatalog();
+        defer g.unlock();
+        try g.catalog.ensureDataset(&.{ project_id, dataset_id }, "");
+    }
+
     /// Snapshots the live table specs for the INFORMATION_SCHEMA vtabs.
     ///
     /// The TEMP overlay is deliberately not merged in: those views report
@@ -644,6 +684,8 @@ pub const Db = struct {
         var g = db.lockCatalog();
         defer g.unlock();
         db.udf_state.info_schema.info_schema = g.catalog.liveTableSpecs(arena) catch
+            return error.OutOfMemory;
+        db.udf_state.info_schema.datasets = g.catalog.liveDatasets(arena) catch
             return error.OutOfMemory;
     }
 
@@ -2196,6 +2238,10 @@ fn transformStatementFragment(
     // so bindParams can cast bound values (Go getParamsFromNode +
     // EncodeNamedValues).
     if (db) |d| d.stmt_params = ctx.collected_params.items;
+    if (opts.capture) |cap| {
+        cap.ast_text = ast_text.render(cap.arena, node) catch "";
+        cap.sql = fragment.toString(cap.arena) catch "";
+    }
     return fragment;
 }
 
@@ -2926,6 +2972,7 @@ pub const Rows = struct {
         // so it must not outlive it. Every statement republishes, so an empty
         // slice between queries is correct rather than merely safe.
         r.db.udf_state.info_schema.info_schema = &.{};
+        r.db.udf_state.info_schema.datasets = &.{};
         // Drop temp tables created by this query (Go Cleanup) before the
         // arena (which backs the name strings) is released.
         if (r.temp_tables.len > 0) {
@@ -5146,4 +5193,30 @@ test "allocStats reports lookaside activity" {
     const rate = default_stats.hitRate().?;
     try testing.expect(rate > 0.0);
     try testing.expect(rate <= 1.0);
+}
+
+test "Capture survives a query that fails after analysis/transform succeed" {
+    // STRUCT(IEEE_DIVIDE(0, 0)) IS DISTINCT FROM ...: IEEE_DIVIDE's NaN result
+    // silently becomes SQL NULL once it leaves native float storage (a SQLite
+    // invariant), and the struct-field comparison then fails at runtime — an
+    // error `query()` only discovers after `transformStatementFragment` has
+    // already populated `Capture`. `query()` frees its own per-call arena via
+    // `errdefer` on any such error, before ever returning to the caller, so
+    // `Capture` must not hold pointers into it.
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+
+    var capture: Capture = .{ .arena = arena_state.allocator() };
+    const err = db.query(
+        "SELECT STRUCT(IEEE_DIVIDE(0, 0)) IS DISTINCT FROM STRUCT(IEEE_DIVIDE(0, 0))",
+        &.{},
+        .{ .capture = &capture },
+    );
+    try testing.expectError(error.ExecFailed, err);
+
+    try testing.expect(capture.ast_text.len > 0);
+    try testing.expect(capture.sql.len > 0);
 }

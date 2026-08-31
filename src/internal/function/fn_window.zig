@@ -912,15 +912,21 @@ pub const WINDOW_PERCENTILE_DISC = struct {
         // Go sort.Slice: NULLs sort first, then ascending order.
         std.mem.sort(Value, values, {}, discLessThan);
 
+        // 0 and 1 are exact, common boundaries (min/max); take them directly
+        // rather than through the float ceiling below, which a percentile
+        // converted from NUMERIC/BIGNUMERIC can round a hair past 1.0 and
+        // walk the index one past the end of values.
+        if (try f.percentile.eq(.{ .int = 0 })) return values[0];
+        if (try f.percentile.eq(.{ .int = 1 })) return values[values.len - 1];
+
         const len: i64 = @intCast(values.len);
         const pick_point = try f.percentile.mul(alloc, .{ .int = len });
-        if (try pick_point.eq(.{ .int = 0 })) return values[0];
         const f_idx = try pick_point.toFloat64();
         var idx: i64 = @intFromFloat(f_idx);
         if (@as(f64, @floatFromInt(idx)) < f_idx) idx += 1;
         idx -= 1;
-        if (idx > 0) return values[@intCast(idx)];
-        return .null;
+        const clamped: usize = @intCast(std.math.clamp(idx, 0, len - 1));
+        return values[clamped];
     }
 };
 

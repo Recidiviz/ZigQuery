@@ -1,0 +1,256 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/date",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/date.test",
+    .cases = .{
+        .{
+            .desc = "current_date_1",
+            .sql =
+            \\select current_date() = current_date,
+            \\       current_date() >= '2015-03-17',
+            \\       current_date() >= date_from_unix_date(0),
+            \\       current_date() >= date_from_unix_date(-719162),
+            \\       current_date() <= date_from_unix_date(2932896)
+            ,
+            .rows = .{
+                .{ true, true, true, true, true },
+            },
+        },
+        .{
+            .desc = "unix_date_1",
+            .sql =
+            \\select unix_date("2014-01-01"),
+            \\       unix_date("1970-01-01"),
+            \\       unix_date("1969-01-01")
+            ,
+            .rows = .{
+                .{ 16071, 0, -365 },
+            },
+        },
+        .{
+            .desc = "date_from_unix_date_1",
+            .sql =
+            \\select date_from_unix_date(-719162),
+            \\       date_from_unix_date(-365),
+            \\       date_from_unix_date(0),
+            \\       date_from_unix_date(16071),
+            \\       date_from_unix_date(2932896)
+            ,
+            .rows = .{
+                .{ "0001-01-01", "1969-01-01", "1970-01-01", "2014-01-01", "9999-12-31" },
+            },
+        },
+        .{
+            .desc = "date_boundaries_1",
+            .sql =
+            \\select unix_date(date "0001-01-01"),
+            \\       unix_date(date "1970-01-01"),
+            \\       unix_date(date "9999-12-31")
+            ,
+            .rows = .{
+                .{ -719162, 0, 2932896 },
+            },
+        },
+        .{
+            .desc = "date_boundaries_back_and_forth",
+            .sql =
+            \\select date_from_unix_date(unix_date(date "0001-01-01")),
+            \\       date_from_unix_date(unix_date(date "1970-01-01")),
+            \\       date_from_unix_date(unix_date(date "9999-12-31")),
+            \\       unix_date(date_from_unix_date(-719162)),
+            \\       unix_date(date_from_unix_date(0)),
+            \\       unix_date(date_from_unix_date(2932896))
+            ,
+            .rows = .{
+                .{ "0001-01-01", "1970-01-01", "9999-12-31", -719162, 0, 2932896 },
+            },
+        },
+        .{
+            .desc = "current_date_in_exotic_timezone",
+            .sql = "select abs(date_diff(current_date('+05'), current_date('-06'), DAY)) IN (0,1)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "current_date_with_null_timezone",
+            .sql = "select current_date(cast(null as string))",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "current_date_with_invalid_timezone",
+            .sql = "select current_date('foo')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "date_diff_with_week",
+            .sql =
+            \\# Note that DATE_DIFF with the WEEK part uses week numbers rather than just
+            \\# taking the difference in the number of days and dividing by seven, so it's
+            \\# expected that the two computations will not always match.
+            \\SELECT
+            \\  d1,
+            \\  d2,
+            \\  DATE_DIFF(d1, d2, WEEK),
+            \\  CAST((UNIX_DATE(d1) - UNIX_DATE(d2)) / 7 AS INT64)
+            \\FROM (
+            \\  SELECT DATE '2017-05-17' AS d1, DATE '2017-05-25' AS d2 UNION ALL
+            \\  SELECT DATE '2017-05-22' AS d1, DATE '2017-05-19' AS d2 UNION ALL
+            \\  SELECT DATE '2012-12-31', DATE '2013-01-01' UNION ALL
+            \\  SELECT DATE '2000-01-01', DATE '2001-01-01'
+            \\)
+            \\ORDER BY d1
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "date_from_string_literal",
+            .sql = "select date('2020-09-01 12:34:56.789-08')",
+            .rows = .{
+                .{"2020-09-01"},
+            },
+        },
+        .{
+            .desc = "date_from_string_non_literal_timestamp",
+            .sql = "select date('2020-09-01' || ' ' || '12:34:56.789-08')",
+            .rows = .{
+                .{"2020-09-01"},
+            },
+        },
+        .{
+            .desc = "date_constructor",
+            .sql = "select date(date '9876-12-31'), date('1999' || '-' || '10' || '-' || '20'), string(date '1234-01-02')",
+            .rows = .{
+                .{ "9876-12-31", "1999-10-20", "1234-01-02" },
+            },
+        },
+        .{
+            .desc = "cast_invalid_string_to_date",
+            .sql = "select cast(\"xxx\" as DATE)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "nested_cast_invalid_string_to_date",
+            .sql = "select cast(cast(\"xxx\" as string) as DATE)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "date_bucket",
+            .sql =
+            \\select
+            \\  date_bucket(dt, INTERVAL 7 DAY),
+            \\  date_bucket(dt, INTERVAL 1 MONTH)
+            \\from (select date '2020-02-15' dt)
+            ,
+            .rows = .{
+                .{ "2020-02-09", "2020-02-01" },
+            },
+        },
+        .{
+            .desc = "date_bucket_custom_origin",
+            .sql =
+            \\select
+            \\  date_bucket(dt, INTERVAL 7 DAY, origin),
+            \\  date_bucket(dt, INTERVAL 1 MONTH)
+            \\from (select date '2020-02-15' dt,
+            \\             date '2150-12-11' origin)
+            ,
+            .rows = .{
+                .{ "2020-02-14", "2020-02-01" },
+            },
+        },
+        .{
+            .desc = "date_in_timestamp_bucket",
+            .sql =
+            \\select
+            \\  timestamp_bucket(dt, INTERVAL 7 DAY),
+            \\  timestamp_bucket(dt, INTERVAL 7 DAY, date '2150-12-11')
+            \\from (select date '2020-02-15' dt)
+            ,
+            .rows = .{
+                .{ "2020-02-09", "2020-02-14" },
+            },
+        },
+        .{
+            .desc = "date_in_datetime_bucket",
+            .sql =
+            \\select
+            \\  datetime_bucket(dt, INTERVAL 7 DAY),
+            \\  datetime_bucket(dt, INTERVAL 7 DAY, date '2150-12-11')
+            \\from (select date '2020-02-15' dt)
+            ,
+            .rows = .{
+                .{ "2020-02-09", "2020-02-14" },
+            },
+        },
+        .{
+            .desc = "date_bucket_null_inputs",
+            .sql =
+            \\select
+            \\  date_bucket(NULL, INTERVAL 3 DAY),
+            \\  date_bucket('2020-02-15', NULL),
+            \\  date_bucket('2020-02-15', INTERVAL 3 DAY, NULL),
+            \\  date_bucket(NULL, NULL),
+            \\  date_bucket(NULL, NULL, NULL),
+            ,
+            .rows = .{
+                .{ null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "repro_b403599925",
+            .sql = "SELECT PARSE_DATE('%Y%j','2020 50') AS a",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "repro_b408960117",
+            .sql = "SELECT PARSE_DATE('%W%y', '92\\r\\x00') AS a",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "weekofyear_case1",
+            .sql = "SELECT PARSE_DATE('%W%y', '92') AS a",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "weekofyear_case2",
+            .sql = "SELECT PARSE_DATE('%W%y', '902') AS a",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "weekofyear_case3",
+            .sql = "SELECT PARSE_DATE('%W%y', '092') AS a",
+            .rows = .{
+                .{"2002-03-04"},
+            },
+        },
+        .{
+            .desc = "weekofyear_case4",
+            .sql = "SELECT PARSE_DATE('%W%y', '0902') AS a",
+            .rows = .{
+                .{"2002-03-04"},
+            },
+        },
+        .{
+            .desc = "weekofyear_case5",
+            .sql = "SELECT PARSE_DATE('%U%g', '82') AS a",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "weekofyear_case6",
+            .sql = "SELECT PARSE_DATE('%U%C', NULL) AS a",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "weekofyear_case7",
+            .sql = "SELECT PARSE_DATE('%U%C', '99') AS a",
+            .expect_error_any = true,
+        },
+    },
+}

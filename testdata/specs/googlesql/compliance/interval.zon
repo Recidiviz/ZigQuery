@@ -1,0 +1,932 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/interval",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/interval.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .unsupported_in_bigquery = "CREATE CONSTANT is not a BigQuery DDL statement (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "CREATE CONSTANT INTERVAL_STRING_YTS  = \"1-2 3 4:5:6.789\"",
+        },
+        .{
+            .desc = "prepare_database",
+            .unsupported_in_bigquery = "CREATE CONSTANT is not a BigQuery DDL statement (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "CREATE CONSTANT INTERVAL_STRING_YTM  = \"1-2\"",
+        },
+        .{
+            .desc = "prepare_database",
+            .unsupported_in_bigquery = "CREATE CONSTANT is not a BigQuery DDL statement (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "CREATE CONSTANT YEAR_STRING  = CONCAT(\"10\",\"0\")",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Intervals AS
+            \\SELECT 1 id, CAST(NULL AS INTERVAL) value UNION ALL
+            \\SELECT 2, interval 0 year UNION ALL
+            \\SELECT 3, interval '0.000001' second UNION ALL
+            \\SELECT 4, interval -1 second UNION ALL
+            \\SELECT 5, interval 1 month UNION ALL
+            \\SELECT 6, interval 30 day UNION ALL
+            \\SELECT 7, interval 720 hour UNION ALL
+            \\SELECT 8, interval 10000 year UNION ALL
+            \\SELECT 9, interval '1-2 3 4:5:6.789' year to second UNION ALL
+            \\SELECT 10, interval 2 hour UNION ALL
+            \\SELECT 11, interval '1:59:59.999999' hour to second UNION ALL
+            \\SELECT 12, interval '1:00:00.000001' hour to second UNION ALL
+            \\SELECT 13, interval '-0.000001' second UNION ALL
+            \\SELECT 14, interval '-4:5:6.789' hour to second
+            ,
+        },
+        .{
+            .desc = "error_messages",
+            .sql = "WITH t AS (SELECT \"P1Y2M<3D\" a) SELECT CAST(a AS INTERVAL) FROM t",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "error_message_expected_parse_number1",
+            .sql =
+            \\# Repro test for b/268563477
+            \\SELECT CAST('P-aY2M3D' AS INTERVAL)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "error_message_expected_parse_number2",
+            .sql =
+            \\# Repro test for b/268563477
+            \\SELECT CAST('P-' AS INTERVAL)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "literal",
+            .sql = "SELECT INTERVAL '1' YEAR, INTERVAL '-20 30' MONTH TO DAY, INTERVAL '-10000' MINUTE, INTERVAL '10:20:30.456789' HOUR TO SECOND",
+            .rows = .{
+                .{ "1-0 0 0:0:0", "-1-8 30 0:0:0", "0-0 0 -166:40:0", "0-0 0 10:20:30.456789" },
+            },
+        },
+        .{
+            .desc = "constructor",
+            .sql =
+            \\SELECT INTERVAL n YEAR, INTERVAL 10 * n + 5 DAY, INTERVAL 10001 * n SECOND
+            \\FROM UNNEST([NULL, 0, 1, -2]) n
+            \\ORDER BY n
+            ,
+            .rows = .{
+                .{ null, null, null },
+                .{ "-2-0 0 0:0:0", "0-0 -15 0:0:0", "0-0 0 -5:33:22" },
+                .{ "0-0 0 0:0:0", "0-0 5 0:0:0", "0-0 0 0:0:0" },
+                .{ "1-0 0 0:0:0", "0-0 15 0:0:0", "0-0 0 2:46:41" },
+            },
+        },
+        .{
+            .desc = "null",
+            .sql = "SELECT CAST(NULL AS INTERVAL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast",
+            .sql =
+            \\SELECT
+            \\  CAST('-1-2 -3 -4:5:6.789' AS INTERVAL), CAST('P1Y2M3DT4H5M6.789S' AS INTERVAL)
+            ,
+            .rows = .{
+                .{ "-1-2 -3 -4:5:6.789", "1-2 3 4:5:6.789" },
+            },
+        },
+        .{
+            .desc = "safe_cast",
+            .sql =
+            \\SELECT
+            \\  SAFE_CAST('1-2' AS INTERVAL), SAFE_CAST('PT1H2M' AS INTERVAL),
+            \\  SAFE_CAST('1' AS INTERVAL), SAFE_CAST('P1' AS INTERVAL)
+            ,
+            .rows = .{
+                .{ "1-2 0 0:0:0", "0-0 0 1:2:0", null, null },
+            },
+        },
+        .{
+            .desc = "cast_nanos_without_nanos_support",
+            .sql =
+            \\SELECT
+            \\  CAST('1-2 3 4:5:6.123456789' AS INTERVAL),
+            \\  CAST('-1-2 -3 -4:5:6.123456789' AS INTERVAL),
+            \\  CAST('P1Y2M3DT4H5M6.123456789S' AS INTERVAL)
+            ,
+            .rows = .{
+                .{ "1-2 3 4:5:6.123456789", "-1-2 -3 -4:5:6.123456789", "1-2 3 4:5:6.123456789" },
+            },
+        },
+        .{
+            .desc = "cast_nanos_without_nanos_support_enforcement_enabled",
+            .sql =
+            \\SELECT
+            \\  CAST('1-2 3 4:5:6.123456789' AS INTERVAL),
+            \\  CAST('-1-2 -3 -4:5:6.123456789' AS INTERVAL),
+            \\  CAST('P1Y2M3DT4H5M6.123456789S' AS INTERVAL)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "make_interval",
+            .sql =
+            \\select
+            \\  make_interval(year => 1),
+            \\  make_interval(second => -6),
+            \\  make_interval(),
+            \\  make_interval(1,-2,3,-4,5,-6),
+            \\  make_interval(second=>-6, minute=>5, hour=>-4, day=>3, month=>-2, year=>1),
+            \\  make_interval(1,-2,3),
+            \\  make_interval(hour=>-4, minute=>5),
+            \\  make_interval(second=>-6, month=>-2),
+            \\  make_interval(1, day=>3),
+            \\  make_interval(NULL),
+            \\  make_interval(1, 2, 3, 4, 5, NULL),
+            \\  make_interval(year => 1, minute => NULL),
+            ,
+            .rows = .{
+                .{ "1-0 0 0:0:0", "0-0 0 -0:0:6", "0-0 0 0:0:0", "0-10 3 -3:55:6", "0-10 3 -3:55:6", "0-10 3 0:0:0", "0-0 0 -3:55:0", "-0-2 0 -0:0:6", "1-0 3 0:0:0", null, null, null },
+            },
+        },
+        .{
+            .desc = "make_interval_overflow",
+            .sql = "select make_interval(year => 10000, month => 1)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cmp_scalar",
+            .sql =
+            \\SELECT
+            \\  CAST(NULL AS INTERVAL) <= INTERVAL 1 DAY,
+            \\  CAST(NULL AS INTERVAL) = CAST(NULL AS INTERVAL),
+            \\  INTERVAL 1 YEAR > INTERVAL 360 DAY
+            ,
+            .rows = .{
+                .{ null, null, false },
+            },
+        },
+        .{
+            .desc = "cmp_array",
+            .sql =
+            \\SELECT
+            \\  [INTERVAL 1 DAY, INTERVAL -2 MINUTE] = [INTERVAL 24 HOUR, INTERVAL -120 SECOND],
+            \\  [INTERVAL -1 DAY, NULL] = [INTERVAL -1 DAY, NULL],
+            \\  [INTERVAL 1 SECOND, INTERVAL 1 HOUR] = [INTERVAL 1 SECOND, INTERVAL -1 HOUR]
+            ,
+            .rows = .{
+                .{ true, null, false },
+            },
+        },
+        .{
+            .desc = "cmp_struct",
+            .sql =
+            \\SELECT
+            \\  STRUCT(1, INTERVAL '1 2:0:0' DAY TO SECOND) = STRUCT(1, INTERVAL 26 HOUR),
+            \\  STRUCT(1, INTERVAL 1 HOUR) = STRUCT(1, NULL),
+            \\  STRUCT(1, INTERVAL '1 23:59:59.999999' DAY TO SECOND) = STRUCT(1, INTERVAL 2 DAY),
+            ,
+            .rows = .{
+                .{ true, null, false },
+            },
+        },
+        .{
+            .desc = "add_interval",
+            .sql =
+            \\SELECT
+            \\  DATE '2010-10-10' + INTERVAL '10 20:20:20' DAY TO SECOND,
+            \\  INTERVAL '24' HOUR + DATE '1999-12-31',
+            \\  DATETIME  '1970-01-02 03:04:05.678' + INTERVAL '1-1 1 1:1:1.1111' YEAR TO SECOND,
+            \\  INTERVAL 1 YEAR + DATETIME '0201-02-02 02:02:02',
+            \\  TIMESTAMP '1970-01-01 02:03:04.567' + INTERVAL '1 1:1:1.1111' DAY TO SECOND,
+            \\  INTERVAL 1 SECOND + TIMESTAMP '1999-12-31 23:59:59',
+            ,
+            .rows = .{
+                .{ "2010-10-20 20:20:20", "2000-01-01 00:00:00", "1971-02-03 04:05:06.789100", "0202-02-02 02:02:02", "1970-01-02 11:04:05.678100+00", "2000-01-01 08:00:00+00" },
+            },
+        },
+        .{
+            .desc = "subtract_interval",
+            .sql =
+            \\SELECT
+            \\  DATE '2010-10-10' - INTERVAL '10 1:1:1' DAY TO SECOND,
+            \\  DATETIME  '1970-01-02 03:04:05.678' - INTERVAL '1-1 1 1:1:1.111' YEAR TO SECOND,
+            \\  TIMESTAMP '1970-01-01 02:03:04.567' - INTERVAL '1 1:1:1.111' DAY TO SECOND,
+            ,
+            .rows = .{
+                .{ "2010-09-29 22:58:59", "1968-12-01 02:03:04.567", "1969-12-31 09:02:03.456+00" },
+            },
+        },
+        .{
+            .desc = "multiply_divide",
+            .sql = "SELECT interval '1' month * 20, interval '2' hour / 4",
+            .rows = .{
+                .{ "1-8 0 0:0:0", "0-0 0 0:30:0" },
+            },
+        },
+        .{
+            .desc = "multiply_double",
+            .sql = "SELECT interval '1' month * 3.5, 4.5 * interval '2' hour, interval '2' day * 2.0",
+            .rows = .{
+                .{ "0-3 15 0:0:0", "0-0 0 9:0:0", "0-0 4 0:0:0" },
+            },
+        },
+        .{
+            .desc = "multiply_float",
+            .sql = "SELECT interval '1' month * cast(3.5 as float), cast(4.5 as float) * interval '2' hour, interval '2' day * cast(2.0 as float)",
+            .rows = .{
+                .{ "0-3 15 0:0:0", "0-0 0 9:0:0", "0-0 4 0:0:0" },
+            },
+        },
+        .{
+            .desc = "multiply_double_without_nanos_feature",
+            .sql = "SELECT interval '1' second * (1.0 / 3.0), (1.0 / 7.0) * interval '1' second",
+            .rows = .{
+                .{ "0-0 0 0:0:0.333333", "0-0 0 0:0:0.142857" },
+            },
+        },
+        .{
+            .desc = "multiply_double_with_nanos_feature",
+            .sql = "SELECT interval '1' second * (1.0 / 3.0), (1.0 / 7.0) * interval '1' second",
+            .rows = .{
+                .{ "0-0 0 0:0:0.333333333", "0-0 0 0:0:0.142857142" },
+            },
+        },
+        .{
+            .desc = "divide_fractional_micros_with_nanos_feature",
+            .sql =
+            \\SELECT (interval '0.000008' SECOND) / 3,  -- 2.666666666...
+            \\       (interval '0.000008' SECOND) / 4,  -- 2.0
+            \\       (interval '0.000008' SECOND) / 6,  -- 1.333333333...
+            \\       (interval '0.000008' SECOND) / -3,  -- 2.666666666...
+            \\       (interval '0.000008' SECOND) / -4,  -- 2.0
+            \\       (interval '0.000008' SECOND) / -6;  -- 1.333333333...
+            ,
+            .rows = .{
+                .{ "0-0 0 0:0:0.000002666", "0-0 0 0:0:0.000002", "0-0 0 0:0:0.000001333", "0-0 0 -0:0:0.000002666", "0-0 0 -0:0:0.000002", "0-0 0 -0:0:0.000001333" },
+            },
+        },
+        .{
+            .desc = "divide_fractional_micros_without_nanos_feature",
+            .sql =
+            \\SELECT (interval '0.000008' SECOND) / 3,  -- 2.666666666...
+            \\       (interval '0.000008' SECOND) / 4,  -- 2.0
+            \\       (interval '0.000008' SECOND) / 6,  -- 1.333333333...
+            \\       (interval '0.000008' SECOND) / -3,  -- 2.666666666...
+            \\       (interval '0.000008' SECOND) / -4,  -- 2.0
+            \\       (interval '0.000008' SECOND) / -6;  -- 1.333333333...
+            ,
+            .rows = .{
+                .{ "0-0 0 0:0:0.000002", "0-0 0 0:0:0.000002", "0-0 0 0:0:0.000001", "0-0 0 -0:0:0.000002", "0-0 0 -0:0:0.000002", "0-0 0 -0:0:0.000001" },
+            },
+        },
+        .{
+            .desc = "divide_fractional_nanos",
+            .sql =
+            \\SELECT (interval '0.000000008' SECOND) / 3,
+            \\       (interval '0.000000008' SECOND) / 4,
+            \\       (interval '0.000000008' SECOND) / 6,
+            \\       (interval '0.000000008' SECOND) / -3,
+            \\       (interval '0.000000008' SECOND) / -4,
+            \\       (interval '0.000000008' SECOND) / -6
+            ,
+            .rows = .{
+                .{ "0-0 0 0:0:0.000000002", "0-0 0 0:0:0.000000002", "0-0 0 0:0:0.000000001", "0-0 0 -0:0:0.000000002", "0-0 0 -0:0:0.000000002", "0-0 0 -0:0:0.000000001" },
+            },
+        },
+        .{
+            .desc = "count_distinct",
+            .sql = "SELECT COUNT(*) num_rows, COUNT(value) num_values, COUNT(DISTINCT value) num_uniques FROM Intervals",
+            .rows = .{
+                .{ 14, 13, 11 },
+            },
+        },
+        .{
+            .desc = "min_max",
+            .sql = "SELECT MIN(value) min, MAX(value) max FROM Intervals",
+            .rows = .{
+                .{ "0-0 0 -4:5:6.789", "10000-0 0 0:0:0" },
+            },
+        },
+        .{
+            .desc = "sum",
+            .sql =
+            \\SELECT SUM(i) sum FROM UNNEST([
+            \\  interval 1 year, interval 2 month, interval 3 day, NULL,
+            \\  interval 4 hour, interval 5 minute, interval '6.789' second, NULL
+            \\]) i
+            ,
+            .rows = .{
+                .{"1-2 3 4:5:6.789"},
+            },
+        },
+        .{
+            .desc = "sum_all_nulls",
+            .sql = "SELECT SUM(i) sum FROM UNNEST([CAST(NULL AS INTERVAL), NULL, NULL]) i",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "sum_overflow",
+            .sql =
+            \\SELECT SUM(i) sum FROM UNNEST([
+            \\  interval 10000 year, interval '1' month
+            \\]) i
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "sum_handles_intermediate_overflow",
+            .sql =
+            \\SELECT SUM(i) sum FROM UNNEST([
+            \\  interval '10000' year,
+            \\  interval '10000' year,
+            \\  interval '10000' year,
+            \\  interval '-120000' month,
+            \\  interval '-120000' month
+            \\]) i
+            ,
+            .rows = .{
+                .{"10000-0 0 0:0:0"},
+            },
+        },
+        .{
+            .desc = "avg",
+            .sql =
+            \\SELECT AVG(i) avg FROM UNNEST([
+            \\  interval 1 year, interval 1 month, interval 1 day, NULL, interval 1 hour, interval 1 second, NULL
+            \\]) i
+            ,
+            .rows = .{
+                .{"0-2 18 5:0:0.200"},
+            },
+        },
+        .{
+            .desc = "avg_1_element",
+            .sql =
+            \\SELECT AVG(i) avg FROM UNNEST([
+            \\  interval '1-2 3 4:5:6.789' year to second
+            \\]) i
+            ,
+            .rows = .{
+                .{"1-2 3 4:5:6.789"},
+            },
+        },
+        .{
+            .desc = "avg_handles_intermediate_overflow",
+            .sql =
+            \\SELECT AVG(i) avg FROM UNNEST([
+            \\  interval 10000 year, interval 8000 year, interval 3660000 day, interval 366000 day
+            \\]) i
+            ,
+            .rows = .{
+                .{"4500-0 1006500 0:0:0"},
+            },
+        },
+        .{
+            .desc = "avg_positive_negative_cancel_each_other",
+            .sql =
+            \\SELECT AVG(i) avg FROM UNNEST([
+            \\  interval -1 year,  interval -5 day, interval -1 hour,   interval -1 minute,
+            \\  interval 12 month, interval 5 day,  interval 60 minute, interval 60 second
+            \\]) i
+            ,
+            .rows = .{
+                .{"0-0 0 0:0:0"},
+            },
+        },
+        .{
+            .desc = "avg_nano_truncation",
+            .sql =
+            \\SELECT AVG(i) avg FROM UNNEST([
+            \\  interval 0 second, interval '0.000000001' second
+            \\]) i
+            ,
+            .rows = .{
+                .{"0-0 0 0:0:0"},
+            },
+        },
+        .{
+            .desc = "avg_nano_truncation2_nanos",
+            .sql =
+            \\# Regression test against AVG(INTERVAL) to ensure nanos precision is only
+            \\# non-zero when FEATURE_TIMESTAMP_NANOS is on. See b/245617716.
+            \\SELECT AVG(i) avg FROM UNNEST([
+            \\  interval 0 second, interval '-0.000000003' second
+            \\]) i
+            ,
+            .rows = .{
+                .{"0-0 0 -0:0:0.000000001"},
+            },
+        },
+        .{
+            .desc = "avg_nano_truncation2_micros",
+            .sql =
+            \\# Regression test against AVG(INTERVAL) to ensure nanos precision is only
+            \\# non-zero when FEATURE_TIMESTAMP_NANOS is on. See b/245617716.
+            \\SELECT AVG(i) avg FROM UNNEST([
+            \\  interval 0 second, interval '-0.000000003' second
+            \\]) i
+            ,
+            .rows = .{
+                .{"0-0 0 0:0:0"},
+            },
+        },
+        .{
+            .desc = "avg_nano_truncation3_nanos",
+            .sql =
+            \\# Regression test against AVG(INTERVAL) to ensure nanos precision is only
+            \\# non-zero when FEATURE_TIMESTAMP_NANOS is on. See b/245617716.
+            \\SELECT AVG(e)
+            \\FROM UNNEST([INTERVAL "-7959-1 -153930 54938167:22:41.712081" YEAR TO SECOND,
+            \\            INTERVAL "8630-9 3512412 62113018:54:19.721996" YEAR TO SECOND,
+            \\            INTERVAL "675-8 -224302 -58850294:15:14.439522" YEAR TO SECOND,
+            \\            INTERVAL "2580-1 -200995 40403849:16:44.554610" YEAR TO SECOND]) AS e
+            ,
+            .rows = .{
+                .{"981-10 733303 24651203:19:37.887291250"},
+            },
+        },
+        .{
+            .desc = "avg_nano_truncation3_micros",
+            .sql =
+            \\# Regression test against AVG(INTERVAL) to ensure nanos precision is only
+            \\# non-zero when FEATURE_TIMESTAMP_NANOS is on. See b/245617716.
+            \\SELECT AVG(e)
+            \\FROM UNNEST([INTERVAL "-7959-1 -153930 54938167:22:41.712081" YEAR TO SECOND,
+            \\            INTERVAL "8630-9 3512412 62113018:54:19.721996" YEAR TO SECOND,
+            \\            INTERVAL "675-8 -224302 -58850294:15:14.439522" YEAR TO SECOND,
+            \\            INTERVAL "2580-1 -200995 40403849:16:44.554610" YEAR TO SECOND]) AS e
+            ,
+            .rows = .{
+                .{"981-10 733303 24651203:19:37.887291"},
+            },
+        },
+        .{
+            .desc = "avg_all_nulls",
+            .sql =
+            \\SELECT AVG(i) avg FROM UNNEST([
+            \\  CAST(NULL AS INTERVAL), NULL, NULL
+            \\]) i
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "any_value",
+            .sql = "SELECT ANY_VALUE(i) FROM UNNEST([interval 1 day, interval 1 day]) i",
+            .rows = .{
+                .{"0-0 1 0:0:0"},
+            },
+        },
+        .{
+            .desc = "array_agg_orderby",
+            .sql = "SELECT ARRAY_AGG(value ORDER BY value, id) FROM Intervals",
+            .rows = .{
+                .{.{ null, "0-0 0 -4:5:6.789", "0-0 0 -0:0:1", "0-0 0 -0:0:0.000001", "0-0 0 0:0:0", "0-0 0 0:0:0.000001", "0-0 0 1:0:0.000001", "0-0 0 1:59:59.999999", "0-0 0 2:0:0", "0-1 0 0:0:0", "0-0 30 0:0:0", "0-0 0 720:0:0", "1-2 3 4:5:6.789", "10000-0 0 0:0:0" }},
+            },
+        },
+        .{
+            .desc = "approx_count_distinct",
+            .sql = "SELECT APPROX_COUNT_DISTINCT(value) approx_uniques FROM Intervals",
+            .rows = .{
+                .{11},
+            },
+        },
+        .{
+            .desc = "approx_quantiles",
+            .sql =
+            \\SELECT
+            \\  -- JUSTIFY_INTERVAL() makes the test robust against different engines making
+            \\  -- different decisions about the relative order of 1 MONTH and 30 DAYS, which
+            \\  -- can affect the result.
+            \\  ARRAY_LENGTH(quantiles) AS length, -- Make sure array is exactly 4 elements
+            \\  JUSTIFY_INTERVAL(quantiles[ORDINAL(1)]) AS first_quantile,
+            \\  JUSTIFY_INTERVAL(quantiles[ORDINAL(2)]) AS second_quantile,
+            \\  JUSTIFY_INTERVAL(quantiles[ORDINAL(3)]) AS third_quantile,
+            \\  JUSTIFY_INTERVAL(quantiles[ORDINAL(4)]) AS fourth_quantile
+            \\FROM (
+            \\  SELECT APPROX_QUANTILES(value, 3) AS quantiles
+            \\  FROM Intervals
+            \\)
+            ,
+            .rows = .{
+                .{ 4, "0-0 0 -4:5:6.789", "0-0 0 0:0:0.000001", "0-1 0 0:0:0", "10000-0 0 0:0:0" },
+            },
+        },
+        .{
+            .desc = "approx_top_count",
+            .sql = "SELECT APPROX_TOP_COUNT(value, 1) FROM Intervals",
+            .rows = .{
+                .{.{.{ "0-0 30 0:0:0", 3 }}},
+            },
+        },
+        .{
+            .desc = "approx_top_sum",
+            .sql = "SELECT APPROX_TOP_SUM(value, EXTRACT(YEAR FROM value), 2) FROM Intervals",
+            .rows = .{
+                .{.{ .{ "10000-0 0 0:0:0", 10000 }, .{ "1-2 3 4:5:6.789", 1 } }},
+            },
+        },
+        .{
+            .desc = "orderby",
+            .sql = "SELECT id, value FROM Intervals ORDER BY value DESC, id ASC",
+            .rows = .{
+                .{ 8, "10000-0 0 0:0:0" },
+                .{ 9, "1-2 3 4:5:6.789" },
+                .{ 5, "0-1 0 0:0:0" },
+                .{ 6, "0-0 30 0:0:0" },
+                .{ 7, "0-0 0 720:0:0" },
+                .{ 10, "0-0 0 2:0:0" },
+                .{ 11, "0-0 0 1:59:59.999999" },
+                .{ 12, "0-0 0 1:0:0.000001" },
+                .{ 3, "0-0 0 0:0:0.000001" },
+                .{ 2, "0-0 0 0:0:0" },
+                .{ 13, "0-0 0 -0:0:0.000001" },
+                .{ 4, "0-0 0 -0:0:1" },
+                .{ 14, "0-0 0 -4:5:6.789" },
+                .{ 1, null },
+            },
+        },
+        .{
+            .desc = "groupby",
+            .sql =
+            \\# Different interval values can compare equal (1 month = 30 days), so the are
+            \\# manually normalized since test harness compares string representations.
+            \\SELECT IF(value = interval 1 month, '1 month', cast(value as string)) value, cnt FROM
+            \\(SELECT value, COUNT(id) cnt FROM Intervals GROUP BY value)
+            \\ORDER BY cnt DESC, value ASC
+            ,
+            .rows = .{
+                .{ "1 month", 3 },
+                .{ null, 1 },
+                .{ "0-0 0 -0:0:0.000001", 1 },
+                .{ "0-0 0 -0:0:1", 1 },
+                .{ "0-0 0 -4:5:6.789", 1 },
+                .{ "0-0 0 0:0:0", 1 },
+                .{ "0-0 0 0:0:0.000001", 1 },
+                .{ "0-0 0 1:0:0.000001", 1 },
+                .{ "0-0 0 1:59:59.999999", 1 },
+                .{ "0-0 0 2:0:0", 1 },
+                .{ "1-2 3 4:5:6.789", 1 },
+                .{ "10000-0 0 0:0:0", 1 },
+            },
+        },
+        .{
+            .desc = "distinct",
+            .sql =
+            \\# Different interval values can compare equal (1 month = 30 days), so the are
+            \\# manually normalized since test harness compares string representations.
+            \\SELECT IF(value = interval 1 month, '1 month', cast(value as string)) value FROM
+            \\(SELECT DISTINCT value FROM Intervals)
+            \\ORDER BY value
+            ,
+            .rows = .{
+                .{null},
+                .{"0-0 0 -0:0:0.000001"},
+                .{"0-0 0 -0:0:1"},
+                .{"0-0 0 -4:5:6.789"},
+                .{"0-0 0 0:0:0"},
+                .{"0-0 0 0:0:0.000001"},
+                .{"0-0 0 1:0:0.000001"},
+                .{"0-0 0 1:59:59.999999"},
+                .{"0-0 0 2:0:0"},
+                .{"1 month"},
+                .{"1-2 3 4:5:6.789"},
+                .{"10000-0 0 0:0:0"},
+            },
+        },
+        .{
+            .desc = "join",
+            .sql =
+            \\SELECT id, value, i FROM Intervals
+            \\INNER JOIN
+            \\(SELECT i FROM UNNEST([interval 1 month, interval 31 day, interval 2 hour]) i)
+            \\ON value = i
+            \\ORDER BY id ASC
+            ,
+            .rows = .{
+                .{ 5, "0-1 0 0:0:0", "0-1 0 0:0:0" },
+                .{ 6, "0-0 30 0:0:0", "0-1 0 0:0:0" },
+                .{ 7, "0-0 0 720:0:0", "0-1 0 0:0:0" },
+                .{ 10, "0-0 0 2:0:0", "0-0 0 2:0:0" },
+            },
+        },
+        .{
+            .desc = "in_semijoin",
+            .sql =
+            \\SELECT id, value FROM Intervals
+            \\WHERE value IN (SELECT i FROM UNNEST([interval -1 second, interval 31 day, interval 30 day]) i)
+            \\ORDER BY id ASC
+            ,
+            .rows = .{
+                .{ 4, "0-0 0 -0:0:1" },
+                .{ 5, "0-1 0 0:0:0" },
+                .{ 6, "0-0 30 0:0:0" },
+                .{ 7, "0-0 0 720:0:0" },
+            },
+        },
+        .{
+            .desc = "analytic_running_sum",
+            .sql =
+            \\SELECT
+            \\  SUM(value) OVER(
+            \\    ORDER BY value ASC, id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            \\  )
+            \\FROM Intervals
+            \\WHERE value < INTERVAL 1 year
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"0-0 0 -4:5:6.789"},
+                .{"0-0 0 -4:5:7.789"},
+                .{"0-0 0 -4:5:7.789001"},
+                .{"0-0 0 -4:5:7.789001"},
+                .{"0-0 0 -4:5:7.789"},
+                .{"0-0 0 -3:5:7.788999"},
+                .{"0-0 0 -1:5:7.789"},
+                .{"0-0 0 0:54:52.211"},
+                .{"0-1 0 0:54:52.211"},
+                .{"0-1 30 0:54:52.211"},
+                .{"0-1 30 720:54:52.211"},
+            },
+        },
+        .{
+            .desc = "analytic_moving_avg_nanos",
+            .sql = "SELECT AVG(value) OVER(ORDER BY value, id ASC ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) FROM Intervals",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"0-0 0 -4:5:6.789"},
+                .{"0-0 0 -2:2:33.894500"},
+                .{"0-0 0 -1:21:42.596333666"},
+                .{"0-0 0 -1:1:16.947250250"},
+                .{"0-0 0 -0:0:0.250"},
+                .{"0-0 0 0:15:0.000000250"},
+                .{"0-0 0 0:45:0.000000250"},
+                .{"0-0 0 1:15:0.000000250"},
+                .{"0-0 7 13:15:0"},
+                .{"0-0 15 0:59:59.999999750"},
+                .{"0-0 15 180:30:0"},
+                .{"0-3 30 199:1:16.697250"},
+                .{"2500-3 23 187:1:16.697250"},
+            },
+        },
+        .{
+            .desc = "analytic_moving_avg",
+            .sql = "SELECT AVG(value) OVER(ORDER BY value, id ASC ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) FROM Intervals",
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{"0-0 0 -4:5:6.789"},
+                .{"0-0 0 -2:2:33.894500"},
+                .{"0-0 0 -1:21:42.596333"},
+                .{"0-0 0 -1:1:16.947250"},
+                .{"0-0 0 -0:0:0.250"},
+                .{"0-0 0 0:15:0"},
+                .{"0-0 0 0:45:0"},
+                .{"0-0 0 1:15:0"},
+                .{"0-0 7 13:15:0"},
+                .{"0-0 15 0:59:59.999999"},
+                .{"0-0 15 180:30:0"},
+                .{"0-3 30 199:1:16.697250"},
+                .{"2500-3 23 187:1:16.697250"},
+            },
+        },
+        .{
+            .desc = "analytic_min_max",
+            .sql =
+            \\SELECT MIN(value) OVER(w), MAX(value) OVER w FROM Intervals
+            \\WINDOW w AS (ORDER BY value ASC, id ASC ROWS BETWEEN CURRENT ROW AND 3 FOLLOWING)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "0-0 0 -4:5:6.789", "0-0 0 -0:0:0.000001" },
+                .{ "0-0 0 -4:5:6.789", "0-0 0 0:0:0" },
+                .{ "0-0 0 -0:0:1", "0-0 0 0:0:0.000001" },
+                .{ "0-0 0 -0:0:0.000001", "0-0 0 1:0:0.000001" },
+                .{ "0-0 0 0:0:0", "0-0 0 1:59:59.999999" },
+                .{ "0-0 0 0:0:0.000001", "0-0 0 2:0:0" },
+                .{ "0-0 0 1:0:0.000001", "0-1 0 0:0:0" },
+                .{ "0-0 0 1:59:59.999999", "0-1 0 0:0:0" },
+                .{ "0-0 0 2:0:0", "0-1 0 0:0:0" },
+                .{ "0-1 0 0:0:0", "1-2 3 4:5:6.789" },
+                .{ "0-0 30 0:0:0", "10000-0 0 0:0:0" },
+                .{ "0-0 0 720:0:0", "10000-0 0 0:0:0" },
+                .{ "1-2 3 4:5:6.789", "10000-0 0 0:0:0" },
+                .{ "10000-0 0 0:0:0", "10000-0 0 0:0:0" },
+            },
+        },
+        .{
+            .desc = "analytic_partitionby",
+            .sql =
+            \\SELECT value, COUNT(*) OVER(PARTITION BY value)
+            \\FROM Intervals
+            \\ORDER BY value ASC, id ASC
+            ,
+            .rows = .{
+                .{ null, 1 },
+                .{ "0-0 0 -4:5:6.789", 1 },
+                .{ "0-0 0 -0:0:1", 1 },
+                .{ "0-0 0 -0:0:0.000001", 1 },
+                .{ "0-0 0 0:0:0", 1 },
+                .{ "0-0 0 0:0:0.000001", 1 },
+                .{ "0-0 0 1:0:0.000001", 1 },
+                .{ "0-0 0 1:59:59.999999", 1 },
+                .{ "0-0 0 2:0:0", 1 },
+                .{ "0-1 0 0:0:0", 3 },
+                .{ "0-0 30 0:0:0", 3 },
+                .{ "0-0 0 720:0:0", 3 },
+                .{ "1-2 3 4:5:6.789", 1 },
+                .{ "10000-0 0 0:0:0", 1 },
+            },
+        },
+        .{
+            .desc = "count_distinct_analytic",
+            .sql =
+            \\SELECT
+            \\  COUNT(DISTINCT value) OVER()
+            \\FROM Intervals
+            ,
+            .unordered = true,
+            .rows = .{
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+                .{11},
+            },
+        },
+        .{
+            .desc = "sum_distinct_analytic",
+            .sql =
+            \\SELECT SUM(DISTINCT value) OVER() FROM Intervals
+            \\WHERE value >= INTERVAL 29 DAY AND value <= Interval 31 DAY
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"0-1 0 0:0:0"},
+                .{"0-1 0 0:0:0"},
+                .{"0-1 0 0:0:0"},
+            },
+        },
+        .{
+            .desc = "array_agg_distinct",
+            .sql =
+            \\SELECT JUSTIFY_INTERVAL(i) as justified_i FROM UNNEST(
+            \\  (SELECT ARRAY_AGG(DISTINCT value) AS a FROM Intervals)) AS i ORDER BY i
+            ,
+            .rows = .{
+                .{null},
+                .{"0-0 0 -4:5:6.789"},
+                .{"0-0 0 -0:0:1"},
+                .{"0-0 0 -0:0:0.000001"},
+                .{"0-0 0 0:0:0"},
+                .{"0-0 0 0:0:0.000001"},
+                .{"0-0 0 1:0:0.000001"},
+                .{"0-0 0 1:59:59.999999"},
+                .{"0-0 0 2:0:0"},
+                .{"0-1 0 0:0:0"},
+                .{"1-2 3 4:5:6.789"},
+                .{"10000-0 0 0:0:0"},
+            },
+        },
+        .{
+            .desc = "between",
+            .sql = "SELECT value, value BETWEEN INTERVAL 30 DAY AND INTERVAL 40 DAY FROM Intervals",
+            .unordered = true,
+            .rows = .{
+                .{ "0-0 0 0:0:0", false },
+                .{ "0-0 0 -0:0:1", false },
+                .{ "0-0 30 0:0:0", true },
+                .{ "10000-0 0 0:0:0", false },
+                .{ "0-0 0 2:0:0", false },
+                .{ "0-0 0 1:0:0.000001", false },
+                .{ "0-0 0 -4:5:6.789", false },
+                .{ null, null },
+                .{ "0-0 0 0:0:0.000001", false },
+                .{ "0-1 0 0:0:0", true },
+                .{ "0-0 0 720:0:0", true },
+                .{ "1-2 3 4:5:6.789", false },
+                .{ "0-0 0 1:59:59.999999", false },
+                .{ "0-0 0 -0:0:0.000001", false },
+            },
+        },
+        .{
+            .desc = "justify_interval",
+            .sql =
+            \\SELECT JUSTIFY_INTERVAL(i) AS justified_interval,
+            \\  EXTRACT(YEAR FROM JUSTIFY_INTERVAL(i)) AS year,
+            \\  EXTRACT(MONTH FROM JUSTIFY_INTERVAL(i)) AS month,
+            \\  EXTRACT(DAY FROM JUSTIFY_INTERVAL(i)) AS day,
+            \\  EXTRACT(HOUR FROM JUSTIFY_INTERVAL(i)) AS hour,
+            \\  EXTRACT(MINUTE FROM JUSTIFY_INTERVAL(i)) AS minute,
+            \\  EXTRACT(SECOND FROM JUSTIFY_INTERVAL(i)) AS second,
+            \\  EXTRACT(MILLISECOND FROM JUSTIFY_INTERVAL(i)) AS milli,
+            \\  EXTRACT(MICROSECOND FROM JUSTIFY_INTERVAL(i)) AS micro
+            \\FROM UNNEST([INTERVAL '1-2 3 4:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 35 4:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 -35 4:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 12 40:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 -12 -40:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 48 75:7:4.657' YEAR TO SECOND,
+            \\          INTERVAL '1-2 -48 -75:7:4.657' YEAR TO SECOND]) AS i
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "1-3 5 4:5:6.789", 1, 3, 5, 4, 5, 6, 789, 789000 },
+                .{ "1-2 13 16:5:6.789", 1, 2, 13, 16, 5, 6, 789, 789000 },
+                .{ "1-3 21 3:7:4.657", 1, 3, 21, 3, 7, 4, 657, 657000 },
+                .{ "1-2 3 4:5:6.789", 1, 2, 3, 4, 5, 6, 789, 789000 },
+                .{ "1-0 25 4:5:6.789", 1, 0, 25, 4, 5, 6, 789, 789000 },
+                .{ "1-1 16 7:54:53.211", 1, 1, 16, 7, 54, 53, 211, 211000 },
+                .{ "1-0 8 20:52:55.343", 1, 0, 8, 20, 52, 55, 343, 343000 },
+            },
+        },
+        .{
+            .desc = "justify_days",
+            .sql =
+            \\SELECT JUSTIFY_DAYS(i) AS justified_days,
+            \\  EXTRACT(YEAR FROM JUSTIFY_DAYS(i)) AS year,
+            \\  EXTRACT(MONTH FROM JUSTIFY_DAYS(i)) AS month,
+            \\  EXTRACT(DAY FROM JUSTIFY_DAYS(i)) AS day,
+            \\  EXTRACT(HOUR FROM JUSTIFY_DAYS(i)) AS hour,
+            \\  EXTRACT(MINUTE FROM JUSTIFY_DAYS(i)) AS minute,
+            \\  EXTRACT(SECOND FROM JUSTIFY_DAYS(i)) AS second,
+            \\  EXTRACT(MILLISECOND FROM JUSTIFY_DAYS(i)) AS milli,
+            \\  EXTRACT(MICROSECOND FROM JUSTIFY_DAYS(i)) AS micro
+            \\FROM UNNEST([INTERVAL '1-2 3 4:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 35 48:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 -35 -48:5:6.789' YEAR TO SECOND]) AS i
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "1-3 5 48:5:6.789", 1, 3, 5, 48, 5, 6, 789, 789000 },
+                .{ "1-2 3 4:5:6.789", 1, 2, 3, 4, 5, 6, 789, 789000 },
+                .{ "1-0 25 -48:5:6.789", 1, 0, 25, -48, -5, -6, -789, -789000 },
+            },
+        },
+        .{
+            .desc = "justify_hours",
+            .sql =
+            \\SELECT JUSTIFY_HOURS(i) AS justified_hours,
+            \\  EXTRACT(YEAR FROM JUSTIFY_HOURS(i)) AS year,
+            \\  EXTRACT(MONTH FROM JUSTIFY_HOURS(i)) AS month,
+            \\  EXTRACT(DAY FROM JUSTIFY_HOURS(i)) AS day,
+            \\  EXTRACT(HOUR FROM JUSTIFY_HOURS(i)) AS hour,
+            \\  EXTRACT(MINUTE FROM JUSTIFY_HOURS(i)) AS minute,
+            \\  EXTRACT(SECOND FROM JUSTIFY_HOURS(i)) AS second,
+            \\  EXTRACT(MILLISECOND FROM JUSTIFY_HOURS(i)) AS milli,
+            \\  EXTRACT(MICROSECOND FROM JUSTIFY_HOURS(i)) AS micro
+            \\FROM UNNEST([INTERVAL '1-2 3 4:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 35 49:5:6.789' YEAR TO SECOND,
+            \\          INTERVAL '1-2 -35 -49:5:6.789' YEAR TO SECOND]) AS i
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "1-2 37 1:5:6.789", 1, 2, 37, 1, 5, 6, 789, 789000 },
+                .{ "1-2 3 4:5:6.789", 1, 2, 3, 4, 5, 6, 789, 789000 },
+                .{ "1-2 -37 -1:5:6.789", 1, 2, -37, -1, -5, -6, -789, -789000 },
+            },
+        },
+        .{
+            .desc = "constant1",
+            .unsupported_in_bigquery = "CREATE CONSTANT is not a BigQuery DDL statement (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT INTERVAL INTERVAL_STRING_YTS YEAR TO SECOND",
+            .rows = .{
+                .{"1-2 3 4:5:6.789"},
+            },
+        },
+        .{
+            .desc = "constant2",
+            .unsupported_in_bigquery = "CREATE CONSTANT is not a BigQuery DDL statement (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT INTERVAL INTERVAL_STRING_YTM YEAR TO MONTH",
+            .rows = .{
+                .{"1-2 0 0:0:0"},
+            },
+        },
+        .{
+            .desc = "constant3",
+            .unsupported_in_bigquery = "CREATE CONSTANT is not a BigQuery DDL statement (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT INTERVAL YEAR_STRING YEAR",
+            .rows = .{
+                .{"100-0 0 0:0:0"},
+            },
+        },
+    },
+}

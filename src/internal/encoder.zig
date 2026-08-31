@@ -149,6 +149,13 @@ pub fn LiteralFromValue(alloc: std.mem.Allocator, v: Value) ValueError![]u8 {
         .null => return alloc.dupe(u8, "null"),
         .int => |i| return std.fmt.allocPrint(alloc, "{d}", .{i}),
         .float => |f| {
+            // SQLite has no NaN/Inf literal syntax and scrubs any non-finite
+            // arithmetic/math-function result to NULL, but a numeric literal that overflows a
+            // double parses straight to +-Inf (`1e400`); NaN has no literal equivalent,
+            // so it goes through zetasqlite_nan_literal() (fn_math.nanLiteral),
+            // which sets the result value directly.
+            if (std.math.isNan(f)) return alloc.dupe(u8, "zetasqlite_nan_literal()");
+            if (std.math.isInf(f)) return alloc.dupe(u8, if (f > 0) "1e400" else "-1e400");
             var buf: [32]u8 = undefined;
             const s = value_mod.formatFloatGo(&buf, f);
             // Go: append ".0" to keep float context when the 'g' form has
@@ -388,13 +395,16 @@ fn intervalFromBinary(bytes: []const u8) !value_mod.Interval {
     const micros = std.mem.readInt(i64, bytes[0..8], .little);
     const days = std.mem.readInt(i32, bytes[8..12], .little);
     const months_nanos = std.mem.readInt(u32, bytes[12..16], .little);
-    const nano_fractions: i64 = @intCast(months_nanos & 0x3FF);
+    const nano_fractions: i32 = @intCast(months_nanos & 0x3FF);
     const months_mag: i64 = @intCast((months_nanos & 0x7FFFE000) >> 13);
     const months: i64 = if (months_nanos & 0x80000000 != 0) -months_mag else months_mag;
-    const total_nanos: i64 = micros * 1000 + nano_fractions;
-    // Build the raw interval: months (canonicalize splits into years), days,
-    // and H:M:S.subsec from the nanosecond total.
-    var iv = value_mod.intervalFromDuration(total_nanos);
+    // `micros` reaches googlesql's actual interval bound (~3.16e17), whose
+    // nanosecond total would overflow i64 (interval_max_micros's own doc
+    // comment on intervalFromMicros: "~3.2e20, well past i64"). Decompose in
+    // microseconds instead and fold the leftover sub-microsecond nanosecond
+    // fraction in afterward.
+    var iv = value_mod.intervalFromMicros(micros);
+    iv.sub_second_nanos += nano_fractions;
     iv.months = @intCast(months);
     iv.days = days;
     return iv;

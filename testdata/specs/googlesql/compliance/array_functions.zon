@@ -1,0 +1,1481 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/array_functions",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/array_functions.test",
+    .cases = .{
+        .{
+            .desc = "array_length_null",
+            .sql =
+            \\##
+            \\## ARRAY_LENGTH queries
+            \\##
+            \\SELECT ARRAY_LENGTH(CAST(NULL AS ARRAY<INT64>))
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_length_empty",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<STRING>[])",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "array_length_1",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<STRING>[\"foo\"])",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_length_2",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<STRING>[\"foo\", NULL])",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_length_many",
+            .sql =
+            \\SELECT ARRAY_LENGTH(arr)
+            \\FROM (SELECT ARRAY<INT64>[1, NULL, 2] arr UNION ALL
+            \\      SELECT [3, 4] UNION ALL
+            \\      SELECT [5] UNION ALL
+            \\      SELECT [NULL] UNION ALL
+            \\      SELECT ARRAY<INT64>[] UNION ALL
+            \\      SELECT NULL)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2},
+                .{1},
+                .{null},
+                .{3},
+                .{1},
+                .{0},
+            },
+        },
+        .{
+            .desc = "array_length_many_2",
+            .sql =
+            \\SELECT ARRAY_LENGTH(ARRAY(SELECT 1
+            \\                          FROM
+            \\                            UNNEST([1,2,3,4,5,6,7,8,9,10]),
+            \\                            UNNEST(['a','b','c','d','e','f','g','h','i','j']),
+            \\                            UNNEST([true, false])))
+            ,
+            .rows = .{
+                .{200},
+            },
+        },
+        .{
+            .desc = "array_length_array_concat",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY_CONCAT([1, 5], [2, 5, 7], [3, 2], [4]))",
+            .rows = .{
+                .{8},
+            },
+        },
+        .{
+            .desc = "array_length_array_concat_operator",
+            .sql = "SELECT ARRAY_LENGTH([1, 5] || [2, 5, 7] || [3, 2] || [4])",
+            .rows = .{
+                .{8},
+            },
+        },
+        .{
+            .desc = "array_length_range_date_null",
+            .sql = "SELECT ARRAY_LENGTH(CAST(NULL AS ARRAY<RANGE<DATE>>))",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_length_range_datetime_null",
+            .sql = "SELECT ARRAY_LENGTH(CAST(NULL AS ARRAY<RANGE<DATETIME>>))",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_length_range_timestamp_null",
+            .sql = "SELECT ARRAY_LENGTH(CAST(NULL AS ARRAY<RANGE<TIMESTAMP>>))",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_length_range_date_empty",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<RANGE<DATE>>[])",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "array_length_range_datetime_empty",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<RANGE<DATETIME>>[])",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "array_length_range_timestamp_empty",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<RANGE<TIMESTAMP>>[])",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "array_length_range_date",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<RANGE<DATE>>[RANGE<DATE> \"[2014-01-01, 2015-01-01)\", RANGE<DATE> \"[2014-01-01, UNBOUNDED)\", RANGE<DATE> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATE> \"[UNBOUNDED, UNBOUNDED)\"])",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "array_length_range_datetime",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<RANGE<DATETIME>>[RANGE<DATETIME> \"[2014-01-01, 2015-01-01)\", RANGE<DATETIME> \"[2014-01-01, UNBOUNDED)\", RANGE<DATETIME> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATETIME> \"[UNBOUNDED, UNBOUNDED)\"])",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "array_length_range_timestamp",
+            .sql = "SELECT ARRAY_LENGTH(ARRAY<RANGE<TIMESTAMP>>[RANGE<TIMESTAMP> \"[2014-01-01, 2015-01-01)\", RANGE<TIMESTAMP> \"[2014-01-01, UNBOUNDED)\", RANGE<TIMESTAMP> \"[UNBOUNDED, 2015-01-01)\", RANGE<TIMESTAMP> \"[UNBOUNDED, UNBOUNDED)\"])",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "array_offset_negative",
+            .sql =
+            \\##
+            \\## OFFSET queries
+            \\##
+            \\SELECT [10, 11][OFFSET(-1)]
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_offset_zero",
+            .sql = "SELECT [10, 11][OFFSET(0)]",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "array_offset_basic",
+            .sql = "SELECT [10, 11][OFFSET(1)]",
+            .rows = .{
+                .{11},
+            },
+        },
+        .{
+            .desc = "array_offset_out_of_range",
+            .sql = "SELECT [10, 11][OFFSET(2)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_var_offset",
+            .sql =
+            \\SELECT arr[OFFSET(0)] ten, arr[OFFSET(1)] eleven
+            \\FROM (SELECT [10, 11] arr)
+            ,
+            .rows = .{
+                .{ 10, 11 },
+            },
+        },
+        .{
+            .desc = "array_var_offset_out_of_range",
+            .sql =
+            \\SELECT arr[OFFSET(-1)] underflow, arr[OFFSET(0)] ten, arr[OFFSET(1)] eleven, arr[OFFSET(2)] overflow
+            \\FROM (SELECT [10, 11] arr)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_var_offset_var",
+            .sql =
+            \\SELECT arr[OFFSET(pos)]
+            \\FROM (SELECT ARRAY(SELECT "foo" UNION ALL SELECT "bar") arr),
+            \\     (SELECT 0 pos UNION ALL SELECT 1)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_var_offset_var_out_of_range",
+            .sql =
+            \\SELECT arr[OFFSET(pos)]
+            \\FROM (SELECT ARRAY(SELECT "foo" UNION ALL SELECT "bar") arr),
+            \\     (SELECT -1 pos UNION ALL SELECT 0 UNION ALL SELECT 1 UNION ALL SELECT 2)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "at_offset_null_position_and_array_return_null",
+            .sql =
+            \\SELECT arr[OFFSET(pos)]
+            \\FROM (SELECT [1,2,3] arr UNION ALL SELECT NULL), (SELECT NULL pos)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{null},
+            },
+        },
+        .{
+            .desc = "at_offset_negative_offset_null_array_fails",
+            .sql =
+            \\SELECT arr[OFFSET(pos)]
+            \\FROM (SELECT [1,2,3] arr UNION ALL SELECT NULL), (SELECT -1 pos)
+            \\WHERE arr IS NULL
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "at_offset_position_in_null_array_returns_null",
+            .sql =
+            \\SELECT arr[OFFSET(pos)]
+            \\FROM (SELECT [1,2,3] arr UNION ALL SELECT NULL),
+            \\     (SELECT 0 pos UNION ALL SELECT 1 UNION ALL SELECT 2)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{2},
+                .{3},
+                .{null},
+                .{null},
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_at_offset_null_position_and_array_return_null",
+            .sql =
+            \\SELECT arr[OFFSET(pos)]
+            \\FROM (SELECT [1,2,3] arr UNION ALL SELECT NULL), (SELECT NULL pos)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_at_offset_negative_offset_null_array_fails",
+            .sql =
+            \\SELECT arr[offset(pos)]
+            \\FROM (SELECT [1,2,3] arr UNION ALL SELECT NULL), (SELECT -1 pos)
+            \\WHERE arr IS NULL
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_at_offset_position_in_null_array_returns_null",
+            .sql =
+            \\SELECT arr[offset(pos)]
+            \\FROM (SELECT [1,2,3] arr UNION ALL SELECT NULL),
+            \\     (SELECT 0 pos UNION ALL SELECT 1 UNION ALL SELECT 2)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{2},
+                .{3},
+                .{null},
+                .{null},
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_offset_range_date_out_of_range",
+            .sql = "SELECT [RANGE<DATE> \"[2014-01-01, 2015-01-01)\", RANGE<DATE> \"[2014-01-01, UNBOUNDED)\", RANGE<DATE> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATE> \"[UNBOUNDED, UNBOUNDED)\"][OFFSET(-1)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_offset_range_datetime_out_of_range",
+            .sql = "SELECT [RANGE<DATETIME> \"[2014-01-01, 2015-01-01)\", RANGE<DATETIME> \"[2014-01-01, UNBOUNDED)\", RANGE<DATETIME> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATETIME> \"[UNBOUNDED, UNBOUNDED)\"][OFFSET(-1)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_offset_range_timestamp_out_of_range",
+            .sql = "SELECT [RANGE<TIMESTAMP> \"[2014-01-01, 2015-01-01)\", RANGE<TIMESTAMP> \"[2014-01-01, UNBOUNDED)\", RANGE<TIMESTAMP> \"[UNBOUNDED, 2015-01-01)\", RANGE<TIMESTAMP> \"[UNBOUNDED, UNBOUNDED)\"][OFFSET(-1)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_offset_range_date",
+            .sql = "SELECT [RANGE<DATE> \"[2014-01-01, 2015-01-01)\", RANGE<DATE> \"[2014-01-01, UNBOUNDED)\", RANGE<DATE> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATE> \"[UNBOUNDED, UNBOUNDED)\"][OFFSET(1)]",
+            .rows = .{
+                .{"[2014-01-01, NULL)"},
+            },
+        },
+        .{
+            .desc = "array_offset_range_datetime",
+            .sql = "SELECT [RANGE<DATETIME> \"[2014-01-01, 2015-01-01)\", RANGE<DATETIME> \"[2014-01-01, UNBOUNDED)\", RANGE<DATETIME> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATETIME> \"[UNBOUNDED, UNBOUNDED)\"][OFFSET(1)]",
+            .rows = .{
+                .{"[2014-01-01 00:00:00, NULL)"},
+            },
+        },
+        .{
+            .desc = "array_offset_range_timestamp",
+            .sql = "SELECT [RANGE<TIMESTAMP> \"[2014-01-01, 2015-01-01)\", RANGE<TIMESTAMP> \"[2014-01-01, UNBOUNDED)\", RANGE<TIMESTAMP> \"[UNBOUNDED, 2015-01-01)\", RANGE<TIMESTAMP> \"[UNBOUNDED, UNBOUNDED)\"][OFFSET(1)]",
+            .rows = .{
+                .{"[2014-01-01 08:00:00+00, NULL)"},
+            },
+        },
+        .{
+            .desc = "array_at_ordinal_zero",
+            .sql =
+            \\##
+            \\## ORDINAL queries
+            \\##
+            \\SELECT [1,2,3][ORDINAL(0)]
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_at_ordinal_negative",
+            .sql = "SELECT [1,2,3][ORDINAL(-1)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_at_ordinal_1_non_empty_array",
+            .sql = "SELECT [\"foo\", \"bar\"][ORDINAL(1)]",
+            .rows = .{
+                .{"foo"},
+            },
+        },
+        .{
+            .desc = "array_at_ordinal_array_size",
+            .sql = "SELECT [\"foo\", \"bar\"][ORDINAL(2)]",
+            .rows = .{
+                .{"bar"},
+            },
+        },
+        .{
+            .desc = "array_at_ordinal_exceeds_size",
+            .sql = "SELECT [\"foo\"][ORDINAL(2)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_at_ordinal_1_empty_array",
+            .sql = "SELECT ARRAY<INT32>[][ORDINAL(1)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_at_ordinal_1_null_array",
+            .sql =
+            \\SELECT arr[ORDINAL(1)] FROM (
+            \\SELECT arr FROM (SELECT [1] arr UNION ALL SELECT NULL) WHERE arr IS NULL)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_at_ordinal_null",
+            .sql = "SELECT [1, 2][ORDINAL(NULL)]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_at_ordinal_0_null_array",
+            .sql =
+            \\SELECT arr[ORDINAL(0)] FROM (
+            \\SELECT arr FROM (SELECT [1] arr UNION ALL SELECT NULL) WHERE arr IS NULL)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_at_ordinal_1_array_of_nulls",
+            .sql = "SELECT ARRAY<BOOL>[NULL][ORDINAL(1)]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_ordinal_range_date_out_of_range",
+            .sql = "SELECT [RANGE<DATE> \"[2014-01-01, 2015-01-01)\", RANGE<DATE> \"[2014-01-01, UNBOUNDED)\", RANGE<DATE> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATE> \"[UNBOUNDED, UNBOUNDED)\"][ORDINAL(0)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_ordinal_range_datetime_out_of_range",
+            .sql = "SELECT [RANGE<DATETIME> \"[2014-01-01, 2015-01-01)\", RANGE<DATETIME> \"[2014-01-01, UNBOUNDED)\", RANGE<DATETIME> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATETIME> \"[UNBOUNDED, UNBOUNDED)\"][ORDINAL(0)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_ordinal_range_timestamp_out_of_range",
+            .sql = "SELECT [RANGE<TIMESTAMP> \"[2014-01-01, 2015-01-01)\", RANGE<TIMESTAMP> \"[2014-01-01, UNBOUNDED)\", RANGE<TIMESTAMP> \"[UNBOUNDED, 2015-01-01)\", RANGE<TIMESTAMP> \"[UNBOUNDED, UNBOUNDED)\"][ORDINAL(0)]",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_ordinal_range_date",
+            .sql = "SELECT [RANGE<DATE> \"[2014-01-01, 2015-01-01)\", RANGE<DATE> \"[2014-01-01, UNBOUNDED)\", RANGE<DATE> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATE> \"[UNBOUNDED, UNBOUNDED)\"][ORDINAL(1)]",
+            .rows = .{
+                .{"[2014-01-01, 2015-01-01)"},
+            },
+        },
+        .{
+            .desc = "array_ordinal_range_datetime",
+            .sql = "SELECT [RANGE<DATETIME> \"[2014-01-01, 2015-01-01)\", RANGE<DATETIME> \"[2014-01-01, UNBOUNDED)\", RANGE<DATETIME> \"[UNBOUNDED, 2015-01-01)\", RANGE<DATETIME> \"[UNBOUNDED, UNBOUNDED)\"][ORDINAL(1)]",
+            .rows = .{
+                .{"[2014-01-01 00:00:00, 2015-01-01 00:00:00)"},
+            },
+        },
+        .{
+            .desc = "array_ordinal_range_timestamp",
+            .sql = "SELECT [RANGE<TIMESTAMP> \"[2014-01-01, 2015-01-01)\", RANGE<TIMESTAMP> \"[2014-01-01, UNBOUNDED)\", RANGE<TIMESTAMP> \"[UNBOUNDED, 2015-01-01)\", RANGE<TIMESTAMP> \"[UNBOUNDED, UNBOUNDED)\"][ORDINAL(1)]",
+            .rows = .{
+                .{"[2014-01-01 08:00:00+00, 2015-01-01 08:00:00+00)"},
+            },
+        },
+        .{
+            .desc = "array_at_safe_offset_negative",
+            .sql =
+            \\##
+            \\## SAFE_OFFSET and SAFE_ORDINAL queries
+            \\##
+            \\SELECT [1,2,3][SAFE_OFFSET(-1)]
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_at_safe_offset_valid",
+            .sql = "SELECT [1,2,3][SAFE_OFFSET(1)]",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_at_safe_ordinal_zero",
+            .sql = "SELECT [1,2,3][SAFE_ORDINAL(0)]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_at_safe_ordinal_valid",
+            .sql = "SELECT [1,2,3][SAFE_ORDINAL(1)]",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_at_safe_offset_out_of_range",
+            .sql =
+            \\SELECT
+            \\  arr[SAFE_OFFSET(2)] AS x,
+            \\  arr[SAFE_OFFSET(-1)] AS y,
+            \\  arr[SAFE_OFFSET(4)] AS z
+            \\FROM (SELECT [1, 2, 3, 4] AS arr)
+            ,
+            .rows = .{
+                .{ 3, null, null },
+            },
+        },
+        .{
+            .desc = "array_at_safe_ordinal_out_of_range",
+            .sql =
+            \\SELECT
+            \\  arr[SAFE_ORDINAL(3)] AS x,
+            \\  arr[SAFE_ORDINAL(0)] AS y,
+            \\  arr[SAFE_ORDINAL(5)] AS z
+            \\FROM (SELECT [1, 2, 3, 4] AS arr)
+            ,
+            .rows = .{
+                .{ 3, null, null },
+            },
+        },
+        .{
+            .desc = "array_at_negative_safe_offset_null_array",
+            .sql = "SELECT arr[SAFE_OFFSET(-1)] FROM (SELECT CAST(NULL AS ARRAY<INT64>) AS arr)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_at_zero_safe_ordinal_null_array",
+            .sql = "SELECT arr[SAFE_ORDINAL(0)] FROM (SELECT CAST(NULL AS ARRAY<INT64>) AS arr)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_concat_int32",
+            .sql =
+            \\##
+            \\## ARRAY_CONCAT queries for different types
+            \\##
+            \\SELECT ARRAY_CONCAT(ARRAY<INT32>[1], ARRAY<INT32>[2])
+            ,
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_int32",
+            .sql = "SELECT ARRAY<INT32>[1] || ARRAY<INT32>[2]",
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_uint32",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<UINT32>[1], ARRAY<UINT32>[2])",
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_uint32",
+            .sql = "SELECT ARRAY<UINT32>[1] || ARRAY<UINT32>[2]",
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_int64",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<INT64>[1], ARRAY<INT64>[2])",
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_int64",
+            .sql = "SELECT ARRAY<INT64>[1] || ARRAY<INT64>[2]",
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_uint64",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<UINT64>[1], ARRAY<UINT64>[2])",
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_uint64",
+            .sql = "SELECT ARRAY<UINT64>[1] || ARRAY<UINT64>[2]",
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_float",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<FLOAT>[1.1], ARRAY<FLOAT>[2.2])",
+            .rows = .{
+                .{.{ 1.1, 2.2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_float",
+            .sql = "SELECT ARRAY<FLOAT>[1.1] || ARRAY<FLOAT>[2.2]",
+            .rows = .{
+                .{.{ 1.1, 2.2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_double",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<DOUBLE>[1.1], ARRAY<DOUBLE>[2.2])",
+            .rows = .{
+                .{.{ 1.1, 2.2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_double",
+            .sql = "SELECT ARRAY<DOUBLE>[1.1] || ARRAY<DOUBLE>[2.2]",
+            .rows = .{
+                .{.{ 1.1, 2.2 }},
+            },
+        },
+        .{
+            .desc = "array_concat_bool",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<BOOL>[true], ARRAY<BOOL>[false])",
+            .rows = .{
+                .{.{ true, false }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_bool",
+            .sql = "SELECT ARRAY<BOOL>[true] || ARRAY<BOOL>[false]",
+            .rows = .{
+                .{.{ true, false }},
+            },
+        },
+        .{
+            .desc = "array_concat_string",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<STRING>[\"a\"], ARRAY<STRING>[\"b\"])",
+            .rows = .{
+                .{.{ "a", "b" }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_string",
+            .sql = "SELECT ARRAY<STRING>[\"a\"] || ARRAY<STRING>[\"b\"]",
+            .rows = .{
+                .{.{ "a", "b" }},
+            },
+        },
+        .{
+            .desc = "array_concat_bytes",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<BYTES>[b\"f1\"], ARRAY<BYTES>[b\"f2\"])",
+            .rows = .{
+                .{.{ "\x66\x31", "\x66\x32" }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_bytes",
+            .sql = "SELECT ARRAY<BYTES>[b\"f1\"] || ARRAY<BYTES>[b\"f2\"]",
+            .rows = .{
+                .{.{ "\x66\x31", "\x66\x32" }},
+            },
+        },
+        .{
+            .desc = "array_concat_date",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY<DATE>[\"2000-01-01\"], ARRAY<DATE>[\"2015-12-30\"])",
+            .rows = .{
+                .{.{ "2000-01-01", "2015-12-30" }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_date",
+            .sql = "SELECT ARRAY<DATE>[\"2000-01-01\"] || ARRAY<DATE>[\"2015-12-30\"]",
+            .rows = .{
+                .{.{ "2000-01-01", "2015-12-30" }},
+            },
+        },
+        .{
+            .desc = "array_concat_timestamp",
+            .sql =
+            \\SELECT ARRAY_CONCAT(ARRAY<TIMESTAMP>["2013-02-01 12:34:56.789012"],
+            \\                    ARRAY<TIMESTAMP>["2014-09-11 01:01:01.001001 UTC"])
+            ,
+            .rows = .{
+                .{.{ "2013-02-01 20:34:56.789012+00", "2014-09-11 01:01:01.001001+00" }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_timestamp",
+            .sql =
+            \\SELECT ARRAY<TIMESTAMP>["2013-02-01 12:34:56.789012"] ||
+            \\       ARRAY<TIMESTAMP>["2014-09-11 01:01:01.001001 UTC"]
+            ,
+            .rows = .{
+                .{.{ "2013-02-01 20:34:56.789012+00", "2014-09-11 01:01:01.001001+00" }},
+            },
+        },
+        .{
+            .desc = "array_concat_enum",
+            .sql =
+            \\SELECT ARRAY_CONCAT(ARRAY<googlesql_test.TestEnum>["TESTENUM0"],
+            \\       ARRAY<googlesql_test.TestEnum>["TESTENUM1"])
+            ,
+            .rows = .{
+                .{.{ "TESTENUM0", "TESTENUM1" }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_enum",
+            .sql =
+            \\SELECT ARRAY<googlesql_test.TestEnum>["TESTENUM0"] ||
+            \\       ARRAY<googlesql_test.TestEnum>["TESTENUM1"]
+            ,
+            .rows = .{
+                .{.{ "TESTENUM0", "TESTENUM1" }},
+            },
+        },
+        .{
+            .desc = "array_concat_struct",
+            .sql = "SELECT ARRAY_CONCAT(ARRAY[STRUCT(1 as i)], ARRAY[STRUCT(2 as i)])",
+            .rows = .{
+                .{.{ .{1}, .{2} }},
+            },
+        },
+        .{
+            .desc = "array_concat_operator_struct",
+            .sql = "SELECT ARRAY[STRUCT(1 as i)] || ARRAY[STRUCT(2 as i)]",
+            .rows = .{
+                .{.{ .{1}, .{2} }},
+            },
+        },
+        .{
+            .desc = "generate_array_no_step",
+            .sql =
+            \\SELECT
+            \\  GENERATE_ARRAY(1, 5),
+            \\  GENERATE_ARRAY(CAST(6 AS UINT64), CAST(10 AS UINT64)),
+            \\  GENERATE_ARRAY(1.59, 3.14)
+            ,
+            .rows = .{
+                .{ .{ 1, 2, 3, 4, 5 }, .{ 6, 7, 8, 9, 10 }, .{ 1.59, 2.59 } },
+            },
+        },
+        .{
+            .desc = "generate_array_literal_zero_step",
+            .sql =
+            \\SELECT
+            \\  GENERATE_ARRAY(1, 5, 0)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "generate_date_array_no_step",
+            .sql =
+            \\# b/31553405
+            \\SELECT GENERATE_DATE_ARRAY('2016-09-28', '2016-10-06')
+            ,
+            .rows = .{
+                .{.{ "2016-09-28", "2016-09-29", "2016-09-30", "2016-10-01", "2016-10-02", "2016-10-03", "2016-10-04", "2016-10-05", "2016-10-06" }},
+            },
+        },
+        .{
+            .desc = "generate_date_array_literal_zero_step",
+            .sql = "SELECT GENERATE_DATE_ARRAY('2016-01-01', '2017-01-01', INTERVAL 0 DAY)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "generate_date_array_by_row",
+            .sql =
+            \\# b/152971237
+            \\SELECT GENERATE_DATE_ARRAY(start_day, end_day, INTERVAL days_step DAY)
+            \\FROM UNNEST(ARRAY<STRUCT<start_day DATE, end_day DATE, days_step INT64>>
+            \\            [('2020-03-01', '2020-03-10', 4),
+            \\             ('2020-03-11', '2020-03-20', 3),
+            \\             ('2020-03-21', '2020-03-30', 2),
+            \\             ('2020-03-31', '2020-03-31', 1)]) as elem WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{.{ "2020-03-01", "2020-03-05", "2020-03-09" }},
+                .{.{ "2020-03-11", "2020-03-14", "2020-03-17", "2020-03-20" }},
+                .{.{ "2020-03-21", "2020-03-23", "2020-03-25", "2020-03-27", "2020-03-29" }},
+                .{.{"2020-03-31"}},
+            },
+        },
+        .{
+            .desc = "generate_timestamp_array_literal_zero_step",
+            .sql = "SELECT GENERATE_TIMESTAMP_ARRAY('2016-01-01', '2017-01-01', INTERVAL 0 DAY)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "concat_op_wrong_type_int_int",
+            .sql = "SELECT 1 || 2",
+            .rows = .{
+                .{"12"},
+            },
+        },
+        .{
+            .desc = "concat_op_wrong_type_string_int",
+            .sql = "SELECT \"abc\" || 2",
+            .rows = .{
+                .{"abc2"},
+            },
+        },
+        .{
+            .desc = "array_is_distinct_untyped_null_array",
+            .sql = "SELECT ARRAY_IS_DISTINCT(NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_is_distinct_array_of_untyped_null",
+            .sql = "SELECT ARRAY_IS_DISTINCT([NULL])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_is_distinct_array_of_two_untyped_nulls",
+            .sql = "SELECT ARRAY_IS_DISTINCT([NULL, NULL])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_is_distinct_array_of_untyped_null_and_int",
+            .sql = "SELECT ARRAY_IS_DISTINCT([NULL, 1])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_is_distinct_repeated_float",
+            .unsupported_in_bigquery = "\"Type ARRAY<DOUBLE> is not supported by ARRAY_IS_DISTINCT function.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_IS_DISTINCT([1.0, 1.0])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_is_distinct_different_structs",
+            .unsupported_in_bigquery = "\"Type ARRAY<STRUCT<INT64>> is not supported by ARRAY_IS_DISTINCT function.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_IS_DISTINCT([STRUCT(1), STRUCT(2)])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_is_distinct_repeated_struct",
+            .unsupported_in_bigquery = "\"Type ARRAY<STRUCT<INT64>> is not supported by ARRAY_IS_DISTINCT function.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_IS_DISTINCT([STRUCT(1), STRUCT(1)])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_is_distinct_floating_point_struct",
+            .unsupported_in_bigquery = "\"Type ARRAY<STRUCT<DOUBLE>> is not supported by ARRAY_IS_DISTINCT function.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_IS_DISTINCT([STRUCT(1.0), STRUCT(1.0)])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_concat_bignumeric",
+            .sql = "SELECT ARRAY_CONCAT([BIGNUMERIC '1', BIGNUMERIC '1e38'], [BIGNUMERIC '-0.00001'])",
+            .rows = .{
+                .{.{ 1, 100000000000000000000000000000000000000, -0.00001 }},
+            },
+        },
+        .{
+            .desc = "array_concat_uuid",
+            .sql =
+            \\SELECT ARRAY_CONCAT([CAST('00000000-0000-0000-0000-000000000000' AS UUID),
+            \\                     CAST('9d3da323-4c20-360f-bd9b-ec54feec54f0' AS UUID)],
+            \\                    [CAST('ffffffff-ffff-ffff-ffff-ffffffffffff' AS UUID)])
+            ,
+            .rows = .{
+                .{.{ "00000000-0000-0000-0000-000000000000", "9d3da323-4c20-360f-bd9b-ec54feec54f0", "ffffffff-ffff-ffff-ffff-ffffffffffff" }},
+            },
+        },
+        .{
+            .desc = "array_first_subquery_unordered",
+            .sql =
+            \\WITH t AS (SELECT value FROM UNNEST([1, 2, 3, 4]) AS value)
+            \\SELECT ARRAY_FIRST(ARRAY(SELECT value FROM t)) IN (1, 2, 3, 4)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "array_first_subquery_ordered",
+            .sql =
+            \\WITH t AS (SELECT value FROM UNNEST([1, 2, 3, 4]) AS value)
+            \\SELECT ARRAY_FIRST(ARRAY(SELECT value FROM t ORDER BY value))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "array_first_empty_subquery_arg",
+            .sql =
+            \\WITH t AS (SELECT value FROM UNNEST([1, 2, 3, 4]) AS value)
+            \\SELECT ARRAY_FIRST(ARRAY(SELECT value FROM t WHERE FALSE))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_last_empty_subquery_arg",
+            .sql =
+            \\WITH t AS (SELECT value FROM UNNEST([1, 2, 3, 4]) AS value)
+            \\SELECT ARRAY_LAST(ARRAY(SELECT value FROM t WHERE FALSE))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_array_first_empty_subquery_arg",
+            .unsupported_in_bigquery = "\"SAFE with function array_first is not supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\WITH t AS (SELECT value FROM UNNEST([1, 2, 3, 4]) AS value)
+            \\SELECT SAFE.ARRAY_FIRST(ARRAY(SELECT value FROM t WHERE FALSE))
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "safe_array_last_empty_subquery_arg",
+            .unsupported_in_bigquery = "\"SAFE with function array_last is not supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\WITH t AS (SELECT value FROM UNNEST([1, 2, 3, 4]) AS value)
+            \\SELECT SAFE.ARRAY_LAST(ARRAY(SELECT value FROM t WHERE FALSE))
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_avg_intervals_1",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_AVG; Did you mean array_agg?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT ARRAY_AVG(ARRAY< INTERVAL >[INTERVAL "-7959-1 -153930 54938167:22:41.712081" YEAR TO SECOND,
+            \\          INTERVAL "8630-9 3512412 62113018:54:19.721996" YEAR TO SECOND, INTERVAL "675-8 -224302 -58850294:15:14.439522" YEAR TO SECOND,
+            \\          INTERVAL "2580-1 -200995 40403849:16:44.554610" YEAR TO SECOND])
+            ,
+            .rows = .{
+                .{"981-10 733303 24651203:19:37.887291"},
+            },
+        },
+        .{
+            .desc = "array_avg_intervals_1_nanos",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_AVG; Did you mean array_agg?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT ARRAY_AVG(ARRAY< INTERVAL >[INTERVAL "-7959-1 -153930 54938167:22:41.712081" YEAR TO SECOND,
+            \\          INTERVAL "8630-9 3512412 62113018:54:19.721996" YEAR TO SECOND, INTERVAL "675-8 -224302 -58850294:15:14.439522" YEAR TO SECOND,
+            \\          INTERVAL "2580-1 -200995 40403849:16:44.554610" YEAR TO SECOND])
+            ,
+            .rows = .{
+                .{"981-10 733303 24651203:19:37.887291250"},
+            },
+        },
+        .{
+            .desc = "regression_repro_b287339825",
+            .sql = "SELECT ARRAY_SLICE([1, 2], -8869911617074265235, -4)",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "array_first_n_basic",
+            .sql = "SELECT ARRAY_FIRST_N([33,22,11], 2)",
+            .rows = .{
+                .{.{ 33, 22 }},
+            },
+        },
+        .{
+            .desc = "array_first_n_empty_array",
+            .sql = "SELECT ARRAY_FIRST_N([],2)",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "array_first_n_explicit_null_input",
+            .sql = "SELECT ARRAY_FIRST_N(NULL,2)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_first_n_explicit_null_array",
+            .sql = "SELECT ARRAY_FIRST_N([NULL],2)",
+            .rows = .{
+                .{.{null}},
+            },
+        },
+        .{
+            .desc = "array_first_n_n_is_null",
+            .sql = "SELECT ARRAY_FIRST_N([33,22,11],NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_first_n_out_of_range_index",
+            .sql = "SELECT ARRAY_FIRST_N([1],3)",
+            .rows = .{
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "array_first_n_negative_index",
+            .sql = "SELECT ARRAY_FIRST_N([1,4,5],-3)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_first_n_nested_array",
+            .sql =
+            \\SELECT
+            \\  ARRAY_FIRST_N(arr1, 2) AS arr_first,
+            \\FROM (
+            \\  SELECT [[1,2], [3,4], [5,6]] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{.{ .{ 1, 2 }, .{ 3, 4 } }},
+            },
+        },
+        .{
+            .desc = "array_includes_nested_arrays",
+            .unsupported_in_bigquery = "\"Cannot construct array with element type ARRAY<INT64> because nested arrays are not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES(arr1, [3,4]) AS arr_includes,
+            \\  ARRAY_INCLUDES(arr1, [9,9]) AS arr_not_includes,
+            \\FROM (
+            \\  SELECT [[1,2], [3,4]] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "array_includes_all_nested_arrays",
+            .unsupported_in_bigquery = "\"Cannot construct array with element type ARRAY<INT64> because nested arrays are not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES_ALL(arr1, [[1,2], [3,4]]) AS arr_includes_all,
+            \\  ARRAY_INCLUDES_ALL(arr1, [[1,2], [9,9]]) AS arr_not_includes_all,
+            \\FROM (
+            \\  SELECT [[1,2], [3,4]] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "euclidian_distance_shuffled_input",
+            .sql = "SELECT EUCLIDEAN_DISTANCE(ARRAY<FLOAT64>[1, 2], ARRAY(SELECT e FROM UNNEST(ARRAY<FLOAT64>[1, 2]) AS e))",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "euclidian_distance_shuffled_input_strkey",
+            .sql = "SELECT EUCLIDEAN_DISTANCE(ARRAY[('a', 10.0), ('b', 30.0), ('d', 40.0)], ARRAY(SELECT e FROM UNNEST(ARRAY[('a', 10.0), ('b', 30.0), ('d', 40.0)]) AS e))",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "euclidian_distance_shuffled_input_intkey",
+            .sql = "SELECT EUCLIDEAN_DISTANCE(ARRAY[(1, 10.0), (2, 30.0), (3, 40.0)], ARRAY(SELECT e FROM UNNEST(ARRAY[(1, 10.0), (2, 30.0), (3, 40.0)]) AS e))",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "array_distinct_null_array",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\##
+            \\## ARRAY_DISTINCT queries
+            \\##
+            \\SELECT ARRAY_DISTINCT(NULL)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_distinct_empty_array",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT([])",
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "array_distinct_simple_duplicates",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT([2, 1, 3, 1])",
+            .rows = .{
+                .{.{ 2, 1, 3 }},
+            },
+        },
+        .{
+            .desc = "array_distinct_adjacent_duplicates",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT([1, 1, 2, 2, 1])",
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_distinct_no_duplicates",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT([1, 2, 3])",
+            .rows = .{
+                .{.{ 1, 2, 3 }},
+            },
+        },
+        .{
+            .desc = "array_distinct_with_nulls",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT([1, NULL, 1, NULL])",
+            .rows = .{
+                .{.{ 1, null }},
+            },
+        },
+        .{
+            .desc = "array_distinct_only_nulls",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT([NULL, NULL])",
+            .rows = .{
+                .{.{null}},
+            },
+        },
+        .{
+            .desc = "array_distinct_nan",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT([CAST('nan' AS DOUBLE), 1.0, CAST('nan' AS DOUBLE)])",
+            .rows = .{
+                .{.{ nan, 1 }},
+            },
+        },
+        .{
+            .desc = "array_distinct_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT(['a', 'b', 'a'])",
+            .rows = .{
+                .{.{ "a", "b" }},
+            },
+        },
+        .{
+            .desc = "array_distinct_bytes",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_DISTINCT([b'a', b'b', b'a'])",
+            .rows = .{
+                .{.{ "\x61", "\x62" }},
+            },
+        },
+        .{
+            .desc = "array_distinct_string_collate_ci",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\## ARRAY_DISTINCT is supposed to pick the first element among the items that are
+            \\## distinct.
+            \\SELECT ARRAY_DISTINCT([COLLATE('a', 'und:ci'), COLLATE('B', 'und:ci'),
+            \\                       COLLATE('A', 'und:ci'), COLLATE('b', 'und:ci')])
+            ,
+            .rows = .{
+                .{.{ "a", "B" }},
+            },
+        },
+        .{
+            .desc = "array_distinct_struct_with_collated_strings",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT ARRAY_DISTINCT([
+            \\  STRUCT(COLLATE('a', 'und:ci'), COLLATE('a', ''), COLLATE('x', '')),
+            \\  STRUCT(COLLATE('A', 'und:ci'), COLLATE('a', ''), COLLATE('x', '')),
+            \\  STRUCT(COLLATE('a', 'und:ci'), COLLATE('A', ''), COLLATE('x', '')),
+            \\  STRUCT(COLLATE('a', 'und:ci'), COLLATE('a', ''), COLLATE('X', ''))
+            \\])
+            ,
+            .rows = .{
+                .{.{ .{ "a", "a", "x" }, .{ "a", "A", "x" }, .{ "a", "a", "X" } }},
+            },
+        },
+        .{
+            .desc = "array_distinct_struct_with_nested_collated_strings",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_DISTINCT; Did you mean array_is_distinct?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT ARRAY_DISTINCT([
+            \\  STRUCT(COLLATE('a', 'und:ci'), COLLATE('a', ''), STRUCT(COLLATE('x', ''))),
+            \\  STRUCT(COLLATE('A', 'und:ci'), COLLATE('a', ''), STRUCT(COLLATE('x', ''))),
+            \\  STRUCT(COLLATE('a', 'und:ci'), COLLATE('A', ''), STRUCT(COLLATE('x', ''))),
+            \\  STRUCT(COLLATE('a', 'und:ci'), COLLATE('a', ''), STRUCT(COLLATE('X', '')))
+            \\])
+            ,
+            .rows = .{
+                .{.{ .{ "a", "a", .{"x"} }, .{ "a", "A", .{"x"} }, .{ "a", "a", .{"X"} } }},
+            },
+        },
+        .{
+            .desc = "array_includes_with_null_string",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES(arr1, 'a') AS includes_a,
+            \\  ARRAY_INCLUDES(arr1, 'c') AS includes_c,
+            \\  ARRAY_INCLUDES(arr1, CAST(NULL AS STRING)) AS includes_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false, null },
+            },
+        },
+        .{
+            .desc = "array_includes_collated_with_null_string",
+            .unsupported_in_bigquery = "\"Function ARRAY_INCLUDES is not yet implemented.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES(arr1, COLLATE('A', 'und:ci')) AS includes_a,
+            \\  ARRAY_INCLUDES(arr1, COLLATE('C', 'und:ci')) AS includes_c,
+            \\  ARRAY_INCLUDES(arr1, COLLATE(CAST(NULL AS STRING), 'und:ci')) AS includes_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false, null },
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_with_null_string",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES(arr1, e -> e = 'a') AS includes_a,
+            \\  ARRAY_INCLUDES(arr1, e -> e = 'c') AS includes_c,
+            \\  ARRAY_INCLUDES(arr1, e -> e = CAST(NULL AS STRING)) AS includes_null,
+            \\  ARRAY_INCLUDES(arr1, e -> e IS NULL) AS includes_is_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false, false, true },
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_collated_with_null_string",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES(arr1, e -> e = COLLATE('A', 'und:ci')) AS includes_a,
+            \\  ARRAY_INCLUDES(arr1, e -> e = COLLATE('C', 'und:ci')) AS includes_c,
+            \\  ARRAY_INCLUDES(arr1, e -> e = COLLATE(CAST(NULL AS STRING), 'und:ci')) AS includes_null,
+            \\  ARRAY_INCLUDES(arr1, e -> COLLATE(e, 'und:ci') IS NULL) AS includes_is_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false, false, true },
+            },
+        },
+        .{
+            .desc = "array_includes_any_with_null_string",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES_ANY(arr1, ['a', 'c']) AS includes_a_c,
+            \\  ARRAY_INCLUDES_ANY(arr1, ['c', 'd']) AS includes_c_d,
+            \\  ARRAY_INCLUDES_ANY(arr1, [CAST(NULL AS STRING)]) AS includes_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false, false },
+            },
+        },
+        .{
+            .desc = "array_includes_any_collated_with_null_string",
+            .unsupported_in_bigquery = "\"Function 'array_includes_any' with collation 'und:ci' is not supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES_ANY(arr1, [COLLATE('A', 'und:ci'), COLLATE('C', 'und:ci')]) AS includes_a_c,
+            \\  ARRAY_INCLUDES_ANY(arr1, [COLLATE('C', 'und:ci'), COLLATE('D', 'und:ci')]) AS includes_c_d,
+            \\  ARRAY_INCLUDES_ANY(arr1, [COLLATE(CAST(NULL AS STRING), 'und:ci')]) AS includes_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false, false },
+            },
+        },
+        .{
+            .desc = "array_includes_all_with_null_string_positive",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES_ALL(arr1, ['a', 'b']) AS includes_a_b,
+            \\  ARRAY_INCLUDES_ALL(arr1, ['a', 'c']) AS includes_a_c,
+            \\  ARRAY_INCLUDES_ALL(arr1, ['a', NULL]) AS includes_a_null,
+            \\  ARRAY_INCLUDES_ALL(arr1, [CAST(NULL AS STRING)]) AS includes_only_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false, false, false },
+            },
+        },
+        .{
+            .desc = "array_includes_all_collated_with_null_string_positive",
+            .unsupported_in_bigquery = "\"Function 'array_includes_all' with collation 'und:ci' is not supported.\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_INCLUDES_ALL(arr1, [COLLATE('A', 'und:ci'), COLLATE('B', 'und:ci')]) AS includes_a_b,
+            \\  ARRAY_INCLUDES_ALL(arr1, [COLLATE('A', 'und:ci'), COLLATE('C', 'und:ci')]) AS includes_a_c,
+            \\  ARRAY_INCLUDES_ALL(arr1, [COLLATE('A', 'und:ci'), COLLATE(CAST(NULL AS STRING), 'und:ci')]) AS includes_a_null,
+            \\  ARRAY_INCLUDES_ALL(arr1, [COLLATE(CAST(NULL AS STRING), 'und:ci')]) AS includes_only_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ true, false, false, false },
+            },
+        },
+        .{
+            .desc = "array_find_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FIND; Did you mean array_first?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_FIND(arr1, 'a') AS find_a,
+            \\  ARRAY_FIND(arr1, 'c') AS find_c,
+            \\  ARRAY_FIND(arr1, CAST(NULL AS STRING)) AS find_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ "a", null, null },
+            },
+        },
+        .{
+            .desc = "array_find_collated_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FIND; Did you mean array_first?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_FIND(arr1, COLLATE('A', 'und:ci')) AS find_a,
+            \\  ARRAY_FIND(arr1, COLLATE('C', 'und:ci')) AS find_c,
+            \\  ARRAY_FIND(arr1, COLLATE(CAST(NULL AS STRING), 'und:ci')) AS find_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ "a", null, null },
+            },
+        },
+        .{
+            .desc = "array_find_lambda_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FIND; Did you mean array_first?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_FIND(arr1, e -> e = 'a') AS find_a,
+            \\  ARRAY_FIND(arr1, e -> e = 'c') AS find_c,
+            \\  ARRAY_FIND(arr1, e -> e = CAST(NULL AS STRING)) AS find_null,
+            \\  ARRAY_FIND(arr1, e -> e IS NULL) AS find_is_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ "a", null, null, null },
+            },
+        },
+        .{
+            .desc = "array_find_lambda_collated_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FIND; Did you mean array_first?\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_FIND(arr1, e -> e = COLLATE('A', 'und:ci')) AS find_a,
+            \\  ARRAY_FIND(arr1, e -> e = COLLATE('C', 'und:ci')) AS find_c,
+            \\  ARRAY_FIND(arr1, e -> e = COLLATE(CAST(NULL AS STRING), 'und:ci')) AS find_null,
+            \\  ARRAY_FIND(arr1, e -> COLLATE(e, 'und:ci') IS NULL) AS find_is_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ "a", null, null, null },
+            },
+        },
+        .{
+            .desc = "array_find_all_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FIND_ALL\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_FIND_ALL(arr1, 'a') AS find_a,
+            \\  ARRAY_FIND_ALL(arr1, 'c') AS find_c,
+            \\  ARRAY_FIND_ALL(arr1, CAST(NULL AS STRING)) AS find_null
+            \\FROM (
+            \\  SELECT ['a', 'b', 'a', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ .{ "a", "a" }, .{}, null },
+            },
+        },
+        .{
+            .desc = "array_find_all_collated_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_FIND_ALL\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_FIND_ALL(arr1, COLLATE('A', 'und:ci')) AS find_a,
+            \\  ARRAY_FIND_ALL(arr1, COLLATE('C', 'und:ci')) AS find_c,
+            \\  ARRAY_FIND_ALL(arr1, COLLATE(CAST(NULL AS STRING), 'und:ci')) AS find_null
+            \\FROM (
+            \\  SELECT ['a', 'b', 'a', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ .{ "a", "a" }, .{}, null },
+            },
+        },
+        .{
+            .desc = "array_offset_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_OFFSET\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_OFFSET(arr1, 'a') AS offset_a,
+            \\  ARRAY_OFFSET(arr1, 'c') AS offset_c,
+            \\  ARRAY_OFFSET(arr1, CAST(NULL AS STRING)) AS offset_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ 0, null, null },
+            },
+        },
+        .{
+            .desc = "array_offset_collated_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_OFFSET\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_OFFSET(arr1, COLLATE('A', 'und:ci')) AS offset_a,
+            \\  ARRAY_OFFSET(arr1, COLLATE('C', 'und:ci')) AS offset_c,
+            \\  ARRAY_OFFSET(arr1, COLLATE(CAST(NULL AS STRING), 'und:ci')) AS offset_null
+            \\FROM (
+            \\  SELECT ['a', 'b', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ 0, null, null },
+            },
+        },
+        .{
+            .desc = "array_offsets_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_OFFSETS\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_OFFSETS(arr1, 'a') AS offsets_a,
+            \\  ARRAY_OFFSETS(arr1, 'c') AS offsets_c,
+            \\  ARRAY_OFFSETS(arr1, CAST(NULL AS STRING)) AS offsets_null
+            \\FROM (
+            \\  SELECT ['a', 'b', 'a', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ .{ 0, 2 }, .{}, null },
+            },
+        },
+        .{
+            .desc = "array_offsets_collated_with_null_string",
+            .unsupported_in_bigquery = "\"Function not found: ARRAY_OFFSETS\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT
+            \\  ARRAY_OFFSETS(arr1, COLLATE('A', 'und:ci')) AS offsets_a,
+            \\  ARRAY_OFFSETS(arr1, COLLATE('C', 'und:ci')) AS offsets_c,
+            \\  ARRAY_OFFSETS(arr1, COLLATE(CAST(NULL AS STRING), 'und:ci')) AS offsets_null
+            \\FROM (
+            \\  SELECT ['a', 'b', 'a', NULL] AS arr1
+            \\)
+            ,
+            .rows = .{
+                .{ .{ 0, 2 }, .{}, null },
+            },
+        },
+    },
+}

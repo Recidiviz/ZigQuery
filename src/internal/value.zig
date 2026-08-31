@@ -1786,16 +1786,18 @@ fn canonicalizeInterval(iv: Interval) Interval {
     const total_months: i32 = iv.years * 12 + iv.months;
     out.years = @divTrunc(total_months, 12);
     out.months = @rem(total_months, 12);
-    var total_nanos: i64 = @as(i64, iv.hours) * 3600 * 1_000_000_000 +
-        @as(i64, iv.minutes) * 60 * 1_000_000_000 +
-        @as(i64, iv.seconds) * 1_000_000_000 +
-        @as(i64, iv.sub_second_nanos);
+    // i128: the widest legal interval (~87.8M hours, interval_max_micros) times 3.6e12 ns/hour is
+    // ~3.16e20, past i64's ~9.2e18.
+    var total_nanos: i128 = @as(i128, iv.hours) * 3600 * 1_000_000_000 +
+        @as(i128, iv.minutes) * 60 * 1_000_000_000 +
+        @as(i128, iv.seconds) * 1_000_000_000 +
+        @as(i128, iv.sub_second_nanos);
     out.hours = @intCast(@divTrunc(total_nanos, 3600 * 1_000_000_000));
-    total_nanos -= @as(i64, out.hours) * 3600 * 1_000_000_000;
+    total_nanos -= @as(i128, out.hours) * 3600 * 1_000_000_000;
     out.minutes = @intCast(@divTrunc(total_nanos, 60 * 1_000_000_000));
-    total_nanos -= @as(i64, out.minutes) * 60 * 1_000_000_000;
+    total_nanos -= @as(i128, out.minutes) * 60 * 1_000_000_000;
     out.seconds = @intCast(@divTrunc(total_nanos, 1_000_000_000));
-    total_nanos -= @as(i64, out.seconds) * 1_000_000_000;
+    total_nanos -= @as(i128, out.seconds) * 1_000_000_000;
     out.sub_second_nanos = @intCast(total_nanos);
     return out;
 }

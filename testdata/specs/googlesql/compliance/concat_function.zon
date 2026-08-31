@@ -1,0 +1,110 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/concat_function",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/concat_function.test",
+    .cases = .{
+        .{
+            .desc = "concat_null",
+            .sql = "SELECT CONCAT(x) FROM UNNEST([NULL]) x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "concat_bool",
+            .sql = "SELECT CONCAT(x, NOT x) FROM UNNEST([true]) x",
+            .rows = .{
+                .{"truefalse"},
+            },
+        },
+        .{
+            .desc = "concat_int64",
+            .sql = "SELECT CONCAT(x, -x) FROM UNNEST([239]) x",
+            .rows = .{
+                .{"239-239"},
+            },
+        },
+        .{
+            .desc = "concat_uint32",
+            .sql = "SELECT CONCAT(\"uint\", x) FROM UNNEST([CAST(32 AS UINT32)]) x",
+            .rows = .{
+                .{"uint32"},
+            },
+        },
+        .{
+            .desc = "concat_numeric",
+            .sql = "SELECT CONCAT(x) FROM UNNEST([CAST('99999999999999999999999.87654321' AS NUMERIC)]) x",
+            .rows = .{
+                .{"99999999999999999999999.87654321"},
+            },
+        },
+        .{
+            .desc = "concat_double",
+            .sql = "SELECT CONCAT(1.23456789, -8765432.1, 1e55)",
+            .rows = .{
+                .{"1.23456789-8765432.11e+55"},
+            },
+        },
+        .{
+            .desc = "concat_timestamp",
+            .sql = "SELECT CONCAT(x) FROM UNNEST([TIMESTAMP '2000-01-02 03:04:05.678']) x",
+            .rows = .{
+                .{"2000-01-02 03:04:05.678-08"},
+            },
+        },
+        .{
+            .desc = "concat_date",
+            .sql = "SELECT CONCAT(x) FROM UNNEST([DATE '2020-10-10']) x",
+            .rows = .{
+                .{"2020-10-10"},
+            },
+        },
+        .{
+            .desc = "concat_datetime",
+            .sql = "SELECT CONCAT(x) FROM UNNEST([DATETIME '2015-12-21 23:54:32']) x",
+            .rows = .{
+                .{"2015-12-21 23:54:32"},
+            },
+        },
+        .{
+            .desc = "concat_time",
+            .sql = "SELECT CONCAT(x) FROM UNNEST([TIME '01:02:03.456789']) x",
+            .rows = .{
+                .{"01:02:03.456789"},
+            },
+        },
+        .{
+            .desc = "concat_interval",
+            .sql = "SELECT CONCAT(x), CONCAT('a', x)  FROM UNNEST([INTERVAL '1 2 3' MONTH TO HOUR]) x",
+            .rows = .{
+                .{ "0-1 2 3:0:0", "a0-1 2 3:0:0" },
+            },
+        },
+        .{
+            .desc = "concat_proto",
+            .sql = "SELECT CONCAT(x.int64_key_1, x) FROM UNNEST([NEW googlesql_test.KitchenSinkPB(5 AS int64_key_1, 6 AS int64_key_2)]) x",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "concat_enum",
+            .sql =
+            \\SELECT CONCAT(
+            \\  CAST(1 AS googlesql_test.TestEnum),
+            \\  CAST(2 AS googlesql_test.TestEnum),
+            \\  CAST(2147483647 AS googlesql_test.TestEnum))
+            ,
+            .rows = .{
+                .{"TESTENUM1TESTENUM2TESTENUM2147483647"},
+            },
+        },
+        .{
+            .desc = "concat_all_basic_types",
+            .sql = "SELECT CONCAT(0.1, 'A', -5, DATE '0001-01-01', true, TIMESTAMP '1999-12-31 23:59:59.999')",
+            .rows = .{
+                .{"0.1A-50001-01-01true1999-12-31 23:59:59.999-08"},
+            },
+        },
+    },
+}

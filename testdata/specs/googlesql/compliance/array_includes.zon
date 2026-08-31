@@ -1,0 +1,357 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/array_includes",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/array_includes.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE T AS
+            \\  SELECT e AS ele  FROM UNNEST([1,2,3]) AS e
+            ,
+        },
+        .{
+            .desc = "array_includes_null_array",
+            .sql = "SELECT ARRAY_INCLUDES(CAST(NULL AS ARRAY<INT64>), 1)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_null_target",
+            .sql = "SELECT ARRAY_INCLUDES([1,2,3], NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_null_element",
+            .sql = "SELECT ARRAY_INCLUDES([NULL], 1)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_with_null_element",
+            .sql = "SELECT ARRAY_INCLUDES([NULL,1,2], 1)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_hit",
+            .sql = "SELECT ARRAY_INCLUDES([1,2,3], 1)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_miss",
+            .sql = "SELECT ARRAY_INCLUDES([1,2,3], 4)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_with_table",
+            .sql = "SELECT ARRAY_INCLUDES([2,3,4], t.ele) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{false},
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_with_subquery_in_input",
+            .sql = "SELECT ARRAY_INCLUDES([2,3,(SELECT t.ele)], 1) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{true},
+                .{false},
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_with_subquery_in_target",
+            .sql = "SELECT ARRAY_INCLUDES([2,3,4], (SELECT t.ele)) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{false},
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_null_array",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES(CAST(NULL AS ARRAY<INT64>), e->e>0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_hit",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES([1,2,3], e->e>0)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_miss",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES([1,2,3], e->e>3)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_null_element",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES([NULL], e->e>0)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_with_null_element",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES([NULL,1], e->e>0)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_find_null_element",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES([NULL,1], e->e IS NULL)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_with_table",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES([1,2,3], e->e>t.ele) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{true},
+                .{true},
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_with_subquery_input",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES([1,2,(SELECT t.ele)], e->e>t.ele) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{true},
+                .{false},
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_lambda_with_subquery_in_lambda",
+            .unsupported_in_bigquery = "\"Lambda is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT ARRAY_INCLUDES([1,2,3], e->e>(SELECT t.ele)) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{true},
+                .{true},
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_any_untyped_null_array",
+            .sql = "SELECT ARRAY_INCLUDES_ANY(NULL, [1])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_any_null_array",
+            .sql = "SELECT ARRAY_INCLUDES_ANY(CAST(NULL AS ARRAY<INT64>), [1])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_any_null_target",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([1,2,3], NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_any_hit",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([1,2,3], [0,3,4])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_any_miss",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([1,2,3], [4,5,6])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_any_null_element",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([NULL,1,2], [1])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_any_null_input_target_element",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([NULL,1,2], [NULL])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_any_null_element_target_with_null",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([NULL,1,2], [NULL, 1])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_any_with_table",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([2,3,4], [t.ele]) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{false},
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_any_with_subquery_in_input",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([2,3,(SELECT t.ele)], [t.ele]) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{true},
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_any_with_subquery_in_target",
+            .sql = "SELECT ARRAY_INCLUDES_ANY([2,3,4], [(SELECT t.ele)]) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{false},
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_all_untyped_null_array",
+            .sql = "SELECT ARRAY_INCLUDES_ALL(NULL, [1])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_all_null_array",
+            .sql = "SELECT ARRAY_INCLUDES_ALL(CAST(NULL AS ARRAY<INT64>), [1])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_all_null_target",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([1,2,3], NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "array_includes_all_hit",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([1,2,3], [2,3])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_all_miss",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([1,2,3], [4,5,6])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_all_some_miss",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([1,2,3], [2,3,6])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_all_duplicates_in_input",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([1,2,2,3], [2,3])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_all_duplicates_in_target",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([1,2,3], [2,2,3])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_all_duplicates_in_both",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([1,2,2,3,3], [2,2,3])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_all_null_element",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([NULL,1,2], [1])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_all_null_input_target_element",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([NULL,1,2], [NULL])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_all_null_element_target_with_null",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([NULL,1,2], [NULL, 1])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "array_includes_all_with_table",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([2,3,4], [t.ele]) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{false},
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_all_with_subquery_in_input",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([2,3,(SELECT t.ele)], [t.ele]) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{true},
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "array_includes_all_with_subquery_in_target",
+            .sql = "SELECT ARRAY_INCLUDES_ALL([2,3,4], [(SELECT t.ele)]) FROM T as t ORDER BY t.ele",
+            .rows = .{
+                .{false},
+                .{true},
+                .{true},
+            },
+        },
+    },
+}

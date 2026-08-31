@@ -1,0 +1,115 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/hints",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/hints.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE t AS
+            \\SELECT 123 as i
+            ,
+        },
+        .{
+            .desc = "ignore_hints_for_other_engines_1",
+            .sql =
+            \\# This file tests the behavior in the expected default mode, where hints for
+            \\# other engines are ignored, and hints for the default engine are rejected if
+            \\# they aren't known.  We don't have any tests here with "valid" hints.
+            \\@{ some_other_engine.hint=5 } select i from t
+            ,
+            .rows = .{
+                .{123},
+            },
+        },
+        .{
+            .desc = "ignore_hints_for_other_engines_2",
+            .sql = "select i from t @{ some_other_engine.hint=5 }",
+            .rows = .{
+                .{123},
+            },
+        },
+        .{
+            .desc = "ignore_hints_for_other_engines_with_expressions",
+            .sql =
+            \\# This checks that ignored hints with expressions don't cause problems.
+            \\# We can't actually check that non-ignored hints with expressions work.
+            \\select i from t @{ some_other_engine.hint1=1+2,
+            \\                   some_other_engine.hint2=concat('abc','def') }
+            ,
+            .rows = .{
+                .{123},
+            },
+        },
+        .{
+            .desc = "reject_unknown_hints_statement",
+            .unsupported_in_bigquery = "@{...} hint syntax rejected here: Unexpected \"@\" / Unexpected identifier (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\# Test that we reject invalid hints in all possible locations where a hint
+            \\# can attach.
+            \\@{ invalid_hint=5 } select i from t
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "reject_unknown_hints_select",
+            .unsupported_in_bigquery = "@{...} hint syntax rejected here: Unexpected \"@\" / Unexpected identifier (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "select @{ invalid_hint=5 } i from t",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "reject_unknown_hints_table",
+            .unsupported_in_bigquery = "@{...} hint syntax rejected here: Unexpected \"@\" / Unexpected identifier (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "select i from t @{ invalid_hint=5 }",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "reject_unknown_hints_group_by",
+            .unsupported_in_bigquery = "@{...} hint syntax rejected here: Unexpected \"@\" / Unexpected identifier (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "select i from t group @{ invalid_hint=5 } by 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "reject_unknown_hints_order_by",
+            .unsupported_in_bigquery = "@{...} hint syntax rejected here: Unexpected \"@\" / Unexpected identifier (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "select i from t order @{ invalid_hint=5 } by 1",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "reject_unknown_hints_join",
+            .unsupported_in_bigquery = "@{...} hint syntax rejected here: Unexpected \"@\" / Unexpected identifier (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "select t1.i from t t1 join @{ invalid_hint=5 } t t2 on true",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "reject_unknown_hints_in",
+            .sql = "select i from t where i in @{ invalid_hint=5 } (select 1)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "reject_unknown_hints_exists",
+            .sql = "select i from t where exists @{ invalid_hint=5 } (select 1, 2)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "reject_invalid_hints",
+            .unsupported_in_bigquery = "@{...} hint syntax rejected here: Unexpected \"@\" / Unexpected identifier (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\# num_shards, if supported, should be an integer, not a string.
+            \\# This should give an error either because the hint is unsupported or
+            \\# because it is invalid.
+            \\select i from t group @{ num_shards='abc' } by 1
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "ignore_invalid_hints_for_other_engines",
+            .sql = "select i from t group @{ some_other_engine.num_shards='abc' } by 1",
+            .rows = .{
+                .{123},
+            },
+        },
+    },
+}

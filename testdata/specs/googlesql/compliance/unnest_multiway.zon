@@ -1,0 +1,809 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/unnest_multiway",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/unnest_multiway.test",
+    .cases = .{
+        .{
+            .desc = "multiway_unnest_unequal_literal_arrays_default_mode",
+            .sql =
+            \\# This file covers the following dimensions of tests:
+            \\# 1. UNNEST with 2, 3 or 10 arguments.
+            \\# 2. Multiway UNNEST with different ARRAY_ZIP_MODE values in mode argument.
+            \\# 3. NULL input in array or/and mode argument.
+            \\# 4. Empty array argument.
+            \\# 5. Array inputs of the same length or different lengths.
+            \\# 6. Unordered array input in multiway UNNEST.
+            \\# 7. Array inputs of literals or column references, with and without explicit alias.
+            \\# 8. Array inputs with collation, with the same or different collations.
+            \\SELECT *
+            \\FROM UNNEST([1,2], [2]) WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2, 0 },
+                .{ 2, null, 1 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_unequal_literal_arrays_strict_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], ["a"], mode => "STRICT")
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_unequal_literal_arrays_truncate_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], ["a"], mode => "TRUNCATE")
+            ,
+            .rows = .{
+                .{ 1, "a" },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_unequal_literal_arrays_pad_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], [1.0], ["a", "b", "c"], mode => "PAD")
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1, "a" },
+                .{ 2, null, "b" },
+                .{ null, null, "c" },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_unequal_literal_arrays_null_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], [1.0], ["a", "b", "c"], mode => CAST(NULL AS ARRAY_ZIP_MODE))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_empty_literal_arrays_default_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], []) WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, 0 },
+                .{ 2, null, 1 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_empty_literal_arrays_strict_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], [], mode => "STRICT")
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_empty_literal_arrays_truncate_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], [], mode => "TRUNCATE")
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "multiway_unnest_empty_literal_arrays_pad_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], [], ["a", "b", "c"], mode => "PAD")
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "a" },
+                .{ 2, null, "b" },
+                .{ null, null, "c" },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_empty_literal_arrays_null_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], [], ["a", "b", "c"], mode => CAST(NULL AS ARRAY_ZIP_MODE))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_one_null_array_default_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], CAST(NULL AS ARRAY<STRING>)) WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, 0 },
+                .{ 2, null, 1 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_one_null_array_strict_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], CAST(NULL AS ARRAY<STRING>), mode => "STRICT")
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_one_null_array_truncate_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], CAST(NULL AS ARRAY<STRING>), mode => "TRUNCATE")
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "multiway_unnest_one_null_array_pad_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], CAST(NULL AS ARRAY<STRING>), ["a", "b", "c"], mode => "PAD")
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "a" },
+                .{ 2, null, "b" },
+                .{ null, null, "c" },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_one_null_array_null_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2], CAST(NULL AS ARRAY<STRING>), ["a", "b", "c"], mode => CAST(NULL AS ARRAY_ZIP_MODE))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_all_null_arrays_default_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST(CAST(NULL AS ARRAY<INT64>), CAST(NULL AS ARRAY<STRING>)) WITH OFFSET
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "multiway_unnest_all_null_arrays_strict_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST(CAST(NULL AS ARRAY<INT64>), CAST(NULL AS ARRAY<STRING>), mode => "STRICT")
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "multiway_unnest_all_null_arrays_truncate_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST(CAST(NULL AS ARRAY<INT64>), CAST(NULL AS ARRAY<STRING>), mode => "TRUNCATE")
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "multiway_unnest_all_null_arrays_pad_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST(CAST(NULL AS ARRAY<INT64>), CAST(NULL AS ARRAY<STRING>), CAST(NULL AS ARRAY<DOUBLE>), mode => "PAD")
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "multiway_unnest_all_null_arrays_null_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST(CAST(NULL AS ARRAY<INT64>), CAST(NULL AS ARRAY<STRING>), CAST(NULL AS ARRAY<DOUBLE>), mode => CAST(NULL AS ARRAY_ZIP_MODE))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_all_empty_arrays_strict_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([], CAST([] AS ARRAY<STRING>), CAST([] AS ARRAY<DOUBLE>), mode => "STRICT")
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "multiway_unnest_aliased_literal_arrays_strict_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2] AS arr1, ["a"] AS arr2, mode => "STRICT") WITH OFFSET
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_aliased_literal_arrays_truncate_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2] AS arr1, ["a"] AS arr2, mode => "TRUNCATE") WITH OFFSET
+            ,
+            .rows = .{
+                .{ 1, "a", 0 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_aliased_literal_arrays_pad_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2] AS arr1, [1.0] AS arr2, ["a", "b", "c"] AS arr3, mode => "PAD") WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{ 1, 1, "a", 0 },
+                .{ 2, null, "b", 1 },
+                .{ null, null, "c", 2 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_aliased_literal_arrays_null_mode",
+            .sql =
+            \\SELECT *
+            \\FROM UNNEST([1,2] AS arr1, [1.0] AS arr2, ["a", "b", "c"] AS arr3, mode => CAST(NULL AS ARRAY_ZIP_MODE)) WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_arrays_unordered_default_mode",
+            .sql =
+            \\WITH T1 AS (
+            \\  SELECT ARRAY_AGG(x) AS unordered_arr1
+            \\  FROM (
+            \\    SELECT 1 AS x
+            \\    UNION ALL
+            \\    SELECT 2 AS x
+            \\    UNION ALL
+            \\    SELECT 3 AS x
+            \\  )
+            \\), T2 AS (
+            \\  SELECT ["hello", "world"] AS arr2
+            \\)
+            \\SELECT COUNT(*)
+            \\FROM T1, T2, UNNEST(
+            \\  T1.unordered_arr1,
+            \\  T2.arr2 AS arr2)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "multiway_unnest_all_arrays_unordered_default_mode",
+            .sql =
+            \\WITH T1 AS (
+            \\  SELECT ARRAY_AGG(x) AS unordered_arr1
+            \\  FROM (
+            \\    SELECT 1 AS x
+            \\    UNION ALL
+            \\    SELECT 2 AS x
+            \\    UNION ALL
+            \\    SELECT 3 AS x
+            \\  )
+            \\), T2 AS (
+            \\  SELECT ARRAY_AGG(y) AS unordered_arr2
+            \\  FROM (
+            \\    SELECT "hello" AS y
+            \\    UNION ALL
+            \\    SELECT "world" AS y
+            \\  )
+            \\)
+            \\SELECT COUNT(*)
+            \\FROM T1, T2, UNNEST(
+            \\  T1.unordered_arr1,
+            \\  T2.unordered_arr2 AS unordered_arr2)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "multiway_unnest_arrays_unordered_with_offset_default_mode",
+            .sql =
+            \\WITH T1 AS (
+            \\  SELECT ARRAY_AGG(x) AS unordered_arr1
+            \\  FROM (
+            \\    SELECT 1 AS x
+            \\    UNION ALL
+            \\    SELECT 2 AS x
+            \\    UNION ALL
+            \\    SELECT 3 AS x
+            \\  )
+            \\), T2 AS (
+            \\  SELECT ["hello", "world"] AS arr2
+            \\)
+            \\SELECT COUNT(*)
+            \\FROM T1, T2, UNNEST(
+            \\  T1.unordered_arr1 AS unordered_arr1,
+            \\  T2.arr2 AS arr2) WITH OFFSET
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "multiway_unnest_three_unequal_arrays_column_ref_default_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT ['a', 'b'] AS str_array, [1] AS int64_array, [1.0, 5.0, 10.0] AS double_array
+            \\)
+            \\SELECT *
+            \\FROM T, UNNEST(
+            \\  T.str_array AS arr1,
+            \\  T.int64_array AS arr2,
+            \\  T.double_array AS arr3) WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ "a", "b" }, .{1}, .{ 1, 5, 10 }, "b", null, 5, 1 },
+                .{ .{ "a", "b" }, .{1}, .{ 1, 5, 10 }, "a", 1, 1, 0 },
+                .{ .{ "a", "b" }, .{1}, .{ 1, 5, 10 }, null, null, 10, 2 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_three_unequal_arrays_column_ref_strict_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT ['a', 'b', 'c'] AS str_array, [1, 2, 3] AS int64_array, [1.0, 5.0] AS double_array
+            \\)
+            \\SELECT *
+            \\FROM T, UNNEST(
+            \\  T.str_array AS arr1,
+            \\  T.int64_array AS arr2,
+            \\  T.double_array AS arr3,
+            \\  mode => "STRICT") WITH OFFSET
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_three_unequal_arrays_column_ref_truncate_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT ['a', 'b', 'c'] AS str_array, [1, 2, 3] AS int64_array, [1.0, 5.0] AS double_array
+            \\)
+            \\SELECT *
+            \\FROM T, UNNEST(
+            \\  T.str_array AS arr1,
+            \\  T.int64_array AS arr2,
+            \\  T.double_array AS arr3,
+            \\  mode => "TRUNCATE") WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ "a", "b", "c" }, .{ 1, 2, 3 }, .{ 1, 5 }, "b", 2, 5, 1 },
+                .{ .{ "a", "b", "c" }, .{ 1, 2, 3 }, .{ 1, 5 }, "a", 1, 1, 0 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_three_unequal_arrays_column_ref_pad_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT ['a', 'b', 'c'] AS str_array, [1, 2, 3] AS int64_array, [1.0, 5.0] AS double_array
+            \\)
+            \\SELECT *
+            \\FROM T, UNNEST(
+            \\  T.str_array AS arr1,
+            \\  T.int64_array AS arr2,
+            \\  T.double_array AS arr3,
+            \\  mode => "PAD") WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ "a", "b", "c" }, .{ 1, 2, 3 }, .{ 1, 5 }, "b", 2, 5, 1 },
+                .{ .{ "a", "b", "c" }, .{ 1, 2, 3 }, .{ 1, 5 }, "a", 1, 1, 0 },
+                .{ .{ "a", "b", "c" }, .{ 1, 2, 3 }, .{ 1, 5 }, "c", 3, null, 2 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_three_unequal_arrays_column_ref_null_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT ['a', 'b', 'c'] AS str_array, [1, 2, 3] AS int64_array, [1.0, 5.0] AS double_array
+            \\)
+            \\SELECT *
+            \\FROM T, UNNEST(
+            \\  T.str_array AS arr1,
+            \\  T.int64_array AS arr2,
+            \\  T.double_array AS arr3,
+            \\  mode => CAST(NULL AS ARRAY_ZIP_MODE)) WITH OFFSET
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_ten_unequal_arrays_column_ref_default_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT
+            \\    ['a', 'b'] AS arr1,
+            \\    [1] AS arr2,
+            \\    ARRAY<INT32>[1, 2] AS arr3,
+            \\    ARRAY<UINT32>[1, 2] AS arr4,
+            \\    ARRAY<UINT64>[1, 2] AS arr5,
+            \\    [1.0] AS arr6,
+            \\    [NEW googlesql_test.KitchenSinkPB(1 AS int64_key_1, 2 AS int64_key_2),
+            \\     NEW googlesql_test.KitchenSinkPB(10 AS int64_key_1, 20 AS int64_key_2)] AS arr7,
+            \\    [STRUCT(1, "a")] AS arr8,
+            \\    [b'a', b'b'] AS arr9,
+            \\    [STRUCT(100 AS field1, "st1" AS field2), STRUCT(200 AS field1, "st2" AS field2)] AS arr10,
+            \\)
+            \\SELECT arr1, arr2, arr3, arr4, arr5, arr6, arr7, arr8, arr9, arr10, offset
+            \\FROM T, UNNEST(
+            \\  T.arr1,
+            \\  T.arr2,
+            \\  T.arr3,
+            \\  T.arr4,
+            \\  T.arr5,
+            \\  T.arr6,
+            \\  T.arr7,
+            \\  T.arr8,
+            \\  T.arr9,
+            \\  T.arr10) WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "b", null, 2, 2, 2, null, .{"int64_key_1: 10 int64_key_2: 20"}, null, "\x62", .{ 200, "st2" }, 1 },
+                .{ "a", 1, 1, 1, 1, 1, .{"int64_key_1: 1 int64_key_2: 2"}, .{ 1, "a" }, "\x61", .{ 100, "st1" }, 0 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_ten_unequal_arrays_column_ref_strict_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT
+            \\    ['a', 'b'] AS arr1,
+            \\    [1] AS arr2,
+            \\    ARRAY<INT32>[1, 2] AS arr3,
+            \\    ARRAY<UINT32>[1, 2] AS arr4,
+            \\    ARRAY<UINT64>[1, 2] AS arr5,
+            \\    [1.0] AS arr6,
+            \\    [NEW googlesql_test.KitchenSinkPB(1 AS int64_key_1, 2 AS int64_key_2),
+            \\     NEW googlesql_test.KitchenSinkPB(10 AS int64_key_1, 20 AS int64_key_2)] AS arr7,
+            \\    [STRUCT(1, "a")] AS arr8,
+            \\    [b'a', b'b'] AS arr9,
+            \\    [STRUCT(100 AS field1, "st1" AS field2), STRUCT(200 AS field1, "st2" AS field2)] AS arr10,
+            \\)
+            \\SELECT arr1, arr2, arr3, arr4, arr5, arr6, arr7, arr8, arr9, arr10, offset
+            \\FROM T, UNNEST(
+            \\  T.arr1,
+            \\  T.arr2,
+            \\  T.arr3,
+            \\  T.arr4,
+            \\  T.arr5,
+            \\  T.arr6,
+            \\  T.arr7,
+            \\  T.arr8,
+            \\  T.arr9,
+            \\  T.arr10,
+            \\  mode => "STRICT") WITH OFFSET
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_ten_unequal_arrays_column_ref_truncate_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT
+            \\    ['a', 'b'] AS arr1,
+            \\    [1] AS arr2,
+            \\    ARRAY<INT32>[1, 2] AS arr3,
+            \\    ARRAY<UINT32>[1, 2] AS arr4,
+            \\    ARRAY<UINT64>[1, 2] AS arr5,
+            \\    [1.0] AS arr6,
+            \\    [NEW googlesql_test.KitchenSinkPB(1 AS int64_key_1, 2 AS int64_key_2),
+            \\     NEW googlesql_test.KitchenSinkPB(10 AS int64_key_1, 20 AS int64_key_2)] AS arr7,
+            \\    [STRUCT(1, "a")] AS arr8,
+            \\    [b'a', b'b'] AS arr9,
+            \\    [STRUCT(100 AS field1, "st1" AS field2), STRUCT(200 AS field1, "st2" AS field2)] AS arr10,
+            \\)
+            \\SELECT arr1, arr2, arr3, arr4, arr5, arr6, arr7, arr8, arr9, arr10, offset
+            \\FROM T, UNNEST(
+            \\  T.arr1,
+            \\  T.arr2,
+            \\  T.arr3,
+            \\  T.arr4,
+            \\  T.arr5,
+            \\  T.arr6,
+            \\  T.arr7,
+            \\  T.arr8,
+            \\  T.arr9,
+            \\  T.arr10,
+            \\  mode => "TRUNCATE") WITH OFFSET
+            ,
+            .rows = .{
+                .{ "a", 1, 1, 1, 1, 1, .{"int64_key_1: 1 int64_key_2: 2"}, .{ 1, "a" }, "\x61", .{ 100, "st1" }, 0 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_ten_unequal_arrays_column_ref_pad_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT
+            \\    ['a', 'b'] AS arr1,
+            \\    [1] AS arr2,
+            \\    ARRAY<INT32>[1, 2] AS arr3,
+            \\    ARRAY<UINT32>[1, 2] AS arr4,
+            \\    ARRAY<UINT64>[1, 2] AS arr5,
+            \\    [1.0] AS arr6,
+            \\    [NEW googlesql_test.KitchenSinkPB(1 AS int64_key_1, 2 AS int64_key_2),
+            \\     NEW googlesql_test.KitchenSinkPB(10 AS int64_key_1, 20 AS int64_key_2)] AS arr7,
+            \\    [STRUCT(1, "a")] AS arr8,
+            \\    [b'a', b'b'] AS arr9,
+            \\    [STRUCT(100 AS field1, "st1" AS field2), STRUCT(200 AS field1, "st2" AS field2)] AS arr10,
+            \\)
+            \\SELECT arr1, arr2, arr3, arr4, arr5, arr6, arr7, arr8, arr9, arr10, offset
+            \\FROM T, UNNEST(
+            \\  T.arr1,
+            \\  T.arr2,
+            \\  T.arr3,
+            \\  T.arr4,
+            \\  T.arr5,
+            \\  T.arr6,
+            \\  T.arr7,
+            \\  T.arr8,
+            \\  T.arr9,
+            \\  T.arr10,
+            \\  mode => "PAD") WITH OFFSET
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "b", null, 2, 2, 2, null, .{"int64_key_1: 10 int64_key_2: 20"}, null, "\x62", .{ 200, "st2" }, 1 },
+                .{ "a", 1, 1, 1, 1, 1, .{"int64_key_1: 1 int64_key_2: 2"}, .{ 1, "a" }, "\x61", .{ 100, "st1" }, 0 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_ten_unequal_arrays_column_ref_null_mode",
+            .sql =
+            \\WITH T AS (
+            \\  SELECT
+            \\    ['a', 'b'] AS arr1,
+            \\    [1] AS arr2,
+            \\    ARRAY<INT32>[1, 2] AS arr3,
+            \\    ARRAY<UINT32>[1, 2] AS arr4,
+            \\    ARRAY<UINT64>[1, 2] AS arr5,
+            \\    [1.0] AS arr6,
+            \\    [NEW googlesql_test.KitchenSinkPB(1 AS int64_key_1, 2 AS int64_key_2),
+            \\     NEW googlesql_test.KitchenSinkPB(10 AS int64_key_1, 20 AS int64_key_2)] AS arr7,
+            \\    [STRUCT(1, "a")] AS arr8,
+            \\    [b'a', b'b'] AS arr9,
+            \\    [STRUCT(100 AS field1, "st1" AS field2), STRUCT(200 AS field1, "st2" AS field2)] AS arr10,
+            \\)
+            \\SELECT arr1, arr2, arr3, arr4, arr5, arr6, arr7, arr8, arr9, arr10, offset
+            \\FROM T, UNNEST(
+            \\  T.arr1,
+            \\  T.arr2,
+            \\  T.arr3,
+            \\  T.arr4,
+            \\  T.arr5,
+            \\  T.arr6,
+            \\  T.arr7,
+            \\  T.arr8,
+            \\  T.arr9,
+            \\  T.arr10,
+            \\  mode => CAST(NULL AS ARRAY_ZIP_MODE)) WITH OFFSET
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_two_literal_arrays_equal_length_with_collation_strict_mode",
+            .sql =
+            \\# Zipping literal arrays with equal length, with only one of the arrays having collation.
+            \\SELECT arr1 = 'a', arr2 = 'a'
+            \\FROM UNNEST(
+            \\  [COLLATE('a', 'und:ci'), COLLATE('A', 'und:ci'), COLLATE('B', 'und:ci')] AS arr1,
+            \\  ['a', 'A', 'B'] AS arr2,
+            \\  mode => "STRICT"
+            \\) WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{ true, true },
+                .{ true, false },
+                .{ false, false },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_two_literal_arrays_unequal_length_with_collation_truncate_mode",
+            .sql =
+            \\# Zipping literal arrays with different length, with only one of the arrays having collation.
+            \\SELECT arr1 = 'a', arr2 = 'a'
+            \\FROM UNNEST(
+            \\  [COLLATE('a', 'und:ci'), COLLATE('A', 'und:ci'), COLLATE('B', 'und:ci')] AS arr1,
+            \\  ['a', 'A'] AS arr2,
+            \\  mode => "TRUNCATE"
+            \\) WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{ true, true },
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_two_literal_arrays_unequal_length_with_collation_pad_mode",
+            .sql =
+            \\# Zipping literal arrays with different length, with only one of the arrays having collation.
+            \\SELECT arr1 = 'a', arr2 = 'a'
+            \\FROM UNNEST(
+            \\  [COLLATE('a', 'und:ci'), COLLATE('A', 'und:ci')] AS arr1,
+            \\  ['a', 'A', 'B'] AS arr2,
+            \\  mode => "PAD"
+            \\) WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{ true, true },
+                .{ true, false },
+                .{ null, false },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_three_unequal_arrays_column_ref_with_collation_strict_mode",
+            .unsupported_in_bigquery = "\"The UNNEST operator supports exactly one argument\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Zipping column referenced arrays with different length, with only one of the arrays having collation.
+            \\WITH T AS (
+            \\  SELECT [COLLATE('a', 'und:ci'), COLLATE('b', 'und:ci'), COLLATE('B', 'und:ci')] AS collated_array,
+            \\  ['a', 'b', 'B'] AS str_array,
+            \\  [1.0, 5.0] AS double_array
+            \\)
+            \\SELECT arr1 = 'B', arr2 = 'B', arr3
+            \\FROM T, UNNEST(
+            \\  T.collated_array AS arr1,
+            \\  T.str_array AS arr2,
+            \\  T.double_array AS arr3,
+            \\  mode => "STRICT") WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "multiway_unnest_three_unequal_arrays_column_ref_with_collation_truncate_mode",
+            .unsupported_in_bigquery = "\"The UNNEST operator supports exactly one argument\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Zipping column referenced arrays with different length, with only one of the arrays having collation.
+            \\WITH T AS (
+            \\  SELECT [COLLATE('a', 'und:ci'), COLLATE('b', 'und:ci'), COLLATE('B', 'und:ci')] AS collated_array,
+            \\  ['a', 'b', 'B'] AS str_array,
+            \\  [1.0, 5.0] AS double_array
+            \\)
+            \\SELECT arr1 = 'B', arr2 = 'B', arr3
+            \\FROM T, UNNEST(
+            \\  T.collated_array AS arr1,
+            \\  T.str_array AS arr2,
+            \\  T.double_array AS arr3,
+            \\  mode => "TRUNCATE") WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{ false, false, 1 },
+                .{ true, false, 5 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_three_unequal_arrays_column_ref_with_collation_pad_mode",
+            .unsupported_in_bigquery = "\"The UNNEST operator supports exactly one argument\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Zipping column referenced arrays with different length, with only one of the arrays having collation.
+            \\WITH T AS (
+            \\  SELECT [COLLATE('a', 'und:ci'), COLLATE('b', 'und:ci'), COLLATE('B', 'und:ci')] AS collated_array,
+            \\  ['a', 'b', 'B'] AS str_array,
+            \\  [1.0, 5.0] AS double_array
+            \\)
+            \\SELECT arr1 = 'B', arr2 = 'B', arr3
+            \\FROM T, UNNEST(
+            \\  T.collated_array AS arr1,
+            \\  T.str_array AS arr2,
+            \\  T.double_array AS arr3,
+            \\  mode => "PAD") WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{ false, false, 1 },
+                .{ true, false, 5 },
+                .{ true, true, null },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_three_equal_arrays_column_ref_with_same_collation",
+            .unsupported_in_bigquery = "\"The UNNEST operator supports exactly one argument\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Zipping column referenced arrays with same length, with the same collation.
+            \\WITH T AS (
+            \\  SELECT [COLLATE('a', 'und:ci'), COLLATE('b', 'und:ci'), COLLATE('B', 'und:ci')] AS collated_array1,
+            \\  [COLLATE('x', 'und:ci'), COLLATE('Y', 'und:ci'), COLLATE('y', 'und:ci')] AS collated_array2,
+            \\  [COLLATE('m', 'und:ci'), COLLATE('n', 'und:ci'), COLLATE('N', 'und:ci')] AS collated_array3,
+            \\)
+            \\SELECT arr1 = 'B', arr2 = 'Y', arr3 = 'M'
+            \\FROM T, UNNEST(
+            \\  T.collated_array1 AS arr1,
+            \\  T.collated_array2 AS arr2,
+            \\  T.collated_array3 AS arr3) WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{ false, false, true },
+                .{ true, true, false },
+                .{ true, true, false },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_three_equal_arrays_column_ref_with_different_collation",
+            .unsupported_in_bigquery = "\"The UNNEST operator supports exactly one argument\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Zipping column referenced arrays with same length, with different collation.
+            \\WITH T AS (
+            \\  SELECT [COLLATE('a', 'und:ci'), COLLATE('b', 'und:ci'), COLLATE('B', 'und:ci')] AS collated_array1,
+            \\  [COLLATE('x', 'und:cs'), COLLATE('Y', 'und:cs'), COLLATE('y', 'und:cs')] AS collated_array2,
+            \\  [COLLATE('m', 'und:cs'), COLLATE('n', 'und:cs'), COLLATE('N', 'und:cs')] AS collated_array3,
+            \\)
+            \\SELECT arr1 = 'B', arr2 = 'Y', arr3 = 'M'
+            \\FROM T, UNNEST(
+            \\  T.collated_array1 AS arr1,
+            \\  T.collated_array2 AS arr2,
+            \\  T.collated_array3 AS arr3) WITH OFFSET
+            \\ORDER BY offset
+            ,
+            .rows = .{
+                .{ false, false, false },
+                .{ true, true, false },
+                .{ true, false, false },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_with_join_expr",
+            .sql =
+            \\# b/423700272
+            \\SELECT a FROM (SELECT NULL)
+            \\LEFT JOIN UNNEST(ARRAY[1] AS a, ARRAY[0] AS b) ON false
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "multiway_unnest_with_join_expr_on_vars",
+            .sql =
+            \\select * from (SELECT null) JOIN
+            \\   UNNEST(ARRAY[1] AS a, ARRAY[0] AS b)
+            \\   ON b = 0
+            ,
+            .rows = .{
+                .{ null, 1, 0 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_with_join_expr_on_vars_and_offset",
+            .sql =
+            \\select * from (SELECT null) JOIN
+            \\   UNNEST(ARRAY[1] AS a, ARRAY[0] AS b) with offset
+            \\   ON b = 0 and offset = 0
+            ,
+            .rows = .{
+                .{ null, 1, 0, 0 },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_with_left_join_expr_on_vars_and_offset_no_results",
+            .sql =
+            \\select * from (SELECT null) LEFT JOIN
+            \\   UNNEST(ARRAY[1] AS a, ARRAY[0] AS b) with offset
+            \\   ON b = 3 and offset = 0
+            ,
+            .rows = .{
+                .{ null, null, null, null },
+            },
+        },
+        .{
+            .desc = "multiway_unnest_with_left_join_expr_on_vars_and_offset_with_results",
+            .sql =
+            \\select * from (SELECT null) LEFT JOIN
+            \\   UNNEST(ARRAY[1] AS a, ARRAY[0] AS b) with offset
+            \\   ON b = 0 and offset = 0
+            ,
+            .rows = .{
+                .{ null, 1, 0, 0 },
+            },
+        },
+    },
+}

@@ -1,0 +1,220 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/unnest_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/unnest_queries.test",
+    .cases = .{
+        .{
+            .desc = "unnest_1",
+            .sql =
+            \\# Straight UNNEST without correlation.
+            \\SELECT x FROM UNNEST([3, 5]) x
+            ,
+            .unordered = true,
+            .rows = .{
+                .{3},
+                .{5},
+            },
+        },
+        .{
+            .desc = "unnest_2",
+            .sql = "SELECT x FROM UNNEST([3, NULL]) x",
+            .unordered = true,
+            .rows = .{
+                .{3},
+                .{null},
+            },
+        },
+        .{
+            .desc = "unnest_3",
+            .sql =
+            \\# Straight UNNEST with offset.
+            \\SELECT x, p
+            \\FROM UNNEST([3, NULL]) x WITH OFFSET p
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, 0 },
+                .{ null, 1 },
+            },
+        },
+        .{
+            .desc = "unnest_4",
+            .sql =
+            \\# Cross apply UNNEST.
+            \\SELECT x
+            \\FROM (SELECT [3, 5] arr) t
+            \\JOIN UNNEST(t.arr) x
+            ,
+            .unordered = true,
+            .rows = .{
+                .{5},
+                .{3},
+            },
+        },
+        .{
+            .desc = "unnest_5",
+            .sql =
+            \\# Cross apply UNNEST with offset.
+            \\SELECT x, p
+            \\FROM (SELECT [3, 5] arr) t
+            \\JOIN UNNEST(t.arr) x WITH OFFSET p
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 5, 1 },
+                .{ 3, 0 },
+            },
+        },
+        .{
+            .desc = "unnest_6",
+            .sql =
+            \\# Outer apply UNNEST.
+            \\SELECT b, x
+            \\FROM UNNEST(
+            \\       [STRUCT(true AS b, [3, 5] AS arr), STRUCT(false AS b, [7, 9] AS arr)]) t
+            \\LEFT JOIN UNNEST(t.arr) x ON b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, 5 },
+                .{ false, null },
+                .{ true, 3 },
+            },
+        },
+        .{
+            .desc = "unnest_7",
+            .sql =
+            \\# Outer apply UNNEST with offset.
+            \\SELECT b, x, p
+            \\FROM UNNEST(
+            \\       [STRUCT(true AS b, [3, 5] AS arr), STRUCT(false AS b, [7, 9] AS arr)]) t
+            \\LEFT JOIN UNNEST(t.arr) x WITH OFFSET p ON b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ true, 5, 1 },
+                .{ false, null, null },
+                .{ true, 3, 0 },
+            },
+        },
+        .{
+            .desc = "unnest_8",
+            .sql =
+            \\# Cross apply UNNEST with correlation.
+            \\SELECT x, s
+            \\FROM (SELECT x FROM UNNEST([3, 5]) x) r,
+            \\     UNNEST(ARRAY(SELECT AS STRUCT r.x - 1 AS y, r.x + 1 AS z)) s
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 5, .{ 4, 6 } },
+                .{ 3, .{ 2, 4 } },
+            },
+        },
+        .{
+            .desc = "unnest_9",
+            .sql =
+            \\# Outer apply UNNEST with correlation.
+            \\SELECT x, s
+            \\FROM (SELECT x FROM UNNEST([3, 5]) x) r
+            \\LEFT JOIN UNNEST(ARRAY(SELECT AS STRUCT r.x - 1 AS y, r.x + 1 AS z
+            \\                       FROM (SELECT 0)
+            \\                       WHERE r.x = 5)) s
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 5, .{ 4, 6 } },
+                .{ 3, null },
+            },
+        },
+        .{
+            .desc = "unnest_null_array",
+            .sql = "SELECT e FROM UNNEST(CAST(NULL AS ARRAY<INT64>)) e",
+            .rows = .{},
+        },
+        .{
+            .desc = "unnest_null_array_via_cross_apply",
+            .sql = "SELECT e FROM (SELECT CAST(NULL AS ARRAY<INT64>) arr) t, t.arr e",
+            .rows = .{},
+        },
+        .{
+            .desc = "unnest_null_array_of_structs",
+            .sql = "SELECT e FROM UNNEST(CAST(NULL AS ARRAY<STRUCT<INT64>>)) e",
+            .rows = .{},
+        },
+        .{
+            .desc = "unnest_bool",
+            .sql = "SELECT x FROM UNNEST([true, false]) x",
+            .unordered = true,
+            .rows = .{
+                .{true},
+                .{false},
+            },
+        },
+        .{
+            .desc = "unnest_bytes",
+            .sql = "SELECT x FROM UNNEST([b'Hello', b'World!']) x",
+            .unordered = true,
+            .rows = .{
+                .{"\x48\x65\x6c\x6c\x6f"},
+                .{"\x57\x6f\x72\x6c\x64\x21"},
+            },
+        },
+        .{
+            .desc = "unnest_numeric",
+            .sql = "SELECT x FROM UNNEST([CAST(3.14159 AS NUMERIC), 1.2345]) x",
+            .unordered = true,
+            .rows = .{
+                .{3.14159},
+                .{1.2345},
+            },
+        },
+        .{
+            .desc = "unnest_date",
+            .sql = "SELECT x FROM UNNEST([DATE '2000-01-02', '2000-10-20']) x",
+            .unordered = true,
+            .rows = .{
+                .{"2000-01-02"},
+                .{"2000-10-20"},
+            },
+        },
+        .{
+            .desc = "unnest_timestamp",
+            .sql = "SELECT x FROM UNNEST([TIMESTAMP '2000-01-02 10:20:30', '2000-01-02 01:02:03']) x",
+            .unordered = true,
+            .rows = .{
+                .{"2000-01-02 18:20:30+00"},
+                .{"2000-01-02 09:02:03+00"},
+            },
+        },
+        .{
+            .desc = "unnest_time",
+            .sql = "SELECT x FROM UNNEST([TIME '10:20:30', '01:02:03']) x",
+            .unordered = true,
+            .rows = .{
+                .{"10:20:30"},
+                .{"01:02:03"},
+            },
+        },
+        .{
+            .desc = "unnest_datetime",
+            .sql = "SELECT x FROM UNNEST([DATETIME '2000-01-02 10:20:30', '2000-01-02 01:02:03']) x",
+            .unordered = true,
+            .rows = .{
+                .{"2000-01-02 10:20:30"},
+                .{"2000-01-02 01:02:03"},
+            },
+        },
+        .{
+            .desc = "unnest_geography",
+            .sql = "SELECT x FROM UNNEST([ST_GEOGPOINT(1,2), ST_GEOGPOINT(-1,-2)]) x",
+            .unordered = true,
+            .rows = .{
+                .{"POINT(1 2)"},
+                .{"POINT(-1 -2)"},
+            },
+        },
+    },
+}

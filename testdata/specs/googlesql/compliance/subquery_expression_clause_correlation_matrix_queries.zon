@@ -1,0 +1,57 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/subquery_expression_clause_correlation_matrix_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/subquery_expression_clause_correlation_matrix_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Tests for correlated and uncorrelated subquery expressions in various
+            \\# query clauses. We distinguish a total of 25 cases: 5 types of correlation
+            \\# (2 uncorrelated and 3 correlated ones) times 5 clauses (SELECT, WHERE, HAVING,
+            \\# GROUP BY, ORDER BY).
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(true as bool) as bool_val, cast(0.1 as double) as double_val,
+            \\       cast(1 as int64) as int64_val, cast("1" as string) as str_val UNION ALL
+            \\  SELECT 2, false, 0.2, 2, "2"
+            ,
+        },
+        .{
+            .desc = "scalar_subquery_expression_in_select_uncorrelated_without_from",
+            .sql =
+            \\# Scalar subquery expression in SELECT clause. Uncorrelated without FROM clause.
+            \\SELECT (SELECT 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "scalar_subquery_expression_in_group_by_correlated_without_from",
+            .sql =
+            \\# Scalar subquery expression in GROUP BY clause. Correlated without FROM clause.
+            \\SELECT SUM(int64_val) AS sum64
+            \\FROM Table1
+            \\GROUP BY (SELECT CONCAT('_', str_val)), str_val
+            \\ORDER BY str_val
+            ,
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "array_subquery_expression_in_select_uncorrelated_with_from",
+            .sql =
+            \\# Array subquery expression in SELECT clause. Uncorrelated with FROM clause.
+            \\SELECT ARRAY(SELECT int64_val FROM Table1 ORDER BY int64_val)
+            ,
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+    },
+}

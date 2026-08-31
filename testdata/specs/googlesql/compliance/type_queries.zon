@@ -1,0 +1,331 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/type_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/type_queries.test",
+    .cases = .{
+        .{
+            .desc = "type_1",
+            .sql = "SELECT cast(1 as INT32) int32_val",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "type_2",
+            .sql = "SELECT cast(2 as INT64) int64_val",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "type_3",
+            .sql = "SELECT cast(3 as UINT32) uint32_val",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "type_4",
+            .sql = "SELECT cast(4 as UINT64) uint64_val",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "type_5",
+            .sql = "SELECT cast(true as BOOL) bool_val",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "type_6",
+            .sql = "SELECT cast(6 as FLOAT) float_val",
+            .rows = .{
+                .{6},
+            },
+        },
+        .{
+            .desc = "type_7",
+            .sql = "SELECT cast(7 as DOUBLE) double_val",
+            .rows = .{
+                .{7},
+            },
+        },
+        .{
+            .desc = "type_8",
+            .sql = "SELECT cast(\"8\" as STRING) string_val",
+            .rows = .{
+                .{"8"},
+            },
+        },
+        .{
+            .desc = "type_9",
+            .sql = "SELECT cast(b\"9\" as BYTES) bytes_val",
+            .rows = .{
+                .{"\x39"},
+            },
+        },
+        .{
+            .desc = "type_10",
+            .sql = "SELECT DATE \"2014-07-18\" date_val",
+            .rows = .{
+                .{"2014-07-18"},
+            },
+        },
+        .{
+            .desc = "type_13",
+            .sql = "SELECT TIMESTAMP \"2014-07-18 00:00:00.000013 UTC\" ts_micros_val",
+            .rows = .{
+                .{"2014-07-18 00:00:00.000013+00"},
+            },
+        },
+        .{
+            .desc = "type_15",
+            .sql = "SELECT [16, 16.25, 16.5, 16.75] array_val",
+            .rows = .{
+                .{.{ 16, 16.25, 16.5, 16.75 }},
+            },
+        },
+        .{
+            .desc = "type_16",
+            .sql = "SELECT (SELECT AS STRUCT 17 x, 17.5 y) struct_val",
+            .rows = .{
+                .{.{ 17, 17.5 }},
+            },
+        },
+        .{
+            .desc = "type_17",
+            .sql =
+            \\# Conditionals are used to avoid introducing a CAST when producing a NULL value
+            \\# of a particular output type.
+            \\SELECT IF(FALSE, CAST(1 AS INT32), NULL) int32_val
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_18",
+            .sql = "SELECT IF(FALSE, CAST(2 AS INT64), NULL) int64_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_19",
+            .sql = "SELECT IF(FALSE, CAST(3 AS UINT32), NULL) uint32_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_20",
+            .sql = "SELECT IF(FALSE, CAST(4 AS UINT64), NULL) uint64_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_21",
+            .sql = "SELECT IF(FALSE, cast(true as bool), NULL) bool_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_22",
+            .sql = "SELECT IF(FALSE, CAST(6 AS FLOAT), NULL) float_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_23",
+            .sql = "SELECT IF(FALSE, CAST(7 AS DOUBLE), NULL) double_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_24",
+            .sql = "SELECT IF(FALSE, CAST(\"8\" AS STRING), NULL) string_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_25",
+            .sql = "SELECT IF(FALSE, CAST(b\"9\" AS BYTES), NULL) bytes_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_26",
+            .sql = "SELECT IF(FALSE, DATE \"2014-07-18\", NULL) date_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_29",
+            .sql =
+            \\SELECT IF(FALSE, TIMESTAMP "2014-07-18 00:00:00.000013 UTC", NULL)
+            \\  ts_micros_val
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_31",
+            .sql = "SELECT IF(FALSE, [16], NULL) array_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_32",
+            .sql = "SELECT IF(FALSE, (SELECT AS STRUCT 17 x, 17.5 y), NULL) struct_val",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "type_33",
+            .sql =
+            \\# Tests for ARRAY<type>
+            \\SELECT [1, 4, 9, NULL, 10] non_empty_array
+            ,
+            .rows = .{
+                .{.{ 1, 4, 9, null, 10 }},
+            },
+        },
+        .{
+            .desc = "type_34",
+            .sql = "SELECT [NULL, CAST(1 AS INT32), CAST(2 AS INT32), CAST(-1 AS INT32)] int32_val",
+            .rows = .{
+                .{.{ null, 1, 2, -1 }},
+            },
+        },
+        .{
+            .desc = "type_35",
+            .sql = "SELECT [CAST(5 AS INT64), NULL] int64_val",
+            .rows = .{
+                .{.{ 5, null }},
+            },
+        },
+        .{
+            .desc = "type_36",
+            .sql = "SELECT [NULL, CAST(3 AS UINT32), CAST(4 AS UINT32)] uint32_val",
+            .rows = .{
+                .{.{ null, 3, 4 }},
+            },
+        },
+        .{
+            .desc = "type_37",
+            .sql = "SELECT [CAST(4 AS UINT64), NULL, CAST(0 AS UINT64), CAST(2 AS UINT64)] uint64_val",
+            .rows = .{
+                .{.{ 4, null, 0, 2 }},
+            },
+        },
+        .{
+            .desc = "type_38",
+            .sql = "SELECT [true, NULL, false, true] bool_val",
+            .rows = .{
+                .{.{ true, null, false, true }},
+            },
+        },
+        .{
+            .desc = "type_39",
+            .sql = "SELECT [CAST(6 AS FLOAT), CAST(2 AS FLOAT), NULL] float_val",
+            .rows = .{
+                .{.{ 6, 2, null }},
+            },
+        },
+        .{
+            .desc = "type_40",
+            .sql = "SELECT [CAST(7 AS DOUBLE), NULL, CAST(3.14 AS DOUBLE)] double_val",
+            .rows = .{
+                .{.{ 7, null, 3.14 }},
+            },
+        },
+        .{
+            .desc = "type_41",
+            .sql = "SELECT [CAST(\"8\" AS STRING), NULL, CAST(\"googlesql\" AS STRING)] string_val",
+            .rows = .{
+                .{.{ "8", null, "googlesql" }},
+            },
+        },
+        .{
+            .desc = "type_42",
+            .sql = "SELECT [NULL, CAST(b\"9\" AS BYTES)] bytes_val",
+            .rows = .{
+                .{.{ null, "\x39" }},
+            },
+        },
+        .{
+            .desc = "type_43",
+            .sql = "SELECT [DATE \"2014-07-23\", NULL, DATE \"2014-07-18\", NULL] date_val",
+            .rows = .{
+                .{.{ "2014-07-23", null, "2014-07-18", null }},
+            },
+        },
+        .{
+            .desc = "type_46",
+            .sql = "SELECT [NULL, TIMESTAMP \"2014-07-18 00:00:00.000013 UTC\"] ts_micros_val",
+            .rows = .{
+                .{.{ null, "2014-07-18 00:00:00.000013+00" }},
+            },
+        },
+        .{
+            .desc = "type_48",
+            .sql = "SELECT ARRAY(SELECT AS STRUCT [1, 2, NULL] x, [NULL, \"y\"] y) array_val",
+            .rows = .{
+                .{.{.{ .{ 1, 2, null }, .{ null, "y" } }}},
+            },
+        },
+        .{
+            .desc = "type_49",
+            .sql = "SELECT [(SELECT AS STRUCT 17 x, 17.5 y), (SELECT AS STRUCT NULL x, 17.75 y), NULL] struct_val",
+            .rows = .{
+                .{.{ .{ 17, 17.5 }, .{ null, 17.75 }, null }},
+            },
+        },
+        .{
+            .desc = "type_50",
+            .sql =
+            \\# Struct of simple types
+            \\SELECT (
+            \\  SELECT AS STRUCT
+            \\  CAST(0 AS INT32) int32_val,
+            \\  CAST(1 AS INT64) int64_val,
+            \\  CAST(2 AS UINT32) uint32_val,
+            \\  CAST(3 AS UINT64) uint64_val,
+            \\  cast(false as bool) bool_val,
+            \\  CAST("8" AS STRING) string_val,
+            \\  CAST(b"9" AS BYTES) bytes_val) struct_val
+            ,
+            .rows = .{
+                .{.{ 0, 1, 2, 3, false, "8", "\x39" }},
+            },
+        },
+        .{
+            .desc = "type_51",
+            .sql =
+            \\# Struct of date and timestamp types
+            \\SELECT (
+            \\  SELECT AS STRUCT
+            \\  DATE "2014-07-18" date_val,
+            \\  TIMESTAMP "2014-07-18 00:00:00.000013 UTC" ts_micros_val)
+            \\    struct_val
+            ,
+            .rows = .{
+                .{.{ "2014-07-18", "2014-07-18 00:00:00.000013+00" }},
+            },
+        },
+    },
+}

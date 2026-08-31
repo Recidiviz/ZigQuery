@@ -7,6 +7,7 @@
 // location recording. The catalog arrives as a SimpleCatalogProto in protobuf
 // JSON form so the caller never touches C++ object lifetimes.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -22,6 +23,7 @@
 #include "re2/re2.h"
 #include "unicode/errorcode.h"
 #include "unicode/normalizer2.h"
+#include "unicode/timezone.h"
 #include "unicode/uchar.h"
 #include "unicode/unistr.h"
 #include "unicode/utf8.h"
@@ -924,6 +926,90 @@ int GoogleSQL_CaseMap(int op, const char* in, int inlen, char** out,
   }
   *out_len = static_cast<int>(result.size());
   *out = reinterpret_cast<char*>(CopyToMalloc(result));
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// ICU surface for named-timezone offset resolution (zoneOffsetSeconds in
+// time_util.zig; ICU's tzdata is already linked in via icudata).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// getCanonicalID + createTimeZone (alias lookup plus a fresh heap object)
+// cost far more per call than getOffset's own transition-table search
+// (`zig build tz-bench` measures the gap). Cached per thread, keyed on the
+// caller's exact zone spelling rather than the canonical name, so no
+// synchronization is needed: every connection in this engine is
+// single-threaded end to end. Every getOffset call below still runs fresh
+// against the real instant, so DST is never at risk — only the zone
+// resolution is memoized, not the offset.
+struct TimeZoneCacheEntry {
+  std::string zone;
+  std::unique_ptr<icu::TimeZone> tz;
+};
+constexpr size_t kTimeZoneCacheCapacity = 16;
+thread_local std::vector<TimeZoneCacheEntry> g_tz_cache;
+
+// Resolved icu::TimeZone for `zone`, from the thread-local cache if present;
+// canonicalizes and constructs (then caches) on a miss. Null if `zone` is not
+// a recognized ID.
+icu::TimeZone* ResolveTimeZone(absl::string_view zone) {
+  for (size_t i = 0; i < g_tz_cache.size(); ++i) {
+    if (g_tz_cache[i].zone == zone) {
+      // Move the hit to the back so eviction below takes the actual
+      // least-recently-used entry, not just the oldest inserted one.
+      if (i + 1 != g_tz_cache.size()) {
+        std::rotate(g_tz_cache.begin() + i, g_tz_cache.begin() + i + 1,
+                    g_tz_cache.end());
+      }
+      return g_tz_cache.back().tz.get();
+    }
+  }
+
+  icu::UnicodeString id = icu::UnicodeString::fromUTF8(zone);
+  icu::UnicodeString canonical;
+  icu::ErrorCode ec;
+  icu::TimeZone::getCanonicalID(id, canonical, ec);
+  if (ec.isFailure()) return nullptr;
+
+  std::unique_ptr<icu::TimeZone> tz(icu::TimeZone::createTimeZone(canonical));
+  icu::TimeZone* raw = tz.get();
+  if (g_tz_cache.size() >= kTimeZoneCacheCapacity) {
+    g_tz_cache.erase(g_tz_cache.begin());
+  }
+  g_tz_cache.push_back({std::string(zone), std::move(tz)});
+  return raw;
+}
+
+}  // namespace
+
+// zone: an IANA/Olson ID ("America/Chicago") or ICU custom ID ("GMT-08:00").
+// date_millis: a UTC instant, milliseconds since epoch. Writes the zone's
+// total offset (raw + DST) in seconds east of UTC to *out_offset_seconds.
+// Returns 0 on success; 1 if `zone` is not a recognized ID.
+int GoogleSQL_TimeZoneOffsetSeconds(const char* zone, int zonelen,
+                                     int64_t date_millis,
+                                     int32_t* out_offset_seconds,
+                                     char** out_err) {
+  *out_err = nullptr;
+  *out_offset_seconds = 0;
+  icu::TimeZone* tz = ResolveTimeZone(absl::string_view(zone, zonelen));
+  if (tz == nullptr) {
+    *out_err = reinterpret_cast<char*>(CopyToMalloc(
+        std::string("invalid time zone: ") + std::string(zone, zonelen)));
+    return 1;
+  }
+  int32_t raw_offset = 0, dst_offset = 0;
+  icu::ErrorCode offset_ec;
+  tz->getOffset(static_cast<UDate>(date_millis), /*local=*/false, raw_offset,
+                dst_offset, offset_ec);
+  if (offset_ec.isFailure()) {
+    *out_err = reinterpret_cast<char*>(
+        CopyToMalloc(std::string("time zone offset lookup failed")));
+    return 1;
+  }
+  *out_offset_seconds = (raw_offset + dst_offset) / 1000;
   return 0;
 }
 

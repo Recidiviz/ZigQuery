@@ -1,0 +1,49 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/cast_timestamp_with_timezone",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/cast_timestamp_with_timezone.test",
+    .cases = .{
+        .{
+            .desc = "cast_string_to_with_format_default_time_zone",
+            .sql =
+            \\# Test that if AT TIME ZONE is not specified, the default time zone is used.
+            \\SELECT CAST('2134-05-06' as timestamp FORMAT 'yyyy-mm-dd')
+            ,
+            .rows = .{
+                .{"2134-05-06 07:00:00+00"},
+            },
+        },
+        .{
+            .desc = "cast_string_to_with_format_user_specified_time_zone",
+            .sql =
+            \\# Test that if AT TIME ZONE is specified, the user specified time zone is used.
+            \\SELECT CAST('2134-05-06' as timestamp FORMAT 'yyyy-mm-dd' AT TIME ZONE '-08')
+            ,
+            .rows = .{
+                .{"2134-05-06 08:00:00+00"},
+            },
+        },
+        .{
+            .desc = "cast_string_to_with_format_default_time_zone_nanos",
+            .sql =
+            \\# Test that if AT TIME ZONE is not specified, the default time zone is used.
+            \\SELECT CAST('2134-05-06' as timestamp FORMAT 'yyyy-mm-dd')
+            ,
+            .rows = .{
+                .{"2134-05-06 07:00:00+00"},
+            },
+        },
+        .{
+            .desc = "cast_string_to_with_format_user_specified_time_zone_nanos",
+            .sql =
+            \\# Test that if AT TIME ZONE is specified, the user specified time zone is used.
+            \\SELECT CAST('2134-05-06' as timestamp FORMAT 'yyyy-mm-dd' AT TIME ZONE '-08')
+            ,
+            .rows = .{
+                .{"2134-05-06 08:00:00+00"},
+            },
+        },
+    },
+}

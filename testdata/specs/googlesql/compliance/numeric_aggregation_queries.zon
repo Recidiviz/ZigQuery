@@ -1,0 +1,662 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/numeric_aggregation_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/numeric_aggregation_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericEmpty AS
+            \\SELECT CAST(1 as int64) as row_id, val FROM (SELECT CAST(1 as NUMERIC) as val) WHERE false
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericNull AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(NULL AS NUMERIC) as val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericOneValue AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(1 AS NUMERIC) as val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericAllValues AS
+            \\SELECT CAST(1 as int64) as row_id, CAST(1 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(2 as int64) as row_id, CAST(2 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(3 as int64) as row_id, CAST(3 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(4 as int64) as row_id, CAST(4 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(5 as int64) as row_id, CAST(5 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(6 as int64) as row_id, CAST(-1.1 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(7 as int64) as row_id, CAST(-2.2 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(8 as int64) as row_id, CAST(-3.3 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(9 as int64) as row_id, CAST(-4.4 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(10 as int64) as row_id, CAST(-5.5 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(11 as int64) as row_id, CAST(NULL AS NUMERIC) as val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableNumericLargeValues AS
+            \\SELECT CAST(1 as int64) as row_id, CAST("99999999999999999999999999999.999999999" AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(2 as int64) as row_id, CAST("99999999999999999999999999999.999999999" AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(3 as int64) as row_id, CAST("99999999999999999999999999999.999999999" AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(4 as int64) as row_id, CAST("-99999999999999999999999999999.999999999" AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(5 as int64) as row_id, CAST(1 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(6 as int64) as row_id, CAST(10 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(7 as int64) as row_id, CAST(-1 AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(8 as int64) as row_id, CAST("-99999999999999999999999999999.999999999" AS NUMERIC) as val
+            \\UNION ALL
+            \\SELECT CAST(9 as int64) as row_id, CAST("-99999999999999999999999999999.999999999" AS NUMERIC) as val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericEmpty AS
+            \\SELECT CAST(1 as int64) as row_id, val FROM (SELECT CAST(1 as BIGNUMERIC) as val) WHERE false
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericNull AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       CAST(NULL AS bignumeric) as val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericOneValue AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       CAST('1' AS bignumeric) as val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericAllValues AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       CAST('1.1' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(2 AS int64) as row_id,
+            \\       CAST('1.1' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(3 AS int64) as row_id,
+            \\       CAST(NULL AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(4 AS int64) as row_id,
+            \\       CAST('-3.3' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(5 AS int64) as row_id,
+            \\       CAST(NULL AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(6 AS int64) as row_id,
+            \\       CAST('-8.8' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(7 AS int64) as row_id,
+            \\       CAST('13.13' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(8 AS int64) as row_id,
+            \\       CAST('-21.21' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(9 AS int64) as row_id,
+            \\       CAST('34.34' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(10 AS int64) as row_id,
+            \\       CAST('-55.55' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(11 AS int64) as row_id,
+            \\       CAST('89.89' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(12 AS int64) as row_id,
+            \\       CAST(NULL AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(13 AS int64) as row_id,
+            \\       CAST('233.233' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(14 AS int64) as row_id,
+            \\       CAST('-377.377' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(15 AS int64) as row_id,
+            \\       CAST('610.610' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(16 AS int64) as row_id,
+            \\       CAST('-987.987' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(17 AS int64) as row_id,
+            \\       CAST('1597.1597' AS bignumeric) as val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableBigNumericLargeValues AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       CAST('578960446186580977117854925043439539266.34992332820282019728792003956564819967' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(2 AS int64) as row_id,
+            \\       CAST('-578960446186580977117854925043439539266.34992332820282019728792003956564819968' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(3 AS int64) as row_id,
+            \\       CAST(NULL AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(4 AS int64) as row_id,
+            \\       CAST('123456789012345678901234567890123456789.12345678901234567890123456789012345678' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(5 AS int64) as row_id,
+            \\       CAST(NULL AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(6 AS int64) as row_id,
+            \\       CAST('-123456789012345678901234567890123456789.12345678901234567890123456789012345678' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(7 AS int64) as row_id,
+            \\       CAST('1' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(8 AS int64) as row_id,
+            \\       CAST('-10' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(9 AS int64) as row_id,
+            \\       CAST('-578960446186580977117854925043439539266.34992332820282019728792003956564819968' AS bignumeric) as val
+            \\UNION ALL
+            \\SELECT CAST(10 AS int64) as row_id,
+            \\       CAST('578960446186580977117854925043439539266.34992332820282019728792003956564819967' AS bignumeric) as val
+            ,
+        },
+        .{
+            .desc = "numeric_sum_null",
+            .sql = "SELECT SUM(val) FROM TableNumericNull",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_sum_one",
+            .sql = "SELECT SUM(val) FROM TableNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "numeric_sum_all",
+            .sql = "SELECT SUM(val) FROM TableNumericAllValues",
+            .rows = .{
+                .{-1.5},
+            },
+        },
+        .{
+            .desc = "numeric_sum_all_filtered_null",
+            .sql = "SELECT SUM(val) FROM TableNumericAllValues WHERE row_id = 11",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_sum_all_filtered_none",
+            .sql = "SELECT SUM(val) FROM TableNumericAllValues WHERE row_id = 100",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_sum_large",
+            .sql = "SELECT SUM(val) FROM TableNumericLargeValues",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "numeric_sum_overflow_1",
+            .sql = "SELECT SUM(val) FROM TableNumericLargeValues WHERE row_id in (1, 5)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "numeric_sum_overflow_2",
+            .sql = "SELECT SUM(val) FROM TableNumericLargeValues WHERE row_id in (4, 7)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "numeric_avg_null",
+            .sql = "SELECT AVG(val) FROM TableNumericNull",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_avg_one",
+            .sql = "SELECT AVG(val) FROM TableNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "numeric_avg_all",
+            .sql = "SELECT AVG(val) FROM TableNumericAllValues",
+            .rows = .{
+                .{-0.15},
+            },
+        },
+        .{
+            .desc = "numeric_avg_all_filtered_null",
+            .sql = "SELECT AVG(val) FROM TableNumericAllValues WHERE row_id = 11",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_avg_all_filtered_none",
+            .sql = "SELECT AVG(val) FROM TableNumericAllValues WHERE row_id = 100",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_avg_large",
+            .sql = "SELECT AVG(val) FROM TableNumericLargeValues",
+            .rows = .{
+                .{1.111111111},
+            },
+        },
+        .{
+            .desc = "numeric_avg_overflow_1",
+            .sql = "SELECT AVG(val) FROM TableNumericLargeValues WHERE row_id in (1, 5)",
+            .rows = .{
+                .{50000000000000000000000000000.5},
+            },
+        },
+        .{
+            .desc = "numeric_avg_overflow_2",
+            .sql = "SELECT AVG(val) FROM TableNumericLargeValues WHERE row_id in (4, 7)",
+            .rows = .{
+                .{-50000000000000000000000000000.5},
+            },
+        },
+        .{
+            .desc = "bignumeric_sum_null",
+            .sql = "SELECT SUM(val) FROM TableBigNumericNull",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_sum_one",
+            .sql = "SELECT SUM(val) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "bignumeric_sum_all",
+            .sql = "SELECT SUM(val) FROM TableBigNumericAllValues",
+            .rows = .{
+                .{1126.3387},
+            },
+        },
+        .{
+            .desc = "bignumeric_sum_all_filtered_null",
+            .sql = "SELECT SUM(val) FROM TableBigNumericAllValues WHERE row_id = 3",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_sum_all_filtered_none",
+            .sql = "SELECT SUM(val) FROM TableBigNumericAllValues WHERE row_id = 100",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_sum_large",
+            .sql = "SELECT SUM(val) FROM TableBigNumericLargeValues",
+            .rows = .{
+                .{-9.00000000000000000000000000000000000002},
+            },
+        },
+        .{
+            .desc = "bignumeric_sum_overflow_1",
+            .sql = "SELECT SUM(val) FROM TableBigNumericLargeValues WHERE row_id in (1, 7)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "bignumeric_sum_overflow_2",
+            .sql = "SELECT SUM(val) FROM TableBigNumericLargeValues WHERE row_id in (8, 9)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "bignumeric_avg_null",
+            .sql = "SELECT AVG(val) FROM TableBigNumericNull",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_avg_one",
+            .sql = "SELECT AVG(val) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "bignumeric_avg_all",
+            .sql = "SELECT AVG(val) FROM TableBigNumericAllValues",
+            .rows = .{
+                .{80.45276428571428571428571428571428571429},
+            },
+        },
+        .{
+            .desc = "bignumeric_avg_all_filtered_null",
+            .sql = "SELECT AVG(val) FROM TableBigNumericAllValues WHERE row_id = 3",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_avg_all_filtered_none",
+            .sql = "SELECT AVG(val) FROM TableBigNumericAllValues WHERE row_id = 100",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_avg_large",
+            .sql = "SELECT AVG(val) FROM TableBigNumericLargeValues",
+            .rows = .{
+                .{-1.125},
+            },
+        },
+        .{
+            .desc = "bignumeric_avg_overflow_on_sum_1",
+            .sql = "SELECT AVG(val) FROM TableBigNumericLargeValues WHERE row_id in (1, 7)",
+            .rows = .{
+                .{289480223093290488558927462521719769633.67496166410141009864396001978282409984},
+            },
+        },
+        .{
+            .desc = "bignumeric_avg_overflow_on_sum_2",
+            .sql = "SELECT AVG(val) FROM TableBigNumericLargeValues WHERE row_id in (8, 9)",
+            .rows = .{
+                .{-289480223093290488558927462521719769638.17496166410141009864396001978282409984},
+            },
+        },
+        .{
+            .desc = "numeric_min_empty",
+            .sql = "SELECT MIN(val) FROM TableNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_min_null",
+            .sql = "SELECT MIN(val) FROM TableNumericNull",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_min_one",
+            .sql = "SELECT MIN(val) FROM TableNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "numeric_min_all",
+            .sql = "SELECT MIN(val) FROM TableNumericAllValues",
+            .rows = .{
+                .{-5.5},
+            },
+        },
+        .{
+            .desc = "numeric_min_all_filtered_null",
+            .sql = "SELECT MIN(val) FROM TableNumericAllValues WHERE row_id = 11",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_min_all_filtered_none",
+            .sql = "SELECT MIN(val) FROM TableNumericAllValues WHERE row_id = 100",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_min_large_values",
+            .sql = "SELECT MIN(val) FROM TableNumericLargeValues",
+            .rows = .{
+                .{-99999999999999999999999999999.999999999},
+            },
+        },
+        .{
+            .desc = "numeric_max_empty",
+            .sql = "SELECT MAX(val) FROM TableNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_max_null",
+            .sql = "SELECT MAX(val) FROM TableNumericNull",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_max_one",
+            .sql = "SELECT MAX(val) FROM TableNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "numeric_max_all",
+            .sql = "SELECT MAX(val) FROM TableNumericAllValues",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "numeric_max_all_filtered_null",
+            .sql = "SELECT MAX(val) FROM TableNumericAllValues WHERE row_id = 11",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_max_all_filtered_none",
+            .sql = "SELECT MAX(val) FROM TableNumericAllValues WHERE row_id = 100",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "numeric_max_large_values",
+            .sql = "SELECT MAX(val) FROM TableNumericLargeValues",
+            .rows = .{
+                .{99999999999999999999999999999.999999999},
+            },
+        },
+        .{
+            .desc = "bignumeric_min_empty",
+            .sql = "SELECT MIN(val) FROM TableBigNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_min_null",
+            .sql = "SELECT MIN(val) FROM TableBigNumericNull",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_min_one",
+            .sql = "SELECT MIN(val) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "bignumeric_min_all",
+            .sql = "SELECT MIN(val) FROM TableBigNumericAllValues",
+            .rows = .{
+                .{-987.987},
+            },
+        },
+        .{
+            .desc = "bignumeric_min_all_filtered_null",
+            .sql = "SELECT MIN(val) FROM TableBigNumericAllValues WHERE row_id = 3",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_min_all_filtered_none",
+            .sql = "SELECT MIN(val) FROM TableBigNumericAllValues WHERE row_id = 100",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_min_large_values",
+            .sql = "SELECT MIN(val) FROM TableBigNumericLargeValues",
+            .rows = .{
+                .{-578960446186580977117854925043439539266.34992332820282019728792003956564819968},
+            },
+        },
+        .{
+            .desc = "bignumeric_max_empty",
+            .sql = "SELECT MAX(val) FROM TableBigNumericEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_max_null",
+            .sql = "SELECT MAX(val) FROM TableBigNumericNull",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_max_one",
+            .sql = "SELECT MAX(val) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "bignumeric_max_all",
+            .sql = "SELECT MAX(val) FROM TableBigNumericAllValues",
+            .rows = .{
+                .{1597.1597},
+            },
+        },
+        .{
+            .desc = "bignumeric_max_all_filtered_null",
+            .sql = "SELECT MAX(val) FROM TableBigNumericAllValues WHERE row_id = 3",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_max_all_filtered_none",
+            .sql = "SELECT MAX(val) FROM TableBigNumericAllValues WHERE row_id = 100",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "bignumeric_max_large_values",
+            .sql = "SELECT MAX(val) FROM TableBigNumericLargeValues",
+            .rows = .{
+                .{578960446186580977117854925043439539266.34992332820282019728792003956564819967},
+            },
+        },
+        .{
+            .desc = "numeric_count_all",
+            .sql = "SELECT COUNT(val) FROM TableNumericAllValues",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "numeric_count_null",
+            .sql = "SELECT COUNT(val) FROM TableNumericNull",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "numeric_count_one",
+            .sql = "SELECT COUNT(val) FROM TableNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "numeric_count_distinct",
+            .sql = "SELECT COUNT(DISTINCT val) FROM TableNumericLargeValues",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "bignumeric_count_all",
+            .sql = "SELECT COUNT(val) FROM TableBigNumericAllValues",
+            .rows = .{
+                .{14},
+            },
+        },
+        .{
+            .desc = "bignumeric_count_null",
+            .sql = "SELECT COUNT(val) FROM TableBigNumericNull",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "bignumeric_count_one",
+            .sql = "SELECT COUNT(val) FROM TableBigNumericOneValue",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "bignumeric_count_distinct",
+            .sql = "SELECT COUNT(DISTINCT val) FROM TableBigNumericLargeValues",
+            .rows = .{
+                .{6},
+            },
+        },
+    },
+}

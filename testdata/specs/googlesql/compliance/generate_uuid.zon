@@ -1,0 +1,83 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/generate_uuid",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/generate_uuid.test",
+    .cases = .{
+        .{
+            .desc = "regexp",
+            .sql =
+            \\# Verify that uuid string satisfies the form:
+            \\# xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx
+            \\# where 'x' represents a lowercase hexidecimal digit.
+            \\SELECT
+            \\  REGEXP_CONTAINS(
+            \\      GENERATE_UUID(),
+            \\      '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            \\  )
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "with",
+            .sql =
+            \\# When GENERATE_UUID() is used in WITH clause, the result has to be the same
+            \\# because of run-once behavior
+            \\WITH T AS (
+            \\  SELECT GENERATE_UUID() AS uuid
+            \\)
+            \\SELECT COUNT(DISTINCT uuid) AS cnt
+            \\FROM (
+            \\  SELECT uuid FROM T
+            \\  UNION ALL
+            \\  SELECT uuid FROM T
+            \\)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "different_columns",
+            .sql =
+            \\# Tests which should pass with very high probability
+            \\# Different columns should have different values
+            \\SELECT (r1 = r2 OR r2 = r3) wrong FROM
+            \\(SELECT GENERATE_UUID() r1, GENERATE_UUID() r2, GENERATE_UUID() r3)
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "different_rows",
+            .sql =
+            \\# Different rows should have different values
+            \\SELECT COUNT(DISTINCT GENERATE_UUID()) AS cnt
+            \\FROM UNNEST([1, 2, 3])
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "branches_of_union",
+            .sql =
+            \\SELECT COUNT(DISTINCT val)
+            \\FROM (
+            \\  SELECT GENERATE_UUID() val
+            \\  UNION ALL
+            \\  SELECT GENERATE_UUID() val
+            \\  UNION ALL
+            \\  SELECT GENERATE_UUID() val
+            \\)
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+    },
+}

@@ -1,0 +1,1079 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/in_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/in_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Queries with IN clause.
+            \\CREATE TABLE Test AS
+            \\SELECT cast(1 as int64) as x,
+            \\       cast('a' as string) as y,
+            \\       cast(100 as int32) as int32_col,
+            \\       cast(101 as uint32) as uint32_col,
+            \\       cast(102 as uint64) as uint64_col,
+            \\       True as bool_col,
+            \\       cast('bytes' as bytes) as bytes_col,
+            \\       cast('2015-01-30' as date) as date_col,
+            \\       cast('2015-01-29 10:47:20' as timestamp) as timestamp_col,
+            \\       cast(1 as int64) z
+            \\UNION ALL
+            \\SELECT 2, NULL, 200, 201, 202, False,
+            \\       cast('bytes2' as bytes),
+            \\       '2014-01-30', '2014-01-29 10:47:20',
+            \\       2
+            \\UNION ALL
+            \\SELECT 3, 'b', 300, 301, 302, True,
+            \\       cast('bytes3' as bytes),
+            \\       '2013-01-30', '2013-01-29 10:47:20',
+            \\       1
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestNumeric AS
+            \\SELECT 'a' as y,
+            \\       cast(1.23 as numeric) as numeric_col
+            \\UNION ALL
+            \\SELECT 'b',
+            \\       cast(-3.14 as numeric)
+            \\UNION ALL
+            \\SELECT 'c',
+            \\       cast(9999 as numeric)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestBigNumeric AS
+            \\SELECT 'a' as y,
+            \\       cast(1.234567890123456789 as bignumeric) as bignumeric_col
+            \\UNION ALL
+            \\SELECT 'b',
+            \\       cast(-3.141592653589793238 as bignumeric)
+            \\UNION ALL
+            \\SELECT 'c',
+            \\       cast("999999999999999999999999999" as bignumeric)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestUuid AS
+            \\SELECT 'a' as str,
+            \\       cast('9d3da323-4c20-360f-bd9b-ec54feec54f0' as uuid) as uuid_col
+            \\UNION ALL
+            \\SELECT 'b',
+            \\       cast('00000000000040008000000000000000' as uuid)
+            \\UNION ALL
+            \\SELECT 'c',
+            \\       cast('ffffffff-ffff-ffff-ffff-ffffffffffff' as uuid)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestStruct AS
+            \\SELECT cast(1 as int64) x, (1, 2) struct_col
+            \\UNION ALL
+            \\SELECT cast(2 as int64) x, (3, 4) struct_col
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestRange AS
+            \\SELECT 'a' as y,
+            \\       RANGE<DATE> '[2020-01-01, 2020-12-31)' as range_date_col,
+            \\       RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)' as range_timestamp_col
+            \\UNION ALL
+            \\SELECT 'b',
+            \\       RANGE<DATE> '[2020-01-01, UNBOUNDED)',
+            \\       RANGE<TIMESTAMP> '[2020-01-01, UNBOUNDED)'
+            \\UNION ALL
+            \\SELECT 'c',
+            \\       RANGE<DATE> '[UNBOUNDED, 2020-12-31)',
+            \\       RANGE<TIMESTAMP> '[UNBOUNDED, 2020-12-31)'
+            \\UNION ALL
+            \\SELECT 'd',
+            \\       RANGE<DATE> '[UNBOUNDED, UNBOUNDED)',
+            \\       RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestDatetimeRange AS
+            \\SELECT 'a' as y,
+            \\       RANGE<DATETIME> '[2020-01-01, 2020-12-31)' as range_datetime_col
+            \\UNION ALL
+            \\SELECT 'b',
+            \\       RANGE<DATETIME> '[2020-01-01, UNBOUNDED)'
+            \\UNION ALL
+            \\SELECT 'c',
+            \\       RANGE<DATETIME> '[UNBOUNDED, 2020-12-31)'
+            \\UNION ALL
+            \\SELECT 'd',
+            \\       RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "in_clause_simple",
+            .sql = "SELECT y FROM Test WHERE x IN(1, 2) ORDER BY y",
+            .rows = .{
+                .{null},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest",
+            .sql = "SELECT y FROM Test WHERE x IN UNNEST(ARRAY<INT64>[1,2]) ORDER BY y",
+            .rows = .{
+                .{null},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_null_selector",
+            .sql = "SELECT x FROM Test WHERE NULL IN (1, 2)",
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_field_with_null_value",
+            .sql = "SELECT x FROM Test WHERE y IN ('a', 'b') ORDER BY x",
+            .rows = .{
+                .{1},
+                .{3},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_null_array",
+            .sql = "SELECT y FROM Test WHERE x IN UNNEST(CAST(NULL AS ARRAY<INT64>))",
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_nulls_in_list",
+            .sql = "SELECT y FROM Test WHERE x IN (1, 2, NULL) ORDER BY y",
+            .rows = .{
+                .{null},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_not_in",
+            .sql = "SELECT y FROM Test WHERE x NOT IN(1, 2)",
+            .rows = .{
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_not_in_numeric",
+            .sql =
+            \\SELECT y FROM TestNumeric
+            \\WHERE numeric_col NOT IN(CAST(1.23 AS NUMERIC), CAST(-3.14 AS NUMERIC))
+            ,
+            .rows = .{
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_in_numeric",
+            .sql =
+            \\SELECT y FROM TestNumeric
+            \\WHERE numeric_col IN(CAST(1.23 AS NUMERIC), CAST(-3.14 AS NUMERIC))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"b"},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_not_in_bignumeric",
+            .sql =
+            \\SELECT y FROM TestBigNumeric
+            \\WHERE bignumeric_col NOT IN(CAST(1.234567890123456789 AS BIGNUMERIC), CAST(-3.141592653589793238 AS BIGNUMERIC))
+            ,
+            .rows = .{
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_in_bignumeric",
+            .sql =
+            \\SELECT y FROM TestBigNumeric
+            \\WHERE bignumeric_col IN(CAST(1.234567890123456789 AS BIGNUMERIC), CAST(-3.141592653589793238 AS BIGNUMERIC))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"b"},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_not_in_uuid",
+            .sql =
+            \\SELECT str FROM TestUuid
+            \\WHERE uuid_col NOT IN(CAST('9d3da323-4c20-360f-bd9b-ec54feec54f0' AS UUID), CAST('00000000-0000-4000-8000-000000000000' AS UUID))
+            ,
+            .rows = .{
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_in_uuid",
+            .sql =
+            \\SELECT str FROM TestUuid
+            \\WHERE uuid_col IN(CAST('9d3da323-4c20-360f-bd9b-ec54feec54f0' AS UUID), CAST('00000000-0000-4000-8000-000000000000' AS UUID))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"b"},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_not_in_range_date",
+            .sql =
+            \\SELECT y FROM TestRange
+            \\WHERE range_date_col NOT IN(RANGE<DATE> '[2020-01-01, 2020-12-31)', RANGE<DATE> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_in_range_date",
+            .sql =
+            \\SELECT y FROM TestRange
+            \\WHERE range_date_col IN(RANGE<DATE> '[2020-01-01, 2020-12-31)', RANGE<DATE> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"d"},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_not_in_range_timestamp",
+            .sql =
+            \\SELECT y FROM TestRange
+            \\WHERE range_timestamp_col NOT IN(RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)', RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_in_range_timestamp",
+            .sql =
+            \\SELECT y FROM TestRange
+            \\WHERE range_timestamp_col IN(RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)', RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"d"},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_not_in_range_datetime",
+            .sql =
+            \\SELECT y FROM TestDatetimeRange
+            \\WHERE range_datetime_col NOT IN(RANGE<DATETIME> '[2020-01-01, 2020-12-31)', RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_in_range_datetime",
+            .sql =
+            \\SELECT y FROM TestDatetimeRange
+            \\WHERE range_datetime_col IN(RANGE<DATETIME> '[2020-01-01, 2020-12-31)', RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"d"},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_not_in",
+            .sql = "SELECT y FROM Test WHERE x NOT IN UNNEST(ARRAY<INT64>[1,2]) ORDER BY y",
+            .rows = .{
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_null_selector",
+            .sql = "SELECT x FROM Test WHERE NULL NOT IN (1, 2)",
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_not_in_nulls_in_list",
+            .sql = "SELECT y FROM Test WHERE x NOT IN (1, 2, NULL)",
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_function_selector",
+            .sql = "SELECT y FROM Test WHERE x + 1 IN (2, 3) ORDER BY y",
+            .rows = .{
+                .{null},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_function_selector2",
+            .sql = "SELECT y FROM Test WHERE x + 1 IN (4, NULL)",
+            .rows = .{
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "in_clause_function_not_in_selector",
+            .sql = "SELECT y FROM Test WHERE x + 1 NOT IN (2, 3)",
+            .rows = .{
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "in_clause_subquery",
+            .sql =
+            \\SELECT y FROM Test WHERE x IN (
+            \\  SELECT CAST(1 AS INT64) t1 UNION ALL SELECT 2) ORDER BY y
+            ,
+            .rows = .{
+                .{null},
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_subquery",
+            .sql =
+            \\SELECT y FROM Test WHERE x NOT IN (
+            \\  SELECT CAST(2 AS INT64) UNION ALL SELECT 3)
+            ,
+            .rows = .{
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "in_clause_subquery_range_date",
+            .sql =
+            \\SELECT y FROM TestRange WHERE range_date_col IN (
+            \\  SELECT RANGE<DATE> '[2020-01-01, 2020-12-31)' t1
+            \\  UNION ALL
+            \\  SELECT RANGE<DATE> '[UNBOUNDED, UNBOUNDED)')
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"a"},
+                .{"d"},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_subquery_range_date",
+            .sql =
+            \\SELECT y FROM TestRange WHERE range_date_col NOT IN (
+            \\  SELECT RANGE<DATE> '[2020-01-01, 2020-12-31)' t1
+            \\  UNION ALL
+            \\  SELECT RANGE<DATE> '[UNBOUNDED, UNBOUNDED)')
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_subquery_range_timestamp",
+            .sql =
+            \\SELECT y FROM TestRange WHERE range_timestamp_col IN (
+            \\  SELECT RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)' t1
+            \\  UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)')
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"a"},
+                .{"d"},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_subquery_range_timestamp",
+            .sql =
+            \\SELECT y FROM TestRange WHERE range_timestamp_col NOT IN (
+            \\  SELECT RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)' t1
+            \\  UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)')
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_subquery_range_datetime",
+            .sql =
+            \\SELECT y FROM TestDatetimeRange WHERE range_datetime_col IN (
+            \\  SELECT RANGE<DATETIME> '[2020-01-01, 2020-12-31)' t1
+            \\  UNION ALL
+            \\  SELECT RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)')
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"a"},
+                .{"d"},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_subquery_range_datetime",
+            .sql =
+            \\SELECT y FROM TestDatetimeRange WHERE range_datetime_col NOT IN (
+            \\  SELECT RANGE<DATETIME> '[2020-01-01, 2020-12-31)' t1
+            \\  UNION ALL
+            \\  SELECT RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)')
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_subquery_range_date_unnest",
+            .sql =
+            \\SELECT y FROM TestRange WHERE range_date_col IN (
+            \\  SELECT i FROM UNNEST([RANGE<DATE> '[2020-01-01, 2020-12-31)',
+            \\                        RANGE<DATE> '[UNBOUNDED, UNBOUNDED)']) i)
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"a"},
+                .{"d"},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_subquery_range_date_unnest",
+            .sql =
+            \\SELECT y FROM TestRange WHERE range_date_col NOT IN (
+            \\  SELECT i FROM UNNEST([RANGE<DATE> '[2020-01-01, 2020-12-31)',
+            \\                        RANGE<DATE> '[UNBOUNDED, UNBOUNDED)']) i)
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_subquery_range_timestamp_unnest",
+            .sql =
+            \\SELECT y FROM TestRange WHERE range_timestamp_col IN (
+            \\  SELECT i FROM UNNEST([RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)',
+            \\                        RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)']) i)
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"a"},
+                .{"d"},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_subquery_range_timestamp_unnest",
+            .sql =
+            \\SELECT y FROM TestRange WHERE range_timestamp_col NOT IN (
+            \\  SELECT i FROM UNNEST([RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)',
+            \\                        RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)']) i)
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_subquery_range_datetime_unnest",
+            .sql =
+            \\SELECT y FROM TestDatetimeRange WHERE range_datetime_col IN (
+            \\  SELECT i FROM UNNEST([RANGE<DATETIME> '[2020-01-01, 2020-12-31)',
+            \\                        RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)']) i)
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"a"},
+                .{"d"},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_subquery_range_datetime_unnest",
+            .sql =
+            \\SELECT y FROM TestDatetimeRange WHERE range_datetime_col NOT IN (
+            \\  SELECT i FROM UNNEST([RANGE<DATETIME> '[2020-01-01, 2020-12-31)',
+            \\                        RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)']) i)
+            \\ORDER BY y
+            ,
+            .rows = .{
+                .{"b"},
+                .{"c"},
+            },
+        },
+        .{
+            .desc = "in_clause_empty_subquery",
+            .sql =
+            \\SELECT y FROM Test WHERE x IN (
+            \\  SELECT x FROM Test WHERE 1=0)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_not_int_empty_subquery",
+            .sql =
+            \\SELECT y FROM Test WHERE x NOT IN (
+            \\  SELECT x FROM Test WHERE 1=0) ORDER BY y
+            ,
+            .rows = .{
+                .{null},
+                .{"a"},
+                .{"b"},
+            },
+        },
+        .{
+            .desc = "in_clause_simple_in_select",
+            .sql = "SELECT 1 IN (1, 2)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_in_select",
+            .sql = "SELECT 1 IN UNNEST(ARRAY<INT64>[1, 2])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_in_select_numeric",
+            .sql = "SELECT CAST(1.23 AS NUMERIC) IN UNNEST(ARRAY<NUMERIC>[1, 2, 3.25, 1.23])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_in_select_bignumeric",
+            .sql = "SELECT CAST(1.234567890123456789 AS BIGNUMERIC) IN UNNEST(ARRAY<BIGNUMERIC>[1, 2, 3.25, 1.234567890123456789])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_in_select_uuid",
+            .sql =
+            \\SELECT CAST('9d3da323-4c20-360f-bd9b-ec54feec54f0' AS UUID)
+            \\IN UNNEST(
+            \\  ARRAY<UUID>[CAST('9d3da323-4c20-360f-bd9b-ec54feec54f0' AS UUID),
+            \\              CAST('9d5da323-4c20-360f-bd9b-ec54feec54f0' AS UUID)])
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_in_select_range_date",
+            .sql =
+            \\SELECT RANGE<DATE> '[2020-01-01, 2020-02-01)'
+            \\IN UNNEST(
+            \\  ARRAY<RANGE<DATE>>[RANGE<DATE> '[2020-01-01, 2020-02-01)',
+            \\                     RANGE<DATE> '[2020-02-01, 2020-03-01)'])
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_in_select_range_timestamp",
+            .sql =
+            \\SELECT RANGE<TIMESTAMP> '[2020-01-01, 2020-02-01)'
+            \\IN UNNEST(
+            \\  ARRAY<RANGE<TIMESTAMP>>[RANGE<TIMESTAMP> '[2020-01-01, 2020-02-01)',
+            \\                          RANGE<TIMESTAMP> '[2020-02-01, 2020-03-01)'])
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_in_select_range_datetime",
+            .sql =
+            \\SELECT RANGE<DATETIME> '[2020-01-01, 2020-02-01)'
+            \\IN UNNEST(
+            \\  ARRAY<RANGE<DATETIME>>[RANGE<DATETIME> '[2020-01-01, 2020-02-01)',
+            \\                         RANGE<DATETIME> '[2020-02-01, 2020-03-01)'])
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_not_int_unnest_in_select",
+            .sql = "SELECT 3 NOT IN UNNEST(ARRAY<INT64>[1, 2])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_null_selector_in_select",
+            .sql = "SELECT NULL IN (1, 2)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_null_selection_in_select",
+            .sql = "SELECT NULL NOT IN (1, 2)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_clause_null_selector_empty_subquery",
+            .sql =
+            \\SELECT y FROM Test WHERE y IS NULL AND y IN (
+            \\  SELECT 'foo' FROM Test WHERE FALSE)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_not_in_null_selector_empty_subquery",
+            .sql =
+            \\SELECT y FROM Test WHERE y IS NULL AND y NOT IN (
+            \\  SELECT 'foo' FROM Test WHERE FALSE)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_clause_null_selector_empty_subquery_is_null",
+            .sql =
+            \\SELECT y FROM Test WHERE y IS NULL AND (y IN (
+            \\  SELECT 'foo' FROM Test WHERE FALSE)) IS NULL
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_not_in_null_selector_empty_subquery_is_null",
+            .sql =
+            \\SELECT y FROM Test WHERE y IS NULL AND (y NOT IN (
+            \\  SELECT 'foo' FROM Test WHERE FALSE)) IS NULL
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_null_selector_empty_unnest",
+            .sql = "SELECT 1 FROM Test WHERE NULL IN UNNEST(ARRAY<INT64>[])",
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_not_in_null_selector_empty_unnest",
+            .sql = "SELECT 1 FROM Test WHERE NULL NOT IN UNNEST(ARRAY<INT64>[])",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "in_clause_null_selector_empty_unnest_is_null",
+            .sql = "SELECT 1 FROM Test WHERE (NULL IN UNNEST(ARRAY<INT64>[])) IS NULL",
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_not_in_null_selector_empty_unnest_is_null",
+            .sql = "SELECT 1 FROM Test WHERE (NULL NOT IN UNNEST(ARRAY<INT64>[])) IS NULL",
+            .rows = .{},
+        },
+        .{
+            .desc = "in_clause_unnest_null_array_in_select",
+            .sql = "SELECT 1 IN UNNEST(CAST(NULL AS ARRAY<INT64>))",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_unnest_null_array_in_select",
+            .sql = "SELECT 1 NOT IN UNNEST(CAST(NULL AS ARRAY<INT64>))",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_unnest_empty_array_in_select",
+            .sql = "SELECT 1 IN UNNEST(ARRAY<INT64>[])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_unnest_empty_array_in_select",
+            .sql = "SELECT 1 NOT IN UNNEST(ARRAY<INT64>[])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_in_select",
+            .sql = "SELECT 3 IN (1, 2, NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_select",
+            .sql = "SELECT 3 NOT IN (1, 2, NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_clause_in_select2",
+            .sql = "SELECT 2 IN (1, 2, NULL)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_select2",
+            .sql = "SELECT 2 NOT IN (1, 2, NULL)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "in_clause_in_select3",
+            .sql = "SELECT NULL IN (1, 2, NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_select3",
+            .sql = "SELECT NULL NOT IN (1, 2, NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_clause_in_select4",
+            .sql = "SELECT 1 IN UNNEST(ARRAY<INT64>[])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "in_clause_not_in_select4",
+            .sql = "SELECT 1 NOT IN UNNEST(ARRAY<INT64>[])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_int32_type",
+            .sql = "SELECT x FROM Test WHERE int32_col IN (100, 200) ORDER BY x",
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "in_clause_uint32_type",
+            .sql = "SELECT x FROM Test WHERE uint32_col IN (101, 201) ORDER BY x",
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "in_clause_uint64_type",
+            .sql = "SELECT x FROM Test WHERE uint64_col IN (102, 202) ORDER BY x",
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "in_clause_bool_type",
+            .sql = "SELECT x FROM Test WHERE bool_col IN (True) ORDER BY x",
+            .rows = .{
+                .{1},
+                .{3},
+            },
+        },
+        .{
+            .desc = "in_clause_bytes_type",
+            .sql = "SELECT x FROM Test WHERE bytes_col IN (b\"bytes\", b\"bytes2\") ORDER BY x",
+            .rows = .{
+                .{1},
+                .{2},
+            },
+        },
+        .{
+            .desc = "in_clause_date_type",
+            .sql = "SELECT x FROM Test WHERE date_col IN ('2015-01-30')",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "in_clause_timestmap_type",
+            .sql = "SELECT x FROM Test WHERE timestamp_col IN ('2015-01-29 10:47:20')",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "in_clause_struct_array_type",
+            .sql =
+            \\SELECT x, x IN ((("test", [1, 2])))
+            \\FROM (SELECT ("test", [1, 2]) x UNION ALL SELECT ("test", [1, 2, 3]))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ "test", .{ 1, 2, 3 } }, false },
+                .{ .{ "test", .{ 1, 2 } }, true },
+            },
+        },
+        .{
+            .desc = "in_unnest_clause_struct_array_type",
+            .sql = "SELECT (\"test\", [1, 2]) IN UNNEST([(\"test\", [1, 2]), (\"test\", [1, 2, 3])])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_clause_struct_type",
+            .sql = "SELECT x FROM TestStruct WHERE struct_col IN ((1, 2))",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "in_clause_having",
+            .sql = "SELECT SUM(x) s FROM Test GROUP BY z HAVING s IN (4)",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "in_clause_if_statement",
+            .sql = "SELECT x, IF(x IN (1, 2), 'included', 'excluded') FROM Test ORDER BY x",
+            .rows = .{
+                .{ 1, "included" },
+                .{ 2, "included" },
+                .{ 3, "excluded" },
+            },
+        },
+        .{
+            .desc = "in_clause_case_statment",
+            .sql =
+            \\SELECT x, CASE WHEN x IN (1, 2) THEN "value1or2"
+            \\               WHEN x IN (3) THEN "value3"
+            \\          END FROM Test ORDER BY x
+            ,
+            .rows = .{
+                .{ 1, "value1or2" },
+                .{ 2, "value1or2" },
+                .{ 3, "value3" },
+            },
+        },
+        .{
+            .desc = "in_struct",
+            .sql =
+            \\SELECT x, x IN ((1,1), (1,2))
+            \\FROM (SELECT (1,1) x UNION ALL SELECT (2,2))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ 2, 2 }, false },
+                .{ .{ 1, 1 }, true },
+            },
+        },
+        .{
+            .desc = "in_struct_unnest",
+            .sql =
+            \\SELECT x, x IN UNNEST([(1,1), (1,2)])
+            \\FROM (SELECT (1,1) x UNION ALL SELECT (2,2))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ 2, 2 }, false },
+                .{ .{ 1, 1 }, true },
+            },
+        },
+        .{
+            .desc = "in_struct_subquery",
+            .sql =
+            \\SELECT x, x IN (SELECT u FROM UNNEST([(1,1),(1, 2)]) u)
+            \\FROM (SELECT (1,1) x UNION ALL SELECT (2,2))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ 2, 2 }, false },
+                .{ .{ 1, 1 }, true },
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_match",
+            .sql = "SELECT (1,(\"this\",3)) IN UNNEST([(1,(\"that\",3)), (1,(\"this\",3))])",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_no_match",
+            .sql = "SELECT (1,(\"this\",3)) IN UNNEST([(1,(\"that\",3)), (2,(\"this\",3))])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_null",
+            .sql = "SELECT CAST(NULL AS STRUCT<INT64, STRUCT<STRING, INT64>>) IN UNNEST([(1,(\"that\",3)), (2,(\"this\",3))])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_null_array_null",
+            .sql = "SELECT CAST(NULL AS STRUCT<INT64, STRUCT<STRING, INT64>>) IN UNNEST([(1,(\"that\",3)), NULL, (2,(\"this\",3))])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_array_null",
+            .sql = "SELECT (5, (\"x\", 5)) IN UNNEST([(1,(\"that\",3)), NULL, (2,(\"this\",3))])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_null_field_no_match",
+            .sql = "SELECT (1, (\"this\", NULL)) IN UNNEST([(1,(\"that\",3)), (2,(\"this\",3))])",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_null_field_possible_match",
+            .sql = "SELECT (1, (\"this\", NULL)) IN UNNEST([(1,(\"that\",3)), (1,(\"this\",3))])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_null_field_array_null",
+            .sql = "SELECT (1, (\"this\", NULL)) IN UNNEST([(1,(\"that\",3)), NULL])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_null_field_array_null_field",
+            .sql = "SELECT (1, (\"this\", NULL)) IN UNNEST([(1,(\"that\",3)), (1,(\"this\",NULL))])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_struct_array_null_field",
+            .sql = "SELECT (1, (\"this\", 3)) IN UNNEST([(1,(\"that\",3)), (1,(\"this\",NULL))])",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_structs_with_different_field_names",
+            .sql =
+            \\SELECT x, y FROM Test
+            \\WHERE struct<a int64, b string>(x, y)
+            \\      IN UNNEST ((SELECT ARRAY_AGG(struct<c int64, d string>(x, y)) FROM Test))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "a" },
+                .{ 3, "b" },
+            },
+        },
+        .{
+            .desc = "in_unnest_all_array_of_only_null_elements",
+            .sql =
+            \\SELECT 1 IN UNNEST([NULL]) x
+            \\UNION ALL
+            \\SELECT 1 NOT IN UNNEST([NULL, NULL]) x
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_all_array_of_only_null_elements_numeric",
+            .sql =
+            \\SELECT CAST(1.1 AS NUMERIC) IN UNNEST([CAST(NULL AS NUMERIC)]) x
+            \\UNION ALL
+            \\SELECT CAST(1.1 AS NUMERIC) NOT IN UNNEST([CAST(NULL AS NUMERIC)]) x
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{null},
+            },
+        },
+        .{
+            .desc = "in_unnest_all_array_of_null_and_non_null_elements",
+            .sql =
+            \\SELECT 1 IN UNNEST([NULL, 2]) x
+            \\UNION ALL
+            \\SELECT 1 NOT IN UNNEST([NULL, 1]) x
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{false},
+            },
+        },
+        .{
+            .desc = "filter_by_in_unnest_all_array_of_only_null_elements",
+            .sql =
+            \\SELECT e
+            \\FROM (SELECT 1 e)
+            \\WHERE e NOT IN UNNEST([NULL])
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "filter_by_in_unnest_all_array_of_reversed_null_elements",
+            .sql =
+            \\SELECT e
+            \\FROM (SELECT 1 AS e)
+            \\WHERE e NOT IN UNNEST(ARRAY_REVERSE(ARRAY[NULL]))
+            ,
+            .rows = .{},
+        },
+    },
+}

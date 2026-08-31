@@ -1,0 +1,3128 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/aggregation_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/aggregation_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableAllNull AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       CAST(NULL AS bool) as bool_val, CAST(NULL AS double) as double_val,
+            \\       CAST(NULL AS float) as float_val, CAST(NULL AS uint32) as uint32_val,
+            \\       CAST(NULL AS int32) as int32_val, CAST(NULL AS uint64) as uint64_val,
+            \\       CAST(NULL AS int64) as int64_val, CAST(NULL AS string) as str_val,
+            \\       CAST(NULL AS BYTES) as bytes_val, CAST(NULL AS DATE) as date_val,
+            \\       CAST(NULL AS TIMESTAMP) as timestamp_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableAllNullUuids AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       CAST(NULL AS UUID) as uuid_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableAllNullRanges AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       CAST(NULL AS RANGE<DATE>) as range_date_val,
+            \\       CAST(NULL AS RANGE<TIMESTAMP>) as range_timestamp_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableAllNullDatetimeRange AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       CAST(NULL AS RANGE<DATETIME>) as range_datetime_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableOneValue AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       CAST(true AS bool) as bool_val, CAST(1 AS double) as double_val,
+            \\       CAST(1 AS float) as float_val, CAST(1 AS uint32) as uint32_val,
+            \\       CAST(1 AS int32) as int32_val, CAST(1 AS uint64) as uint64_val,
+            \\       CAST(1 AS int64) as int64_val, CAST("1" AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val, CAST('2001-01-01' AS DATE) as date_val,
+            \\       CAST('2001-01-01 00:00:00 UTC' AS TIMESTAMP) as timestamp_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableOneValueUuid AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       CAST('9d3da323-4c20-460f-8d9b-ec54feec54f0' AS UUID) as uuid_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableOneValueRanges AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       RANGE<DATE> '[2020-01-01, 2020-12-31)' as range_date_val,
+            \\       RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)' as range_timestamp_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableOneValueDatetimeRange AS
+            \\SELECT CAST(1 as int64) as row_id,
+            \\       RANGE<DATETIME> '[2020-01-01, 2020-12-31)' as range_datetime_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableAllTypes AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(-1 AS int32) as int32_val,
+            \\       CAST(-1 AS int64) as int64_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST(0.125 AS float) as float_val,
+            \\       CAST(0.125 AS double) as double_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-01 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(2 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(-1 AS int32) as int32_val,
+            \\       CAST(-1 AS int64) as int64_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST("NaN" AS float) as float_val,
+            \\       CAST("+Inf" AS double) as double_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-01 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(3 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(-1 AS int32) as int32_val,
+            \\       CAST(-1 AS int64) as int64_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST("+Inf" AS float) as float_val,
+            \\       CAST("-Inf" AS double) as double_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-01 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(4 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(-2 AS int32) as int32_val,
+            \\       CAST(-2 AS int64) as int64_val,
+            \\       CAST(2 AS uint32) as uint32_val,
+            \\       CAST(2 AS uint64) as uint64_val,
+            \\       CAST(0.25 AS float) as float_val,
+            \\       CAST(pow(0.1, 324) AS double) as double_val, #positive 0 of type double
+            \\       CAST("2" AS string) as str_val,
+            \\       CAST("2" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-02' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-02 00:00:02 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(5 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(-2 AS int32) as int32_val,
+            \\       CAST(-2 AS int64) as int64_val,
+            \\       CAST(2 AS uint32) as uint32_val,
+            \\       CAST(2 AS uint64) as uint64_val,
+            \\       CAST("-Inf" AS float) as float_val,
+            \\       CAST(0.25 AS double) as double_val,
+            \\       CAST("2" AS string) as str_val,
+            \\       CAST("2" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-02' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-02 00:00:02 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(6 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(-3 AS int32) as int32_val,
+            \\       CAST(-3 AS int64) as int64_val,
+            \\       CAST(3 AS uint32) as uint32_val,
+            \\       CAST(3 AS uint64) as uint64_val,
+            \\       CAST(0.375 AS float) as float_val,
+            \\       CAST(0.375 AS double) as double_val,
+            \\       CAST("3" AS string) as str_val,
+            \\       CAST("3" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-03' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-03 00:00:03 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(7 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(-4 AS int32) as int32_val,
+            \\       CAST(-4 AS int64) as int64_val,
+            \\       CAST(4 AS uint32) as uint32_val,
+            \\       CAST(4 AS uint64) as uint64_val,
+            \\       CAST(0.5 AS float) as float_val,
+            \\       CAST(0.5 AS double) as double_val,
+            \\       CAST("4" AS string) as str_val,
+            \\       CAST("4" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-04' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-04 00:00:04 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(8 AS int64) as row_id,
+            \\       CAST(NULL AS bool) as bool_val,
+            \\       CAST(NULL AS int32) as int32_val,
+            \\       CAST(NULL AS int64) as int64_val,
+            \\       CAST(NULL AS uint32) as uint32_val,
+            \\       CAST(NULL AS uint64) as uint64_val,
+            \\       CAST(NULL AS float) as float_val,
+            \\       CAST(NULL AS double) as double_val,
+            \\       CAST(NULL AS string) as str_val,
+            \\       CAST(NULL AS BYTES) as bytes_val,
+            \\       CAST(NULL AS DATE) as date_val,
+            \\       CAST(NULL AS TIMESTAMP) as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(9 AS int64) as row_id,
+            \\       CAST(NULL AS bool) as bool_val,
+            \\       CAST(NULL AS int32) as int32_val,
+            \\       CAST(NULL AS int64) as int64_val,
+            \\       CAST(NULL AS uint32) as uint32_val,
+            \\       CAST(NULL AS uint64) as uint64_val,
+            \\       CAST(-pow(0.1, 46) AS float) as float_val, #negative 0 of type float
+            \\       CAST("NaN" AS double) as double_val,
+            \\       CAST(NULL AS string) as str_val,
+            \\       CAST(NULL AS BYTES) as bytes_val,
+            \\       CAST(NULL AS DATE) as date_val,
+            \\       CAST(NULL AS TIMESTAMP) as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(10 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(1 AS int32) as int32_val,
+            \\       CAST(1 AS int64) as int64_val,
+            \\       CAST(11 AS uint32) as uint32_val,
+            \\       CAST(11 AS uint64) as uint64_val,
+            \\       CAST(0.625 AS float) as float_val,
+            \\       CAST(0.625 AS double) as double_val,
+            \\       CAST("6" AS string) as str_val,
+            \\       CAST("7" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-08' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-07 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(11 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(5 AS int32) as int32_val,
+            \\       CAST(3 AS int64) as int64_val,
+            \\       CAST(11 AS uint32) as uint32_val,
+            \\       CAST(8 AS uint64) as uint64_val,
+            \\       CAST(-0.125 AS float) as float_val,
+            \\       CAST(-0.125 AS double) as double_val,
+            \\       CAST("123" AS string) as str_val,
+            \\       CAST("123" AS BYTES) as bytes_val,
+            \\       CAST('2014-02-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-03-01 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(12 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(2 AS int32) as int32_val,
+            \\       CAST(16 AS int64) as int64_val,
+            \\       CAST(5 AS uint32) as uint32_val,
+            \\       CAST(9 AS uint64) as uint64_val,
+            \\       CAST(0.75 AS float) as float_val,
+            \\       CAST(-0.25 AS double) as double_val,
+            \\       CAST("24" AS string) as str_val,
+            \\       CAST("22" AS BYTES) as bytes_val,
+            \\       CAST('2014-02-02' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-03-02 00:00:02 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(13 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(9 AS int32) as int32_val,
+            \\       CAST(9 AS int64) as int64_val,
+            \\       CAST(4 AS uint32) as uint32_val,
+            \\       CAST(8 AS uint64) as uint64_val,
+            \\       CAST(-0.25 AS float) as float_val,
+            \\       CAST(-0.75 AS double) as double_val,
+            \\       CAST("222" AS string) as str_val,
+            \\       CAST("234" AS BYTES) as bytes_val,
+            \\       CAST('2014-05-02' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-05-02 00:00:02 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(14 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(13 AS int32) as int32_val,
+            \\       CAST(23 AS int64) as int64_val,
+            \\       CAST(31 AS uint32) as uint32_val,
+            \\       CAST(32 AS uint64) as uint64_val,
+            \\       CAST(-0.375 AS float) as float_val,
+            \\       CAST(-0.375 AS double) as double_val,
+            \\       CAST("345" AS string) as str_val,
+            \\       CAST("345" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-06' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-02-03 00:00:03 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(15 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(-24 AS int32) as int32_val,
+            \\       CAST(-14 AS int64) as int64_val,
+            \\       CAST(41 AS uint32) as uint32_val,
+            \\       CAST(54 AS uint64) as uint64_val,
+            \\       CAST(-0.5 AS float) as float_val,
+            \\       CAST(-0.5 AS double) as double_val,
+            \\       CAST("432" AS string) as str_val,
+            \\       CAST("433" AS BYTES) as bytes_val,
+            \\       CAST('2014-02-04' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-02-04 00:00:04 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(16 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(NULL AS int32) as int32_val,
+            \\       CAST(-1 AS int64) as int64_val,
+            \\       CAST(NULL AS uint32) as uint32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST(NULL AS float) as float_val,
+            \\       CAST(-pow(0.1, 324) AS double) as double_val, #negative 0 of type double
+            \\       CAST(NULL AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST(NULL AS DATE) as date_val,
+            \\       TIMESTAMP '2014-02-04 00:00:04 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(17 AS int64) as row_id,
+            \\       CAST(NULL AS bool) as bool_val,
+            \\       CAST(-1 AS int32) as int32_val,
+            \\       CAST(NULL AS int64) as int64_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(NULL AS uint64) as uint64_val,
+            \\       CAST(pow(0.1, 46) AS float) as float_val, #positive 0 of type float
+            \\       CAST(NULL AS double) as double_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST(NULL AS BYTES) as bytes_val,
+            \\       CAST('2014-02-04' AS DATE) as date_val,
+            \\       CAST(NULL AS TIMESTAMP) as timestamp_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableUuidTypes AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       true AS bool_val,
+            \\       CAST('9d3da323-4c20-460f-8d9b-ec54feec54f0' AS UUID) AS uuid_val UNION ALL
+            \\SELECT 2, true, CAST('9d3da323-4c20-460f-8d9b-ec54feec54f0' AS UUID) UNION ALL
+            \\SELECT 3, true, CAST('9d3da323-4c20-460f-8d9b-ec54feec54f0' AS UUID) UNION ALL
+            \\SELECT 4, false, CAST('9d3da323-4c21-460f-8d9b-ec54feec54f1' AS UUID) UNION ALL
+            \\SELECT 5, false, CAST('9d3da323-4c21-460f-8d9b-ec54feec54f1' AS UUID) UNION ALL
+            \\SELECT 6, true, CAST('9d3da323-4c22-460f-8d9b-ec54feec54f2' AS UUID) UNION ALL
+            \\SELECT 7, false, CAST('9d3da323-4c23-460f-8d9b-ec54feec54f3' AS UUID) UNION ALL
+            \\SELECT 8, CAST(NULL AS bool), CAST(NULL AS UUID) UNION ALL
+            \\SELECT 9, CAST(NULL AS bool), CAST(NULL AS UUID) UNION ALL
+            \\SELECT 10, true, CAST('9d3da323-4c24-460f-8d9b-ec54feec54f4' AS UUID) UNION ALL
+            \\SELECT 11, false, CAST('9d3da323-4c25-460f-8d9b-ec54feec54f5' AS UUID) UNION ALL
+            \\SELECT 12, false, CAST('9d3da323-4c26-460f-8d9b-ec54feec54f6' AS UUID) UNION ALL
+            \\SELECT 13, false, CAST('9d3da323-4c27-460f-8d9b-ec54feec54f7' AS UUID) UNION ALL
+            \\SELECT 14, true, CAST('9d3da323-4c28-460f-8d9b-ec54feec54f8' AS UUID) UNION ALL
+            \\SELECT 15, false, CAST('9d3da323-4c29-460f-8d9b-ec54feec54f9' AS UUID) UNION ALL
+            \\SELECT 16, false, CAST('9d3da323-4c29-460f-8d9b-ec54feec54f9' AS UUID) UNION ALL
+            \\SELECT 17, CAST(NULL AS bool), CAST(NULL AS UUID)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableRangeTypes AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       true AS bool_val,
+            \\       CAST(NULL AS RANGE<DATE>) AS range_date_val,
+            \\       CAST(NULL AS RANGE<TIMESTAMP>) AS range_timestamp_val UNION ALL
+            \\SELECT 2, true, RANGE<DATE> '[UNBOUNDED, 0001-01-01)', RANGE<TIMESTAMP> '[UNBOUNDED, 0001-01-01 00:00:00+00)' UNION ALL
+            \\SELECT 3, true, RANGE<DATE> '[UNBOUNDED, 2020-01-01)', RANGE<TIMESTAMP> '[UNBOUNDED, 2020-01-01 00:00:00+00)' UNION ALL
+            \\SELECT 4, true, RANGE<DATE> '[UNBOUNDED, 9999-12-31)', RANGE<TIMESTAMP> '[UNBOUNDED, 9999-12-31 23:59:59.999999+00)' UNION ALL
+            \\SELECT 5, false, RANGE<DATE> '[UNBOUNDED, UNBOUNDED)', RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)' UNION ALL
+            \\SELECT 6, false, RANGE<DATE> '[0001-01-01, 2020-01-01)', RANGE<TIMESTAMP> '[0001-01-01 00:00:00+00, 2020-01-01 00:00:00+00)' UNION ALL
+            \\SELECT 7, false, RANGE<DATE> '[2020-01-01, 9999-12-31)', RANGE<TIMESTAMP> '[2020-01-01, 9999-12-31 23:59:59.999999+00)' UNION ALL
+            \\SELECT 8, false, RANGE<DATE> '[9999-12-31, UNBOUNDED)', RANGE<TIMESTAMP> '[9999-12-31 23:59:59.999999+00, UNBOUNDED)' UNION ALL
+            \\SELECT 9, true, RANGE<DATE> '[0001-01-01, 2020-01-01)', RANGE<TIMESTAMP> '[0001-01-01 00:00:00+00, 2020-01-01 00:00:00+00)' UNION ALL
+            \\SELECT 10, false, RANGE<DATE> '[2020-01-01, 9999-12-31)', RANGE<TIMESTAMP> '[2020-01-01, 9999-12-31 23:59:59.999999+00)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableDatetimeRangeTypes AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       true AS bool_val,
+            \\       CAST(NULL AS RANGE<DATETIME>) AS range_datetime_val UNION ALL
+            \\SELECT 2, true, RANGE<DATETIME> '[UNBOUNDED, 0001-01-01)' UNION ALL
+            \\SELECT 3, true, RANGE<DATETIME> '[UNBOUNDED, 2020-01-01)' UNION ALL
+            \\SELECT 4, true, RANGE<DATETIME> '[UNBOUNDED, 9999-12-31 23:59:59.999999)' UNION ALL
+            \\SELECT 5, false, RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)' UNION ALL
+            \\SELECT 6, false, RANGE<DATETIME> '[0001-01-01, 2020-01-01)' UNION ALL
+            \\SELECT 7, false, RANGE<DATETIME> '[2020-01-01, 9999-12-31 23:59:59.999999)' UNION ALL
+            \\SELECT 8, false, RANGE<DATETIME> '[9999-12-31 23:59:59.999999, UNBOUNDED)' UNION ALL
+            \\SELECT 9, true, RANGE<DATETIME> '[0001-01-01, 2020-01-01)' UNION ALL
+            \\SELECT 10, false, RANGE<DATETIME> '[2020-01-01, 9999-12-31 23:59:59.999999)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TABLE TableEmpty AS SELECT val FROM (SELECT 1 as val) WHERE false",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableEmptyRanges AS SELECT range_date_val, range_timestamp_val
+            \\FROM (SELECT RANGE<DATE> '[UNBOUNDED, UNBOUNDED)' as range_date_val,
+            \\RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)' as range_timestamp_val)
+            \\WHERE false
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableEmptyDatetimeRange AS SELECT range_datetime_val
+            \\ FROM (SELECT RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)' as range_datetime_val) WHERE false
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableLarge AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       CAST(NULL AS bool) as bool_val, CAST(NULL AS double) as double_val,
+            \\       CAST(NULL AS int64) as int64_val, CAST(NULL AS uint64) as uint64_val,
+            \\       CAST(NULL AS string) as str_val UNION ALL
+            \\  SELECT 2,  true,  NULL, NULL, NULL, NULL UNION ALL
+            \\  SELECT 3,  false, 0.2,  NULL, NULL, NULL UNION ALL
+            \\  SELECT 4,  true,  0.3,  3,    NULL, NULL UNION ALL
+            \\  SELECT 5,  false, 0.4,  4,    15, "4" UNION ALL
+            \\  SELECT 6,  true,  0.5,  5,    17, "5" UNION ALL
+            \\  SELECT 7,  false, 0.6,  6,    19,  "6" UNION ALL
+            \\  SELECT 8,  true,  0.7,  7,    21,  "7" UNION ALL
+            \\  SELECT 9,  false, 0.8,  8,    23, "8" UNION ALL
+            \\  SELECT 10, true,  0.9,  9,    25,  "9" UNION ALL
+            \\  SELECT 11, false, 1.0, 10,    27, "10" UNION ALL
+            \\  SELECT 12, true,  IEEE_DIVIDE(1, 0), 11, 29, "11" UNION ALL
+            \\  SELECT 13, false, IEEE_DIVIDE(-1, 0), 12, 31, "12" UNION ALL
+            \\  SELECT 14, true,  IEEE_DIVIDE(0, 0), 13, 33, "13"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE T AS
+            \\SELECT CAST(1 AS int64) as x, CAST("foo" AS string) as y UNION ALL
+            \\  SELECT 2, "bar"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE SumOverflow AS
+            \\SELECT CAST(1 AS int64) as row_id, 1.1e+308 double_val, 9223372036854775807 int64_val, 18446744073709551615 uint64_val
+            \\UNION ALL
+            \\SELECT CAST(2 AS int64) as row_id, 1.2e+308 double_val, 1 int64_val, CAST(1 AS uint64) uint64_val
+            ,
+        },
+        .{
+            .desc = "aggregation_avg_1",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# AVG
+            \\# ----------------------------------------------------------------------------
+            \\# No overflow due to double coercion of AVG argument. AVG can be implemented
+            \\# iteratively to avoid double overflows, so we aren't testing for presence or
+            \\# absence of those.
+            \\SELECT AVG(x) FROM (SELECT 9223372036854775807 x UNION ALL SELECT 1)
+            ,
+            .rows = .{
+                .{4.6116860184273879e+18},
+            },
+        },
+        .{
+            .desc = "aggregation_avg_2",
+            .sql = "SELECT AVG(double_val) FROM TableLarge",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "aggregation_avg_3",
+            .sql = "SELECT AVG(double_val) FROM TableLarge WHERE NOT IS_NAN(double_val)",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "aggregation_avg_4",
+            .sql = "SELECT AVG(double_val) FROM TableLarge WHERE NOT IS_INF(double_val)",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "aggregation_avg_5",
+            .sql =
+            \\SELECT AVG(double_val) FROM TableLarge WHERE NOT IS_INF(double_val) AND
+            \\  NOT IS_NAN(double_val)
+            ,
+            .rows = .{
+                .{0.6},
+            },
+        },
+        .{
+            .desc = "aggregation_avg_6",
+            .sql =
+            \\# Depending on implementation of AVG, feeding INF's to it may result in either
+            \\# INF (if only addition is used) or in NAN (if both addition and subtraction are
+            \\# used as in Knuth algorithm).
+            \\SELECT IS_INF(a) OR IS_NAN(a) FROM (
+            \\SELECT AVG(double_val) a FROM TableLarge WHERE double_val > 0)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "aggregation_avg_7",
+            .sql = "SELECT AVG(int64_val) FROM TableLarge",
+            .rows = .{
+                .{8},
+            },
+        },
+        .{
+            .desc = "aggregation_avg_8",
+            .sql = "SELECT AVG(uint64_val) FROM TableLarge",
+            .rows = .{
+                .{24},
+            },
+        },
+        .{
+            .desc = "avg_aggregation_9",
+            .sql =
+            \\# Not using BETWEEN since it may not be supported. Approximate checking allows
+            \\# for different AVG algorithms.
+            \\SELECT AVG(double_val) > 0.599999 AND AVG(double_val) < 0.6000001 AS true1,
+            \\       AVG(int64_val)  > 6.499999 AND AVG(int64_val)  < 6.5000001 AS true2,
+            \\       AVG(uint64_val)  > 20.999999 AND AVG(uint64_val)  < 21.0000001 AS true3
+            \\FROM TableLarge WHERE NOT IS_INF(double_val) AND NOT IS_NAN(double_val)
+            ,
+            .rows = .{
+                .{ true, true, true },
+            },
+        },
+        .{
+            .desc = "aggregation_avg_10",
+            .sql =
+            \\# AVG a table of all NULL values.
+            \\SELECT AVG(double_val) double_avg, AVG(uint64_val) uint64_avg,
+            \\       AVG(int64_val) int64_avg
+            \\FROM TableAllNull
+            ,
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_avg_having_null",
+            .sql =
+            \\# AVG with HAVING on NULL.
+            \\SELECT AVG(double_val) double_avg, AVG(uint64_val) uint64_avg,
+            \\       AVG(int64_val) int64_avg
+            \\FROM TableAllNull HAVING double_avg > 0.5
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "aggregation_avg_group_by",
+            .sql =
+            \\# AVG should work with GROUP BY.
+            \\SELECT bool_val, AVG(double_val) FROM TableLarge
+            \\  WHERE NOT IS_INF(double_val) AND NOT IS_NAN(double_val)
+            \\    GROUP BY bool_val ORDER BY bool_val
+            ,
+            .rows = .{
+                .{ false, 0.6 },
+                .{ true, 0.6 },
+            },
+        },
+        .{
+            .desc = "aggregation_avg_group_by_and_having_1",
+            .sql =
+            \\# AVG should work with GROUP BY and HAVING.
+            \\SELECT bool_val, AVG(double_val) FROM TableLarge
+            \\  WHERE NOT IS_INF(double_val) AND NOT IS_NAN(double_val)
+            \\    GROUP BY bool_val HAVING bool_val ORDER BY bool_val
+            ,
+            .rows = .{
+                .{ true, 0.6 },
+            },
+        },
+        .{
+            .desc = "aggregation_avg_group_by_and_having_2",
+            .sql =
+            \\# AVG should work with GROUP BY and HAVING.
+            \\SELECT bool_val, AVG(double_val) double_avg FROM TableLarge
+            \\  WHERE NOT IS_INF(double_val) AND NOT IS_NAN(double_val)
+            \\    GROUP BY bool_val HAVING double_avg > 0.7 ORDER BY bool_val
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "aggregation_sum_1",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# SUM
+            \\# ----------------------------------------------------------------------------
+            \\SELECT SUM(double_val) FROM TableLarge
+            ,
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "aggregation_sum_2",
+            .sql = "SELECT SUM(double_val) FROM TableLarge WHERE NOT IS_INF(double_val)",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "aggregation_sum_3",
+            .sql = "SELECT SUM(double_val) FROM TableLarge WHERE double_val > 0",
+            .rows = .{
+                .{inf},
+            },
+        },
+        .{
+            .desc = "aggregation_sum_4",
+            .sql =
+            \\SELECT SUM(double_val) double_sum, SUM(uint64_val) uint64_sum,
+            \\       SUM(int64_val) int64_sum
+            \\FROM TableLarge WHERE NOT IS_INF(double_val) AND NOT IS_NAN(double_val)
+            ,
+            .rows = .{
+                .{ 5.4, 147, 52 },
+            },
+        },
+        .{
+            .desc = "aggregation_sum_5",
+            .sql =
+            \\# SUM a table of all NULL values.
+            \\SELECT SUM(double_val) double_sum, SUM(uint64_val) uint64_sum,
+            \\       SUM(int64_val) int64_sum
+            \\FROM TableAllNull
+            ,
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_sum_6",
+            .sql =
+            \\# Overflow double.
+            \\SELECT SUM(double_val) FROM SumOverflow
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "aggregation_sum_7",
+            .sql =
+            \\# Overflow int64.
+            \\SELECT SUM(int64_val) FROM SumOverflow
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "aggregation_sum_8",
+            .sql =
+            \\# Overflow uint64.
+            \\SELECT SUM(uint64_val) FROM SumOverflow
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "aggregation_sum_group_by",
+            .sql =
+            \\# SUM should work with GROUP BY.
+            \\SELECT row_id, SUM(int64_val) int64_sum FROM TableLarge GROUP BY row_id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null },
+                .{ 2, null },
+                .{ 3, null },
+                .{ 4, 3 },
+                .{ 5, 4 },
+                .{ 6, 5 },
+                .{ 7, 6 },
+                .{ 8, 7 },
+                .{ 9, 8 },
+                .{ 10, 9 },
+                .{ 11, 10 },
+                .{ 12, 11 },
+                .{ 13, 12 },
+                .{ 14, 13 },
+            },
+        },
+        .{
+            .desc = "aggregation_sum_group_by_and_having",
+            .sql =
+            \\# SUM should work with GROUP BY and HAVING.
+            \\SELECT row_id, SUM(int64_val) int64_sum
+            \\FROM TableLarge GROUP BY row_id HAVING int64_sum IS NULL
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, null },
+                .{ 1, null },
+                .{ 3, null },
+            },
+        },
+        .{
+            .desc = "aggregation_count_1",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# COUNT
+            \\# ----------------------------------------------------------------------------
+            \\SELECT COUNT(bool_val), COUNT(double_val), COUNT(float_val), COUNT(str_val),
+            \\       COUNT(int32_val), COUNT(uint32_val), COUNT(int64_val), COUNT(uint64_val),
+            \\       COUNT(date_val), COUNT(bytes_val), COUNT(timestamp_val)
+            \\  FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ 14, 15, 15, 14, 14, 14, 14, 14, 14, 14, 14 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_2",
+            .sql =
+            \\SELECT COUNT(bool_val), COUNT(double_val), COUNT(float_val), COUNT(str_val),
+            \\       COUNT(int32_val), COUNT(uint32_val), COUNT(int64_val), COUNT(uint64_val),
+            \\       COUNT(date_val), COUNT(bytes_val), COUNT(timestamp_val)
+            \\FROM TableAllNull
+            ,
+            .rows = .{
+                .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_3",
+            .sql = "SELECT COUNT(*) FROM TableAllTypes",
+            .rows = .{
+                .{17},
+            },
+        },
+        .{
+            .desc = "aggregation_count_4",
+            .sql = "SELECT COUNT(*) FROM TableAllNull",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "aggregation_count_5",
+            .sql = "SELECT COUNT(bool_val) FROM TableAllNull",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "aggregation_count_6",
+            .sql = "SELECT COUNT(*) FROM TableEmpty",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "aggregation_count_7",
+            .sql = "SELECT COUNT(val) FROM TableEmpty",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "aggregation_count_uuids_1",
+            .sql = "SELECT COUNT(uuid_val) FROM TableUuidTypes",
+            .rows = .{
+                .{14},
+            },
+        },
+        .{
+            .desc = "aggregation_count_uuids_2",
+            .sql = "SELECT COUNT(*) FROM TableUuidTypes",
+            .rows = .{
+                .{17},
+            },
+        },
+        .{
+            .desc = "aggregation_count_uuid_nulls_1",
+            .sql = "SELECT COUNT(uuid_val) FROM TableAllNullUuids",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "aggregation_count_uuid_nulls_2",
+            .sql = "SELECT COUNT(*) FROM TableAllNullUuids",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "aggregation_count_group_by",
+            .sql =
+            \\# COUNT should work with GROUP BY
+            \\SELECT int32_val, COUNT(double_val) FROM TableAllTypes GROUP BY int32_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 2 },
+                .{ -24, 1 },
+                .{ -4, 1 },
+                .{ -3, 1 },
+                .{ -2, 2 },
+                .{ -1, 3 },
+                .{ 1, 1 },
+                .{ 2, 1 },
+                .{ 5, 1 },
+                .{ 9, 1 },
+                .{ 13, 1 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_group_by_and_having",
+            .sql =
+            \\# COUNT should work with GROUP BY and HAVING
+            \\SELECT bool_val, COUNT(double_val) FROM TableAllTypes GROUP BY bool_val HAVING bool_val ORDER BY bool_val
+            ,
+            .rows = .{
+                .{ true, 6 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_uuids_group_by_and_having",
+            .sql =
+            \\# COUNT should work with GROUP BY and HAVING with Uuids
+            \\SELECT bool_val, COUNT(uuid_val) FROM TableUuidTypes GROUP BY bool_val HAVING bool_val ORDER BY bool_val
+            ,
+            .rows = .{
+                .{ true, 6 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_arrays_1",
+            .sql = "SELECT COUNT([1,2,3]) FROM (SELECT 1 UNION ALL SELECT 2)",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "aggregation_count_arrays_2",
+            .sql = "SELECT COUNT(arr) FROM (SELECT [\"foo\", \"bar\"] arr UNION ALL SELECT NULL)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "aggregation_count_range",
+            .sql =
+            \\SELECT COUNT(range_date_val), COUNT(range_timestamp_val), COUNT(*)
+            \\FROM TableRangeTypes
+            ,
+            .rows = .{
+                .{ 9, 9, 10 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_datetime",
+            .sql = "SELECT COUNT(range_datetime_val), COUNT(*) FROM TableDatetimeRangeTypes",
+            .rows = .{
+                .{ 9, 10 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_all_null",
+            .sql =
+            \\SELECT COUNT(range_date_val), COUNT(range_timestamp_val), COUNT(*)
+            \\FROM TableAllNullRanges
+            ,
+            .rows = .{
+                .{ 0, 0, 1 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_datetime_all_null",
+            .sql = "SELECT COUNT(range_datetime_val), COUNT(*) FROM TableAllNullDatetimeRange",
+            .rows = .{
+                .{ 0, 1 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_empty",
+            .sql =
+            \\SELECT COUNT(range_date_val), COUNT(range_timestamp_val), COUNT(*)
+            \\FROM TableEmptyRanges
+            ,
+            .rows = .{
+                .{ 0, 0, 0 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_datetime_empty",
+            .sql = "SELECT COUNT(range_datetime_val), COUNT(*) FROM TableEmptyDatetimeRange",
+            .rows = .{
+                .{ 0, 0 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_group_by",
+            .sql =
+            \\SELECT bool_val, COUNT(range_date_val), COUNT(range_timestamp_val), COUNT(*)
+            \\FROM TableRangeTypes
+            \\GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, 5, 5, 5 },
+                .{ true, 4, 4, 5 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_datetime_group_by",
+            .sql =
+            \\SELECT bool_val, COUNT(range_datetime_val), COUNT(*) FROM TableDatetimeRangeTypes
+            \\GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, 5, 5 },
+                .{ true, 4, 5 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_group_by_having",
+            .sql =
+            \\SELECT bool_val, COUNT(range_date_val), COUNT(range_timestamp_val), COUNT(*)
+            \\FROM TableRangeTypes
+            \\GROUP BY bool_val HAVING bool_val
+            ,
+            .rows = .{
+                .{ true, 4, 4, 5 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_datetime_group_by_having",
+            .sql =
+            \\SELECT bool_val, COUNT(range_datetime_val), COUNT(*) FROM TableDatetimeRangeTypes
+            \\GROUP BY bool_val HAVING bool_val
+            ,
+            .rows = .{
+                .{ true, 4, 5 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_group_by_range_date",
+            .sql =
+            \\SELECT range_date_val, COUNT(range_date_val), COUNT(*)
+            \\FROM TableRangeTypes
+            \\GROUP BY range_date_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0, 1 },
+                .{ "[NULL, 0001-01-01)", 1, 1 },
+                .{ "[NULL, 2020-01-01)", 1, 1 },
+                .{ "[NULL, 9999-12-31)", 1, 1 },
+                .{ "[NULL, NULL)", 1, 1 },
+                .{ "[0001-01-01, 2020-01-01)", 2, 2 },
+                .{ "[2020-01-01, 9999-12-31)", 2, 2 },
+                .{ "[9999-12-31, NULL)", 1, 1 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_group_by_range_timestamp",
+            .sql =
+            \\SELECT range_timestamp_val, COUNT(range_timestamp_val), COUNT(*)
+            \\FROM TableRangeTypes
+            \\GROUP BY range_timestamp_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0, 1 },
+                .{ "[NULL, 0001-01-01 00:00:00+00)", 1, 1 },
+                .{ "[NULL, 2020-01-01 00:00:00+00)", 1, 1 },
+                .{ "[NULL, 9999-12-31 23:59:59.999999+00)", 1, 1 },
+                .{ "[NULL, NULL)", 1, 1 },
+                .{ "[0001-01-01 00:00:00+00, 2020-01-01 00:00:00+00)", 2, 2 },
+                .{ "[2020-01-01 08:00:00+00, 9999-12-31 23:59:59.999999+00)", 2, 2 },
+                .{ "[9999-12-31 23:59:59.999999+00, NULL)", 1, 1 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_datetime_group_by_range_datetime",
+            .sql =
+            \\SELECT range_datetime_val, COUNT(range_datetime_val), COUNT(*) FROM TableDatetimeRangeTypes
+            \\GROUP BY range_datetime_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 0, 1 },
+                .{ "[NULL, 0001-01-01 00:00:00)", 1, 1 },
+                .{ "[NULL, 2020-01-01 00:00:00)", 1, 1 },
+                .{ "[NULL, 9999-12-31 23:59:59.999999)", 1, 1 },
+                .{ "[NULL, NULL)", 1, 1 },
+                .{ "[0001-01-01 00:00:00, 2020-01-01 00:00:00)", 2, 2 },
+                .{ "[2020-01-01 00:00:00, 9999-12-31 23:59:59.999999)", 2, 2 },
+                .{ "[9999-12-31 23:59:59.999999, NULL)", 1, 1 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_group_by_having_range_date",
+            .sql =
+            \\SELECT range_date_val, COUNT(range_date_val), COUNT(*)
+            \\FROM TableRangeTypes
+            \\GROUP BY range_date_val
+            \\HAVING range_date_val > RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "[0001-01-01, 2020-01-01)", 2, 2 },
+                .{ "[9999-12-31, NULL)", 1, 1 },
+                .{ "[2020-01-01, 9999-12-31)", 2, 2 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_group_by_having_range_timestamp",
+            .sql =
+            \\SELECT range_timestamp_val, COUNT(range_timestamp_val), COUNT(*)
+            \\FROM TableRangeTypes
+            \\GROUP BY range_timestamp_val
+            \\HAVING range_timestamp_val > RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)'
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "[0001-01-01 00:00:00+00, 2020-01-01 00:00:00+00)", 2, 2 },
+                .{ "[9999-12-31 23:59:59.999999+00, NULL)", 1, 1 },
+                .{ "[2020-01-01 08:00:00+00, 9999-12-31 23:59:59.999999+00)", 2, 2 },
+            },
+        },
+        .{
+            .desc = "aggregation_count_range_datetime_group_by_having_range",
+            .sql =
+            \\SELECT range_datetime_val, COUNT(range_datetime_val), COUNT(*)
+            \\FROM TableDatetimeRangeTypes
+            \\GROUP BY range_datetime_val
+            \\HAVING range_datetime_val > RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "[0001-01-01 00:00:00, 2020-01-01 00:00:00)", 2, 2 },
+                .{ "[9999-12-31 23:59:59.999999, NULL)", 1, 1 },
+                .{ "[2020-01-01 00:00:00, 9999-12-31 23:59:59.999999)", 2, 2 },
+            },
+        },
+        .{
+            .desc = "timestamp_min_max",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# MAX, MIN
+            \\# ----------------------------------------------------------------------------
+            \\SELECT min(ts), max(ts) FROM (
+            \\ SELECT TIMESTAMP '1955-01-01 12:00:15 UTC' as ts UNION ALL
+            \\ SELECT TIMESTAMP '2055-02-02 10:45:00 UTC')
+            ,
+            .rows = .{
+                .{ "1955-01-01 12:00:15+00", "2055-02-02 10:45:00+00" },
+            },
+        },
+        .{
+            .desc = "timestamp_min_max_nano_precision",
+            .sql =
+            \\SELECT min(ts), max(ts) FROM (
+            \\ SELECT TIMESTAMP '1955-01-01 12:00:15.789567123 UTC' as ts UNION ALL
+            \\ SELECT TIMESTAMP '2055-02-02 10:45:00.789567123 UTC')
+            ,
+            .rows = .{
+                .{ "1955-01-01 12:00:15.789567123+00", "2055-02-02 10:45:00.789567123+00" },
+            },
+        },
+        .{
+            .desc = "timestamp_NULL_min_max",
+            .sql =
+            \\SELECT MAX(CAST(NULL AS TIMESTAMP)) AS max_NULL,
+            \\       MIN(CAST(NULL AS TIMESTAMP)) AS min_NULL
+            \\FROM (SELECT 1)
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_1",
+            .sql = "SELECT MIN(double_val), MAX(double_val) FROM TableLarge",
+            .rows = .{
+                .{ nan, nan },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_2",
+            .sql =
+            \\SELECT MIN(double_val), MAX(double_val) FROM TableLarge WHERE
+            \\  NOT IS_INF(double_val)
+            ,
+            .rows = .{
+                .{ nan, nan },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_neg_inf_to_pos_inf",
+            .sql =
+            \\SELECT MIN(double_val), MAX(double_val) FROM TableLarge WHERE
+            \\  NOT IS_NAN(double_val)
+            ,
+            .rows = .{
+                .{ -inf, inf },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_3",
+            .sql = "SELECT MIN(double_val), MAX(double_val) FROM TableLarge WHERE double_val > 0",
+            .rows = .{
+                .{ 0.2, inf },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_4",
+            .sql = "SELECT MIN(double_val), MAX(double_val) FROM TableLarge WHERE double_val <= 0",
+            .rows = .{
+                .{ -inf, -inf },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_5",
+            .sql =
+            \\SELECT MIN(double_val), MAX(double_val) FROM TableLarge WHERE
+            \\  NOT IS_INF(double_val) AND NOT IS_NAN(double_val)
+            ,
+            .rows = .{
+                .{ 0.2, 1 },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_6",
+            .sql =
+            \\SELECT MIN(pos_inf), MAX(neg_inf) FROM
+            \\  (SELECT IEEE_DIVIDE(1, 0) pos_inf, IEEE_DIVIDE(-1, 0) neg_inf)
+            ,
+            .rows = .{
+                .{ inf, -inf },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_7",
+            .sql = "SELECT min(x), max(x) FROM T",
+            .rows = .{
+                .{ 1, 2 },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_8",
+            .sql =
+            \\SELECT MIN(bool_val), MIN(double_val), MIN(float_val), MIN(str_val),
+            \\       MIN(int32_val), MIN(uint32_val), MIN(int64_val), MIN(uint64_val),
+            \\       MIN(date_val), MIN(bytes_val), MIN(timestamp_val)
+            \\  FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ false, nan, nan, "1", -24, 1, -14, 1, "2014-01-01", "\x31", "2014-01-01 00:00:01+00" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_9",
+            .sql =
+            \\SELECT MIN(bool_val), MIN(double_val), MIN(float_val), MIN(str_val),
+            \\       MIN(int32_val), MIN(uint32_val), MIN(int64_val), MIN(uint64_val),
+            \\       MIN(date_val), MIN(bytes_val), MIN(timestamp_val)
+            \\FROM TableAllNull
+            ,
+            .rows = .{
+                .{ null, null, null, null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_10",
+            .sql =
+            \\SELECT MAX(bool_val), MAX(double_val), MAX(float_val), MAX(str_val),
+            \\       MAX(int32_val), MAX(uint32_val), MAX(int64_val), MAX(uint64_val),
+            \\       MAX(date_val), MAX(bytes_val), MAX(timestamp_val)
+            \\  FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ true, nan, nan, "6", 13, 41, 23, 54, "2014-05-02", "\x37", "2014-05-02 00:00:02+00" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_11",
+            .sql =
+            \\SELECT MAX(bool_val), MAX(double_val), MAX(float_val), MAX(str_val),
+            \\       MAX(int32_val), MAX(uint32_val), MAX(int64_val), MAX(uint64_val),
+            \\       MAX(date_val), MAX(bytes_val), MAX(timestamp_val)
+            \\FROM TableAllNull
+            ,
+            .rows = .{
+                .{ null, null, null, null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_group_by",
+            .sql =
+            \\# MIN/MAX should work with GROUP BY
+            \\SELECT MIN(int32_val), MAX(uint32_val), bool_val FROM TableAllTypes
+            \\  GROUP BY bool_val ORDER BY bool_val
+            ,
+            .rows = .{
+                .{ -1, 1, null },
+                .{ -24, 41, false },
+                .{ -3, 31, true },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_group_by_and_having",
+            .sql =
+            \\# MIN/MAX should work with GROUP BY and HAVING
+            \\SELECT MIN(int32_val), bool_val FROM TableAllTypes
+            \\  GROUP BY bool_val having MAX(uint32_val) > 30 ORDER BY bool_val
+            ,
+            .rows = .{
+                .{ -24, false },
+                .{ -3, true },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_uuid_1",
+            .sql = "SELECT MIN(uuid_val), MAX(uuid_val) FROM TableUuidTypes",
+            .rows = .{
+                .{ "9d3da323-4c20-460f-8d9b-ec54feec54f0", "9d3da323-4c29-460f-8d9b-ec54feec54f9" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_uuid_3",
+            .sql = "SELECT MIN(uuid_val), MAX(uuid_val) FROM TableAllNullUuids",
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_uuid_with_group_by",
+            .sql = "SELECT bool_val, MIN(uuid_val), MAX(uuid_val) FROM TableUuidTypes GROUP BY bool_val",
+            .unordered = true,
+            .rows = .{
+                .{ null, null, null },
+                .{ false, "9d3da323-4c21-460f-8d9b-ec54feec54f1", "9d3da323-4c29-460f-8d9b-ec54feec54f9" },
+                .{ true, "9d3da323-4c20-460f-8d9b-ec54feec54f0", "9d3da323-4c28-460f-8d9b-ec54feec54f8" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_date_with_group_by",
+            .sql =
+            \\SELECT bool_val,
+            \\       MIN(range_date_val), MAX(range_date_val)
+            \\FROM TableRangeTypes GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, "[NULL, NULL)", "[9999-12-31, NULL)" },
+                .{ true, "[NULL, 0001-01-01)", "[0001-01-01, 2020-01-01)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_timestamp_with_group_by",
+            .sql =
+            \\SELECT bool_val,
+            \\       MIN(range_timestamp_val), MAX(range_timestamp_val)
+            \\FROM TableRangeTypes GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, "[NULL, NULL)", "[9999-12-31 23:59:59.999999+00, NULL)" },
+                .{ true, "[NULL, 0001-01-01 00:00:00+00)", "[0001-01-01 00:00:00+00, 2020-01-01 00:00:00+00)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_datetime_with_groupby",
+            .sql =
+            \\SELECT bool_val,
+            \\       MIN(range_datetime_val), MAX(range_datetime_val)
+            \\FROM TableDatetimeRangeTypes GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, "[NULL, NULL)", "[9999-12-31 23:59:59.999999, NULL)" },
+                .{ true, "[NULL, 0001-01-01 00:00:00)", "[0001-01-01 00:00:00, 2020-01-01 00:00:00)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_date_with_group_by_and_having",
+            .sql =
+            \\SELECT row_id,
+            \\       MIN(range_date_val), MAX(range_date_val)
+            \\FROM TableRangeTypes
+            \\GROUP BY row_id
+            \\HAVING MIN(range_date_val) >= RANGE<DATE> '[2020-01-01, 2020-01-02)'
+            \\ORDER BY row_id
+            ,
+            .rows = .{
+                .{ 7, "[2020-01-01, 9999-12-31)", "[2020-01-01, 9999-12-31)" },
+                .{ 8, "[9999-12-31, NULL)", "[9999-12-31, NULL)" },
+                .{ 10, "[2020-01-01, 9999-12-31)", "[2020-01-01, 9999-12-31)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_timestamp_with_group_by_and_having",
+            .sql =
+            \\SELECT row_id,
+            \\       MIN(range_timestamp_val), MAX(range_timestamp_val)
+            \\FROM TableRangeTypes
+            \\GROUP BY row_id
+            \\HAVING MIN(range_timestamp_val) >= RANGE<TIMESTAMP> '[2020-01-01 10:00:00+00, 2020-12-31 10:00:00+00)'
+            \\ORDER BY row_id
+            ,
+            .rows = .{
+                .{ 8, "[9999-12-31 23:59:59.999999+00, NULL)", "[9999-12-31 23:59:59.999999+00, NULL)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_datetime_with_groupby_and_having",
+            .sql =
+            \\SELECT row_id,
+            \\       MIN(range_datetime_val), MAX(range_datetime_val)
+            \\FROM TableDatetimeRangeTypes
+            \\GROUP BY row_id
+            \\HAVING MIN(range_datetime_val) >= RANGE<DATETIME> '[2020-01-01, 2020-01-02)'
+            \\ORDER BY row_id
+            ,
+            .rows = .{
+                .{ 7, "[2020-01-01 00:00:00, 9999-12-31 23:59:59.999999)", "[2020-01-01 00:00:00, 9999-12-31 23:59:59.999999)" },
+                .{ 8, "[9999-12-31 23:59:59.999999, NULL)", "[9999-12-31 23:59:59.999999, NULL)" },
+                .{ 10, "[2020-01-01 00:00:00, 9999-12-31 23:59:59.999999)", "[2020-01-01 00:00:00, 9999-12-31 23:59:59.999999)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_double_float_nan",
+            .sql =
+            \\SELECT MIN(double_val), MAX(double_val), MIN(float_val), MAX(float_val)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ nan, nan, nan, nan },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_double_inf",
+            .sql =
+            \\SELECT MIN(double_val), MAX(double_val)
+            \\FROM TableAllTypes WHERE NOT IS_NAN(double_val)
+            ,
+            .rows = .{
+                .{ -inf, inf },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_float_inf",
+            .sql =
+            \\SELECT  MIN(float_val), MAX(float_val)
+            \\FROM TableAllTypes WHERE NOT IS_NAN(float_val)
+            ,
+            .rows = .{
+                .{ -inf, inf },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_double",
+            .sql =
+            \\SELECT MIN(double_val), MAX(double_val)
+            \\FROM TableAllTypes WHERE NOT IS_NAN(double_val) AND NOT IS_INF(double_val)
+            ,
+            .rows = .{
+                .{ -0.75, 0.625 },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_float",
+            .sql =
+            \\SELECT MIN(float_val), MAX(float_val)
+            \\FROM TableAllTypes WHERE NOT IS_NAN(float_val) AND NOT IS_INF(float_val)
+            ,
+            .rows = .{
+                .{ -0.5, 0.75 },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_null_vs_nan",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[NULL] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[CAST("NaN" AS FLOAT64)] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{null}, .{nan} },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_empty_vs_null",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<INT64>[] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<INT64>[NULL] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{}, .{null} },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_empty_vs_nan",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[CAST("NaN" AS FLOAT64)] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{}, .{nan} },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_null_nan_appended",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, NULL] AS a
+            \\  )
+            \\    UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, CAST("NaN" AS FLOAT64)] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{1}, .{ 1, nan } },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_null_in_the_middle",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<INT64>[1, NULL, 3] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<INT64>[1, NULL, 2] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{ 1, null, 2 }, .{ 1, null, 3 } },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_nan_in_the_middle",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, CAST("NaN" AS FLOAT64), 3] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, CAST("NaN" AS FLOAT64), 2] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{ 1, nan, 2 }, .{ 1, nan, 3 } },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_null_nan_in_the_middle",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, NULL, 3] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, NULL, 2] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, CAST("NaN" AS FLOAT64), 2] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{ 1, null, 2 }, .{ 1, nan, 2 } },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_null_nan_vs_positive_inf",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, CAST("+Inf" AS FLOAT64)] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, NULL, 2] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, CAST("NaN" AS FLOAT64), 2] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{ 1, null, 2 }, .{ 1, inf } },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_array_null_nan_vs_negative_inf",
+            .sql =
+            \\SELECT MIN(a), MAX(a)
+            \\FROM (
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, CAST("-Inf" AS FLOAT64)] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, NULL, 2] AS a
+            \\  )
+            \\  UNION ALL
+            \\  (
+            \\    SELECT ARRAY<FLOAT64>[1, CAST("NaN" AS FLOAT64), 2] AS a
+            \\  )
+            \\)
+            ,
+            .rows = .{
+                .{ .{ 1, null, 2 }, .{ 1, -inf } },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_date",
+            .sql = "SELECT min(range_date_val), max(range_date_val) FROM TableRangeTypes",
+            .rows = .{
+                .{ "[NULL, 0001-01-01)", "[9999-12-31, NULL)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_datetime",
+            .sql = "SELECT min(range_datetime_val), max(range_datetime_val) FROM TableDatetimeRangeTypes",
+            .rows = .{
+                .{ "[NULL, 0001-01-01 00:00:00)", "[9999-12-31 23:59:59.999999, NULL)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_timestamp",
+            .sql = "SELECT min(range_timestamp_val), max(range_timestamp_val) FROM TableRangeTypes",
+            .rows = .{
+                .{ "[NULL, 0001-01-01 00:00:00+00)", "[9999-12-31 23:59:59.999999+00, NULL)" },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_date_all_null",
+            .sql =
+            \\SELECT MAX(range_date_val) AS max_NULL,
+            \\       MIN(range_date_val) AS min_NULL
+            \\FROM TableAllNullRanges
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_datetime_all_null",
+            .sql =
+            \\SELECT MAX(range_datetime_val) AS max_NULL,
+            \\       MIN(range_datetime_val) AS min_NULL
+            \\FROM TableAllNullDatetimeRange
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_min_max_range_timestamp_all_null",
+            .sql =
+            \\SELECT MAX(range_timestamp_val) AS max_NULL,
+            \\       MIN(range_timestamp_val) AS min_NULL
+            \\FROM TableAllNullRanges
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_array_agg_1",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# ARRAY_AGG
+            \\# ----------------------------------------------------------------------------
+            \\# ARRAY_AGG on zero rows produces NULL array.
+            \\SELECT ARRAY_AGG(val) FROM TableEmpty
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_array_agg_2",
+            .sql =
+            \\# ARRAY_AGG on NULLs produces array of NULLs.
+            \\SELECT ARRAY_AGG(bool_val), ARRAY_AGG(double_val), ARRAY_AGG(float_val),
+            \\       ARRAY_AGG(str_val), ARRAY_AGG(int32_val), ARRAY_AGG(uint32_val),
+            \\       ARRAY_AGG(int64_val), ARRAY_AGG(uint64_val), ARRAY_AGG(date_val),
+            \\       ARRAY_AGG(bytes_val), ARRAY_AGG(timestamp_val)
+            \\FROM TableAllNull
+            ,
+            .rows = .{
+                .{ .{null}, .{null}, .{null}, .{null}, .{null}, .{null}, .{null}, .{null}, .{null}, .{null}, .{null} },
+            },
+        },
+        .{
+            .desc = "aggregation_array_agg_group_by",
+            .sql =
+            \\# ARRAY_AGG works with GROUP BY
+            \\SELECT ARRAY_AGG(bool_val), row_id FROM TableAllTypes GROUP BY row_id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{true}, 1 },
+                .{ .{true}, 2 },
+                .{ .{true}, 3 },
+                .{ .{false}, 4 },
+                .{ .{false}, 5 },
+                .{ .{true}, 6 },
+                .{ .{false}, 7 },
+                .{ .{null}, 8 },
+                .{ .{null}, 9 },
+                .{ .{true}, 10 },
+                .{ .{false}, 11 },
+                .{ .{false}, 12 },
+                .{ .{false}, 13 },
+                .{ .{true}, 14 },
+                .{ .{false}, 15 },
+                .{ .{false}, 16 },
+                .{ .{null}, 17 },
+            },
+        },
+        .{
+            .desc = "aggregation_array_agg_uuid_1",
+            .sql = "SELECT ARRAY_AGG(uuid_val) FROM TableAllNullUuids",
+            .rows = .{
+                .{.{null}},
+            },
+        },
+        .{
+            .desc = "array_agg_empty_input",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# ARRAY_AGG over empty input produces NULL
+            \\# ----------------------------------------------------------------------------
+            \\SELECT array_agg(x) FROM T WHERE x < 0
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_14",
+            .sql =
+            \\# Aggregation of 0 rows
+            \\SELECT COUNT(a) count_all,
+            \\       COUNT(DISTINCT a) count_distinct,
+            \\       MIN(a) min_all,
+            \\       MIN(DISTINCT a) min_distinct,
+            \\       MAX(a) max_all,
+            \\       MAX(DISTINCT a) max_distinct,
+            \\       AVG(a) avg_all,
+            \\       AVG(DISTINCT a) avg_distinct,
+            \\       ARRAY_AGG(a) agg_all,
+            \\       ARRAY_AGG(DISTINCT a) agg_distinct,
+            \\       STRING_AGG(c) str_agg_unary,
+            \\       STRING_AGG(c, ", ") str_agg_binary,
+            \\       STRING_AGG(d) bytes_agg_unary,
+            \\       STRING_AGG(d, b", ") bytes_agg_binary
+            \\FROM (SELECT 1 a, 2 b, "foo" c, b"bar" d) WHERE a > b
+            ,
+            .rows = .{
+                .{ 0, 0, null, null, null, null, null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "scalar_aggregate_where_false",
+            .sql =
+            \\SELECT subq.c1
+            \\FROM (SELECT MIN(t.c1) c1
+            \\      FROM (SELECT 1 c1) t) subq
+            \\WHERE false
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "aggregation_input_scan_column_pruning",
+            .sql =
+            \\# Regression test for b/134139834 (for the PreparedQuery API, which runs with
+            \\# analyzer column pruning).
+            \\SELECT 1
+            \\FROM (SELECT 1 AS key, 10 AS value UNION ALL
+            \\      SELECT 2, 20)
+            \\GROUP BY (key + 1)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "aggregation_string_agg_1",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# STRING_AGG
+            \\# ----------------------------------------------------------------------------
+            \\# string_agg on two strings: 'foo' and 'bar'. Note that the order of the
+            \\# elements is unspecified.
+            \\SELECT string_agg(y) IN ("bar,foo", "foo,bar"),
+            \\       string_agg(y, " : ") IN ("bar : foo", "foo : bar")
+            \\FROM T
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "aggregation_string_agg_2",
+            .sql =
+            \\SELECT string_agg(CAST(y as bytes)) IN (b"bar,foo", b"foo,bar"),
+            \\       string_agg(CAST(y as bytes), b"<->") IN (b"bar<->foo", b"foo<->bar")
+            \\FROM T
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "aggregation_string_agg_3",
+            .sql =
+            \\# string_agg with NULL values and several non-NULL values. Note that the order
+            \\# of the elements in the output string is non-deterministic.
+            \\SELECT string_agg(x) IN ("a,c,d", "a,d,c", "c,a,d", "c,d,a", "d,a,c", "d,c,a"),
+            \\       string_agg(x, "|") IN ("a|c|d", "a|d|c", "c|a|d", "c|d|a", "d|a|c",
+            \\                              "d|c|a")
+            \\FROM (SELECT "a" x UNION ALL SELECT NULL UNION ALL
+            \\      SELECT "c" UNION ALL SELECT "d")
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "aggregation_string_agg_4",
+            .sql =
+            \\# string_agg on bytes with NULL values and several non-NULL values, as above.
+            \\SELECT string_agg(CAST(x as bytes)) IN (b"a,c,d", b"a,d,c", b"c,a,d", b"c,d,a",
+            \\                                        b"d,a,c", b"d,c,a"),
+            \\       string_agg(CAST(x as bytes), b"|") IN (b"a|c|d", b"a|d|c", b"c|a|d",
+            \\                                              b"c|d|a", b"d|a|c", b"d|c|a")
+            \\FROM (SELECT "a" x UNION ALL SELECT NULL UNION ALL
+            \\      SELECT "c" UNION ALL SELECT "d")
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "aggregation_string_agg_5",
+            .sql =
+            \\# string_agg on string with a single value
+            \\SELECT string_agg(x), string_agg(x, ", ")
+            \\FROM (SELECT NULL x UNION ALL SELECT "a" UNION ALL SELECT NULL)
+            ,
+            .rows = .{
+                .{ "a", "a" },
+            },
+        },
+        .{
+            .desc = "aggregation_string_agg_6",
+            .sql =
+            \\# string_agg on bytes with a single value
+            \\SELECT string_agg(CAST(x as bytes)), string_agg(CAST(x as bytes), b", ")
+            \\FROM (SELECT NULL x UNION ALL SELECT "a" UNION ALL SELECT NULL)
+            ,
+            .rows = .{
+                .{ "\x61", "\x61" },
+            },
+        },
+        .{
+            .desc = "string_agg_data_contains_delimiter",
+            .sql = "SELECT STRING_AGG(x) FROM ((SELECT \"f,oo\" as x) UNION ALL (SELECT \"f,oo\"))",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "aggregation_string_agg_error_1",
+            .sql =
+            \\# string_agg on string with NULL separator gives error
+            \\SELECT string_agg("s", NULL) FROM (SELECT 1)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "aggregation_string_agg_error_2",
+            .sql =
+            \\# string_agg on bytes with NULL separator gives error
+            \\SELECT string_agg(b"b", NULL) FROM (SELECT 1)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "aggregation_23",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# BIT_AND
+            \\# ----------------------------------------------------------------------------
+            \\SELECT bit_and(CAST(x as int32)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_24",
+            .sql = "SELECT bit_and(CAST(x as int64)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_25",
+            .sql = "SELECT bit_and(CAST(x as uint32)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_26",
+            .sql = "SELECT bit_and(CAST(x as uint64)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_27",
+            .sql = "SELECT bit_and(x) FROM (SELECT CAST(NULL AS int32) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_28",
+            .sql = "SELECT bit_and(x) FROM (SELECT CAST(NULL AS int64) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_29",
+            .sql = "SELECT bit_and(x) FROM (SELECT CAST(NULL AS uint32) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_30",
+            .sql = "SELECT bit_and(x) FROM (SELECT CAST(NULL AS uint64) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_31",
+            .sql = "SELECT bit_and(CAST(x as int32)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_32",
+            .sql = "SELECT bit_and(CAST(x as int64)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_33",
+            .sql = "SELECT bit_and(CAST(x as uint32)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_34",
+            .sql = "SELECT bit_and(CAST(x as uint64)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_35",
+            .sql =
+            \\SELECT bit_and(CAST(x as int32)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "aggregation_36",
+            .sql =
+            \\SELECT bit_and(CAST(x as int64)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "aggregation_37",
+            .sql =
+            \\SELECT bit_and(CAST(x as uint32)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "aggregation_38",
+            .sql =
+            \\SELECT bit_and(CAST(x as uint64)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "aggregation_39",
+            .sql =
+            \\# BIT_AND should work with GROUP BY.
+            \\SELECT id, bit_and(x) FROM
+            \\(SELECT "a" id, 3 x UNION ALL SELECT "a", 5 UNION ALL
+            \\ SELECT "b" id, 5 x UNION ALL SELECT "b", 6)
+            \\GROUP BY id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", 1 },
+                .{ "b", 4 },
+            },
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_1",
+            .sql =
+            \\SELECT bit_and(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"" UNION ALL SELECT b"")
+            ,
+            .rows = .{
+                .{""},
+            },
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_2",
+            .sql =
+            \\SELECT bit_and(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\x00" UNION ALL SELECT b"\xFF")
+            ,
+            .rows = .{
+                .{"\x00"},
+            },
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_3",
+            .sql =
+            \\SELECT bit_and(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\x00\xFF" UNION ALL SELECT b"\xFF\x00")
+            ,
+            .rows = .{
+                .{"\x00\x00"},
+            },
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_4",
+            .sql =
+            \\SELECT bit_and(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\xAA\xAA\xAA\xAA\xAA" UNION ALL
+            \\ SELECT b"\x55\x55\x55\x55\x55")
+            ,
+            .rows = .{
+                .{"\x00\x00\x00\x00\x00"},
+            },
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_5",
+            .sql =
+            \\SELECT bit_and(x) FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x23\x45\x67\x89\xAB\xCD\xEF\xFE\xDC\xBA" UNION ALL
+            \\ SELECT b"\x12\x34\x56\x78\x9A\xBC\xDE\xF0\x0F\xED\xCB")
+            ,
+            .rows = .{
+                .{"\x00\x20\x44\x60\x88\xa8\xcc\xe0\x0e\xcc\x8a"},
+            },
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_6",
+            .sql =
+            \\# BIT_AND with BYTES argument should work with GROUP BY.
+            \\SELECT id, bit_and(x) FROM
+            \\(SELECT "a" id, b"\xFF" x UNION ALL SELECT "a", b"\x00" UNION ALL
+            \\ SELECT "b" id, b"\xFF" x UNION ALL SELECT "b", b"\xFF")
+            \\GROUP BY id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", "\x00" },
+                .{ "b", "\xff" },
+            },
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_7",
+            .sql =
+            \\# BIT_AND with BYTES argument should verify input is the same length.
+            \\SELECT bit_and(x) FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01")
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_with_pad_mode_1",
+            .sql =
+            \\# BIT_AND with BYTES and PAD mode should pad the shorter input.
+            \\SELECT bit_and(x, mode => 'PAD') FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01")
+            ,
+            .rows = .{
+                .{"\x01\x00"},
+            },
+        },
+        .{
+            .desc = "bit_and_aggregation_bytes_arg_with_pad_mode_2",
+            .sql =
+            \\# BIT_AND with BYTES and PAD mode should pad the shorter input.
+            \\SELECT bit_and(x, mode => 'PAD') FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01" UNION ALL
+            \\ SELECT b"\x01\x02\x03")
+            ,
+            .rows = .{
+                .{"\x01\x00\x00"},
+            },
+        },
+        .{
+            .desc = "aggregation_40",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# BIT_OR
+            \\# ----------------------------------------------------------------------------
+            \\SELECT bit_or(CAST(x as int32)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_41",
+            .sql = "SELECT bit_or(CAST(x as int64)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_42",
+            .sql = "SELECT bit_or(CAST(x as uint32)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_43",
+            .sql = "SELECT bit_or(CAST(x as uint64)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_44",
+            .sql = "SELECT bit_or(x) FROM (SELECT CAST(NULL AS int32) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_45",
+            .sql = "SELECT bit_or(x) FROM (SELECT CAST(NULL AS int64) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_46",
+            .sql = "SELECT bit_or(x) FROM (SELECT CAST(NULL AS uint32) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_47",
+            .sql = "SELECT bit_or(x) FROM (SELECT CAST(NULL AS uint64) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_48",
+            .sql = "SELECT bit_or(CAST(x as int32)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_49",
+            .sql = "SELECT bit_or(CAST(x as int64)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_50",
+            .sql = "SELECT bit_or(CAST(x as uint32)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_51",
+            .sql = "SELECT bit_or(CAST(x as uint64)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_52",
+            .sql =
+            \\SELECT bit_or(CAST(x as int32)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{7},
+            },
+        },
+        .{
+            .desc = "aggregation_53",
+            .sql =
+            \\SELECT bit_or(CAST(x as int64)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{7},
+            },
+        },
+        .{
+            .desc = "aggregation_54",
+            .sql =
+            \\SELECT bit_or(CAST(x as uint32)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{7},
+            },
+        },
+        .{
+            .desc = "aggregation_55",
+            .sql =
+            \\SELECT bit_or(CAST(x as uint64)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{7},
+            },
+        },
+        .{
+            .desc = "aggregation_56",
+            .sql =
+            \\# BIT_OR should work with GROUP BY.
+            \\SELECT id, bit_or(x) FROM
+            \\(SELECT "a" id, 3 x UNION ALL SELECT "a", 5 UNION ALL
+            \\ SELECT "b" id, 5 x UNION ALL SELECT "b", 6)
+            \\GROUP BY id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", 7 },
+                .{ "b", 7 },
+            },
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_1",
+            .sql =
+            \\SELECT bit_or(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"" UNION ALL SELECT b"")
+            ,
+            .rows = .{
+                .{""},
+            },
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_2",
+            .sql =
+            \\SELECT bit_or(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\x00" UNION ALL SELECT b"\xFF")
+            ,
+            .rows = .{
+                .{"\xff"},
+            },
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_3",
+            .sql =
+            \\SELECT bit_or(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\x00\xFF" UNION ALL SELECT b"\xFF\x00")
+            ,
+            .rows = .{
+                .{"\xff\xff"},
+            },
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_4",
+            .sql =
+            \\SELECT bit_or(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\xAA\xAA\xAA\xAA\xAA" UNION ALL
+            \\ SELECT b"\x55\x55\x55\x55\x55")
+            ,
+            .rows = .{
+                .{"\xff\xff\xff\xff\xff"},
+            },
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_5",
+            .sql =
+            \\SELECT bit_or(x) FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x23\x45\x67\x89\xAB\xCD\xEF\xFE\xDC\xBA" UNION ALL
+            \\ SELECT b"\x12\x34\x56\x78\x9A\xBC\xDE\xF0\x0F\xED\xCB")
+            ,
+            .rows = .{
+                .{"\x13\x37\x57\x7f\x9b\xbf\xdf\xff\xff\xfd\xfb"},
+            },
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_6",
+            .sql =
+            \\# BIT_OR with BYTES argument should work with GROUP BY.
+            \\SELECT id, bit_or(x) FROM
+            \\(SELECT "a" id, b"\xFF" x UNION ALL SELECT "a", b"\x00" UNION ALL
+            \\ SELECT "b" id, b"\x00" x UNION ALL SELECT "b", b"\x00")
+            \\GROUP BY id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", "\xff" },
+                .{ "b", "\x00" },
+            },
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_7",
+            .sql =
+            \\# BIT_OR with BYTES argument should verify input is the same length.
+            \\SELECT bit_or(x) FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01")
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_with_pad_mode_1",
+            .sql =
+            \\# BIT_OR with BYTES and PAD mode should pad the shorter input.
+            \\SELECT bit_or(x, mode => 'PAD') FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01")
+            ,
+            .rows = .{
+                .{"\x01\x02"},
+            },
+        },
+        .{
+            .desc = "bit_or_aggregation_bytes_arg_with_pad_mode_2",
+            .sql =
+            \\# BIT_OR with BYTES and PAD mode should pad the shorter input.
+            \\SELECT bit_or(x, mode => 'PAD') FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01" UNION ALL
+            \\ SELECT b"\x01\x02\x03")
+            ,
+            .rows = .{
+                .{"\x01\x02\x03"},
+            },
+        },
+        .{
+            .desc = "aggregation_57",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# BIT_XOR
+            \\# ----------------------------------------------------------------------------
+            \\SELECT bit_xor(CAST(x as int32)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_58",
+            .sql = "SELECT bit_xor(CAST(x as int64)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_59",
+            .sql = "SELECT bit_xor(CAST(x as uint32)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_60",
+            .sql = "SELECT bit_xor(CAST(x as uint64)) FROM (SELECT 1 x FROM (SELECT 1) WHERE false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_61",
+            .sql = "SELECT bit_xor(x) FROM (SELECT CAST(NULL AS int32) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_62",
+            .sql = "SELECT bit_xor(x) FROM (SELECT CAST(NULL AS int64) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_63",
+            .sql = "SELECT bit_xor(x) FROM (SELECT CAST(NULL AS uint32) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_64",
+            .sql = "SELECT bit_xor(x) FROM (SELECT CAST(NULL AS uint64) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_65",
+            .sql = "SELECT bit_xor(CAST(x as int32)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_66",
+            .sql = "SELECT bit_xor(CAST(x as int64)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_67",
+            .sql = "SELECT bit_xor(CAST(x as uint32)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_68",
+            .sql = "SELECT bit_xor(CAST(x as uint64)) FROM (SELECT 5 x)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "aggregation_69",
+            .sql =
+            \\SELECT bit_xor(CAST(x as int32)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "aggregation_70",
+            .sql =
+            \\SELECT bit_xor(CAST(x as int64)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "aggregation_71",
+            .sql =
+            \\SELECT bit_xor(CAST(x as uint32)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "aggregation_72",
+            .sql =
+            \\SELECT bit_xor(CAST(x as uint64)) FROM
+            \\(SELECT NULL x UNION ALL SELECT 5 UNION ALL SELECT 6)
+            ,
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "aggregation_73",
+            .sql =
+            \\# BIT_XOR should work with GROUP BY.
+            \\SELECT id, bit_xor(x) FROM
+            \\(SELECT "a" id, 3 x UNION ALL SELECT "a", 5 UNION ALL
+            \\ SELECT "b" id, 5 x UNION ALL SELECT "b", 6)
+            \\GROUP BY id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", 6 },
+                .{ "b", 3 },
+            },
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_1",
+            .sql =
+            \\SELECT bit_xor(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"" UNION ALL SELECT b"")
+            ,
+            .rows = .{
+                .{""},
+            },
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_2",
+            .sql =
+            \\SELECT bit_xor(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\x00" UNION ALL SELECT b"\xFF")
+            ,
+            .rows = .{
+                .{"\xff"},
+            },
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_3",
+            .sql =
+            \\SELECT bit_xor(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\x00\xFF" UNION ALL SELECT b"\xFF\x00")
+            ,
+            .rows = .{
+                .{"\xff\xff"},
+            },
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_4",
+            .sql =
+            \\SELECT bit_xor(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT b"\xAA\xAA\xAA\xAA\xAA" UNION ALL
+            \\ SELECT b"\x55\x55\x55\x55\x55")
+            ,
+            .rows = .{
+                .{"\xff\xff\xff\xff\xff"},
+            },
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_5",
+            .sql =
+            \\SELECT bit_xor(x) FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x23\x45\x67\x89\xAB\xCD\xEF\xFE\xDC\xBA" UNION ALL
+            \\ SELECT b"\x12\x34\x56\x78\x9A\xBC\xDE\xF0\x0F\xED\xCB")
+            ,
+            .rows = .{
+                .{"\x13\x17\x13\x1f\x13\x17\x13\x1f\xf1\x31\x71"},
+            },
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_6",
+            .sql =
+            \\# BIT_XOR with BYTES argument should work with GROUP BY.
+            \\SELECT id, bit_xor(x) FROM
+            \\(SELECT "a" id, b"\xFF" x UNION ALL SELECT "a", b"\x00" UNION ALL
+            \\ SELECT "b" id, b"\xFF" x UNION ALL SELECT "b", b"\xFF")
+            \\GROUP BY id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", "\xff" },
+                .{ "b", "\x00" },
+            },
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_7",
+            .sql =
+            \\# BIT_XOR with BYTES argument should verify input is the same length.
+            \\SELECT bit_xor(x) FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01")
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_with_pad_mode_1",
+            .sql =
+            \\# BIT_XOR with BYTES and PAD mode should pad the shorter input.
+            \\SELECT bit_xor(x, mode => 'PAD') FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01")
+            ,
+            .rows = .{
+                .{"\x00\x02"},
+            },
+        },
+        .{
+            .desc = "bit_xor_aggregation_bytes_arg_with_pad_mode_2",
+            .sql =
+            \\# BIT_XOR with BYTES and PAD mode should pad the shorter input.
+            \\SELECT bit_xor(x, mode => 'PAD') FROM
+            \\(SELECT NULL x UNION ALL
+            \\ SELECT b"\x01\x02" UNION ALL
+            \\ SELECT b"\x01" UNION ALL
+            \\ SELECT b"\x01\x02\x03")
+            ,
+            .rows = .{
+                .{"\x01\x00\x03"},
+            },
+        },
+        .{
+            .desc = "aggregation_74",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# LOGICAL_AND
+            \\# ----------------------------------------------------------------------------
+            \\SELECT logical_and(x) FROM (SELECT true x FROM (SELECT 1) WHERE false)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_75",
+            .sql = "SELECT logical_and(x) FROM (SELECT CAST(NULL AS bool) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_76",
+            .sql = "SELECT logical_and(x) FROM (SELECT true x)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "aggregation_77",
+            .sql = "SELECT logical_and(x) FROM (SELECT false x)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "aggregation_78",
+            .sql = "SELECT logical_and(x) FROM (SELECT NULL x UNION ALL SELECT true)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "aggregation_79",
+            .sql = "SELECT logical_and(x) FROM (SELECT NULL x UNION ALL SELECT false)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "aggregation_80",
+            .sql =
+            \\SELECT logical_and(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT true UNION ALL SELECT false)
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "aggregation_81",
+            .sql =
+            \\SELECT logical_and(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT true UNION ALL SELECT true)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "aggregation_82",
+            .sql =
+            \\SELECT logical_and(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT false UNION ALL SELECT false)
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "aggregation_83",
+            .sql =
+            \\# LOGICAL_AND should work with GROUP BY.
+            \\SELECT id, logical_and(x) FROM
+            \\(SELECT "a" id, true x UNION ALL SELECT "a", false UNION ALL
+            \\ SELECT "b" id, true x UNION ALL SELECT "b", true UNION ALL
+            \\ SELECT "c" id, false x UNION ALL SELECT "c", false)
+            \\GROUP BY id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", false },
+                .{ "b", true },
+                .{ "c", false },
+            },
+        },
+        .{
+            .desc = "aggregation_84",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# LOGICAL_OR
+            \\# ----------------------------------------------------------------------------
+            \\SELECT logical_or(x) FROM (SELECT true x FROM (SELECT 1) WHERE false)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_85",
+            .sql = "SELECT logical_or(x) FROM (SELECT CAST(NULL AS bool) x)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_86",
+            .sql = "SELECT logical_or(x) FROM (SELECT true x)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "aggregation_87",
+            .sql = "SELECT logical_or(x) FROM (SELECT false x)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "aggregation_88",
+            .sql = "SELECT logical_or(x) FROM (SELECT NULL x UNION ALL SELECT true)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "aggregation_89",
+            .sql = "SELECT logical_or(x) FROM (SELECT NULL x UNION ALL SELECT false)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "aggregation_90",
+            .sql =
+            \\SELECT logical_or(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT true UNION ALL SELECT false)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "aggregation_91",
+            .sql =
+            \\SELECT logical_or(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT true UNION ALL SELECT true)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "aggregation_92",
+            .sql =
+            \\SELECT logical_or(x) FROM
+            \\(SELECT NULL x UNION ALL SELECT false UNION ALL SELECT false)
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "aggregation_93",
+            .sql =
+            \\# LOGICAL_OR should work with GROUP BY.
+            \\SELECT id, logical_or(x) FROM
+            \\(SELECT "a" id, true x UNION ALL SELECT "a", false UNION ALL
+            \\ SELECT "b" id, true x UNION ALL SELECT "b", true UNION ALL
+            \\ SELECT "c" id, false x UNION ALL SELECT "c", false)
+            \\GROUP BY id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "a", true },
+                .{ "b", true },
+                .{ "c", false },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_1",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# ANY_VALUE
+            \\# ----------------------------------------------------------------------------
+            \\SELECT any_value(x) FROM (select 2 as x)
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_2",
+            .sql =
+            \\SELECT ANY_VALUE(bool_val), ANY_VALUE(double_val), ANY_VALUE(float_val),
+            \\       ANY_VALUE(str_val), ANY_VALUE(int32_val), ANY_VALUE(uint32_val),
+            \\       ANY_VALUE(int64_val), ANY_VALUE(uint64_val), ANY_VALUE(date_val),
+            \\       ANY_VALUE(bytes_val), ANY_VALUE(timestamp_val)
+            \\  FROM TableOneValue
+            ,
+            .rows = .{
+                .{ true, 1, 1, "1", 1, 1, 1, 1, "2001-01-01", "\x31", "2001-01-01 00:00:00+00" },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_array_struct_proto",
+            .sql =
+            \\SELECT any_value(array_val), any_value(struct_val), any_value(proto_val) FROM (
+            \\  SELECT [1, 2, 3] as array_val,
+            \\         STRUCT(1 as int_field, 'foo' as str_field) as struct_val,
+            \\         NEW googlesql_test.TestNullabilityInnerPB(1 as required_field,
+            \\                                                   2 as optional_field)
+            \\         as proto_val)
+            ,
+            .rows = .{
+                .{ .{ 1, 2, 3 }, .{ 1, "foo" }, .{"required_field: 1 optional_field: 2"} },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_3",
+            .sql =
+            \\SELECT ANY_VALUE(bool_val), ANY_VALUE(double_val), ANY_VALUE(float_val),
+            \\       ANY_VALUE(str_val), ANY_VALUE(int32_val), ANY_VALUE(uint32_val),
+            \\       ANY_VALUE(int64_val), ANY_VALUE(uint64_val), ANY_VALUE(date_val),
+            \\       ANY_VALUE(bytes_val), ANY_VALUE(timestamp_val)
+            \\  FROM TableAllNull
+            ,
+            .rows = .{
+                .{ null, null, null, null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_group_by",
+            .sql =
+            \\# ANY_VALUE should work with GROUP BY
+            \\SELECT bool_val, ANY_VALUE(double_val) FROM TableOneValue GROUP BY bool_val ORDER BY bool_val
+            ,
+            .rows = .{
+                .{ true, 1 },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_empty",
+            .sql = "SELECT ANY_VALUE(val) FROM TableEmpty",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_double_INF",
+            .sql =
+            \\SELECT ANY_VALUE(double_val) IN (CAST("Inf" AS float), CAST("-Inf" AS float))
+            \\FROM TableAllTypes WHERE IS_INF(double_val)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "aggregation_any_value_float_INF",
+            .sql =
+            \\SELECT ANY_VALUE(float_val) IN (CAST("Inf" AS float), CAST("-Inf" AS float))
+            \\FROM TableAllTypes WHERE IS_INF(float_val)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "aggregation_any_value_double_NaN",
+            .sql = "SELECT ANY_VALUE(double_val) FROM TableAllTypes WHERE IS_NAN(double_val)",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_float_NaN",
+            .sql = "SELECT ANY_VALUE(float_val) FROM TableAllTypes WHERE IS_NAN(float_val)",
+            .rows = .{
+                .{nan},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_array",
+            .sql = "SELECT any_value([1]) FROM (select 2)",
+            .rows = .{
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_numeric",
+            .sql =
+            \\SELECT ANY_VALUE(x) FROM (
+            \\SELECT BIGNUMERIC '1e2' x UNION ALL
+            \\SELECT BIGNUMERIC '1e2')
+            ,
+            .rows = .{
+                .{100},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_json",
+            .sql =
+            \\SELECT ANY_VALUE(x) FROM (
+            \\SELECT JSON '{"a": 10}' x UNION ALL
+            \\SELECT JSON '{"a": 10}')
+            ,
+            .rows = .{
+                .{"{\"a\":10}"},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_null_json",
+            .sql =
+            \\SELECT ANY_VALUE(x) FROM (
+            \\SELECT CAST(NULL AS JSON) x)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_uuid_1",
+            .sql = "SELECT ANY_VALUE(uuid_val) FROM TableOneValueUuid",
+            .rows = .{
+                .{"9d3da323-4c20-460f-8d9b-ec54feec54f0"},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_uuid_2",
+            .sql = "SELECT ANY_VALUE(uuid_val) FROM TableAllNullUuids",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range",
+            .sql =
+            \\SELECT ANY_VALUE(range_date_val), ANY_VALUE(range_timestamp_val) FROM (
+            \\SELECT RANGE<DATE> '[2020-01-01, 2020-12-31)' range_date_val,
+            \\       RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)' range_timestamp_val UNION ALL
+            \\SELECT RANGE<DATE> '[2020-01-01, 2020-12-31)' range_date_val,
+            \\       RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)' range_timestamp_val)
+            ,
+            .rows = .{
+                .{ "[2020-01-01, 2020-12-31)", "[2020-01-01 08:00:00+00, 2020-12-31 08:00:00+00)" },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_datetime",
+            .sql =
+            \\SELECT ANY_VALUE(range_datetime_val) FROM (
+            \\SELECT RANGE<DATETIME> '[2020-01-01, 2020-12-31)' range_datetime_val UNION ALL
+            \\SELECT RANGE<DATETIME> '[2020-01-01, 2020-12-31)' range_datetime_val)
+            ,
+            .rows = .{
+                .{"[2020-01-01 00:00:00, 2020-12-31 00:00:00)"},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_null",
+            .sql =
+            \\SELECT ANY_VALUE(range_date_val), ANY_VALUE(range_timestamp_val) FROM (
+            \\SELECT CAST(NULL AS RANGE<DATE>) range_date_val,
+            \\       CAST(NULL AS RANGE<TIMESTAMP>) range_timestamp_val)
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_datetime_null",
+            .sql =
+            \\SELECT ANY_VALUE(range_datetime_val) FROM (
+            \\SELECT CAST(NULL AS RANGE<DATETIME>) range_datetime_val)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_date_group_by",
+            .sql =
+            \\SELECT bool_val, ANY_VALUE(range_date_val)
+            \\FROM (
+            \\  SELECT true bool_val, RANGE<DATE> '[2020-01-01, 2020-02-01)' range_date_val UNION ALL
+            \\  SELECT true bool_val, RANGE<DATE> '[2020-01-01, 2020-02-01)' range_date_val UNION ALL
+            \\  SELECT false bool_val, RANGE<DATE> '[2020-02-01, 2020-03-01)' range_date_val UNION ALL
+            \\  SELECT false bool_val, RANGE<DATE> '[2020-02-01, 2020-03-01)' range_date_val
+            \\)
+            \\GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, "[2020-02-01, 2020-03-01)" },
+                .{ true, "[2020-01-01, 2020-02-01)" },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_timestamp_group_by",
+            .sql =
+            \\SELECT bool_val, ANY_VALUE(range_timestamp_val)
+            \\FROM (
+            \\  SELECT true bool_val, RANGE<TIMESTAMP> '[2020-01-01, 2020-02-01)' range_timestamp_val UNION ALL
+            \\  SELECT true bool_val, RANGE<TIMESTAMP> '[2020-01-01, 2020-02-01)' range_timestamp_val UNION ALL
+            \\  SELECT false bool_val, RANGE<TIMESTAMP> '[2020-02-01, 2020-03-01)' range_timestamp_val UNION ALL
+            \\  SELECT false bool_val, RANGE<TIMESTAMP> '[2020-02-01, 2020-03-01)' range_timestamp_val
+            \\)
+            \\GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, "[2020-02-01 08:00:00+00, 2020-03-01 08:00:00+00)" },
+                .{ true, "[2020-01-01 08:00:00+00, 2020-02-01 08:00:00+00)" },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_datetime_group_by",
+            .sql =
+            \\SELECT bool_val, ANY_VALUE(range_datetime_val)
+            \\FROM (
+            \\  SELECT true bool_val, RANGE<DATETIME> '[2020-01-01, 2020-02-01)' range_datetime_val UNION ALL
+            \\  SELECT true bool_val, RANGE<DATETIME> '[2020-01-01, 2020-02-01)' range_datetime_val UNION ALL
+            \\  SELECT false bool_val, RANGE<DATETIME> '[2020-02-01, 2020-03-01)' range_datetime_val UNION ALL
+            \\  SELECT false bool_val, RANGE<DATETIME> '[2020-02-01, 2020-03-01)' range_datetime_val
+            \\)
+            \\GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, "[2020-02-01 00:00:00, 2020-03-01 00:00:00)" },
+                .{ true, "[2020-01-01 00:00:00, 2020-02-01 00:00:00)" },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_date_group_by_having",
+            .sql =
+            \\SELECT bool_val, ANY_VALUE(range_date_val)
+            \\FROM (
+            \\  SELECT true bool_val, RANGE<DATE> '[2020-01-01, 2020-02-01)' range_date_val UNION ALL
+            \\  SELECT true bool_val, RANGE<DATE> '[2020-01-01, 2020-02-01)' range_date_val UNION ALL
+            \\  SELECT false bool_val, RANGE<DATE> '[2020-02-01, 2020-03-01)' range_date_val UNION ALL
+            \\  SELECT false bool_val, RANGE<DATE> '[2020-02-01, 2020-03-01)' range_date_val
+            \\)
+            \\GROUP BY bool_val HAVING bool_val
+            ,
+            .rows = .{
+                .{ true, "[2020-01-01, 2020-02-01)" },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_timestamp_group_by_having",
+            .sql =
+            \\SELECT bool_val, ANY_VALUE(range_timestamp_val)
+            \\FROM (
+            \\  SELECT true bool_val, RANGE<TIMESTAMP> '[2020-01-01, 2020-02-01)' range_timestamp_val UNION ALL
+            \\  SELECT true bool_val, RANGE<TIMESTAMP> '[2020-01-01, 2020-02-01)' range_timestamp_val UNION ALL
+            \\  SELECT false bool_val, RANGE<TIMESTAMP> '[2020-02-01, 2020-03-01)' range_timestamp_val UNION ALL
+            \\  SELECT false bool_val, RANGE<TIMESTAMP> '[2020-02-01, 2020-03-01)' range_timestamp_val
+            \\)
+            \\GROUP BY bool_val HAVING bool_val
+            ,
+            .rows = .{
+                .{ true, "[2020-01-01 08:00:00+00, 2020-02-01 08:00:00+00)" },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_datetime_group_by_having",
+            .sql =
+            \\SELECT bool_val, ANY_VALUE(range_datetime_val)
+            \\FROM (
+            \\  SELECT true bool_val, RANGE<DATETIME> '[2020-01-01, 2020-02-01)' range_datetime_val UNION ALL
+            \\  SELECT true bool_val, RANGE<DATETIME> '[2020-01-01, 2020-02-01)' range_datetime_val UNION ALL
+            \\  SELECT false bool_val, RANGE<DATETIME> '[2020-02-01, 2020-03-01)' range_datetime_val UNION ALL
+            \\  SELECT false bool_val, RANGE<DATETIME> '[2020-02-01, 2020-03-01)' range_datetime_val
+            \\)
+            \\GROUP BY bool_val HAVING bool_val
+            ,
+            .rows = .{
+                .{ true, "[2020-01-01 00:00:00, 2020-02-01 00:00:00)" },
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_date_group_by_range",
+            .sql =
+            \\SELECT ANY_VALUE(range_date_val)
+            \\FROM (
+            \\  SELECT RANGE<DATE> '[2020-01-01, 2020-02-01)' range_date_val UNION ALL
+            \\  SELECT RANGE<DATE> '[2020-01-01, 2020-02-01)' range_date_val UNION ALL
+            \\  SELECT RANGE<DATE> '[2020-02-01, 2020-03-01)' range_date_val UNION ALL
+            \\  SELECT RANGE<DATE> '[2020-02-01, 2020-03-01)' range_date_val
+            \\)
+            \\GROUP BY range_date_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"[2020-01-01, 2020-02-01)"},
+                .{"[2020-02-01, 2020-03-01)"},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_timestamp_group_by_range",
+            .sql =
+            \\SELECT ANY_VALUE(range_timestamp_val)
+            \\FROM (
+            \\  SELECT RANGE<TIMESTAMP> '[2020-01-01, 2020-02-01)' range_timestamp_val UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[2020-01-01, 2020-02-01)' range_timestamp_val UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[2020-02-01, 2020-03-01)' range_timestamp_val UNION ALL
+            \\  SELECT RANGE<TIMESTAMP> '[2020-02-01, 2020-03-01)' range_timestamp_val
+            \\)
+            \\GROUP BY range_timestamp_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"[2020-01-01 08:00:00+00, 2020-02-01 08:00:00+00)"},
+                .{"[2020-02-01 08:00:00+00, 2020-03-01 08:00:00+00)"},
+            },
+        },
+        .{
+            .desc = "aggregation_any_value_range_datetime_group_by_range",
+            .sql =
+            \\SELECT ANY_VALUE(range_datetime_val)
+            \\FROM (
+            \\  SELECT RANGE<DATETIME> '[2020-01-01, 2020-02-01)' range_datetime_val UNION ALL
+            \\  SELECT RANGE<DATETIME> '[2020-01-01, 2020-02-01)' range_datetime_val UNION ALL
+            \\  SELECT RANGE<DATETIME> '[2020-02-01, 2020-03-01)' range_datetime_val UNION ALL
+            \\  SELECT RANGE<DATETIME> '[2020-02-01, 2020-03-01)' range_datetime_val
+            \\)
+            \\GROUP BY range_datetime_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"[2020-01-01 00:00:00, 2020-02-01 00:00:00)"},
+                .{"[2020-02-01 00:00:00, 2020-03-01 00:00:00)"},
+            },
+        },
+        .{
+            .desc = "aggregation_zero_rows_1",
+            .sql =
+            \\# ----------------------------------------------------------------------------
+            \\# AGGREGATING EMPTY TABLE (ZERO ROWS)
+            \\# ----------------------------------------------------------------------------
+            \\SELECT COUNT(val), COUNT(*), SUM(val), AVG(val), MIN(val), MAX(val),
+            \\       ANY_VALUE(val), ARRAY_AGG(val), BIT_AND(val), BIT_OR(val), BIT_XOR(val),
+            \\       LOGICAL_AND(CAST(val AS bool)), LOGICAL_OR(CAST(val AS bool)),
+            \\       STRING_AGG(CAST(val AS string)), STRING_AGG(CAST(val AS string), "X")
+            \\FROM TableEmpty
+            ,
+            .rows = .{
+                .{ 0, 0, null, null, null, null, null, null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "string_agg_with_constants_and_limit",
+            .sql = "select array_agg(\"x\" limit 100) from (select 1)",
+            .rows = .{
+                .{.{"x"}},
+            },
+        },
+    },
+}

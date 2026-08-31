@@ -1,0 +1,170 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/arithmetic_functions",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/arithmetic_functions.test",
+    .cases = .{
+        .{
+            .desc = "arithmetic_functions_1",
+            .sql = "SELECT 1+1",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_2",
+            .sql = "SELECT 3.0+5.7",
+            .rows = .{
+                .{8.7},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_3",
+            .sql = "SELECT 1+NULL",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "arithmetic_functions_4",
+            .sql = "SELECT 1-1",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_5",
+            .sql = "SELECT 1*2",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_6",
+            .sql = "SELECT 2147483648*2147483648",
+            .rows = .{
+                .{4611686018427387904},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_7",
+            .sql = "SELECT 3.0*5.7",
+            .rows = .{
+                .{17.1},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_8",
+            .sql = "SELECT 1/2",
+            .rows = .{
+                .{0.5},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_8_safe_divide",
+            .sql = "SELECT safe_divide(1, 2)",
+            .rows = .{
+                .{0.5},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_8_safe_divide_int32",
+            .sql = "SELECT safe_divide(cast(1 as int32), cast(2 as int32))",
+            .rows = .{
+                .{0.5},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_8_div_int32",
+            .sql = "SELECT div(cast(1 as int32), cast(2 as int32))",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_9",
+            .sql = "SELECT 1.8/3.0",
+            .rows = .{
+                .{0.6},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_9_safe_divide",
+            .sql = "SELECT safe_divide(1.8, 3.0)",
+            .rows = .{
+                .{0.6},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_10",
+            .sql = "SELECT 1/0",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "arithmetic_functions_10_safe_divide",
+            .sql = "SELECT safe_divide(1, 0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_11",
+            .sql = "SELECT 0/0",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "arithmetic_functions_11_safe_divide",
+            .sql = "SELECT safe_divide(0, 0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_12",
+            .sql = "SELECT 1.0/0",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "arithmetic_functions_12_safe_divide",
+            .sql = "SELECT safe_divide(1.0, 0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_13",
+            .sql = "SELECT 1.0/(-0.0)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "arithmetic_functions_13_safe_divide",
+            .sql = "SELECT safe_divide(1.0, -0.0)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_14",
+            .sql = "SELECT 1e300/1e-300",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "arithmetic_functions_14_safe_divide",
+            .sql = "SELECT safe_divide(1e300, 1e-300)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "arithmetic_functions_15",
+            .sql = "SELECT 0.0/0.0",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "arithmetic_functions_15_safe_divide",
+            .sql = "SELECT safe_divide(0.0, 0.0)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

@@ -4,7 +4,7 @@
 
 pub const sqlite = @import("sqlite.zig");
 pub const analyzer_ffi = @import("analyzer_ffi.zig");
-pub const regexp_ffi = @import("regexp_ffi.zig");
+pub const shim_ffi = @import("shim_ffi.zig");
 pub const pb = @import("proto/resolved_ast.zig");
 pub const wire = @import("proto/wire.zig");
 pub const driver = @import("driver.zig");
@@ -18,6 +18,8 @@ pub const catalog = @import("internal/catalog.zig");
 pub const shared_catalog = @import("internal/shared_catalog.zig");
 pub const phase = @import("internal/phase.zig");
 pub const spec_expect = @import("internal/spec_expect.zig");
+pub const spec_run = @import("internal/spec_run.zig");
+pub const ast_text = @import("internal/ast_text.zig");
 pub const coordinator_types = @import("internal/coordinator/types_data.zig");
 pub const coordinator_context = @import("internal/coordinator/context.zig");
 pub const extractor = @import("internal/coordinator/extractor.zig");

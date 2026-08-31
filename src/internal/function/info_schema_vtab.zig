@@ -69,6 +69,7 @@ pub const View = struct {
     build: *const fn (
         std.mem.Allocator,
         []const *spec.TableSpec,
+        []const *spec.DatasetSpec,
         Filter,
     ) error{OutOfMemory}![]const Row,
 
@@ -210,16 +211,49 @@ fn matches(arena: std.mem.Allocator, table_spec: *const spec.TableSpec, filter: 
     return std.mem.eql(u8, own, filter.prefix);
 }
 
+/// SCHEMATA's own matching, looser than `matches()`: a scan can be narrowed
+/// to exactly one dataset (`filter.prefix` is that dataset's own `_`-joined
+/// path, same as `matches()`) or to every dataset in one project
+/// (`filter.prefix` is just the bare project — `<project>.INFORMATION_SCHEMA.
+/// SCHEMATA` has no dataset segment to narrow by). The two cannot collide: a
+/// project only ever equals a bare, project-less dataset's own name, which is
+/// itself the narrower, correct match either way.
+fn schemataMatches(arena: std.mem.Allocator, table_spec: *const spec.TableSpec, filter: Filter) bool {
+    if (hidden(table_spec)) return false;
+    const path = table_spec.name_path;
+    if (path.len < 2) return false;
+    if (filter.schema) |want| {
+        if (!std.mem.eql(u8, path[path.len - 2], want)) return false;
+    }
+    if (filter.prefix.len == 0) return true;
+    const own = spec.formatPath(arena, path[0 .. path.len - 1]) catch return false;
+    if (std.mem.eql(u8, own, filter.prefix)) return true;
+    return path.len >= 3 and std.mem.eql(u8, path[0], filter.prefix);
+}
+
+/// The dataset-registry analogue of `schemataMatches`, for a dataset that
+/// holds no table of its own yet to carry a path `matches()`/`schemataMatches`
+/// could scan.
+fn datasetMatches(ds: *const spec.DatasetSpec, filter: Filter) bool {
+    if (filter.schema) |want| {
+        if (!std.mem.eql(u8, ds.name_path[1], want)) return false;
+    }
+    if (filter.prefix.len == 0) return true;
+    if (std.mem.eql(u8, ds.name_path[1], filter.prefix)) return true;
+    return std.mem.eql(u8, ds.name_path[0], filter.prefix);
+}
+
 fn buildSchemata(
     arena: std.mem.Allocator,
     specs: []const *spec.TableSpec,
+    datasets: []const *spec.DatasetSpec,
     filter: Filter,
 ) error{OutOfMemory}![]const Row {
     var out: std.ArrayList(Row) = .empty;
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(arena);
     for (specs) |table_spec| {
-        if (!matches(arena, table_spec, filter)) continue;
+        if (!schemataMatches(arena, table_spec, filter)) continue;
         const parts = splitPath(table_spec.name_path).?;
         if (seen.contains(parts.schema)) continue;
         try seen.put(arena, parts.schema, {});
@@ -235,14 +269,32 @@ fn buildSchemata(
         row[5] = .null; // location: no regions
         try out.append(arena, row);
     }
+    // A dataset with no table of its own contributes nothing above; report it
+    // from the registry instead. Checked after `specs` so a dataset that does
+    // have tables keeps reporting whatever `created_at` its own path carried.
+    for (datasets) |ds| {
+        if (!datasetMatches(ds, filter)) continue;
+        if (seen.contains(ds.name_path[1])) continue;
+        try seen.put(arena, ds.name_path[1], {});
+        const row = try arena.alloc(Cell, 6);
+        row[0] = .{ .string = ds.name_path[0] };
+        row[1] = .{ .string = ds.name_path[1] };
+        row[2] = .null; // schema_owner: no ownership model
+        row[3] = if (ds.created_at.len > 0) .{ .string = ds.created_at } else .null;
+        row[4] = .null; // last_modified_time
+        row[5] = .null; // location: no regions
+        try out.append(arena, row);
+    }
     return out.toOwnedSlice(arena);
 }
 
 fn buildTables(
     arena: std.mem.Allocator,
     specs: []const *spec.TableSpec,
+    datasets: []const *spec.DatasetSpec,
     filter: Filter,
 ) error{OutOfMemory}![]const Row {
+    _ = datasets; // A dataset with no tables has no rows to report here.
     var out: std.ArrayList(Row) = .empty;
     for (specs) |table_spec| {
         if (!matches(arena, table_spec, filter)) continue;
@@ -266,8 +318,10 @@ fn buildTables(
 fn buildColumns(
     arena: std.mem.Allocator,
     specs: []const *spec.TableSpec,
+    datasets: []const *spec.DatasetSpec,
     filter: Filter,
 ) error{OutOfMemory}![]const Row {
+    _ = datasets; // A dataset with no tables has no columns to report here.
     var out: std.ArrayList(Row) = .empty;
     for (specs) |table_spec| {
         if (!matches(arena, table_spec, filter)) continue;
@@ -298,8 +352,10 @@ fn buildColumns(
 fn buildTableOptions(
     arena: std.mem.Allocator,
     specs: []const *spec.TableSpec,
+    datasets: []const *spec.DatasetSpec,
     filter: Filter,
 ) error{OutOfMemory}![]const Row {
+    _ = datasets; // A dataset with no tables has no options to report here.
     var out: std.ArrayList(Row) = .empty;
     for (specs) |table_spec| {
         if (!matches(arena, table_spec, filter)) continue;
@@ -338,6 +394,10 @@ pub const SharedState = struct {
     /// the statement runs. Points into the per-query arena; empty between
     /// statements, which correctly yields zero rows.
     info_schema: []const *spec.TableSpec = &.{},
+    /// Live dataset specs, published alongside `info_schema`. Only SCHEMATA
+    /// reads this — TABLES/COLUMNS/TABLE_OPTIONS have no rows for a dataset
+    /// that holds no tables, so they need no dataset-level source at all.
+    datasets: []const *spec.DatasetSpec = &.{},
 };
 
 const Vtab = extern struct {
@@ -591,7 +651,7 @@ fn xFilter(
         next += 1;
     }
 
-    st.rows = st.ctx.view.build(alloc, st.ctx.state.info_schema, filter) catch
+    st.rows = st.ctx.view.build(alloc, st.ctx.state.info_schema, st.ctx.state.datasets, filter) catch
         return c.SQLITE_NOMEM;
     return c.SQLITE_OK;
 }
@@ -696,7 +756,7 @@ test "TABLES reports one row per table with its type" {
         try testSpec(a, &.{ "other", "t2" }, &.{"z"}, false),
     };
 
-    const rows = try buildTables(a, &specs, .{ .prefix = "ds" });
+    const rows = try buildTables(a, &specs, &.{}, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 2), rows.len);
     try testing.expectEqualStrings("t1", rows[0][2].string);
     try testing.expectEqualStrings("BASE TABLE", rows[0][3].string);
@@ -706,7 +766,7 @@ test "TABLES reports one row per table with its type" {
     try testing.expectEqualStrings("NO", rows[1][5].string);
 
     // No dataset constraint scans everything.
-    try testing.expectEqual(@as(usize, 3), (try buildTables(a, &specs, .{ .prefix = "" })).len);
+    try testing.expectEqual(@as(usize, 3), (try buildTables(a, &specs, &.{}, .{ .prefix = "" })).len);
 }
 
 test "COLUMNS numbers columns from one, in declaration order" {
@@ -717,7 +777,7 @@ test "COLUMNS numbers columns from one, in declaration order" {
     const specs = [_]*spec.TableSpec{
         try testSpec(a, &.{ "ds", "t1" }, &.{ "col_a", "col_b", "col_c" }, false),
     };
-    const rows = try buildColumns(a, &specs, .{ .prefix = "ds" });
+    const rows = try buildColumns(a, &specs, &.{}, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 3), rows.len);
     try testing.expectEqualStrings("col_a", rows[0][3].string);
     try testing.expectEqual(@as(i64, 1), rows[0][4].int);
@@ -737,12 +797,12 @@ test "SCHEMATA lists each dataset once" {
         try testSpec(a, &.{ "ds", "t2" }, &.{"x"}, false),
         try testSpec(a, &.{ "other", "t3" }, &.{"x"}, false),
     };
-    const all = try buildSchemata(a, &specs, .{ .prefix = "" });
+    const all = try buildSchemata(a, &specs, &.{}, .{ .prefix = "" });
     try testing.expectEqual(@as(usize, 2), all.len);
     try testing.expectEqualStrings("ds", all[0][1].string);
     try testing.expectEqualStrings("other", all[1][1].string);
 
-    const one = try buildSchemata(a, &specs, .{ .prefix = "ds" });
+    const one = try buildSchemata(a, &specs, &.{}, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 1), one.len);
 }
 
@@ -759,7 +819,7 @@ test "temps and the synthetic views are never listed" {
         // Our own injected view must not report itself.
         try testSpec(a, &.{ "ds", "INFORMATION_SCHEMA", "TABLES" }, &.{"table_name"}, false),
     };
-    const rows = try buildTables(a, &specs, .{ .prefix = "ds" });
+    const rows = try buildTables(a, &specs, &.{}, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqualStrings("real", rows[0][2].string);
 }
@@ -773,16 +833,16 @@ test "a three-part path reports its project as the catalog" {
         try testSpec(a, &.{ "proj", "ds", "t1" }, &.{"x"}, false),
     };
     // The filter is the `_`-joined prefix, so a 3-part path wants "proj_ds".
-    const rows = try buildTables(a, &specs, .{ .prefix = "proj_ds" });
+    const rows = try buildTables(a, &specs, &.{}, .{ .prefix = "proj_ds" });
     try testing.expectEqual(@as(usize, 1), rows.len);
     try testing.expectEqualStrings("proj", rows[0][0].string);
     try testing.expectEqualStrings("ds", rows[0][1].string);
     // The bare dataset name is NOT the prefix here and must not match.
-    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, .{ .prefix = "ds" })).len);
+    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, &.{}, .{ .prefix = "ds" })).len);
 
     // A two-part path has no project to report.
     const short = [_]*spec.TableSpec{try testSpec(a, &.{ "ds", "t1" }, &.{"x"}, false)};
-    const short_rows = try buildTables(a, &short, .{ .prefix = "ds" });
+    const short_rows = try buildTables(a, &short, &.{}, .{ .prefix = "ds" });
     try testing.expectEqualStrings("", short_rows[0][0].string);
 }
 
@@ -797,8 +857,8 @@ test "a dataset name containing an underscore is not mis-split" {
     const specs = [_]*spec.TableSpec{
         try testSpec(a, &.{ "demo_ds", "tbl_a" }, &.{"x"}, false),
     };
-    try testing.expectEqual(@as(usize, 1), (try buildTables(a, &specs, .{ .prefix = "demo_ds" })).len);
-    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, .{ .prefix = "ds" })).len);
+    try testing.expectEqual(@as(usize, 1), (try buildTables(a, &specs, &.{}, .{ .prefix = "demo_ds" })).len);
+    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, &.{}, .{ .prefix = "ds" })).len);
 }
 
 test "pushed-down table and schema filters agree with filtering afterwards" {
@@ -817,10 +877,10 @@ test "pushed-down table and schema filters agree with filtering afterwards" {
 
     // COLUMNS across the dataset is 3 rows; narrowed to t1 it is the 2 that
     // belong to t1, and they are the same rows.
-    const all = try buildColumns(a, &specs, .{ .prefix = "ds" });
+    const all = try buildColumns(a, &specs, &.{}, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 3), all.len);
 
-    const narrowed = try buildColumns(a, &specs, .{ .prefix = "ds", .table = "t1" });
+    const narrowed = try buildColumns(a, &specs, &.{}, .{ .prefix = "ds", .table = "t1" });
     try testing.expectEqual(@as(usize, 2), narrowed.len);
     for (narrowed) |row| try testing.expectEqualStrings("t1", row[2].string);
     try testing.expectEqualStrings("x", narrowed[0][3].string);
@@ -830,27 +890,27 @@ test "pushed-down table and schema filters agree with filtering afterwards" {
     // with a different one.
     try testing.expectEqual(
         @as(usize, 3),
-        (try buildColumns(a, &specs, .{ .prefix = "ds", .schema = "ds" })).len,
+        (try buildColumns(a, &specs, &.{}, .{ .prefix = "ds", .schema = "ds" })).len,
     );
     try testing.expectEqual(
         @as(usize, 0),
-        (try buildColumns(a, &specs, .{ .prefix = "ds", .schema = "other" })).len,
+        (try buildColumns(a, &specs, &.{}, .{ .prefix = "ds", .schema = "other" })).len,
     );
 
     // A table name that exists in a different dataset must not leak in.
     try testing.expectEqual(
         @as(usize, 2),
-        (try buildTables(a, &specs, .{ .table = "t1" })).len, // ds.t1 and other.t1
+        (try buildTables(a, &specs, &.{}, .{ .table = "t1" })).len, // ds.t1 and other.t1
     );
     try testing.expectEqual(
         @as(usize, 1),
-        (try buildTables(a, &specs, .{ .prefix = "ds", .table = "t1" })).len,
+        (try buildTables(a, &specs, &.{}, .{ .prefix = "ds", .table = "t1" })).len,
     );
 
     // An unmatched table prunes to nothing rather than falling back to all.
     try testing.expectEqual(
         @as(usize, 0),
-        (try buildTables(a, &specs, .{ .prefix = "ds", .table = "nope" })).len,
+        (try buildTables(a, &specs, &.{}, .{ .prefix = "ds", .table = "nope" })).len,
     );
 }
 
@@ -873,7 +933,7 @@ test "TABLE_OPTIONS reports one row per declared option and none otherwise" {
         try testSpec(a, &.{ "ds", "t2" }, &.{"y"}, false),
     };
 
-    const rows = try buildTableOptions(a, &specs, .{ .prefix = "ds" });
+    const rows = try buildTableOptions(a, &specs, &.{}, .{ .prefix = "ds" });
     try testing.expectEqual(@as(usize, 2), rows.len);
     try testing.expectEqualStrings("t1", rows[0][2].string);
     try testing.expectEqualStrings("description", rows[0][3].string);
@@ -884,11 +944,11 @@ test "TABLE_OPTIONS reports one row per declared option and none otherwise" {
     // The table pushdown applies here too.
     try testing.expectEqual(
         @as(usize, 0),
-        (try buildTableOptions(a, &specs, .{ .prefix = "ds", .table = "t2" })).len,
+        (try buildTableOptions(a, &specs, &.{}, .{ .prefix = "ds", .table = "t2" })).len,
     );
     try testing.expectEqual(
         @as(usize, 2),
-        (try buildTableOptions(a, &specs, .{ .prefix = "ds", .table = "t1" })).len,
+        (try buildTableOptions(a, &specs, &.{}, .{ .prefix = "ds", .table = "t1" })).len,
     );
 }
 

@@ -1,0 +1,107 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/with_expressions",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/with_expressions.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE InputTable AS
+            \\SELECT *
+            \\FROM (
+            \\    SELECT 123 AS Key, "value" AS Value
+            \\)
+            ,
+        },
+        .{
+            .desc = "with_expr_1",
+            .sql = "select WITH(a AS 2, b AS 3 * 4, a + b)",
+            .rows = .{
+                .{14},
+            },
+        },
+        .{
+            .desc = "with_expr_name_scoping",
+            .sql =
+            \\# Names introduced in WITH should take precedence over names from the
+            \\# environment (e.g. from a selected table).
+            \\#
+            \\# 123 + 2 + LENGTH("value")=5 => 130
+            \\select WITH(Value AS 2, Key + Value + LENGTH(InputTable.Value)) from InputTable
+            ,
+            .rows = .{
+                .{130},
+            },
+        },
+        .{
+            .desc = "with_expr_names_visible_to_later_columns",
+            .sql =
+            \\# We can reference expressions computed in one stage of a WITH expression
+            \\# in later stages.
+            \\SELECT WITH(a AS 1, b AS a + 2, c AS b + 3, d AS a * 2, a + c + d)
+            ,
+            .rows = .{
+                .{9},
+            },
+        },
+        .{
+            .desc = "with_expr_nested",
+            .sql =
+            \\# Nested WITH expressions resolve correctly.
+            \\SELECT WITH(a AS "abc", b AS WITH(a AS "def", b AS "ghi", CONCAT(a, b)), CONCAT(a, b))
+            ,
+            .rows = .{
+                .{"abcdefghi"},
+            },
+        },
+        .{
+            .desc = "with_aggregates",
+            .sql =
+            \\SELECT
+            \\  WITH(valuelen AS LENGTH(KeyValue.value),  -- LENGTH("abc") = 3
+            \\       keysum   AS SUM(KeyValue.key),       -- 1 + 4 = 5
+            \\       valuelen + keysum)                   -- 3 + 5 = 8
+            \\FROM
+            \\  (SELECT 1 AS key, "abc" AS value
+            \\   UNION ALL
+            \\   SELECT 4 AS key, "abc" AS value) KeyValue
+            \\GROUP BY value
+            ,
+            .rows = .{
+                .{8},
+            },
+        },
+        .{
+            .desc = "with_aggregates_avg",
+            .sql =
+            \\SELECT
+            \\  WITH(thecount AS COUNT(KeyValue.key),
+            \\       thesum   AS SUM(KeyValue.key),
+            \\       CAST(thesum AS DOUBLE)/thecount)  -- avg 1,4=2.5
+            \\FROM
+            \\  (SELECT 1 AS key, "abc" AS value
+            \\   UNION ALL
+            \\   SELECT 4 AS key, "abc" AS value) KeyValue
+            \\GROUP BY value
+            ,
+            .rows = .{
+                .{2.5},
+            },
+        },
+        .{
+            .desc = "conditional_evaluation_in_with_expr",
+            .sql =
+            \\SELECT
+            \\  WITH (s AS IF(sum(x) = 0, sum(x), SUM(1/x)),
+            \\        s)
+            \\FROM
+            \\  (SELECT 0 AS x)
+            ,
+            .rows = .{
+                .{0},
+            },
+        },
+    },
+}

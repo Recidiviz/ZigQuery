@@ -1,0 +1,488 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/any_value_aggregation",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/any_value_aggregation.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableAllTypes AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(-1 AS int32) as int32_val,
+            \\       CAST(-1 AS int64) as int64_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST(0.125 AS float) as float_val,
+            \\       CAST(0.125 AS double) as double_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-01 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(2 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(-1 AS int32) as int32_val,
+            \\       CAST(-1 AS int64) as int64_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST("NaN" AS float) as float_val,
+            \\       CAST("+Inf" AS double) as double_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-01 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(3 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(-1 AS int32) as int32_val,
+            \\       CAST(-1 AS int64) as int64_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST("+Inf" AS float) as float_val,
+            \\       CAST("-Inf" AS double) as double_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-01 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(4 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(-2 AS int32) as int32_val,
+            \\       CAST(-2 AS int64) as int64_val,
+            \\       CAST(2 AS uint32) as uint32_val,
+            \\       CAST(2 AS uint64) as uint64_val,
+            \\       CAST(0.25 AS float) as float_val,
+            \\       CAST(pow(0.1, 324) AS double) as double_val, #positive 0 of type double
+            \\       CAST("2" AS string) as str_val,
+            \\       CAST("2" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-02' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-02 00:00:02 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(5 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(-2 AS int32) as int32_val,
+            \\       CAST(-2 AS int64) as int64_val,
+            \\       CAST(2 AS uint32) as uint32_val,
+            \\       CAST(2 AS uint64) as uint64_val,
+            \\       CAST("-Inf" AS float) as float_val,
+            \\       CAST(0.25 AS double) as double_val,
+            \\       CAST("2" AS string) as str_val,
+            \\       CAST("2" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-02' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-02 00:00:02 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(6 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(-3 AS int32) as int32_val,
+            \\       CAST(-3 AS int64) as int64_val,
+            \\       CAST(3 AS uint32) as uint32_val,
+            \\       CAST(3 AS uint64) as uint64_val,
+            \\       CAST(0.375 AS float) as float_val,
+            \\       CAST(0.375 AS double) as double_val,
+            \\       CAST("3" AS string) as str_val,
+            \\       CAST("3" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-03' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-03 00:00:03 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(7 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(-4 AS int32) as int32_val,
+            \\       CAST(-4 AS int64) as int64_val,
+            \\       CAST(4 AS uint32) as uint32_val,
+            \\       CAST(4 AS uint64) as uint64_val,
+            \\       CAST(0.5 AS float) as float_val,
+            \\       CAST(0.5 AS double) as double_val,
+            \\       CAST("4" AS string) as str_val,
+            \\       CAST("4" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-04' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-04 00:00:04 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(8 AS int64) as row_id,
+            \\       CAST(NULL AS bool) as bool_val,
+            \\       CAST(NULL AS int32) as int32_val,
+            \\       CAST(NULL AS int64) as int64_val,
+            \\       CAST(NULL AS uint32) as uint32_val,
+            \\       CAST(NULL AS uint64) as uint64_val,
+            \\       CAST(NULL AS float) as float_val,
+            \\       CAST(NULL AS double) as double_val,
+            \\       CAST(NULL AS string) as str_val,
+            \\       CAST(NULL AS BYTES) as bytes_val,
+            \\       CAST(NULL AS DATE) as date_val,
+            \\       CAST(NULL AS TIMESTAMP) as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(9 AS int64) as row_id,
+            \\       CAST(NULL AS bool) as bool_val,
+            \\       CAST(NULL AS int32) as int32_val,
+            \\       CAST(NULL AS int64) as int64_val,
+            \\       CAST(NULL AS uint32) as uint32_val,
+            \\       CAST(NULL AS uint64) as uint64_val,
+            \\       CAST(-pow(0.1, 46) AS float) as float_val, #negative 0 of type float
+            \\       CAST("NaN" AS double) as double_val,
+            \\       CAST(NULL AS string) as str_val,
+            \\       CAST(NULL AS BYTES) as bytes_val,
+            \\       CAST(NULL AS DATE) as date_val,
+            \\       CAST(NULL AS TIMESTAMP) as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(10 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(1 AS int32) as int32_val,
+            \\       CAST(1 AS int64) as int64_val,
+            \\       CAST(11 AS uint32) as uint32_val,
+            \\       CAST(11 AS uint64) as uint64_val,
+            \\       CAST(0.625 AS float) as float_val,
+            \\       CAST(0.625 AS double) as double_val,
+            \\       CAST("6" AS string) as str_val,
+            \\       CAST("7" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-08' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-01-07 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(11 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(5 AS int32) as int32_val,
+            \\       CAST(3 AS int64) as int64_val,
+            \\       CAST(11 AS uint32) as uint32_val,
+            \\       CAST(8 AS uint64) as uint64_val,
+            \\       CAST(-0.125 AS float) as float_val,
+            \\       CAST(-0.125 AS double) as double_val,
+            \\       CAST("123" AS string) as str_val,
+            \\       CAST("123" AS BYTES) as bytes_val,
+            \\       CAST('2014-02-01' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-03-01 00:00:01 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(12 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(2 AS int32) as int32_val,
+            \\       CAST(16 AS int64) as int64_val,
+            \\       CAST(5 AS uint32) as uint32_val,
+            \\       CAST(9 AS uint64) as uint64_val,
+            \\       CAST(0.75 AS float) as float_val,
+            \\       CAST(-0.25 AS double) as double_val,
+            \\       CAST("24" AS string) as str_val,
+            \\       CAST("22" AS BYTES) as bytes_val,
+            \\       CAST('2014-02-02' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-03-02 00:00:02 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(13 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(9 AS int32) as int32_val,
+            \\       CAST(9 AS int64) as int64_val,
+            \\       CAST(4 AS uint32) as uint32_val,
+            \\       CAST(8 AS uint64) as uint64_val,
+            \\       CAST(-0.25 AS float) as float_val,
+            \\       CAST(-0.75 AS double) as double_val,
+            \\       CAST("222" AS string) as str_val,
+            \\       CAST("234" AS BYTES) as bytes_val,
+            \\       CAST('2014-05-02' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-05-02 00:00:02 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(14 AS int64) as row_id,
+            \\       CAST(true AS bool) as bool_val,
+            \\       CAST(13 AS int32) as int32_val,
+            \\       CAST(23 AS int64) as int64_val,
+            \\       CAST(31 AS uint32) as uint32_val,
+            \\       CAST(32 AS uint64) as uint64_val,
+            \\       CAST(-0.375 AS float) as float_val,
+            \\       CAST(-0.375 AS double) as double_val,
+            \\       CAST("345" AS string) as str_val,
+            \\       CAST("345" AS BYTES) as bytes_val,
+            \\       CAST('2014-01-06' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-02-03 00:00:03 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(15 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(-24 AS int32) as int32_val,
+            \\       CAST(-14 AS int64) as int64_val,
+            \\       CAST(41 AS uint32) as uint32_val,
+            \\       CAST(54 AS uint64) as uint64_val,
+            \\       CAST(-0.5 AS float) as float_val,
+            \\       CAST(-0.5 AS double) as double_val,
+            \\       CAST("432" AS string) as str_val,
+            \\       CAST("433" AS BYTES) as bytes_val,
+            \\       CAST('2014-02-04' AS DATE) as date_val,
+            \\       TIMESTAMP '2014-02-04 00:00:04 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(16 AS int64) as row_id,
+            \\       CAST(false AS bool) as bool_val,
+            \\       CAST(NULL AS int32) as int32_val,
+            \\       CAST(-1 AS int64) as int64_val,
+            \\       CAST(NULL AS uint32) as uint32_val,
+            \\       CAST(1 AS uint64) as uint64_val,
+            \\       CAST(NULL AS float) as float_val,
+            \\       CAST(-pow(0.1, 324) AS double) as double_val, #negative 0 of type double
+            \\       CAST(NULL AS string) as str_val,
+            \\       CAST("1" AS BYTES) as bytes_val,
+            \\       CAST(NULL AS DATE) as date_val,
+            \\       TIMESTAMP '2014-02-04 00:00:04 UTC' as timestamp_val
+            \\UNION ALL
+            \\SELECT CAST(17 AS int64) as row_id,
+            \\       CAST(NULL AS bool) as bool_val,
+            \\       CAST(-1 AS int32) as int32_val,
+            \\       CAST(NULL AS int64) as int64_val,
+            \\       CAST(1 AS uint32) as uint32_val,
+            \\       CAST(NULL AS uint64) as uint64_val,
+            \\       CAST(pow(0.1, 46) AS float) as float_val, #positive 0 of type float
+            \\       CAST(NULL AS double) as double_val,
+            \\       CAST("1" AS string) as str_val,
+            \\       CAST(NULL AS BYTES) as bytes_val,
+            \\       CAST('2014-02-04' AS DATE) as date_val,
+            \\       CAST(NULL AS TIMESTAMP) as timestamp_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableRangeTypes AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       true AS bool_val,
+            \\       CAST(NULL AS RANGE<DATE>) AS range_date_val,
+            \\       CAST(NULL AS RANGE<TIMESTAMP>) AS range_timestamp_val UNION ALL
+            \\SELECT 2, true, RANGE<DATE> '[UNBOUNDED, 0001-01-01)', RANGE<TIMESTAMP> '[UNBOUNDED, 0001-01-01 00:00:00+00)' UNION ALL
+            \\SELECT 3, true, RANGE<DATE> '[UNBOUNDED, 2020-01-01)', RANGE<TIMESTAMP> '[UNBOUNDED, 2020-01-01 00:00:00+00)' UNION ALL
+            \\SELECT 4, true, RANGE<DATE> '[UNBOUNDED, 9999-12-31)', RANGE<TIMESTAMP> '[UNBOUNDED, 9999-12-31 23:59:59.999999+00)' UNION ALL
+            \\SELECT 5, false, RANGE<DATE> '[UNBOUNDED, UNBOUNDED)', RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)' UNION ALL
+            \\SELECT 6, false, RANGE<DATE> '[0001-01-01, 2020-01-01)', RANGE<TIMESTAMP> '[0001-01-01 00:00:00+00, 2020-01-01 00:00:00+00)' UNION ALL
+            \\SELECT 7, false, RANGE<DATE> '[2020-01-01, 9999-12-31)', RANGE<TIMESTAMP> '[2020-01-01, 9999-12-31 23:59:59.999999+00)' UNION ALL
+            \\SELECT 8, false, RANGE<DATE> '[9999-12-31, UNBOUNDED)', RANGE<TIMESTAMP> '[9999-12-31 23:59:59.999999+00, UNBOUNDED)' UNION ALL
+            \\SELECT 9, true, RANGE<DATE> '[0001-01-01, 2020-01-01)', RANGE<TIMESTAMP> '[0001-01-01 00:00:00+00, 2020-01-01 00:00:00+00)' UNION ALL
+            \\SELECT 10, false, RANGE<DATE> '[2020-01-01, 9999-12-31)', RANGE<TIMESTAMP> '[2020-01-01, 9999-12-31 23:59:59.999999+00)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableDatetimeRangeTypes AS
+            \\SELECT CAST(1 AS int64) as row_id,
+            \\       true AS bool_val,
+            \\       CAST(NULL AS RANGE<DATETIME>) AS range_datetime_val UNION ALL
+            \\SELECT 2, true, RANGE<DATETIME> '[UNBOUNDED, 0001-01-01)' UNION ALL
+            \\SELECT 3, true, RANGE<DATETIME> '[UNBOUNDED, 2020-01-01)' UNION ALL
+            \\SELECT 4, true, RANGE<DATETIME> '[UNBOUNDED, 9999-12-31 23:59:59.999999)' UNION ALL
+            \\SELECT 5, false, RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)' UNION ALL
+            \\SELECT 6, false, RANGE<DATETIME> '[0001-01-01, 2020-01-01)' UNION ALL
+            \\SELECT 7, false, RANGE<DATETIME> '[2020-01-01, 9999-12-31 23:59:59.999999)' UNION ALL
+            \\SELECT 8, false, RANGE<DATETIME> '[9999-12-31 23:59:59.999999, UNBOUNDED)' UNION ALL
+            \\SELECT 9, true, RANGE<DATETIME> '[0001-01-01, 2020-01-01)' UNION ALL
+            \\SELECT 10, false, RANGE<DATETIME> '[2020-01-01, 9999-12-31 23:59:59.999999)'
+            ,
+        },
+        .{
+            .desc = "aggregate_any_value_having_simple_case1",
+            .sql =
+            \\SELECT ANY_VALUE(int32_val HAVING MAX row_id),
+            \\       ANY_VALUE(double_val HAVING MIN row_id)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ -1, 0.125 },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_simple_case2",
+            .sql =
+            \\SELECT ANY_VALUE(int32_val HAVING MAX str_val),
+            \\       ANY_VALUE(double_val HAVING MAX bytes_val),
+            \\       ANY_VALUE(uint32_val HAVING MAX date_val),
+            \\       ANY_VALUE(bool_val HAVING MAX timestamp_val),
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ 1, 0.625, 4, false },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_various_having_modifier_types",
+            .sql =
+            \\SELECT ANY_VALUE(row_id HAVING MIN bool_val),
+            \\       ANY_VALUE(row_id HAVING MAX int32_val),
+            \\       ANY_VALUE(row_id HAVING MIN int64_val),
+            \\       ANY_VALUE(row_id HAVING MAX uint64_val),
+            \\       ANY_VALUE(row_id HAVING MIN float_val),
+            \\       ANY_VALUE(row_id HAVING MAX double_val),
+            \\       ANY_VALUE(row_id HAVING MIN str_val),
+            \\       ANY_VALUE(row_id HAVING MAX bytes_val),
+            \\       ANY_VALUE(row_id HAVING MIN date_val),
+            \\       ANY_VALUE(row_id HAVING MAX timestamp_val),
+            \\FROM TableAllTypes
+            \\WHERE uint32_val > 11
+            ,
+            .rows = .{
+                .{ 15, 14, 15, 15, 15, 14, 14, 15, 14, 15 },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_various_input_types",
+            .sql =
+            \\SELECT ANY_VALUE(row_id HAVING MIN bool_val),
+            \\       ANY_VALUE(int32_val HAVING MAX bool_val),
+            \\       ANY_VALUE(int64_val HAVING MIN bool_val),
+            \\       ANY_VALUE(uint32_val HAVING MAX bool_val),
+            \\       ANY_VALUE(uint64_val HAVING MIN bool_val),
+            \\       ANY_VALUE(float_val HAVING MAX bool_val),
+            \\       ANY_VALUE(double_val HAVING MIN bool_val),
+            \\       ANY_VALUE(str_val HAVING MAX bool_val),
+            \\       ANY_VALUE(bytes_val HAVING MIN bool_val),
+            \\       ANY_VALUE(date_val HAVING MAX bool_val),
+            \\       ANY_VALUE(timestamp_val HAVING MIN bool_val),
+            \\FROM TableAllTypes
+            \\WHERE uint32_val > 11
+            ,
+            .rows = .{
+                .{ 15, 13, -14, 31, 54, -0.375, -0.5, "345", "\x34\x33\x33", "2014-01-06", "2014-02-04 00:00:04+00" },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_null_having_modifier",
+            .sql =
+            \\SELECT ANY_VALUE(row_id HAVING MAX int32_val),
+            \\       ANY_VALUE(row_id HAVING MIN str_val)
+            \\FROM TableAllTypes
+            \\WHERE double_val < 0
+            ,
+            .rows = .{
+                .{ 14, 3 },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_nan_having_modifier",
+            .sql =
+            \\SELECT ANY_VALUE(str_val HAVING MAX double_val),
+            \\       ANY_VALUE(str_val HAVING MIN double_val)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_null_input",
+            .sql =
+            \\SELECT ANY_VALUE(bool_val HAVING MAX row_id),
+            \\       ANY_VALUE(bool_val HAVING MIN row_id)
+            \\FROM TableAllTypes
+            ,
+            .rows = .{
+                .{ null, true },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_nan_input",
+            .sql =
+            \\SELECT ANY_VALUE(double_val HAVING MAX float_val),
+            \\       ANY_VALUE(double_val HAVING MIN float_val)
+            \\FROM TableAllTypes
+            \\WHERE row_id = 9
+            ,
+            .rows = .{
+                .{ nan, nan },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_with_group_by",
+            .sql =
+            \\SELECT ANY_VALUE(row_id HAVING MAX double_val),
+            \\       ANY_VALUE(row_id HAVING MIN double_val)
+            \\FROM TableAllTypes
+            \\GROUP BY bytes_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, null },
+                .{ 2, 3 },
+                .{ 11, 11 },
+                .{ 5, 4 },
+                .{ 12, 12 },
+                .{ 13, 13 },
+                .{ 6, 6 },
+                .{ 14, 14 },
+                .{ 7, 7 },
+                .{ 15, 15 },
+                .{ 10, 10 },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_range_modifier_type",
+            .sql =
+            \\SELECT ANY_VALUE(row_id HAVING MIN range_date_val),
+            \\       ANY_VALUE(row_id HAVING MAX range_date_val),
+            \\       ANY_VALUE(row_id HAVING MIN range_timestamp_val),
+            \\       ANY_VALUE(row_id HAVING MAX range_timestamp_val)
+            \\FROM TableRangeTypes
+            \\WHERE bool_val
+            ,
+            .rows = .{
+                .{ 2, 9, 2, 9 },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_range_datetime_modifier_type",
+            .sql =
+            \\SELECT ANY_VALUE(row_id HAVING MIN range_datetime_val),
+            \\       ANY_VALUE(row_id HAVING MAX range_datetime_val)
+            \\FROM TableDatetimeRangeTypes
+            \\WHERE bool_val = true
+            ,
+            .rows = .{
+                .{ 2, 9 },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_range_input_type",
+            .sql =
+            \\SELECT ANY_VALUE(range_date_val HAVING MIN row_id),
+            \\       ANY_VALUE(range_date_val HAVING MAX row_id),
+            \\       ANY_VALUE(range_timestamp_val HAVING MIN row_id),
+            \\       ANY_VALUE(range_timestamp_val HAVING MAX row_id)
+            \\FROM TableRangeTypes
+            \\WHERE bool_val = true
+            ,
+            .rows = .{
+                .{ null, "[0001-01-01, 2020-01-01)", null, "[0001-01-01 00:00:00+00, 2020-01-01 00:00:00+00)" },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_range_datetime_input_type",
+            .sql =
+            \\SELECT ANY_VALUE(range_datetime_val HAVING MIN row_id),
+            \\       ANY_VALUE(range_datetime_val HAVING MAX row_id)
+            \\FROM TableDatetimeRangeTypes
+            \\WHERE bool_val = true
+            ,
+            .rows = .{
+                .{ null, "[0001-01-01 00:00:00, 2020-01-01 00:00:00)" },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_range_with_group_by",
+            .sql =
+            \\SELECT bool_val, ANY_VALUE(row_id HAVING MAX range_date_val),
+            \\       ANY_VALUE(row_id HAVING MIN range_date_val),
+            \\       ANY_VALUE(row_id HAVING MAX range_timestamp_val),
+            \\       ANY_VALUE(row_id HAVING MIN range_timestamp_val)
+            \\FROM TableRangeTypes
+            \\GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, 8, 5, 8, 5 },
+                .{ true, 9, 2, 9, 2 },
+            },
+        },
+        .{
+            .desc = "aggregate_any_value_having_range_datetime_with_group_by",
+            .sql =
+            \\SELECT bool_val, ANY_VALUE(row_id HAVING MAX range_datetime_val),
+            \\       ANY_VALUE(row_id HAVING MIN range_datetime_val)
+            \\FROM TableDatetimeRangeTypes
+            \\GROUP BY bool_val
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, 8, 5 },
+                .{ true, 9, 2 },
+            },
+        },
+    },
+}

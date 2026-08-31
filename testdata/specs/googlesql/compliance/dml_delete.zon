@@ -1,0 +1,60 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_delete",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_delete.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(10 as int64) as value
+            \\UNION ALL
+            \\SELECT 2, 20
+            ,
+        },
+        .{
+            .desc = "delete_nothing_with_failed_assertion",
+            .sql =
+            \\DELETE Table1 WHERE False
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "delete_everything_with_failed_assertion",
+            .sql =
+            \\DELETE Table1 WHERE True
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "delete_half_with_failed_assertion",
+            .sql =
+            \\DELETE Table1 WHERE primary_key = 1
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "delete_dml_exists_subquery_with_scan",
+            .sql =
+            \\# Repro b/362158469: DML containing WITH scan on subquery does not have
+            \\# algebrizer implementation.
+            \\DELETE Table1
+            \\WHERE EXISTS(
+            \\  WITH T AS (
+            \\    SELECT 1 AS a
+            \\  )
+            \\  SELECT * FROM T
+            \\  UNION ALL
+            \\  SELECT * FROM T
+            \\)
+            ,
+            .expect_error_any = true,
+        },
+    },
+}

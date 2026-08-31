@@ -1,0 +1,37 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/regexp_functions",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/regexp_functions.test",
+    .cases = .{
+        .{
+            .desc = "regexp_functions_1",
+            .sql = "SELECT 'SeattleKirkland' LIKE 'Seattle%'",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "regexp_functions_2",
+            .sql = "SELECT 'SeattleKirkland' LIKE 'Seattle_'",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "regexp_functions_newline",
+            .sql = "SELECT \"FirstLine\\nSeattleKirkland\\nAnotherLine\" LIKE 'F%Seattle%Line' AS result",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "regexp_functions_case",
+            .sql = "SELECT 'SeattLeKirkland' LIKE '%Seattle' AS result",
+            .rows = .{
+                .{false},
+            },
+        },
+    },
+}

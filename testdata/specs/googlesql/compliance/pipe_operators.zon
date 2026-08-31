@@ -1,0 +1,818 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/pipe_operators",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/pipe_operators.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# This file has at least one test for each pipe operator (that doesn't have its
+            \\# own compliance file).
+            \\#
+            \\# This doesn't test those operators exhaustively since they are the same
+            \\# underlying operators in standard syntax.  This just tests that queries with
+            \\# the operator work.
+            \\CREATE TABLE KeyValue
+            \\AS
+            \\SELECT 1 AS key, "value1" AS value
+            \\UNION ALL
+            \\SELECT 2, "value2"
+            \\UNION ALL
+            \\SELECT 3, "value1"
+            ,
+        },
+        .{
+            .desc = "pipe_where",
+            .sql =
+            \\FROM KeyValue
+            \\|> WHERE key=2
+            ,
+            .rows = .{
+                .{ 2, "value2" },
+            },
+        },
+        .{
+            .desc = "pipe_where_window_function",
+            .sql =
+            \\FROM KeyValue
+            \\|> WHERE RANK() OVER (ORDER BY key) = 2
+            ,
+            .rows = .{
+                .{ 2, "value2" },
+            },
+        },
+        .{
+            .desc = "pipe_having",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE COUNT(*) c GROUP BY value
+            \\|> WHERE c = 2
+            ,
+            .rows = .{
+                .{ "value1", 2 },
+            },
+        },
+        .{
+            .desc = "pipe_having_window_function",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE COUNT(*) c GROUP BY value
+            \\|> WHERE RANK() OVER (ORDER BY c) = 1
+            ,
+            .rows = .{
+                .{ "value2", 1 },
+            },
+        },
+        .{
+            .desc = "pipe_select",
+            .sql =
+            \\FROM KeyValue
+            \\|> select key, key*10 AS k10, key*100
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 20, 200 },
+                .{ 1, 10, 100 },
+                .{ 3, 30, 300 },
+            },
+        },
+        .{
+            .desc = "pipe_select_window_function",
+            .sql =
+            \\FROM KeyValue
+            \\|> SELECT key, value, RANK() OVER (ORDER BY value)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, "value1", 1 },
+                .{ 1, "value1", 1 },
+                .{ 2, "value2", 3 },
+            },
+        },
+        .{
+            .desc = "pipe_select_named_window",
+            .sql =
+            \\FROM KeyValue
+            \\|> SELECT key, value, RANK() OVER w
+            \\   WINDOW w AS (ORDER BY value)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, "value1", 1 },
+                .{ 1, "value1", 1 },
+                .{ 2, "value2", 3 },
+            },
+        },
+        .{
+            .desc = "pipe_extend",
+            .sql =
+            \\FROM KeyValue
+            \\|> EXTEND key*10 AS k10, key*100
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2", 20, 200 },
+                .{ 1, "value1", 10, 100 },
+                .{ 3, "value1", 30, 300 },
+            },
+        },
+        .{
+            .desc = "pipe_extend_window_function",
+            .sql =
+            \\FROM KeyValue
+            \\|> EXTEND RANK() OVER (ORDER BY value)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, "value1", 1 },
+                .{ 1, "value1", 1 },
+                .{ 2, "value2", 3 },
+            },
+        },
+        .{
+            .desc = "pipe_extend_named_window",
+            .sql =
+            \\FROM KeyValue
+            \\|> EXTEND RANK() OVER w, SUM(key) OVER (w2), COUNT(*) OVER (w2)
+            \\   WINDOW w AS (ORDER BY value),
+            \\          w2 AS (ORDER BY key
+            \\                 ROWS BETWEEN UNBOUNDED PRECEDING and CURRENT ROW)
+            \\# TODO Workaround for reference impl incorrectly reporting window
+            \\# function output is ordered.
+            \\|> WHERE true
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "value1", 1, 1, 1 },
+                .{ 2, "value2", 3, 3, 2 },
+                .{ 3, "value1", 1, 6, 3 },
+            },
+        },
+        .{
+            .desc = "pipe_set",
+            .sql =
+            \\FROM KeyValue
+            \\|> SET key=key*10, value=5.0
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 20, 5 },
+                .{ 10, 5 },
+                .{ 30, 5 },
+            },
+        },
+        .{
+            .desc = "pipe_set_window_function",
+            .sql =
+            \\FROM KeyValue
+            \\|> SET value = RANK() OVER (ORDER BY value)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 3, 1 },
+                .{ 2, 3 },
+            },
+        },
+        .{
+            .desc = "pipe_drop",
+            .sql =
+            \\FROM KeyValue
+            \\|> DROP key
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"value1"},
+                .{"value2"},
+                .{"value1"},
+            },
+        },
+        .{
+            .desc = "pipe_rename",
+            .sql =
+            \\FROM KeyValue
+            \\|> RENAME key AS k
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "value1" },
+                .{ 2, "value2" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_rename_swap",
+            .sql =
+            \\FROM KeyValue
+            \\|> RENAME key AS value, value AS key
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "value1" },
+                .{ 2, "value2" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_order_by",
+            .sql =
+            \\FROM KeyValue
+            \\|> ORDER BY key desc
+            ,
+            .rows = .{
+                .{ 3, "value1" },
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_order_by_window_function",
+            .sql =
+            \\FROM KeyValue
+            \\|> ORDER BY RANK() OVER (ORDER BY key DESC)
+            ,
+            .rows = .{
+                .{ 3, "value1" },
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_limit",
+            .sql =
+            \\FROM KeyValue
+            \\|> ORDER BY key
+            \\|> LIMIT 1
+            ,
+            .rows = .{
+                .{ 1, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_limit_offset",
+            .sql =
+            \\FROM KeyValue
+            \\|> ORDER BY key
+            \\|> LIMIT 1 OFFSET 1
+            ,
+            .rows = .{
+                .{ 2, "value2" },
+            },
+        },
+        .{
+            .desc = "pipe_limit_all_offset",
+            .unsupported_in_bigquery = "LIMIT ALL and LIMIT NULL are both rejected (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\FROM KeyValue
+            \\|> ORDER BY key
+            \\|> LIMIT ALL OFFSET 1
+            ,
+            .rows = .{
+                .{ 2, "value2" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_limit_null_offset",
+            .unsupported_in_bigquery = "LIMIT ALL and LIMIT NULL are both rejected (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\FROM KeyValue
+            \\|> ORDER BY key
+            \\|> LIMIT NULL OFFSET 1
+            ,
+            .rows = .{
+                .{ 2, "value2" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_aggregate",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE COUNT(*), SUM(key)
+            ,
+            .rows = .{
+                .{ 3, 6 },
+            },
+        },
+        .{
+            .desc = "pipe_aggregate_group_by",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE COUNT(*), MIN(key)
+            \\   GROUP BY value
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "value1", 2, 1 },
+                .{ "value2", 1, 2 },
+            },
+        },
+        .{
+            .desc = "pipe_aggregate_group_and_order_by",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE COUNT(*), MIN(key)
+            \\   GROUP AND ORDER BY value DESC
+            ,
+            .rows = .{
+                .{ "value2", 1, 2 },
+                .{ "value1", 2, 1 },
+            },
+        },
+        .{
+            .desc = "pipe_aggregate_group_by_ordered",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE
+            \\   GROUP BY value DESC, key
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "value2", 2 },
+                .{ "value1", 3 },
+                .{ "value1", 1 },
+            },
+        },
+        .{
+            .desc = "pipe_aggregate_group_by_ordered_by_agg",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE COUNT(*) DESC
+            \\   GROUP BY value
+            ,
+            .rows = .{
+                .{ "value1", 2 },
+                .{ "value2", 1 },
+            },
+        },
+        .{
+            .desc = "pipe_aggregate_mixed_expression",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE SUM(key) + key AS val
+            \\   GROUP BY key
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 4 },
+                .{ 1, 2 },
+                .{ 3, 6 },
+            },
+        },
+        .{
+            .desc = "pipe_aggregate_correlated_subquery",
+            .sql =
+            \\FROM KeyValue
+            \\|> AGGREGATE
+            \\     SUM(key) + (
+            \\       SELECT SUM(t2.key)
+            \\       FROM KeyValue t2
+            \\       WHERE t2.value = KeyValue.value
+            \\     ) AS val
+            \\   GROUP BY value
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "value2", 4 },
+                .{ "value1", 8 },
+            },
+        },
+        .{
+            .desc = "pipe_distinct",
+            .sql =
+            \\FROM KeyValue
+            \\|> DISTINCT
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "value1" },
+                .{ 2, "value2" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_distinct2",
+            .sql =
+            \\FROM KeyValue
+            \\|> SELECT value
+            \\|> DISTINCT
+            ,
+            .unordered = true,
+            .rows = .{
+                .{"value1"},
+                .{"value2"},
+            },
+        },
+        .{
+            .desc = "pipe_join",
+            .sql =
+            \\FROM KeyValue
+            \\|> JOIN KeyValue kv2 USING (key)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2", "value2" },
+                .{ 1, "value1", "value1" },
+                .{ 3, "value1", "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_left_join",
+            .sql =
+            \\FROM KeyValue kv1
+            \\|> LEFT JOIN KeyValue kv2
+            \\     ON kv2.value = CONCAT('value', cast(kv1.key as string))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2", 2, "value2" },
+                .{ 1, "value1", 1, "value1" },
+                .{ 1, "value1", 3, "value1" },
+                .{ 3, "value1", null, null },
+            },
+        },
+        .{
+            .desc = "pipe_left_join_subquery",
+            .sql =
+            \\FROM KeyValue kv1
+            \\|> LEFT JOIN (select 1 key, 17777 vvv) USING (key)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2", null },
+                .{ 1, "value1", 17777 },
+                .{ 3, "value1", null },
+            },
+        },
+        .{
+            .desc = "pipe_union",
+            .sql =
+            \\FROM KeyValue kv1
+            \\|> UNION ALL
+            \\   (FROM KeyValue)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+                .{ 3, "value1" },
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_union_multi",
+            .sql =
+            \\FROM KeyValue kv1
+            \\|> UNION ALL
+            \\   (FROM KeyValue),
+            \\   (FROM KeyValue),
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+                .{ 3, "value1" },
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+                .{ 3, "value1" },
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_union_multi_subquery",
+            .sql =
+            \\(select 1, 'zz')
+            \\|> UNION ALL
+            \\   (select 5, 'xx'),
+            \\   (select 10, 'yy')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "zz" },
+                .{ 5, "xx" },
+                .{ 10, "yy" },
+            },
+        },
+        .{
+            .desc = "pipe_union_distinct",
+            .sql =
+            \\FROM KeyValue
+            \\|> UNION DISTINCT
+            \\   (select 2, 'value2'),
+            \\   (select 5, 'value5')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "value1" },
+                .{ 2, "value2" },
+                .{ 3, "value1" },
+                .{ 5, "value5" },
+            },
+        },
+        .{
+            .desc = "pipe_union_by_name",
+            .sql =
+            \\FROM KeyValue kv1
+            \\|> UNION ALL BY NAME
+            \\   (SELECT 'abc' value, 17 key)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+                .{ 3, "value1" },
+                .{ 17, "abc" },
+            },
+        },
+        .{
+            .desc = "pipe_union_corresponding",
+            .sql =
+            \\FROM KeyValue kv1
+            \\|> EXTEND key*10 k10
+            \\|> UNION ALL CORRESPONDING
+            \\   (SELECT 'abc' value, 17 k10, 111 extra)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "value1", 10 },
+                .{ "value2", 20 },
+                .{ "value1", 30 },
+                .{ "abc", 17 },
+            },
+        },
+        .{
+            .desc = "pipe_intersect",
+            .unsupported_in_bigquery = "only DISTINCT mode is supported for INTERSECT/EXCEPT; ALL mode is rejected (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\(select 2, 'value2' UNION ALL select 2, 'value2')
+            \\|> INTERSECT ALL
+            \\   (select 2, 'value2' UNION ALL select 2, 'value2')
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "value2" },
+                .{ 2, "value2" },
+            },
+        },
+        .{
+            .desc = "pipe_intersect_distinct",
+            .sql =
+            \\(select 2, 'value2' UNION ALL select 2, 'value2')
+            \\|> INTERSECT DISTINCT
+            \\   (select 2, 'value2' UNION ALL select 2, 'value2')
+            ,
+            .rows = .{
+                .{ 2, "value2" },
+            },
+        },
+        .{
+            .desc = "pipe_except",
+            .unsupported_in_bigquery = "only DISTINCT mode is supported for INTERSECT/EXCEPT; ALL mode is rejected (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\(select 2, 'value2' UNION ALL select 2, 'value2')
+            \\|> EXCEPT ALL
+            \\   (select 2, 'value2')
+            ,
+            .rows = .{
+                .{ 2, "value2" },
+            },
+        },
+        .{
+            .desc = "pipe_except_distinct",
+            .sql =
+            \\(select 2, 'value2' UNION ALL select 2, 'value2')
+            \\|> EXCEPT DISTINCT
+            \\   (select 2, 'value2')
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "pipe_window",
+            .sql =
+            \\# This has ORDER BY because it was incorrectly reported as having a
+            \\# known order otherwise.
+            \\FROM KeyValue
+            \\|> WINDOW COUNT(*) OVER (), RANK() OVER (ORDER BY key)
+            \\|> ORDER BY key
+            ,
+            .rows = .{
+                .{ 1, "value1", 3, 1 },
+                .{ 2, "value2", 3, 2 },
+                .{ 3, "value1", 3, 3 },
+            },
+        },
+        .{
+            .desc = "pipe_window_in_select",
+            .sql =
+            \\FROM KeyValue
+            \\|> SELECT key, COUNT(*) OVER (), RANK() OVER (ORDER BY key)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 3, 1 },
+                .{ 2, 3, 2 },
+                .{ 3, 3, 3 },
+            },
+        },
+        .{
+            .desc = "pipe_window_in_extend",
+            .sql =
+            \\# This has ORDER BY because it was incorrectly reported as having a
+            \\# known order otherwise.
+            \\FROM KeyValue
+            \\|> EXTEND COUNT(*) OVER (), RANK() OVER (ORDER BY key)
+            \\|> ORDER BY key
+            ,
+            .rows = .{
+                .{ 1, "value1", 3, 1 },
+                .{ 2, "value2", 3, 2 },
+                .{ 3, "value1", 3, 3 },
+            },
+        },
+        .{
+            .desc = "pipe_window_in_where",
+            .sql =
+            \\FROM KeyValue
+            \\|> WHERE RANK() OVER (ORDER BY key) = 3
+            ,
+            .rows = .{
+                .{ 3, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_window_in_set",
+            .sql =
+            \\FROM KeyValue
+            \\|> SET key = RANK() OVER (ORDER BY value)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "value1" },
+                .{ 1, "value1" },
+                .{ 3, "value2" },
+            },
+        },
+        .{
+            .desc = "pipe_window_in_order_by",
+            .sql =
+            \\FROM KeyValue
+            \\|> ORDER BY RANK() OVER (ORDER BY key) DESC
+            ,
+            .rows = .{
+                .{ 3, "value1" },
+                .{ 2, "value2" },
+                .{ 1, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_as",
+            .sql =
+            \\FROM KeyValue
+            \\|> AS t
+            \\|> SELECT t, t.key
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ .{ 2, "value2" }, 2 },
+                .{ .{ 1, "value1" }, 1 },
+                .{ .{ 3, "value1" }, 3 },
+            },
+        },
+        .{
+            .desc = "pipe_pivot",
+            .sql =
+            \\FROM KeyValue
+            \\|> PIVOT (MAX(key) FOR value IN ('value1', 'value2'))
+            ,
+            .rows = .{
+                .{ 3, 2 },
+            },
+        },
+        .{
+            .desc = "pipe_unpivot",
+            .sql =
+            \\WITH animals
+            \\AS (
+            \\  SELECT 2000 AS year, 10 AS dogs, 12 AS cats, 14 AS birds
+            \\  UNION ALL
+            \\  SELECT 2001 AS year, 11 AS dogs, 15 AS cats, 17 AS birds
+            \\  UNION ALL
+            \\  SELECT 2002 AS year, 6 AS dogs, 5 AS cats, 2 AS birds
+            \\)
+            \\FROM animals
+            \\|> UNPIVOT (cnt FOR animal IN (dogs, cats, birds))
+            \\|> ORDER BY year, cnt
+            ,
+            .rows = .{
+                .{ 2000, 10, "dogs" },
+                .{ 2000, 12, "cats" },
+                .{ 2000, 14, "birds" },
+                .{ 2001, 11, "dogs" },
+                .{ 2001, 15, "cats" },
+                .{ 2001, 17, "birds" },
+                .{ 2002, 2, "birds" },
+                .{ 2002, 5, "cats" },
+                .{ 2002, 6, "dogs" },
+            },
+        },
+        .{
+            .desc = "pipe_tablesample",
+            .unsupported_in_bigquery = "RESERVOIR sampling method is rejected (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\FROM KeyValue
+            \\|> TABLESAMPLE RESERVOIR (2 ROWS)
+            \\|> AGGREGATE COUNT(*)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "pipe_with",
+            .sql =
+            \\select 2 key
+            \\|> WITH kv AS (FROM KeyValue)
+            \\|> JOIN kv USING (key)
+            ,
+            .rows = .{
+                .{ 2, "value2" },
+            },
+        },
+        .{
+            .desc = "pipe_with_unused",
+            .sql =
+            \\select 2 key
+            \\|> WITH kv AS (FROM KeyValue)
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "pipe_with_multi",
+            .sql =
+            \\select null
+            \\|> WITH kv AS (FROM KeyValue),
+            \\        kv2 AS (FROM kv |> SET key=key+10)
+            \\|> WITH kv3 AS (FROM kv2 |> SET key=key+100)
+            \\|> WITH kv AS (FROM kv3 |> SET key=key+1000)
+            \\|> CROSS JOIN kv
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1111, "value1" },
+                .{ null, 1112, "value2" },
+                .{ null, 1113, "value1" },
+            },
+        },
+        .{
+            .desc = "pipe_with_in_subquery",
+            .sql =
+            \\select 2 key
+            \\|> WITH kv AS (FROM KeyValue)
+            \\|> JOIN (
+            \\     FROM kv
+            \\     |> WITH kv2 AS (
+            \\          FROM KeyValue
+            \\          |> EXTEND key+1000 AS k2
+            \\        )
+            \\     |> JOIN kv2 USING (key)
+            \\   ) USING (key)
+            ,
+            .rows = .{
+                .{ 2, "value2", "value2", 1002 },
+            },
+        },
+        .{
+            .desc = "pipe_match_recognize",
+            .sql =
+            \\FROM UNNEST([
+            \\    STRUCT(1 AS rowid, 1 AS x, 100 AS y, 1000 AS z),
+            \\    STRUCT(2 AS rowid, 1 AS x, 100 AS y, 1000 AS z),
+            \\    STRUCT(3 AS rowid, 1 AS x, 100 AS y, 1001 AS z),
+            \\    STRUCT(4 AS rowid, 1 AS x, 100 AS y, 1002 AS z),
+            \\    STRUCT(5 AS rowid, 1 AS x, 100 AS y, 1003 AS z)
+            \\    ])
+            \\|> MATCH_RECOGNIZE(
+            \\  ORDER BY rowid + rowid
+            \\  MEASURES max(z+z) AS m
+            \\  PATTERN ( a )
+            \\  DEFINE
+            \\    a AS true)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{2000},
+                .{2004},
+                .{2000},
+                .{2002},
+                .{2006},
+            },
+        },
+    },
+}

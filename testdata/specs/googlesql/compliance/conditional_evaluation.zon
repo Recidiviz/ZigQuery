@@ -1,0 +1,220 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/conditional_evaluation",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/conditional_evaluation.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE T AS
+            \\SELECT 0 as a, 0 as b UNION ALL
+            \\SELECT 1,     10      UNION ALL
+            \\SELECT 2,     20      UNION ALL
+            \\SELECT 3,     30      UNION ALL
+            \\SELECT 4,     40
+            ,
+        },
+        .{
+            .desc = "scalar_expressions_in_if",
+            .sql =
+            \\# Scalar expressions
+            \\SELECT IF(a >= 0, a, (a/a-1)) FROM T
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{3},
+                .{0},
+                .{2},
+                .{4},
+            },
+        },
+        .{
+            .desc = "scalar_expressions_in_case",
+            .sql = "SELECT CASE WHEN a >= 0 THEN a ELSE (a/a-1) END AS x FROM T",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{3},
+                .{0},
+                .{2},
+                .{4},
+            },
+        },
+        .{
+            .desc = "aggregate_in_if",
+            .sql =
+            \\# Aggregate expressions
+            \\SELECT IF(1 > 0, sum(a), sum(a/0)) FROM T
+            ,
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "aggregate_in_case",
+            .sql = "SELECT CASE WHEN 1 > 0 THEN sum(a) ELSE sum(a/0) END FROM T",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "aggregate_in_if_also_in_condition",
+            .sql = "SELECT IF(sum(a) > 0, sum(a), sum(a/0)) FROM T",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "aggregate_in_case_also_in_condition",
+            .sql = "SELECT CASE WHEN sum(a) > 0 THEN sum(a) ELSE sum(a/0) END FROM T",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "aggregate_in_if_with_grouping_column_in_condition",
+            .sql = "SELECT IF(b >= 0, sum(a), sum(a/0)) FROM T GROUP BY b",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{3},
+                .{0},
+                .{2},
+                .{4},
+            },
+        },
+        .{
+            .desc = "aggregate_in_case_with_grouping_column_in_condition",
+            .sql = "SELECT CASE WHEN b >= 0 THEN sum(a) ELSE sum(a/0) END FROM T GROUP BY b",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{3},
+                .{0},
+                .{2},
+                .{4},
+            },
+        },
+        .{
+            .desc = "uncorrelated_subquery_with_top1_in_if",
+            .sql =
+            \\# Uncorrelated subqueries
+            \\SELECT IF((SELECT COUNT(*) FROM T) > 0, 1, (SELECT 1/a FROM T ORDER BY a LIMIT 1))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "uncorrelated_subquery_with_top1_in_case",
+            .sql = "SELECT CASE WHEN (SELECT COUNT(*) FROM T) > 0 THEN 1 ELSE (SELECT a/(a-1) FROM T ORDER BY a LIMIT 1) END",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "uncorrelated_subquery_in_false_branch",
+            .sql = "SELECT IF (a >= 0, a, (SELECT SUM(1/a) FROM t)) FROM t GROUP BY a",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{3},
+                .{0},
+                .{2},
+                .{4},
+            },
+        },
+        .{
+            .desc = "correlated_subquery_with_top1_in_if",
+            .unsupported_in_bigquery = "BigQuery evaluates the correlated-subquery branch instead of skipping it, unlike this test's expected rows (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\# Correlated subqueries
+            \\SELECT IF(
+            \\    (SELECT COUNT(*) FROM T WHERE a < outerT.b) > 0,
+            \\    1,
+            \\    (SELECT 1/a FROM T WHERE a < outerT.b ORDER BY a LIMIT 1))
+            \\  FROM T outerT
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+                .{null},
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "correlated_subquery_with_top1_in_case",
+            .unsupported_in_bigquery = "BigQuery evaluates the correlated-subquery branch instead of skipping it, unlike this test's expected rows (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\SELECT CASE
+            \\    WHEN (SELECT COUNT(*) FROM T WHERE a < outerT.b) > 0 THEN 1
+            \\    ELSE (SELECT a/(a-1) FROM T WHERE a < outerT.b ORDER BY a LIMIT 1) END
+            \\  FROM T outerT
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+                .{null},
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "correlated_subquery_in_false_branch",
+            .sql = "SELECT IF (a >= 0, a, (SELECT SUM(1/a) FROM t AS t2 WHERE t2.b < 20 )) FROM t GROUP BY a",
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{3},
+                .{0},
+                .{2},
+                .{4},
+            },
+        },
+        .{
+            .desc = "lambdas_in_false_branch",
+            .unsupported_in_bigquery = "Function not found: ARRAY_TRANSFORM (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT IF (a >= 0, [1.0], ARRAY_TRANSFORM([a, a], e -> 1/e)) FROM t GROUP BY a",
+            .unordered = true,
+            .rows = .{
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "lambdas_with_uncorrelated_subquery_in_false_branch",
+            .unsupported_in_bigquery = "Function not found: ARRAY_TRANSFORM (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT IF (a >= 0, [1.0], ARRAY_TRANSFORM([a, a], e -> (SELECT MAX(1/a) FROM t AS innerT))) FROM t GROUP BY a",
+            .unordered = true,
+            .rows = .{
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "lambdas_with_correlated_subquery_in_false_branch",
+            .unsupported_in_bigquery = "Function not found: ARRAY_TRANSFORM (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT IF (a >= 0, [1.0], ARRAY_TRANSFORM([a, a], e -> (SELECT MAX(1/a) FROM t AS innerT WHERE innerT.a = outerT.a))) FROM t AS outerT GROUP BY a",
+            .unordered = true,
+            .rows = .{
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+                .{.{1}},
+            },
+        },
+    },
+}

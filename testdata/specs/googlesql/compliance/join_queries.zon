@@ -1,0 +1,1051 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/join_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/join_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE R AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(1 as int64) as id, cast("a1" as string) as a UNION ALL
+            \\  SELECT 2, 2, "a2"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE S AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(2 as int64) as id, cast("b21" as string) as b UNION ALL
+            \\  SELECT 2, 2, "b22" UNION ALL
+            \\  SELECT 3, 3, "b3"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE T AS
+            \\SELECT cast(0x7FFFFFFFFFFFFFFF as int64) as primary_key,
+            \\       cast(0x8000000000000000 as uint64) as id UNION ALL
+            \\  SELECT 0, 0x7FFFFFFFFFFFFFFF UNION ALL
+            \\  SELECT -1, 0
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE FloatingPointTable AS
+            \\SELECT "zero" as id, 0.0 as value UNION ALL
+            \\SELECT "negative zero", -0.0 UNION ALL
+            \\SELECT "infinity", cast("inf" as double) UNION ALL
+            \\SELECT "-infinity", cast("-inf" as double) UNION ALL
+            \\SELECT "NaN", cast("nan" as double) UNION ALL
+            \\SELECT "-NaN", -cast("nan" as double) UNION ALL
+            \\SELECT "1/4", 0.25 UNION ALL
+            \\SELECT "-1/4", -0.25
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE DateTimestampTable AS
+            \\SELECT
+            \\  1 AS row_id,
+            \\  DATE '2018-02-03' AS date_val,
+            \\  TIMESTAMP '2013-02-03 04:05:06' AS timestamp_val UNION ALL
+            \\SELECT
+            \\  2 AS row_id,
+            \\  DATE '2018-02-03' AS date_val,
+            \\  TIMESTAMP '2013-02-03 04:05:06' AS timestamp_val UNION ALL
+            \\SELECT
+            \\  3 AS row_id,
+            \\  DATE '2018-02-04' AS date_val,
+            \\  TIMESTAMP '2013-02-03 04:05:07' AS timestamp_val UNION ALL
+            \\SELECT
+            \\  4 AS row_id,
+            \\  NULL AS date_val,
+            \\  NULL AS timestamp_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TimeDatetimeTable AS
+            \\SELECT
+            \\  1 AS row_id,
+            \\  TIME '12:34:56.789' AS time_val,
+            \\  DATETIME '2013-02-03 04:05:06' AS datetime_val UNION ALL
+            \\SELECT
+            \\  2 AS row_id,
+            \\  TIME '12:34:56.789' AS time_val,
+            \\  DATETIME '2013-02-03 04:05:06' AS datetime_val UNION ALL
+            \\SELECT
+            \\  3 AS row_id,
+            \\  TIME '12:34:56.790' AS time_val,
+            \\  DATETIME '2013-02-03 04:05:07' AS datetime_val UNION ALL
+            \\SELECT
+            \\  4 AS row_id,
+            \\  NULL AS time_val,
+            \\  NULL AS datetime_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE NumericTable AS
+            \\SELECT
+            \\  1 as row_id,
+            \\  cast(1 AS numeric) as numeric_val UNION ALL
+            \\SELECT
+            \\  2 as row_id,
+            \\  cast(1.234 AS numeric) as numeric_val UNION ALL
+            \\SELECT
+            \\  3 as row_id,
+            \\  cast(1.234 AS numeric) as numeric_val UNION ALL
+            \\SELECT
+            \\  4 as row_id,
+            \\  cast(-345 AS numeric) as numeric_val UNION ALL
+            \\SELECT
+            \\  5 as row_id,
+            \\  cast(null AS numeric) as numeric_val UNION ALL
+            \\SELECT
+            \\  6 as row_id,
+            \\  cast(9999999.999999999 AS numeric) as numeric_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE BigNumericTable AS
+            \\SELECT
+            \\  1 as row_id,
+            \\  cast(1 AS bignumeric) as bignumeric_val UNION ALL
+            \\SELECT
+            \\  2 as row_id,
+            \\  cast(3.141592653589793238 AS bignumeric) as bignumeric_val UNION ALL
+            \\SELECT
+            \\  3 as row_id,
+            \\  cast(3.141592653589793238 AS bignumeric) as bignumeric_val UNION ALL
+            \\SELECT
+            \\  4 as row_id,
+            \\  cast(-345 AS bignumeric) as bignumeric_val UNION ALL
+            \\SELECT
+            \\  5 as row_id,
+            \\  cast(null AS bignumeric) as bignumeric_val UNION ALL
+            \\SELECT
+            \\  6 as row_id,
+            \\  cast("578960446186580977117854925043439539266.34992332820282019728792003956564819967" AS bignumeric) as bignumeric_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE UuidTable AS
+            \\SELECT
+            \\  1 as row_id,
+            \\  cast("00000000-0000-0000-0000-000000000000" AS uuid) as uuid_val UNION ALL
+            \\SELECT
+            \\  2 as row_id,
+            \\  cast("9d3da323-4c20-360f-bd9b-ec54feec54f0" AS uuid) as uuid_val UNION ALL
+            \\SELECT
+            \\  3 as row_id,
+            \\  cast("9d3da323-4c20-360f-bd9b-ec54feec54f0" AS uuid) as uuid_val UNION ALL
+            \\SELECT
+            \\  4 as row_id,
+            \\  cast("ffffffff-ffff-ffff-ffff-ffffffffffff" AS uuid) as uuid_val UNION ALL
+            \\SELECT
+            \\  5 as row_id,
+            \\  cast(NULL AS uuid) as uuid_val
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE DateRangeTable AS
+            \\SELECT 1 AS id, "a" AS name, RANGE<DATE> '[2014-01-01, 2015-01-01)' AS date_range_val
+            \\UNION ALL SELECT 2, "a", RANGE<DATE> '[2014-01-01, UNBOUNDED)'
+            \\UNION ALL SELECT 3, "a", RANGE<DATE> '[UNBOUNDED, 2015-01-01)'
+            \\UNION ALL SELECT 4, "b", RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 5, "b", CAST(NULL AS RANGE<DATE>)
+            \\UNION ALL SELECT 6, "b", RANGE<DATE> '[UNBOUNDED, 2015-01-01)'
+            \\UNION ALL SELECT 7, "c", RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 8, "c", RANGE<DATE> '[UNBOUNDED, 2015-01-01)'
+            \\UNION ALL SELECT 9, "c", RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 10, "d", RANGE<DATE> '[UNBOUNDED, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE DatetimeRangeTable AS
+            \\SELECT 1 AS id, "a" AS name, RANGE<DATETIME> '[2016-01-01 12:00:00, 2017-01-01 12:00:00)' AS datetime_range_val
+            \\UNION ALL SELECT 2, "a", RANGE<DATETIME> '[2016-01-01 12:00:00, UNBOUNDED)'
+            \\UNION ALL SELECT 3, "a", RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)'
+            \\UNION ALL SELECT 4, "b", RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 5, "b", CAST(NULL AS RANGE<DATETIME>)
+            \\UNION ALL SELECT 6, "b", RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)'
+            \\UNION ALL SELECT 7, "c", RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 8, "c", RANGE<DATETIME> '[UNBOUNDED, 2017-01-01 12:00:00)'
+            \\UNION ALL SELECT 9, "c", RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 10, "d", RANGE<DATETIME> '[UNBOUNDED, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TimestampRangeTable AS
+            \\SELECT 1 AS id, "a" AS name, RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, 2019-01-01 12:00:00+08)' AS timestamp_range_val
+            \\UNION ALL SELECT 2, "a",  RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, UNBOUNDED)'
+            \\UNION ALL SELECT 3, "a", RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 4, "b", RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)'
+            \\UNION ALL SELECT 5, "b", CAST(NULL AS RANGE<TIMESTAMP>)
+            \\UNION ALL SELECT 6, "b", RANGE<TIMESTAMP> '[2018-10-01 12:00:00+08, UNBOUNDED)'
+            \\UNION ALL SELECT 7, "c", RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 8, "c", RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 9, "c", RANGE<TIMESTAMP> '[UNBOUNDED, 2019-01-01 12:00:00+08)'
+            \\UNION ALL SELECT 10, "d", RANGE<TIMESTAMP> '[UNBOUNDED, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "join_1",
+            .sql =
+            \\# TODO: add more test cases including:
+            \\# 0 rows meet the join condition.
+            \\# All rows meet the join condition (hence no NULL extension)
+            \\# Only join columns selected (no NULL extension columns)
+            \\# Non-equality join conditions, etc.
+            \\SELECT t1.a FROM (SELECT 1 AS a) t1 JOIN (SELECT 1 AS a) t2 ON t1.a = t2.a
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "join_2",
+            .sql = "SELECT R.id, S.id, R.a, S.b FROM R LEFT JOIN S ON R.id = S.id",
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, "a2", "b22" },
+                .{ 2, 2, "a2", "b21" },
+                .{ 1, null, "a1", null },
+            },
+        },
+        .{
+            .desc = "join_3",
+            .sql = "SELECT R.id, S.id, R.a, S.b FROM R RIGHT JOIN S ON R.id = S.id",
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, "a2", "b22" },
+                .{ 2, 2, "a2", "b21" },
+                .{ null, 3, null, "b3" },
+            },
+        },
+        .{
+            .desc = "join_4",
+            .sql = "SELECT R.id, S.id, R.a, S.b FROM R FULL JOIN S ON R.id = S.id",
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, "a2", "b22" },
+                .{ 2, 2, "a2", "b21" },
+                .{ 1, null, "a1", null },
+                .{ null, 3, null, "b3" },
+            },
+        },
+        .{
+            .desc = "join_5",
+            .sql = "SELECT id, a, b FROM R FULL JOIN S USING (id)",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", "b21" },
+                .{ 3, null, "b3" },
+                .{ 2, "a2", "b22" },
+                .{ 1, "a1", null },
+            },
+        },
+        .{
+            .desc = "join_6",
+            .sql =
+            \\SELECT t1.id, t2.id
+            \\FROM (SELECT 1 as id) t1 FULL JOIN (SELECT id FROM R WHERE FALSE) t2
+            \\ON t1.id = t2.id
+            ,
+            .rows = .{
+                .{ 1, null },
+            },
+        },
+        .{
+            .desc = "join_7",
+            .sql =
+            \\SELECT t1.id, t2.id
+            \\FROM (SELECT id FROM R WHERE FALSE) t1 FULL JOIN (SELECT 1 as id) t2
+            \\ON t1.id = t2.id
+            ,
+            .rows = .{
+                .{ null, 1 },
+            },
+        },
+        .{
+            .desc = "join_8",
+            .sql = "SELECT * FROM R JOIN (S JOIN DateTimestampTable d ON S.id = d.row_id) ON R.id = S.id",
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, "a2", 1, 2, "b21", 2, "2018-02-03", "2013-02-03 12:05:06+00" },
+                .{ 2, 2, "a2", 2, 2, "b22", 2, "2018-02-03", "2013-02-03 12:05:06+00" },
+            },
+        },
+        .{
+            .desc = "join_9",
+            .sql =
+            \\# With the consecutive feature on, this query will be equivalent to the case
+            \\# join_8.
+            \\SELECT * FROM R JOIN S JOIN DateTimestampTable d ON S.id = d.row_id ON R.id = S.id
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, "a2", 1, 2, "b21", 2, "2018-02-03", "2013-02-03 12:05:06+00" },
+                .{ 2, 2, "a2", 2, 2, "b22", 2, "2018-02-03", "2013-02-03 12:05:06+00" },
+            },
+        },
+        .{
+            .desc = "empty_inner_join",
+            .sql =
+            \\SELECT t1.id, t2.id
+            \\FROM (SELECT id FROM R WHERE FALSE) t1 JOIN (SELECT id FROM R WHERE FALSE) t2
+            \\ON t1.id = t2.id
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "full_join_duplicate_column_1",
+            .sql = "SELECT 1 FROM (SELECT x, x FROM (SELECT 2 x)) FULL JOIN (SELECT 3) ON true",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "full_join_duplicate_column_2",
+            .sql =
+            \\SELECT r.y, s.y FROM
+            \\(SELECT x, x, y FROM (SELECT 2 x, 4 y)) r FULL JOIN (SELECT 3 y) s ON true
+            ,
+            .rows = .{
+                .{ 4, 3 },
+            },
+        },
+        .{
+            .desc = "full_join_duplicate_column_3",
+            .sql =
+            \\SELECT r.*, s.* FROM
+            \\(SELECT x, x FROM (SELECT 2 x)) r FULL JOIN (SELECT 3) s ON false
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, null },
+                .{ null, null, 3 },
+            },
+        },
+        .{
+            .desc = "select_star_using",
+            .sql = "SELECT * FROM R JOIN S USING(id)",
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, "a2", 2, "b22" },
+                .{ 2, 2, "a2", 1, "b21" },
+            },
+        },
+        .{
+            .desc = "select_star_on",
+            .sql = "SELECT * FROM R JOIN S ON R.id = S.id",
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, "a2", 2, 2, "b22" },
+                .{ 2, 2, "a2", 1, 2, "b21" },
+            },
+        },
+        .{
+            .desc = "select_table_stars",
+            .sql = "SELECT R.*, S.* FROM R JOIN S USING(id)",
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, "a2", 2, 2, "b22" },
+                .{ 2, 2, "a2", 1, 2, "b21" },
+            },
+        },
+        .{
+            .desc = "predicate_match_inner",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R INNER JOIN S ON R.id = S.id AND R.id + S.id = 4",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", 2, "b22" },
+                .{ 2, "a2", 2, "b21" },
+            },
+        },
+        .{
+            .desc = "predicate_nomatch_inner",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R INNER JOIN S ON R.id = S.id AND R.id + S.id = 6",
+            .rows = .{},
+        },
+        .{
+            .desc = "predicate_only_match_inner",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R INNER JOIN S ON R.id + S.id = 4",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", 2, "b22" },
+                .{ 2, "a2", 2, "b21" },
+                .{ 1, "a1", 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_only_nomatch_inner",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R INNER JOIN S ON R.id + S.id = 6",
+            .rows = .{},
+        },
+        .{
+            .desc = "predicate_match_left",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R LEFT OUTER JOIN S ON R.id = S.id AND R.id + S.id = 4",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", 2, "b22" },
+                .{ 2, "a2", 2, "b21" },
+                .{ 1, "a1", null, null },
+            },
+        },
+        .{
+            .desc = "predicate_nomatch_left",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R LEFT OUTER JOIN S ON R.id = S.id AND R.id + S.id = 6",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", null, null },
+                .{ 1, "a1", null, null },
+            },
+        },
+        .{
+            .desc = "predicate_only_match_left",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R LEFT OUTER JOIN S ON R.id + S.id = 4",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", 2, "b22" },
+                .{ 2, "a2", 2, "b21" },
+                .{ 1, "a1", 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_only_nomatch_left",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R LEFT OUTER JOIN S ON R.id + S.id = 6",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", null, null },
+                .{ 1, "a1", null, null },
+            },
+        },
+        .{
+            .desc = "predicate_match_right",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R RIGHT OUTER JOIN S ON R.id = S.id AND R.id + S.id = 4",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", 2, "b22" },
+                .{ 2, "a2", 2, "b21" },
+                .{ null, null, 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_nomatch_right",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R RIGHT OUTER JOIN S ON R.id = S.id AND R.id + S.id = 6",
+            .unordered = true,
+            .rows = .{
+                .{ null, null, 2, "b22" },
+                .{ null, null, 2, "b21" },
+                .{ null, null, 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_only_match_right",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R RIGHT OUTER JOIN S ON R.id + S.id = 4",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", 2, "b22" },
+                .{ 2, "a2", 2, "b21" },
+                .{ 1, "a1", 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_only_nomatch_right",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R RIGHT OUTER JOIN S ON R.id + S.id = 6",
+            .unordered = true,
+            .rows = .{
+                .{ null, null, 2, "b22" },
+                .{ null, null, 2, "b21" },
+                .{ null, null, 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_match_full",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R FULL OUTER JOIN S ON R.id = S.id AND R.id + S.id = 4",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", 2, "b22" },
+                .{ 2, "a2", 2, "b21" },
+                .{ 1, "a1", null, null },
+                .{ null, null, 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_nomatch_full",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R FULL OUTER JOIN S ON R.id = S.id AND R.id + S.id = 6",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", null, null },
+                .{ 1, "a1", null, null },
+                .{ null, null, 2, "b22" },
+                .{ null, null, 2, "b21" },
+                .{ null, null, 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_only_match_full",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R FULL OUTER JOIN S ON R.id + S.id = 4",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", 2, "b22" },
+                .{ 2, "a2", 2, "b21" },
+                .{ 1, "a1", 3, "b3" },
+            },
+        },
+        .{
+            .desc = "predicate_only_nomatch_full",
+            .sql = "SELECT R.id, R.a, S.id, S.b FROM R FULL OUTER JOIN S ON R.id + S.id = 6",
+            .unordered = true,
+            .rows = .{
+                .{ 2, "a2", null, null },
+                .{ 1, "a1", null, null },
+                .{ null, null, 2, "b22" },
+                .{ null, null, 2, "b21" },
+                .{ null, null, 3, "b3" },
+            },
+        },
+        .{
+            .desc = "int64_uint64_equality_full",
+            .unsupported_in_bigquery = "BigQuery has no UINT64 SQL type (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT T1.primary_key, T2.id FROM T AS T1 FULL OUTER JOIN T AS T2 ON T1.primary_key = T2.id",
+            .unordered = true,
+            .rows = .{
+                .{ 0, 0 },
+                .{ 9223372036854775807, 9223372036854775807 },
+                .{ -1, null },
+                .{ null, 9223372036854775808 },
+            },
+        },
+        .{
+            .desc = "uint64_int64_equality_full",
+            .unsupported_in_bigquery = "BigQuery has no UINT64 SQL type (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT T1.id, T2.primary_key FROM T AS T1 FULL OUTER JOIN T AS T2 ON T1.id = T2.primary_key",
+            .unordered = true,
+            .rows = .{
+                .{ 9223372036854775807, 9223372036854775807 },
+                .{ 9223372036854775808, null },
+                .{ 0, 0 },
+                .{ null, -1 },
+            },
+        },
+        .{
+            .desc = "int64_uint64_with_predicate_full",
+            .unsupported_in_bigquery = "BigQuery has no UINT64 SQL type (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql = "SELECT T1.primary_key, T2.id FROM T AS T1 FULL OUTER JOIN (SELECT IF(id < 0, NULL, id) AS id FROM T) AS T2 ON T1.primary_key = T2.id - 1",
+            .unordered = true,
+            .rows = .{
+                .{ 0, null },
+                .{ 9223372036854775807, 9223372036854775808 },
+                .{ -1, 0 },
+                .{ null, 9223372036854775807 },
+            },
+        },
+        .{
+            .desc = "int64_uint64_withbitwise_equality",
+            .unsupported_in_bigquery = "BigQuery has no UINT64 SQL type (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\SELECT COUNT (*) FROM
+            \\  (SELECT CAST (10000000000 AS UINT64) AS key
+            \\      UNION ALL SELECT 0XFFFFFFFFFFFFD8F0 ) a
+            \\  JOIN
+            \\  (SELECT CAST (10000000000 AS INT64) AS key
+            \\      UNION ALL SELECT -10000) b
+            \\  ON a.key = b.key
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "int64_uint64_withbitwise_equality_2",
+            .sql =
+            \\SELECT key
+            \\FROM
+            \\  (SELECT CAST(10000000000 AS UINT64) AS key) a
+            \\  JOIN
+            \\  (SELECT CAST(10000000000 AS INT64) AS key) b
+            \\  USING (key)
+            ,
+            .rows = .{
+                .{10000000000},
+            },
+        },
+        .{
+            .desc = "int64_uint64_withbitwise_equality_3",
+            .unsupported_in_bigquery = "BigQuery has no UINT64 SQL type (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\SELECT key
+            \\FROM
+            \\  (SELECT BIT_CAST_TO_UINT64(-10000000000) AS key) a
+            \\  JOIN
+            \\  (SELECT BIT_CAST_TO_INT64(-10000000000) AS key) b
+            \\  USING (key)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "double_key_inner_join",
+            .sql =
+            \\SELECT t1.value, t1.id, t2.value, t2.id FROM
+            \\(SELECT value, id FROM FloatingPointTable) AS t1
+            \\INNER JOIN
+            \\(SELECT value, id FROM FloatingPointTable) AS t2
+            \\USING (value)
+            \\ORDER BY t1.id, t2.id
+            ,
+            .rows = .{
+                .{ -0.25, "-1/4", -0.25, "-1/4" },
+                .{ -inf, "-infinity", -inf, "-infinity" },
+                .{ 0.25, "1/4", 0.25, "1/4" },
+                .{ inf, "infinity", inf, "infinity" },
+                .{ -0.0, "negative zero", -0.0, "negative zero" },
+                .{ -0.0, "negative zero", 0, "zero" },
+                .{ 0, "zero", -0.0, "negative zero" },
+                .{ 0, "zero", 0, "zero" },
+            },
+        },
+        .{
+            .desc = "double_key_left_join",
+            .sql =
+            \\SELECT t1.value, t1.id, t2.value, t2.id FROM
+            \\(SELECT value, id FROM FloatingPointTable) AS t1
+            \\LEFT JOIN
+            \\(SELECT value, id FROM FloatingPointTable) AS t2
+            \\USING (value)
+            \\ORDER BY t1.id, t2.id
+            ,
+            .rows = .{
+                .{ -0.25, "-1/4", -0.25, "-1/4" },
+                .{ nan, "-NaN", null, null },
+                .{ -inf, "-infinity", -inf, "-infinity" },
+                .{ 0.25, "1/4", 0.25, "1/4" },
+                .{ nan, "NaN", null, null },
+                .{ inf, "infinity", inf, "infinity" },
+                .{ -0.0, "negative zero", -0.0, "negative zero" },
+                .{ -0.0, "negative zero", 0, "zero" },
+                .{ 0, "zero", -0.0, "negative zero" },
+                .{ 0, "zero", 0, "zero" },
+            },
+        },
+        .{
+            .desc = "date_key_inner_join",
+            .sql =
+            \\SELECT t1.date_val, t1.row_id, t2.date_val, t2.row_id FROM
+            \\(SELECT row_id, date_val FROM DateTimestampTable) AS t1
+            \\INNER JOIN
+            \\(SELECT row_id, date_val FROM DateTimestampTable) AS t2
+            \\USING (date_val)
+            \\ORDER BY t1.row_id, t2.row_id
+            ,
+            .rows = .{
+                .{ "2018-02-03", 1, "2018-02-03", 1 },
+                .{ "2018-02-03", 1, "2018-02-03", 2 },
+                .{ "2018-02-03", 2, "2018-02-03", 1 },
+                .{ "2018-02-03", 2, "2018-02-03", 2 },
+                .{ "2018-02-04", 3, "2018-02-04", 3 },
+            },
+        },
+        .{
+            .desc = "date_key_left_join",
+            .sql =
+            \\SELECT t1.date_val, t1.row_id, t2.date_val, t2.row_id FROM
+            \\(SELECT row_id, date_val FROM DateTimestampTable) AS t1
+            \\LEFT JOIN
+            \\(SELECT row_id, date_val FROM DateTimestampTable) AS t2
+            \\USING (date_val)
+            \\ORDER BY t1.row_id, t2.row_id
+            ,
+            .rows = .{
+                .{ "2018-02-03", 1, "2018-02-03", 1 },
+                .{ "2018-02-03", 1, "2018-02-03", 2 },
+                .{ "2018-02-03", 2, "2018-02-03", 1 },
+                .{ "2018-02-03", 2, "2018-02-03", 2 },
+                .{ "2018-02-04", 3, "2018-02-04", 3 },
+                .{ null, 4, null, null },
+            },
+        },
+        .{
+            .desc = "timestamp_key_inner_join",
+            .sql =
+            \\SELECT t1.timestamp_val, t1.row_id, t2.timestamp_val, t2.row_id FROM
+            \\(SELECT row_id, timestamp_val FROM DateTimestampTable) AS t1
+            \\INNER JOIN
+            \\(SELECT row_id, timestamp_val FROM DateTimestampTable) AS t2
+            \\USING (timestamp_val)
+            \\ORDER BY t1.row_id, t2.row_id
+            ,
+            .rows = .{
+                .{ "2013-02-03 12:05:06+00", 1, "2013-02-03 12:05:06+00", 1 },
+                .{ "2013-02-03 12:05:06+00", 1, "2013-02-03 12:05:06+00", 2 },
+                .{ "2013-02-03 12:05:06+00", 2, "2013-02-03 12:05:06+00", 1 },
+                .{ "2013-02-03 12:05:06+00", 2, "2013-02-03 12:05:06+00", 2 },
+                .{ "2013-02-03 12:05:07+00", 3, "2013-02-03 12:05:07+00", 3 },
+            },
+        },
+        .{
+            .desc = "timestamp_key_left_join",
+            .sql =
+            \\SELECT t1.timestamp_val, t1.row_id, t2.timestamp_val, t2.row_id FROM
+            \\(SELECT row_id, timestamp_val FROM DateTimestampTable) AS t1
+            \\LEFT JOIN
+            \\(SELECT row_id, timestamp_val FROM DateTimestampTable) AS t2
+            \\USING (timestamp_val)
+            \\ORDER BY t1.row_id, t2.row_id
+            ,
+            .rows = .{
+                .{ "2013-02-03 12:05:06+00", 1, "2013-02-03 12:05:06+00", 1 },
+                .{ "2013-02-03 12:05:06+00", 1, "2013-02-03 12:05:06+00", 2 },
+                .{ "2013-02-03 12:05:06+00", 2, "2013-02-03 12:05:06+00", 1 },
+                .{ "2013-02-03 12:05:06+00", 2, "2013-02-03 12:05:06+00", 2 },
+                .{ "2013-02-03 12:05:07+00", 3, "2013-02-03 12:05:07+00", 3 },
+                .{ null, 4, null, null },
+            },
+        },
+        .{
+            .desc = "time_key_inner_join",
+            .sql =
+            \\SELECT t1.time_val, t1.row_id, t2.time_val, t2.row_id FROM
+            \\(SELECT row_id, time_val FROM TimeDatetimeTable) AS t1
+            \\INNER JOIN
+            \\(SELECT row_id, time_val FROM TimeDatetimeTable) AS t2
+            \\USING (time_val)
+            \\ORDER BY t1.row_id, t2.row_id
+            ,
+            .rows = .{
+                .{ "12:34:56.789", 1, "12:34:56.789", 1 },
+                .{ "12:34:56.789", 1, "12:34:56.789", 2 },
+                .{ "12:34:56.789", 2, "12:34:56.789", 1 },
+                .{ "12:34:56.789", 2, "12:34:56.789", 2 },
+                .{ "12:34:56.790", 3, "12:34:56.790", 3 },
+            },
+        },
+        .{
+            .desc = "time_key_left_join",
+            .sql =
+            \\SELECT t1.time_val, t1.row_id, t2.time_val, t2.row_id FROM
+            \\(SELECT row_id, time_val FROM TimeDatetimeTable) AS t1
+            \\LEFT JOIN
+            \\(SELECT row_id, time_val FROM TimeDatetimeTable) AS t2
+            \\USING (time_val)
+            \\ORDER BY t1.row_id, t2.row_id
+            ,
+            .rows = .{
+                .{ "12:34:56.789", 1, "12:34:56.789", 1 },
+                .{ "12:34:56.789", 1, "12:34:56.789", 2 },
+                .{ "12:34:56.789", 2, "12:34:56.789", 1 },
+                .{ "12:34:56.789", 2, "12:34:56.789", 2 },
+                .{ "12:34:56.790", 3, "12:34:56.790", 3 },
+                .{ null, 4, null, null },
+            },
+        },
+        .{
+            .desc = "datetime_key_inner_join",
+            .sql =
+            \\SELECT t1.datetime_val, t1.row_id, t2.datetime_val, t2.row_id FROM
+            \\(SELECT row_id, datetime_val FROM TimeDatetimeTable) AS t1
+            \\INNER JOIN
+            \\(SELECT row_id, datetime_val FROM TimeDatetimeTable) AS t2
+            \\USING (datetime_val)
+            \\ORDER BY t1.row_id, t2.row_id
+            ,
+            .rows = .{
+                .{ "2013-02-03 04:05:06", 1, "2013-02-03 04:05:06", 1 },
+                .{ "2013-02-03 04:05:06", 1, "2013-02-03 04:05:06", 2 },
+                .{ "2013-02-03 04:05:06", 2, "2013-02-03 04:05:06", 1 },
+                .{ "2013-02-03 04:05:06", 2, "2013-02-03 04:05:06", 2 },
+                .{ "2013-02-03 04:05:07", 3, "2013-02-03 04:05:07", 3 },
+            },
+        },
+        .{
+            .desc = "datetime_key_left_join",
+            .sql =
+            \\SELECT t1.datetime_val, t1.row_id, t2.datetime_val, t2.row_id FROM
+            \\(SELECT row_id, datetime_val FROM TimeDatetimeTable) AS t1
+            \\LEFT JOIN
+            \\(SELECT row_id, datetime_val FROM TimeDatetimeTable) AS t2
+            \\USING (datetime_val)
+            \\ORDER BY t1.row_id, t2.row_id
+            ,
+            .rows = .{
+                .{ "2013-02-03 04:05:06", 1, "2013-02-03 04:05:06", 1 },
+                .{ "2013-02-03 04:05:06", 1, "2013-02-03 04:05:06", 2 },
+                .{ "2013-02-03 04:05:06", 2, "2013-02-03 04:05:06", 1 },
+                .{ "2013-02-03 04:05:06", 2, "2013-02-03 04:05:06", 2 },
+                .{ "2013-02-03 04:05:07", 3, "2013-02-03 04:05:07", 3 },
+                .{ null, 4, null, null },
+            },
+        },
+        .{
+            .desc = "numeric_key_join",
+            .sql =
+            \\SELECT t1.numeric_val, t1.row_id, t2.numeric_val, t2.row_id
+            \\FROM (
+            \\  SELECT numeric_val, row_id FROM NumericTable WHERE MOD(row_id, 2) = 0
+            \\) AS t1
+            \\JOIN (
+            \\  SELECT numeric_val, row_id FROM NumericTable WHERE MOD(row_id, 2) = 1
+            \\) AS t2
+            \\USING (numeric_val)
+            ,
+            .rows = .{
+                .{ 1.234, 2, 1.234, 3 },
+            },
+        },
+        .{
+            .desc = "numeric_key_left_join",
+            .sql =
+            \\SELECT t1.numeric_val, t1.row_id, t2.numeric_val, t2.row_id
+            \\FROM (
+            \\  SELECT numeric_val, row_id FROM NumericTable WHERE MOD(row_id, 2) = 0
+            \\) AS t1
+            \\LEFT JOIN (
+            \\  SELECT numeric_val, row_id FROM NumericTable WHERE MOD(row_id, 2) = 1
+            \\) AS t2
+            \\USING (numeric_val)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -345, 4, null, null },
+                .{ 1.234, 2, 1.234, 3 },
+                .{ 9999999.999999999, 6, null, null },
+            },
+        },
+        .{
+            .desc = "bignumeric_key_join",
+            .sql =
+            \\SELECT t1.bignumeric_val, t1.row_id, t2.bignumeric_val, t2.row_id
+            \\FROM (
+            \\  SELECT bignumeric_val, row_id FROM BigNumericTable WHERE MOD(row_id, 2) = 0
+            \\) AS t1
+            \\JOIN (
+            \\  SELECT bignumeric_val, row_id FROM BigNumericTable WHERE MOD(row_id, 2) = 1
+            \\) AS t2
+            \\USING (bignumeric_val)
+            ,
+            .rows = .{
+                .{ 3.141592653589793238, 2, 3.141592653589793238, 3 },
+            },
+        },
+        .{
+            .desc = "bignumeric_key_left_join",
+            .sql =
+            \\SELECT t1.bignumeric_val, t1.row_id, t2.bignumeric_val, t2.row_id
+            \\FROM (
+            \\  SELECT bignumeric_val, row_id FROM BigNumericTable WHERE MOD(row_id, 2) = 0
+            \\) AS t1
+            \\LEFT JOIN (
+            \\  SELECT bignumeric_val, row_id FROM BigNumericTable WHERE MOD(row_id, 2) = 1
+            \\) AS t2
+            \\USING (bignumeric_val)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ -345, 4, null, null },
+                .{ 3.141592653589793238, 2, 3.141592653589793238, 3 },
+                .{ 578960446186580977117854925043439539266.34992332820282019728792003956564819967, 6, null, null },
+            },
+        },
+        .{
+            .desc = "uuid_key_join",
+            .unsupported_in_bigquery = "BigQuery has no UUID SQL type; GENERATE_UUID() returns STRING (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\SELECT t1.uuid_val, t1.row_id, t2.uuid_val, t2.row_id
+            \\FROM (
+            \\  SELECT uuid_val, row_id FROM UuidTable WHERE MOD(row_id, 2) = 0
+            \\) AS t1
+            \\JOIN (
+            \\  SELECT uuid_val, row_id FROM UuidTable WHERE MOD(row_id, 2) = 1
+            \\) AS t2
+            \\USING (uuid_val)
+            ,
+            .rows = .{
+                .{ "9d3da323-4c20-360f-bd9b-ec54feec54f0", 2, "9d3da323-4c20-360f-bd9b-ec54feec54f0", 3 },
+            },
+        },
+        .{
+            .desc = "uuid_key_left_join",
+            .unsupported_in_bigquery = "BigQuery has no UUID SQL type; GENERATE_UUID() returns STRING (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\SELECT t1.uuid_val, t1.row_id, t2.uuid_val, t2.row_id
+            \\FROM (
+            \\  SELECT uuid_val, row_id FROM UuidTable WHERE MOD(row_id, 2) = 0
+            \\) AS t1
+            \\LEFT JOIN (
+            \\  SELECT uuid_val, row_id FROM UuidTable WHERE MOD(row_id, 2) = 1
+            \\) AS t2
+            \\USING (uuid_val)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "ffffffff-ffff-ffff-ffff-ffffffffffff", 4, null, null },
+                .{ "9d3da323-4c20-360f-bd9b-ec54feec54f0", 2, "9d3da323-4c20-360f-bd9b-ec54feec54f0", 3 },
+            },
+        },
+        .{
+            .desc = "date_range_inner_join",
+            .sql =
+            \\SELECT t1.date_range_val, t1.id, t2.date_range_val, t2.id
+            \\FROM (
+            \\  SELECT date_range_val, id FROM DateRangeTable WHERE id <= 5
+            \\) AS t1
+            \\JOIN (
+            \\  SELECT date_range_val, id FROM DateRangeTable WHERE id > 5
+            \\) AS t2
+            \\USING (date_range_val) ORDER BY t1.id, t2.id
+            ,
+            .rows = .{
+                .{ "[NULL, 2015-01-01)", 3, "[NULL, 2015-01-01)", 6 },
+                .{ "[NULL, 2015-01-01)", 3, "[NULL, 2015-01-01)", 8 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 7 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 9 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 10 },
+            },
+        },
+        .{
+            .desc = "date_range_left_join",
+            .sql =
+            \\SELECT t1.date_range_val, t1.id, t2.date_range_val, t2.id
+            \\FROM (
+            \\  SELECT date_range_val, id FROM DateRangeTable WHERE id <= 5
+            \\) AS t1
+            \\LEFT JOIN (
+            \\  SELECT date_range_val, id FROM DateRangeTable WHERE id > 5
+            \\) AS t2
+            \\USING (date_range_val) ORDER BY t1.id, t2.id
+            ,
+            .rows = .{
+                .{ "[2014-01-01, 2015-01-01)", 1, null, null },
+                .{ "[2014-01-01, NULL)", 2, null, null },
+                .{ "[NULL, 2015-01-01)", 3, "[NULL, 2015-01-01)", 6 },
+                .{ "[NULL, 2015-01-01)", 3, "[NULL, 2015-01-01)", 8 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 7 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 9 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 10 },
+                .{ null, 5, null, null },
+            },
+        },
+        .{
+            .desc = "datetime_range_inner_join",
+            .sql =
+            \\SELECT t1.datetime_range_val, t1.id, t2.datetime_range_val, t2.id
+            \\FROM (
+            \\  SELECT datetime_range_val, id FROM DatetimeRangeTable WHERE id <= 5
+            \\) AS t1
+            \\JOIN (
+            \\  SELECT datetime_range_val, id FROM DatetimeRangeTable WHERE id > 5
+            \\) AS t2
+            \\USING (datetime_range_val) ORDER BY t1.id, t2.id
+            ,
+            .rows = .{
+                .{ "[NULL, 2017-01-01 12:00:00)", 3, "[NULL, 2017-01-01 12:00:00)", 6 },
+                .{ "[NULL, 2017-01-01 12:00:00)", 3, "[NULL, 2017-01-01 12:00:00)", 8 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 7 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 9 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 10 },
+            },
+        },
+        .{
+            .desc = "datetime_range_left_join",
+            .sql =
+            \\SELECT t1.datetime_range_val, t1.id, t2.datetime_range_val, t2.id
+            \\FROM (
+            \\  SELECT datetime_range_val, id FROM DatetimeRangeTable WHERE id <= 5
+            \\) AS t1
+            \\LEFT JOIN (
+            \\  SELECT datetime_range_val, id FROM DatetimeRangeTable WHERE id > 5
+            \\) AS t2
+            \\USING (datetime_range_val) ORDER BY t1.id, t2.id
+            ,
+            .rows = .{
+                .{ "[2016-01-01 12:00:00, 2017-01-01 12:00:00)", 1, null, null },
+                .{ "[2016-01-01 12:00:00, NULL)", 2, null, null },
+                .{ "[NULL, 2017-01-01 12:00:00)", 3, "[NULL, 2017-01-01 12:00:00)", 6 },
+                .{ "[NULL, 2017-01-01 12:00:00)", 3, "[NULL, 2017-01-01 12:00:00)", 8 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 7 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 9 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 10 },
+                .{ null, 5, null, null },
+            },
+        },
+        .{
+            .desc = "timestamp_range_inner_join",
+            .sql =
+            \\SELECT t1.timestamp_range_val, t1.id, t2.timestamp_range_val, t2.id
+            \\FROM (
+            \\  SELECT timestamp_range_val, id FROM TimestampRangeTable WHERE id <= 5
+            \\) AS t1
+            \\JOIN (
+            \\  SELECT timestamp_range_val, id FROM TimestampRangeTable WHERE id > 5
+            \\) AS t2
+            \\USING (timestamp_range_val) ORDER BY t1.id, t2.id
+            ,
+            .rows = .{
+                .{ "[2018-10-01 04:00:00+00, NULL)", 2, "[2018-10-01 04:00:00+00, NULL)", 6 },
+                .{ "[NULL, 2019-01-01 04:00:00+00)", 3, "[NULL, 2019-01-01 04:00:00+00)", 7 },
+                .{ "[NULL, 2019-01-01 04:00:00+00)", 3, "[NULL, 2019-01-01 04:00:00+00)", 8 },
+                .{ "[NULL, 2019-01-01 04:00:00+00)", 3, "[NULL, 2019-01-01 04:00:00+00)", 9 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 10 },
+            },
+        },
+        .{
+            .desc = "timestamp_range_left_join",
+            .sql =
+            \\SELECT t1.timestamp_range_val, t1.id, t2.timestamp_range_val, t2.id
+            \\FROM (
+            \\  SELECT timestamp_range_val, id FROM TimestampRangeTable WHERE id <= 5
+            \\) AS t1
+            \\LEFT JOIN (
+            \\  SELECT timestamp_range_val, id FROM TimestampRangeTable WHERE id > 5
+            \\) AS t2
+            \\USING (timestamp_range_val) ORDER BY t1.id, t2.id
+            ,
+            .rows = .{
+                .{ "[2018-10-01 04:00:00+00, 2019-01-01 04:00:00+00)", 1, null, null },
+                .{ "[2018-10-01 04:00:00+00, NULL)", 2, "[2018-10-01 04:00:00+00, NULL)", 6 },
+                .{ "[NULL, 2019-01-01 04:00:00+00)", 3, "[NULL, 2019-01-01 04:00:00+00)", 7 },
+                .{ "[NULL, 2019-01-01 04:00:00+00)", 3, "[NULL, 2019-01-01 04:00:00+00)", 8 },
+                .{ "[NULL, 2019-01-01 04:00:00+00)", 3, "[NULL, 2019-01-01 04:00:00+00)", 9 },
+                .{ "[NULL, NULL)", 4, "[NULL, NULL)", 10 },
+                .{ null, 5, null, null },
+            },
+        },
+        .{
+            .desc = "predicate_nomatch_left_with_further_conjuncts",
+            .sql =
+            \\# b/282197704: IN() should not be pushed down since it's not always NULL For
+            \\# NULL arguments, e.g. `1 IN (1, x)` is true even if x is NULL.
+            \\# This test protects the fix. The bug caused the result to be empty.
+            \\SELECT R.id, R.a, S.id, S.b
+            \\FROM R LEFT OUTER JOIN S ON R.id = 10 * S.id
+            \\WHERE 1 IN (1, S.id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, "a1", null, null },
+                .{ 2, "a2", null, null },
+            },
+        },
+    },
+}

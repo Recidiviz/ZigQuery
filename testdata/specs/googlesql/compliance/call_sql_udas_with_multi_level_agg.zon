@@ -1,0 +1,891 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/call_sql_udas_with_multi_level_agg",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/call_sql_udas_with_multi_level_agg.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# TODO: b/316422061 - Consider replacing unnested ARRAYs in tests with tables
+            \\# defined with [create_table] once the bug with schema objects is resolved.
+            \\### CREATE FUNCTION STATEMENTS ###
+            \\CREATE TEMP AGGREGATE FUNCTION SumTimesTwo(a INT64) AS (SUM(a) + SUM(a))
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION MaxTimesTwo(a INT64) AS (MAX(a) + MAX(a))",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION CountTimesTwo(a INT64) AS (COUNT(a) + COUNT(a))",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION AvgTimesTwo(a INT64) AS (AVG(a) + AVG(a))",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION SumTimesTwoOverMaxByKey(key STRING, value INT64) AS (
+            \\  SumTimesTwo(MAX(value) GROUP BY key)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION MaxTimesTwoOverMaxByKey(key STRING, value INT64) AS (
+            \\  MaxTimesTwo(MAX(value) GROUP BY key)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION CountTimesTwoOverMaxByKey(key STRING, value INT64) AS (
+            \\  CountTimesTwo(MAX(value) GROUP BY key)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION SumSquares(a INT64) AS (SUM(a * a))",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION TemplatedSumSquares(a ANY TYPE) AS (
+            \\  SUM(a * a)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION SumSquaresOverSumTimesTwoByKey(key STRING, a INT64) AS (
+            \\  SumSquares(SumTimesTwo(a) GROUP BY key)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION BunchOfAggs(a INT64) AS (
+            \\  STRUCT(
+            \\    SUM(a) AS sum_a,
+            \\    AVG(a) AS avg_a,
+            \\    COUNT(DISTINCT a) AS count_distinct_a)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION NullaryUDAWithMultiLevelAgg()
+            \\RETURNS INT64
+            \\AS (
+            \\  (SELECT MAX(SUM(col2) GROUP BY col1)
+            \\  FROM
+            \\  (
+            \\    SELECT 1 AS col1, 100 AS col2
+            \\    UNION ALL
+            \\    SELECT 1, 400
+            \\    UNION ALL
+            \\    SELECT 2, 200
+            \\    UNION ALL
+            \\    SELECT 2, 800
+            \\    UNION ALL
+            \\    SELECT 2, 500
+            \\  ))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION NullaryUDFWithMultiLevelAgg()
+            \\RETURNS INT64
+            \\AS (
+            \\  (SELECT MAX(SUM(col2) GROUP BY col1)
+            \\  FROM
+            \\  (
+            \\    SELECT 1 AS col1, 100 AS col2
+            \\    UNION ALL
+            \\    SELECT 1, 400
+            \\    UNION ALL
+            \\    SELECT 2, 200
+            \\    UNION ALL
+            \\    SELECT 2, 800
+            \\    UNION ALL
+            \\    SELECT 2, 500
+            \\  ))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION SumOfDistinctArrayValues(arr ARRAY<INT64>) AS (
+            \\  (SELECT SUM(value GROUP BY value) FROM UNNEST(arr) AS value)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP FUNCTION TemplatedSumOfDistinctArrayValues(arr ANY TYPE) AS (
+            \\  (SELECT SUM(value GROUP BY value) FROM UNNEST(arr) AS value)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION SumOfDistinctValues(value INT64) AS (
+            \\  SUM(value GROUP BY value)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION TemplatedSumOfDistinctValues(value ANY TYPE) AS (
+            \\  SUM(value GROUP BY value)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION SumOfAveragesForDistinctKey(key STRING, value INT64) AS (
+            \\  SUM(AVG(value) GROUP BY key)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION TemplatedSumOfAveragesForDistinctKey(key ANY TYPE, value INT64) AS (
+            \\  SUM(AVG(value) GROUP BY key)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION RatioOfSumOfMaxValuesForDistinctKeys(key1 STRING, key2 STRING, value INT64) AS (
+            \\  SUM(MAX(value) GROUP BY key1) / SUM(MAX(value) GROUP BY key2)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION ArrayAggSumWithNonAggregateArgs(key STRING, value INT64, x INT64 NOT AGGREGATE, y INT64 NOT AGGREGATE) AS (
+            \\  ARRAY_AGG(SUM(value + x) + y GROUP BY key, x ORDER BY key)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION SumWithStructFieldAccesses(struct_arg STRUCT<a STRUCT<b INT64>>) AS (
+            \\  SUM(struct_arg.a.b GROUP BY struct_arg.a)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION TemplatedSumWithStructFieldAccesses(struct_arg ANY TYPE) AS (
+            \\  SUM(struct_arg.a.b GROUP BY struct_arg.a)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION UdaCallingOtherUdas(key1 STRING, key2 STRING, value INT64) AS (
+            \\  FLOOR(
+            \\  MAX(SumOfAveragesForDistinctKey(key1, value) GROUP BY key2)
+            \\  + SumOfAveragesForDistinctKey(key2, value)
+            \\  + TemplatedSumOfAveragesForDistinctKey(key1, value))
+            \\)
+            ,
+        },
+        .{
+            .desc = "skip_failed_reference_setup",
+            .sql =
+            \\CREATE TEMP FUNCTION UdfCallingUdas() AS
+            \\  ((SELECT ARRAY_SUM(ArrayAggSumWithNonAggregateArgs(key, value, 1, 100))
+            \\  + SumOfAveragesForDistinctKey(key, value)
+            \\  + TemplatedSumOfAveragesForDistinctKey(key, value)
+            \\  FROM UNNEST(
+            \\    ARRAY<STRUCT<key STRING, value INT64>>[
+            \\      ('foo', 70),
+            \\      ('foo', 20),
+            \\      ('bar', 30),
+            \\      ('bar', 10),
+            \\      ('bar', 20)])
+            \\))
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION SumPlusCountPlusOne(value INT64) AS (
+            \\  SUM(value) + COUNT(value) + 1
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION CountStarPlusOne() AS (
+            \\  COUNT(*) + 1
+            \\)
+            ,
+        },
+        .{
+            .desc = "call_nullary_uda_with_multi_level_agg",
+            .sql =
+            \\### BEGIN TESTS ###
+            \\# These tests all invoke UDA/UDFs that require the multilevel agg feature to be
+            \\# enabled during [prepare_database], but the refimpl can successfully execute
+            \\# these tests without the feature if the functions are already in the catalog,
+            \\# so the feature integrity test gives a false positive in this case.
+            \\SELECT NullaryUDAWithMultiLevelAgg() FROM (SELECT 1)
+            ,
+            .rows = .{
+                .{1500},
+            },
+        },
+        .{
+            .desc = "call_sum_of_distinct_array_values",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT SumOfDistinctArrayValues([1, 2, 2, 3, 3, 3, 3, 4, 4])",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "call_templated_sum_of_distinct_array_values",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT TemplatedSumOfDistinctArrayValues([1, 2, 2, 3, 3, 3, 3, 4, 4])",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "call_nullary_udf_with_multi_level_agg",
+            .sql = "SELECT NullaryUDFWithMultiLevelAgg()",
+            .rows = .{
+                .{1500},
+            },
+        },
+        .{
+            .desc = "call_sum_of_distinct_values",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT SumOfDistinctValues(x) FROM UNNEST([1, 2, 2, 3, 3, 3, 3, 4, 4]) as x",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "call_templated_sum_of_distinct_values",
+            .unsupported_in_bigquery = "\"User defined aggregate function does not support template argument\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT TemplatedSumOfDistinctValues(x) FROM UNNEST([1, 2, 2, 3, 3, 3, 3, 4, 4]) as x",
+            .rows = .{
+                .{10},
+            },
+        },
+        .{
+            .desc = "call_sum_of_averages_for_distinct_key",
+            .sql =
+            \\SELECT key1, SumOfAveragesForDistinctKey(key2, value) FROM UNNEST(
+            \\    ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\      ('foo', 'a', 10),
+            \\      ('foo', 'a', 30),
+            \\      ('foo', 'b', 7),
+            \\      ('bar', 'b', 30),
+            \\      ('bar', 'b', 50),
+            \\      ('bar', 'a', 100)])
+            \\GROUP BY key1
+            \\ORDER BY key1
+            ,
+            .rows = .{
+                .{ "bar", 140 },
+                .{ "foo", 27 },
+            },
+        },
+        .{
+            .desc = "call_templated_sum_of_averages_for_distinct_key",
+            .unsupported_in_bigquery = "\"User defined aggregate function does not support template argument\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT key1, TemplatedSumOfAveragesForDistinctKey(key2, value) FROM UNNEST(
+            \\    ARRAY<STRUCT<key1 STRING, key2 BOOL, value INT64>>[
+            \\      ('foo', true, 10),
+            \\      ('foo', true, 30),
+            \\      ('foo', false, 7),
+            \\      ('bar', false, 30),
+            \\      ('bar', false, 50),
+            \\      ('bar', true, 100)])
+            \\GROUP BY key1
+            \\ORDER BY key1
+            ,
+            .rows = .{
+                .{ "bar", 140 },
+                .{ "foo", 27 },
+            },
+        },
+        .{
+            .desc = "call_ratio_of_sum_of_max_values_for_distinct_keys",
+            .sql =
+            \\SELECT RatioOfSumOfMaxValuesForDistinctKeys(key1, key2, value) FROM UNNEST(
+            \\    ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\      ('foo', 'a', 10),
+            \\      ('foo', 'a', -30),
+            \\      ('foo', 'b', 7),
+            \\      ('bar', 'b', 10),
+            \\      ('bar', 'b', -50),
+            \\      ('bar', 'a', 90)])
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "call_array_agg_sum_with_non_aggregate_args",
+            .unsupported_in_bigquery = "\"Multi-level aggregation not supported in ARRAY_AGG without IGNORE NULLS behavior\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT ArrayAggSumWithNonAggregateArgs(key, value, 1, 100) FROM UNNEST(
+            \\    ARRAY<STRUCT<key STRING, value INT64>>[
+            \\      ('foo', 70),
+            \\      ('foo', 20),
+            \\      ('bar', 30),
+            \\      ('bar', 10),
+            \\      ('bar', 20)])
+            ,
+            .rows = .{
+                .{.{ 163, 192 }},
+            },
+        },
+        .{
+            .desc = "call_sum_with_struct_field_accesses",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT SumWithStructFieldAccesses(struct_arg) FROM UNNEST(
+            \\    ARRAY<STRUCT<struct_arg STRUCT<a STRUCT<b INT64>>>>[
+            \\      (STRUCT(STRUCT(STRUCT(10)))),
+            \\      (STRUCT(STRUCT(STRUCT(10)))),
+            \\      (STRUCT(STRUCT(STRUCT(20)))),
+            \\      (STRUCT(STRUCT(STRUCT(30)))),
+            \\      (STRUCT(STRUCT(STRUCT(40))))])
+            ,
+            .rows = .{
+                .{100},
+            },
+        },
+        .{
+            .desc = "call_templated_sum_with_struct_field_accesses",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT SumWithStructFieldAccesses(struct_arg) FROM UNNEST(
+            \\    ARRAY<STRUCT<struct_arg STRUCT<a STRUCT<b INT64>>>>[
+            \\      (STRUCT(STRUCT(STRUCT(10)))),
+            \\      (STRUCT(STRUCT(STRUCT(10)))),
+            \\      (STRUCT(STRUCT(STRUCT(20)))),
+            \\      (STRUCT(STRUCT(STRUCT(30)))),
+            \\      (STRUCT(STRUCT(STRUCT(40))))])
+            ,
+            .rows = .{
+                .{100},
+            },
+        },
+        .{
+            .desc = "call_sum_of_distinct_values_group_by_rollup",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT
+            \\  GROUPING(col1) as col1_is_aggregated,
+            \\  GROUPING(col2) as col2_is_aggregated,
+            \\  SumOfDistinctValues(value) FROM UNNEST(
+            \\    ARRAY<STRUCT<col1 STRING, col2 STRING, value INT64>>[
+            \\      ('foo', 'a', 1),
+            \\      ('foo', 'a', 1),
+            \\      ('foo', 'a', 2),
+            \\      ('foo', 'b', 4),
+            \\      ('bar', 'b', 8),
+            \\      ('bar', 'b', 8),
+            \\      ('bar', 'b', 16),
+            \\      ('bar', 'a', 32)])
+            \\GROUP BY ROLLUP(col1, col2)
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ 0, 0, 3 },
+                .{ 0, 0, 4 },
+                .{ 0, 0, 24 },
+                .{ 0, 0, 32 },
+                .{ 0, 1, 7 },
+                .{ 0, 1, 56 },
+                .{ 1, 1, 63 },
+            },
+        },
+        .{
+            .desc = "call_sum_of_distinct_values_group_by_cube",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT
+            \\  GROUPING(col1) as col1_is_aggregated,
+            \\  GROUPING(col2) as col2_is_aggregated,
+            \\  SumOfDistinctValues(value) FROM UNNEST(
+            \\    ARRAY<STRUCT<col1 STRING, col2 STRING, value INT64>>[
+            \\      ('foo', 'a', 1),
+            \\      ('foo', 'a', 1),
+            \\      ('foo', 'a', 2),
+            \\      ('foo', 'b', 4),
+            \\      ('bar', 'b', 8),
+            \\      ('bar', 'b', 8),
+            \\      ('bar', 'b', 16),
+            \\      ('bar', 'a', 32)])
+            \\GROUP BY CUBE(col1, col2)
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ 0, 0, 3 },
+                .{ 0, 0, 4 },
+                .{ 0, 0, 24 },
+                .{ 0, 0, 32 },
+                .{ 0, 1, 7 },
+                .{ 0, 1, 56 },
+                .{ 1, 0, 28 },
+                .{ 1, 0, 35 },
+                .{ 1, 1, 63 },
+            },
+        },
+        .{
+            .desc = "call_sum_of_distinct_values_group_by_grouping_sets",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT
+            \\  GROUPING(col1) as col1_is_aggregated,
+            \\  GROUPING(col2) as col2_is_aggregated,
+            \\  SumOfDistinctValues(value) FROM UNNEST(
+            \\    ARRAY<STRUCT<col1 STRING, col2 STRING, value INT64>>[
+            \\      ('foo', 'a', 1),
+            \\      ('foo', 'a', 1),
+            \\      ('foo', 'a', 2),
+            \\      ('foo', 'b', 4),
+            \\      ('bar', 'b', 8),
+            \\      ('bar', 'b', 8),
+            \\      ('bar', 'b', 16),
+            \\      ('bar', 'a', 32)])
+            \\GROUP BY GROUPING SETS((col1, col1, col2), col2, () )
+            \\ORDER BY 1, 2, 3
+            ,
+            .rows = .{
+                .{ 0, 0, 3 },
+                .{ 0, 0, 4 },
+                .{ 0, 0, 24 },
+                .{ 0, 0, 32 },
+                .{ 1, 0, 28 },
+                .{ 1, 0, 35 },
+                .{ 1, 1, 63 },
+            },
+        },
+        .{
+            .desc = "call_uda_calling_other_udas",
+            .unsupported_in_bigquery = "\"User defined aggregate function does not support template argument\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT UdaCallingOtherUdas(key1, key2, value) FROM UNNEST(
+            \\    ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\      ('foo', 'a', 10),
+            \\      ('foo', 'a', -30),
+            \\      ('foo', 'b', 7),
+            \\      ('bar', 'b', 10),
+            \\      ('bar', 'b', -50),
+            \\      ('bar', 'a', 90)])
+            ,
+            .rows = .{
+                .{104},
+            },
+        },
+        .{
+            .desc = "call_udf_calling_udas",
+            .unsupported_in_bigquery = "\"User defined aggregate function does not support template argument\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql = "SELECT UdfCallingUdas()",
+            .rows = .{
+                .{485},
+            },
+        },
+        .{
+            .desc = "call_uda_mixed_with_multi_level_aggs",
+            .unsupported_in_bigquery = "\"Function sum has empty aggregate function list. This is not supported in multi-level aggregation.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT SumPlusCountPlusOne(value),
+            \\       COUNT(value GROUP BY value),
+            \\       CountStarPlusOne(),
+            \\       SumOfDistinctValues(value),
+            \\       RatioOfSumOfMaxValuesForDistinctKeys(key1, key2, value)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 10),
+            \\  ('foo', 'a', -30),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 10),
+            \\  ('bar', 'b', -50),
+            \\  ('bar', 'a', 90)])
+            ,
+            .rows = .{
+                .{ 44, 5, 7, 27, 1 },
+            },
+        },
+        .{
+            .desc = "call_uda_nested_inside_multi_level_agg",
+            .sql =
+            \\SELECT SUM(CountStarPlusOne() GROUP BY key1),
+            \\       MAX(SumPlusCountPlusOne(value) GROUP BY key1, key2),
+            \\       COUNT(value GROUP BY value)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 10),
+            \\  ('foo', 'a', -30),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 10),
+            \\  ('bar', 'b', -50),
+            \\  ('bar', 'a', 90)])
+            ,
+            .rows = .{
+                .{ 8, 92, 5 },
+            },
+        },
+        .{
+            .desc = "call_uda_mixed_with_multi_level_aggs_complex",
+            .unsupported_in_bigquery = "\"User defined aggregate function does not support template argument\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT SumPlusCountPlusOne(value),
+            \\       UdaCallingOtherUdas(key1, key2, value),
+            \\       FLOOR(SumOfAveragesForDistinctKey(key2, value)),
+            \\       FLOOR(SUM(AVG(value) GROUP BY key2)),
+            \\       COUNT(value GROUP BY value)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 10),
+            \\  ('foo', 'a', -30),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 10),
+            \\  ('bar', 'b', -50),
+            \\  ('bar', 'a', 90)])
+            ,
+            .rows = .{
+                .{ 44, 104, 12, 12, 5 },
+            },
+        },
+        .{
+            .desc = "call_uda_nested_inside_multi_level_agg_complex",
+            .sql =
+            \\SELECT SUM(SumOfDistinctValues(value) GROUP BY key1),
+            \\       COUNT(RatioOfSumOfMaxValuesForDistinctKeys(key1, key2, value) GROUP BY key1, key2),
+            \\       MAX(UdaCallingOtherUdas(key1, key2, value) GROUP BY key2)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 10),
+            \\  ('foo', 'a', -30),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 10),
+            \\  ('bar', 'b', -50),
+            \\  ('bar', 'a', 90)])
+            ,
+            .rows = .{
+                .{ 37, 4, 183 },
+            },
+        },
+        .{
+            .desc = "call_sum_squares_with_group_by",
+            .sql =
+            \\SELECT SumSquares(MAX(val) GROUP BY key)
+            \\FROM UNNEST([
+            \\  STRUCT('a' AS key, 1 AS val),
+            \\  STRUCT('a', 2),
+            \\  STRUCT('b', 3)
+            \\])
+            ,
+            .rows = .{
+                .{13},
+            },
+        },
+        .{
+            .desc = "call_sum_squares_with_group_by_2",
+            .sql =
+            \\SELECT SumSquares(CountStarPlusOne() - 1 GROUP BY key)
+            \\FROM UNNEST([
+            \\  STRUCT('a' AS key, 1 AS val),
+            \\  STRUCT('a', 2),
+            \\  STRUCT('b', 3)
+            \\])
+            ,
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "call_templated_sum_squares_with_group_by",
+            .sql =
+            \\SELECT TemplatedSumSquares(SumOfAveragesForDistinctKey(inner_key, val) GROUP BY outer_key)
+            \\FROM UNNEST([
+            \\  STRUCT('x' as outer_key, 'a' AS inner_key, 1 AS val),
+            \\  STRUCT('x', 'a', 3),
+            \\  STRUCT('x', 'b', 7),
+            \\  STRUCT('y', 'a', 25),
+            \\  STRUCT('y', 'a', 15),
+            \\  STRUCT('y', 'b', 10)
+            \\])
+            ,
+            .rows = .{
+                .{981},
+            },
+        },
+        .{
+            .desc = "call_bunch_of_aggs_with_group_by",
+            .sql =
+            \\SELECT BunchOfAggs(SUM(val) GROUP BY key)
+            \\FROM UNNEST([
+            \\  STRUCT('a' AS key, 1 AS val),
+            \\  STRUCT('a', 2),
+            \\  STRUCT('b', 3),
+            \\  STRUCT('b', 4)
+            \\])
+            ,
+            .rows = .{
+                .{.{ 10, 5, 2 }},
+            },
+        },
+        .{
+            .desc = "call_sum_of_distinct_values_with_group_by",
+            .sql =
+            \\SELECT SumOfDistinctValues(CountStarPlusOne() GROUP BY key)
+            \\FROM UNNEST([
+            \\  STRUCT('a' AS key, 1 AS val),
+            \\  STRUCT('a', 1),
+            \\  STRUCT('a', 2),
+            \\  STRUCT('b', 3),
+            \\  STRUCT('b', 3),
+            \\  STRUCT('b', 4)
+            \\])
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "call_templated_sum_of_distinct_values_with_group_by",
+            .sql =
+            \\SELECT TemplatedSumOfDistinctValues(COUNT(DISTINCT val) GROUP BY key)
+            \\FROM UNNEST([
+            \\  STRUCT('a' AS key, 1 AS val),
+            \\  STRUCT('a', 1),
+            \\  STRUCT('a', 2),
+            \\  STRUCT('b', 3),
+            \\  STRUCT('b', 3),
+            \\  STRUCT('b', 4)
+            \\])
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "call_sum_times_two_over_max_by_key",
+            .unsupported_in_bigquery = "\"GROUP BY modifiers are not yet supported on user-defined functions.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT SumTimesTwoOverMaxByKey(key2, value)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            \\GROUP BY key1
+            \\ORDER BY key1
+            ,
+            .rows = .{
+                .{20},
+                .{24},
+            },
+        },
+        .{
+            .desc = "call_avg_times_two_over_sum__times_two_over_max_by_key",
+            .sql =
+            \\SELECT AvgTimesTwo(SumTimesTwoOverMaxByKey(key2, value) GROUP BY key1)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            ,
+            .rows = .{
+                .{44},
+            },
+        },
+        .{
+            .desc = "call_max_times_two_over_max_by_key",
+            .unsupported_in_bigquery = "\"GROUP BY modifiers are not yet supported on user-defined functions.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT MaxTimesTwoOverMaxByKey(key2, value)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            \\GROUP BY key1
+            \\ORDER BY key1
+            ,
+            .rows = .{
+                .{12},
+                .{14},
+            },
+        },
+        .{
+            .desc = "call_avg_times_two_over_max_times_two_over_max_by_key",
+            .sql =
+            \\SELECT AvgTimesTwo(MaxTimesTwoOverMaxByKey(key2, value) GROUP BY key1)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            ,
+            .rows = .{
+                .{26},
+            },
+        },
+        .{
+            .desc = "call_count_times_two_over_max_by_key",
+            .unsupported_in_bigquery = "\"GROUP BY modifiers are not yet supported on user-defined functions.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT CountTimesTwoOverMaxByKey(key2, value)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            \\GROUP BY key1
+            \\ORDER BY key1
+            ,
+            .rows = .{
+                .{4},
+                .{4},
+            },
+        },
+        .{
+            .desc = "call_avg_times_two_over_count_times_two_over_max_by_key",
+            .sql =
+            \\SELECT AvgTimesTwo(CountTimesTwoOverMaxByKey(key2, value) GROUP BY key1)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            ,
+            .rows = .{
+                .{8},
+            },
+        },
+        .{
+            .desc = "call_sum_squares_over_sum_times_two_by_key",
+            .unsupported_in_bigquery = "\"GROUP BY modifiers are not yet supported on user-defined functions.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT SumSquaresOverSumTimesTwoByKey(key2, value)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            \\GROUP BY key1
+            \\ORDER BY key1
+            ,
+            .rows = .{
+                .{288},
+                .{340},
+            },
+        },
+        .{
+            .desc = "call_avg_times_two_over_sum_squares_over_sum_times_two_by_key",
+            .sql =
+            \\SELECT AVG(SumSquaresOverSumTimesTwoByKey(key2, value) GROUP BY key1)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            ,
+            .rows = .{
+                .{314},
+            },
+        },
+        .{
+            .desc = "call_array_agg_sum_with_non_aggregate_args_and_group_by",
+            .sql =
+            \\SELECT ArrayAggSumWithNonAggregateArgs(key, SUM(value), 1, 100 GROUP BY key)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key STRING, value INT64>>[
+            \\  ('foo', 70),
+            \\  ('foo', 20),
+            \\  ('bar', 30),
+            \\  ('bar', 10),
+            \\  ('bar', 20)
+            \\])
+            ,
+            .rows = .{
+                .{.{ 161, 191 }},
+            },
+        },
+        .{
+            .desc = "call_multiple_top_level_udas_with_group_by",
+            .sql =
+            \\SELECT SUM(CountStarPlusOne() GROUP BY key1),
+            \\       SumTimesTwo(CountStarPlusOne() GROUP BY key1),
+            \\       MaxTimesTwo(SumPlusCountPlusOne(value) GROUP BY key1, key2),
+            \\       CountTimesTwo(value GROUP BY value)
+            \\FROM UNNEST(
+            \\ARRAY<STRUCT<key1 STRING, key2 STRING, value INT64>>[
+            \\  ('foo', 'a', 1),
+            \\  ('foo', 'a', 5),
+            \\  ('foo', 'b', 7),
+            \\  ('bar', 'b', 2),
+            \\  ('bar', 'b', 4),
+            \\  ('bar', 'a', 6)])
+            ,
+            .rows = .{
+                .{ 8, 16, 18, 12 },
+            },
+        },
+    },
+}

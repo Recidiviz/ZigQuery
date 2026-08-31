@@ -1,0 +1,151 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_value_table",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_value_table.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Note that the test framework does not allow any way to specify a primary key
+            \\# constraint on a value table, although some engines may support using an
+            \\# extracted proto field for that. This is relevant for INSERT because some
+            \\# of the semantics depend on whether we are trying to insert rows with duplicate
+            \\# primary keys. For now, we simply trust that it is good enough to test value
+            \\# tables without primary keys and non-value tables with/without primary keys.
+            \\CREATE TABLE Int64ValueTable AS
+            \\SELECT AS VALUE 10
+            \\UNION ALL
+            \\SELECT 20
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE StructValueTable AS
+            \\SELECT AS STRUCT 55 foo, "fifty five" bar
+            \\UNION ALL
+            \\SELECT AS STRUCT 77 foo, "seventy seven" bar
+            ,
+        },
+        .{
+            .desc = "int64_delete_nothing_with_failed_assertion",
+            .sql =
+            \\DELETE Int64ValueTable WHERE False
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_delete_nothing_with_failed_assertion",
+            .sql =
+            \\DELETE StructValueTable WHERE False
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "int64_delete_everything_with_failed_assertion",
+            .sql =
+            \\DELETE Int64ValueTable WHERE True
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_delete_everything_with_failed_assertion",
+            .sql =
+            \\DELETE StructValueTable WHERE True
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "int64_delete_half_with_failed_assertion",
+            .sql =
+            \\DELETE Int64ValueTable AS value WHERE value = 10
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_delete_half_with_failed_assertion",
+            .sql =
+            \\DELETE StructValueTable WHERE foo = 55
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "int64_update_nothing_with_failed_assertion",
+            .sql =
+            \\UPDATE Int64ValueTable AS value SET value = 100 WHERE False
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_update_nothing_with_failed_assertion",
+            .sql =
+            \\UPDATE StructValueTable SET foo = 1000 WHERE False
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_update_everything_with_failed_assertion",
+            .sql =
+            \\UPDATE StructValueTable SET foo = 100 WHERE True
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "int64_update_half_with_failed_assertion",
+            .sql =
+            \\UPDATE Int64ValueTable AS value SET value = 100 WHERE value = 10
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_update_half_with_failed_assertion",
+            .sql =
+            \\UPDATE StructValueTable SET foo = 100 WHERE foo = 55
+            \\ASSERT_ROWS_MODIFIED 100
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "int64_insert_ignore_duplicate_value",
+            .sql = "INSERT IGNORE Int64ValueTable VALUES (10)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_insert_ignore_duplicate_value",
+            .sql = "INSERT IGNORE StructValueTable VALUES ((55, \"fifty five\"))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "int64_insert_replace_duplicate_value",
+            .sql = "INSERT REPLACE Int64ValueTable VALUES (10)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_insert_replace_duplicate_value",
+            .sql = "INSERT REPLACE StructValueTable VALUES ((55, \"fifty five\"))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "int64_insert_update_duplicate_value",
+            .sql = "INSERT UPDATE Int64ValueTable VALUES (10)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_insert_update_duplicate_value",
+            .sql = "INSERT UPDATE StructValueTable VALUES ((55, \"fifty five\"))",
+            .expect_error_any = true,
+        },
+    },
+}

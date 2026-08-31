@@ -1,0 +1,209 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/subquery_expression_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/subquery_expression_queries.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Miscellaneous tests for subquery expressions.
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       cast(true as bool) as bool_val, cast(0.1 as double) as double_val,
+            \\       cast(1 as int64) as int64_val, cast("1" as string) as str_val UNION ALL
+            \\  SELECT 2, false, 0.2, 2, "2"
+            ,
+        },
+        .{
+            .desc = "subquery_expression_3",
+            .sql =
+            \\# Scalar subquery expression enforced by a predicate.
+            \\SELECT (SELECT int64_val FROM Table1 WHERE int64_val = 1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "subquery_expression_2",
+            .sql =
+            \\# Scalar subquery expression with 1 row, 2 columns as struct.
+            \\SELECT (SELECT AS STRUCT 1 A, 2 B)
+            ,
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "subquery_expression_8",
+            .sql =
+            \\# Scalar subquery expression with a UNION ALL with one input returning zero
+            \\# rows.
+            \\SELECT (SELECT 1 UNION ALL SELECT 2 FROM Table1 WHERE int64_val = -1)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "subquery_expression_union_all_inputs_empty",
+            .sql =
+            \\# Scalar subquery expression with a UNION ALL with both inputs returning zero
+            \\# rows.
+            \\SELECT (
+            \\  SELECT 1 FROM Table1 WHERE FALSE
+            \\  UNION ALL
+            \\  SELECT 2 FROM Table1 WHERE NOT TRUE
+            \\)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "subquery_expression_correlated_single_ref",
+            .sql =
+            \\# Correlated scalar subquery expression with single reference to outer query.
+            \\SELECT (SELECT CONCAT('_', str_val)) AS key
+            \\FROM Table1
+            \\WHERE int64_val < 3
+            \\ORDER BY key
+            ,
+            .rows = .{
+                .{"_1"},
+                .{"_2"},
+            },
+        },
+        .{
+            .desc = "subquery_expression_correlated_multi_ref",
+            .sql =
+            \\# Correlated scalar subquery expression with multiple references to outer query.
+            \\SELECT (SELECT CONCAT('_', str_val, '@', CAST(int64_val AS string))) AS key
+            \\FROM Table1
+            \\WHERE int64_val < 3
+            \\ORDER BY key
+            ,
+            .rows = .{
+                .{"_1@1"},
+                .{"_2@2"},
+            },
+        },
+        .{
+            .desc = "subquery_expression_correlated_nested_simple_refs",
+            .sql =
+            \\# Nested correlated scalar subquery expression with references to both outer
+            \\# queries.
+            \\SELECT (SELECT (SELECT CONCAT(hashmark, str_val))
+            \\        FROM (SELECT '#' AS hashmark) AS T) AS key
+            \\FROM Table1
+            \\WHERE int64_val < 3
+            \\ORDER BY key
+            ,
+            .rows = .{
+                .{"#1"},
+                .{"#2"},
+            },
+        },
+        .{
+            .desc = "subquery_expression_correlated_nested_mixed_refs",
+            .sql =
+            \\# Nested correlated scalar subquery expression with references to both outer
+            \\# queries at different nesting levels.
+            \\SELECT (SELECT CONCAT(str_val, hashmark, (SELECT hashmark), (SELECT str_val))
+            \\        FROM (SELECT '#' AS hashmark) AS T) AS key
+            \\FROM Table1
+            \\WHERE int64_val < 3
+            \\ORDER BY key
+            ,
+            .rows = .{
+                .{"1##1"},
+                .{"2##2"},
+            },
+        },
+        .{
+            .desc = "subquery_expression_correlated_nested_ambiguous_refs",
+            .sql =
+            \\# Nested correlated scalar subquery expression with references to homonymous
+            \\# fields in multiple containing queries.
+            \\SELECT (SELECT (SELECT (SELECT str_val) FROM (SELECT 's2' AS str_val) AS T2)
+            \\        FROM (SELECT 's1' AS str_val) AS T1)
+            \\FROM Table1
+            \\WHERE int64_val = 1
+            ,
+            .rows = .{
+                .{"s2"},
+            },
+        },
+        .{
+            .desc = "scalar_subquery_expression_containing_array_subquery_expression",
+            .sql =
+            \\# Scalar subquery expression that contains an array subquery expression.
+            \\SELECT (SELECT * FROM UNNEST(ARRAY(SELECT t FROM UNNEST([1]) t)))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "subquery_expression_9",
+            .sql =
+            \\# Queries fail because the scalar subqueries return > 1 row.
+            \\SELECT (SELECT int64_val FROM Table1)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "subquery_expression_10",
+            .sql = "SELECT (SELECT AS STRUCT bool_val, double_val, int64_val, str_val FROM Table1)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "subquery_expression_11",
+            .sql = "SELECT (SELECT 1 UNION ALL SELECT 2)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "subquery_expression_12",
+            .sql = "SELECT (SELECT AS STRUCT 1, 2 UNION ALL SELECT AS STRUCT 3, 4)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "array_subquery_expression_single_row_with_single_column_struct",
+            .sql =
+            \\# Array subquery expression with a single row containing a struct with one
+            \\# column.
+            \\SELECT ARRAY(SELECT AS STRUCT 1 FROM (SELECT 1 AS point))
+            ,
+            .rows = .{
+                .{.{.{1}}},
+            },
+        },
+        .{
+            .desc = "subquery_expression_6",
+            .sql =
+            \\# Array subquery expression with a single-column UNION ALL.
+            \\SELECT ARRAY(SELECT 1 AS i UNION ALL SELECT 2 ORDER BY i)
+            ,
+            .rows = .{
+                .{.{ 1, 2 }},
+            },
+        },
+        .{
+            .desc = "array_subquery_expression_union_all_inputs_empty",
+            .sql =
+            \\# Array subquery expression with a UNION ALL with both inputs returning zero
+            \\# rows.
+            \\SELECT ARRAY(
+            \\  SELECT 1 FROM Table1 WHERE FALSE
+            \\  UNION ALL
+            \\  SELECT 2 FROM Table1 WHERE NOT TRUE
+            \\)
+            ,
+            .rows = .{
+                .{.{}},
+            },
+        },
+    },
+}

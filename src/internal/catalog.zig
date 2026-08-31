@@ -157,6 +157,12 @@ pub const Catalog = struct {
     functions: std.ArrayList(*spec.FunctionSpec),
     /// Canonical function name -> index into `functions` (Go: c.funcMap).
     func_map: std.StringHashMap(usize),
+    /// Insertion-ordered, append-only (Go has no analogue): datasets the
+    /// catalog has been told exist, independent of whether they hold a table.
+    /// See `ensureDataset`.
+    datasets: std.ArrayList(*spec.DatasetSpec),
+    /// `project_dataset` -> index into `datasets`.
+    dataset_map: std.StringHashMap(usize),
     /// Append-only, ordered log of table changes.
     ///
     /// A persistent analyzer catalog can be updated incrementally, but only
@@ -312,6 +318,8 @@ pub const Catalog = struct {
             .table_map = std.StringHashMap(usize).init(gpa),
             .functions = .empty,
             .func_map = std.StringHashMap(usize).init(gpa),
+            .datasets = .empty,
+            .dataset_map = std.StringHashMap(usize).init(gpa),
             .changes = .empty,
         };
         errdefer c.deinit();
@@ -331,6 +339,8 @@ pub const Catalog = struct {
         c.table_map.deinit();
         c.functions.deinit(c.gpa);
         c.func_map.deinit();
+        c.datasets.deinit(c.gpa);
+        c.dataset_map.deinit();
         c.changes.deinit(c.gpa);
         c.arena_state.deinit();
         c.gpa.destroy(c);
@@ -671,7 +681,8 @@ pub const Catalog = struct {
         try c.ensureInfoSchema(table_spec.name_path);
     }
 
-    /// Registers the INFORMATION_SCHEMA views for a table's dataset, once.
+    /// Registers the INFORMATION_SCHEMA views for a table's dataset, once, and
+    /// (via `ensureDataset`) the dataset itself and its project's SCHEMATA.
     ///
     /// Hooked here rather than in the JSON renderers because this is the single
     /// funnel all three registration paths pass through — including
@@ -697,29 +708,101 @@ pub const Catalog = struct {
             for (prefix, 0..) |seg, i| path[i] = try arena.dupe(u8, seg);
             path[prefix.len] = info_schema_vtab.info_schema_segment;
             path[prefix.len + 1] = view.view;
-
-            const table_spec = try arena.create(spec.TableSpec);
-            const columns = try arena.alloc(*spec.ColumnSpec, view.columns.len);
-            for (view.columns, 0..) |col_name, i| {
-                const col = try arena.create(spec.ColumnSpec);
-                col.* = .{
-                    .name = col_name,
-                    // ordinal_position is the only non-STRING column.
-                    .type = try spec.newSimpleType(arena, .TYPE_INT64),
-                };
-                if (!std.mem.eql(u8, col_name, "ordinal_position")) {
-                    col.type = try spec.newSimpleType(arena, .TYPE_STRING);
-                }
-                columns[i] = col;
-            }
-            table_spec.* = .{ .name_path = path, .columns = columns };
-
-            const canonical = try table_spec.tableName(arena);
-            if (c.table_map.contains(canonical)) continue;
-            try c.tables.append(c.gpa, table_spec);
-            try c.table_map.put(canonical, c.tables.items.len - 1);
-            try c.changes.append(c.gpa, .{ .table_added = canonical });
+            try c.registerSyntheticView(arena, path, view);
         }
+        try c.ensureDataset(prefix, "");
+    }
+
+    /// Builds and registers one INFORMATION_SCHEMA view's `TableSpec` at
+    /// `path`, if a spec is not already registered there. Shared by a table's
+    /// per-dataset views (`ensureInfoSchema`) and a dataset's project-scoped
+    /// SCHEMATA (`ensureDataset`) — both are ordinary synthetic `TableSpec`s
+    /// with no backing SQLite object, differing only in path shape.
+    fn registerSyntheticView(
+        c: *Catalog,
+        arena: std.mem.Allocator,
+        path: []const []const u8,
+        view: *const info_schema_vtab.View,
+    ) error{OutOfMemory}!void {
+        const table_spec = try arena.create(spec.TableSpec);
+        const columns = try arena.alloc(*spec.ColumnSpec, view.columns.len);
+        for (view.columns, 0..) |col_name, i| {
+            const col = try arena.create(spec.ColumnSpec);
+            col.* = .{
+                .name = col_name,
+                // ordinal_position is the only non-STRING column.
+                .type = try spec.newSimpleType(arena, .TYPE_INT64),
+            };
+            if (!std.mem.eql(u8, col_name, "ordinal_position")) {
+                col.type = try spec.newSimpleType(arena, .TYPE_STRING);
+            }
+            columns[i] = col;
+        }
+        table_spec.* = .{ .name_path = path, .columns = columns };
+
+        const canonical = try table_spec.tableName(arena);
+        if (c.table_map.contains(canonical)) return;
+        try c.tables.append(c.gpa, table_spec);
+        try c.table_map.put(canonical, c.tables.items.len - 1);
+        try c.changes.append(c.gpa, .{ .table_added = canonical });
+    }
+
+    /// Records that `[project, dataset]` exists and registers the project's
+    /// SCHEMATA view (`<project>.INFORMATION_SCHEMA.SCHEMATA`), both once per
+    /// project. Idempotent: a dataset already known is left alone.
+    ///
+    /// Go has no analogue — the reference emulator tracks datasets only in its
+    /// metadata store — but the SQL catalog needs to know a dataset exists
+    /// before it holds a table, or a freshly created, still-empty dataset is
+    /// invisible to a project-scoped SCHEMATA scan (buildSchemata's data comes
+    /// from real tables' own paths; TABLES/COLUMNS need no such registration,
+    /// since an empty dataset genuinely has zero rows there).
+    ///
+    /// Called both directly, when a dataset is created (server.zig addDataset),
+    /// and via `ensureInfoSchema`, when a table is registered under a dataset
+    /// the catalog has not seen yet. A project-less dataset (`name_path.len !=
+    /// 2`, e.g. a bare `CREATE TABLE ds.t`) has no project segment to register
+    /// a project-scoped SCHEMATA under, so it is left to the existing
+    /// dataset-scoped `ds.INFORMATION_SCHEMA.SCHEMATA` form instead.
+    pub fn ensureDataset(
+        c: *Catalog,
+        name_path: []const []const u8,
+        created_at: []const u8,
+    ) error{OutOfMemory}!void {
+        if (name_path.len != 2) return;
+        const arena = c.arena_state.allocator();
+        const canonical = try spec.formatPath(arena, name_path);
+        if (c.dataset_map.contains(canonical)) return;
+
+        const dataset_path = try arena.alloc([]const u8, 2);
+        dataset_path[0] = try arena.dupe(u8, name_path[0]);
+        dataset_path[1] = try arena.dupe(u8, name_path[1]);
+        const entry = try arena.create(spec.DatasetSpec);
+        entry.* = .{ .name_path = dataset_path, .created_at = try arena.dupe(u8, created_at) };
+        try c.datasets.append(c.gpa, entry);
+        try c.dataset_map.put(canonical, c.datasets.items.len - 1);
+
+        const schemata_view = for (&info_schema_vtab.views) |*v| {
+            if (std.mem.eql(u8, v.view, "SCHEMATA")) break v;
+        } else unreachable; // SCHEMATA is always in info_schema_vtab.views.
+        const project_path = try arena.alloc([]const u8, 3);
+        project_path[0] = try arena.dupe(u8, name_path[0]);
+        project_path[1] = info_schema_vtab.info_schema_segment;
+        project_path[2] = schemata_view.view;
+        try c.registerSyntheticView(arena, project_path, schemata_view);
+    }
+
+    /// Every dataset the catalog has been told exists, in registration order.
+    ///
+    /// Copies into `alloc` rather than returning `c.datasets.items` directly,
+    /// same as `liveTableSpecs`: the slice must stay valid for a reader who
+    /// releases the catalog lock before consuming it, and a concurrent append
+    /// on another connection can reallocate the backing array underneath it.
+    pub fn liveDatasets(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+    ) error{OutOfMemory}![]const *spec.DatasetSpec {
+        return alloc.dupe(*spec.DatasetSpec, c.datasets.items);
     }
 
     // ------------------------------------------------------------------

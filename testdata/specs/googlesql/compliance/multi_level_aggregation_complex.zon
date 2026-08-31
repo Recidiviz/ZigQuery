@@ -1,0 +1,546 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/multi_level_aggregation_complex",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/multi_level_aggregation_complex.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE SimpleTypes AS
+            \\  SELECT * FROM UNNEST([
+            \\    STRUCT(
+            \\      1 AS row_id,
+            \\      CAST(1000 AS INT32) AS int32, CAST(2000 AS INT64) AS int64,
+            \\      CAST(3000 AS UINT32) AS uint32, CAST(4000 AS UINT64) AS uint64,
+            \\      CAST(1000.0 AS FLOAT) AS float, CAST(2000.0 AS DOUBLE) AS double,
+            \\      "oddstring" AS string, CAST(NULL AS STRING) AS nullable_string
+            \\    ),
+            \\    STRUCT(
+            \\      2 AS row_id,
+            \\      CAST(1000 AS INT32) AS int32, CAST(2000 AS INT64) AS int64,
+            \\      CAST(3000 AS UINT32) AS uint32, CAST(4000 AS UINT64) AS uint64,
+            \\      CAST(1000.0 AS FLOAT) AS float, CAST(2000.0 AS DOUBLE) AS double,
+            \\      "evenstring" AS string, CAST("not_null" AS STRING) AS nullable_string
+            \\    ),
+            \\    STRUCT(
+            \\      3 AS row_id,
+            \\      CAST(100 AS INT32) AS int32, CAST(2000 AS INT64) AS int64,
+            \\      CAST(300 AS UINT32) AS uint32, CAST(4000 AS UINT64) AS uint64,
+            \\      CAST(100.0 AS FLOAT) AS float, CAST(2000.0 AS DOUBLE) AS double,
+            \\      "oddstring" AS string, CAST("not_null" AS STRING) AS nullable_string
+            \\    ),
+            \\    STRUCT(
+            \\      4 AS row_id,
+            \\      CAST(1000 AS INT32) AS int32, CAST(200 AS INT64) AS int64,
+            \\      CAST(3000 AS UINT32) AS uint32, CAST(400 AS UINT64) AS uint64,
+            \\      CAST(1000.0 AS FLOAT) AS float, CAST(200.0 AS DOUBLE) AS double,
+            \\      "evenstring" AS string, CAST("not_null" AS STRING) AS nullable_string
+            \\    ),
+            \\    STRUCT(
+            \\      5 AS row_id,
+            \\      CAST(1000 AS INT32) AS int32, CAST(200 AS INT64) AS int64,
+            \\      CAST(3000 AS UINT32) AS uint32, CAST(400 AS UINT64) AS uint64,
+            \\      CAST(1000.0 AS FLOAT) AS float, CAST(200.0 AS DOUBLE) AS double,
+            \\      "oddstring" AS string, CAST(NULL AS STRING) AS nullable_string
+            \\    ),
+            \\    STRUCT(
+            \\      6 AS row_id,
+            \\      CAST(100 AS INT32) AS int32, CAST(200 AS INT64) AS int64,
+            \\      CAST(300 AS UINT32) AS uint32, CAST(400 AS UINT64) AS uint64,
+            \\      CAST(100.0 AS FLOAT) AS float, CAST(200.0 AS DOUBLE) AS double,
+            \\      "evenstring" AS string, CAST(NULL AS STRING) AS nullable_string
+            \\    )
+            \\  ])
+            ,
+        },
+        .{
+            .desc = "multi_level_agg_basic",
+            .sql =
+            \\SELECT
+            \\  SUM(MAX(int64) GROUP BY int32)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{4000},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_grouping_constness",
+            .sql =
+            \\SELECT
+            \\  SUM(uint64 + uint32 + CAST(MAX(int64) AS UINT64) GROUP BY uint32)
+            \\FROM SimpleTypes
+            \\GROUP BY uint64
+            ,
+            .unordered = true,
+            .rows = .{
+                .{4500},
+                .{15300},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_count_star",
+            .sql =
+            \\SELECT
+            \\  SUM(int64 GROUP BY int64),
+            \\  COUNT(* GROUP BY int64),
+            \\  SUM(COUNT(*) + int32 + COUNT(* GROUP BY int64) GROUP BY int32),
+            \\FROM SimpleTypes
+            \\GROUP BY uint64
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 200, 1, 1105 },
+                .{ 2000, 1, 1105 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_redundant_grouping_keys",
+            .sql =
+            \\SELECT
+            \\  SUM(int32 + COUNT(string GROUP BY int32, uint64, string) GROUP BY int32, uint64),
+            \\  MIN(COUNT(string GROUP BY int32, int32, string, uint64, string) GROUP BY int32, uint64, uint64),
+            \\FROM SimpleTypes
+            \\GROUP BY uint64
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1103, 1 },
+                .{ 1103, 1 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_in_having_clause",
+            .sql =
+            \\SELECT
+            \\  string,
+            \\  SUM(MAX(int64) GROUP BY int32) AS multi_level_agg
+            \\FROM SimpleTypes
+            \\GROUP BY string
+            \\HAVING multi_level_agg > 0 AND SUM(int32 + AVG(int64) GROUP BY int32) = 4200
+            \\ORDER BY multi_level_agg
+            ,
+            .rows = .{
+                .{ "oddstring", 4000 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_inside_over_clause",
+            .sql =
+            \\SELECT
+            \\  SUM(uint32) OVER () AS window_result
+            \\FROM SimpleTypes
+            \\GROUP BY uint32
+            \\QUALIFY
+            \\  window_result >
+            \\  AVG(uint32) OVER (
+            \\    PARTITION BY SUM(uint32 + MAX(int32) GROUP BY uint64)
+            \\    ORDER BY MAX(uint64 + uint32 + CAST(MIN(int32) AS UINT64) GROUP BY uint64)
+            \\  )
+            ,
+            .unordered = true,
+            .rows = .{
+                .{3300},
+                .{3300},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_in_order_by_clause",
+            .sql =
+            \\SELECT
+            \\  SUM(int64)
+            \\FROM SimpleTypes
+            \\GROUP BY int64
+            \\ORDER BY
+            \\  SUM(CAST(int64 AS UINT64) + uint64 + CAST(MAX(int32) AS UINT64) GROUP BY uint64),
+            \\  MIN(int64 + MAX(COUNT(*) GROUP BY int32) GROUP BY string)
+            ,
+            .rows = .{
+                .{600},
+                .{6000},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_order_by_and_limit_1",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(int64 GROUP BY int64 ORDER BY int64 LIMIT 2)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{.{ 200, 2000 }},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_order_by_and_limit_1_ignore_nulls",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(int64 IGNORE NULLS GROUP BY int64 ORDER BY int64 LIMIT 2)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{.{ 200, 2000 }},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_order_by_and_limit_2",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(MAX(row_id) GROUP BY row_id ORDER BY MAX(row_id) LIMIT 4)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{.{ 1, 2, 3, 4 }},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_order_by_and_limit_2_ignore_nulls",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(MAX(row_id) IGNORE NULLS GROUP BY row_id ORDER BY MAX(row_id) LIMIT 4)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{.{ 1, 2, 3, 4 }},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_sum_distinct",
+            .sql =
+            \\SELECT
+            \\  SUM(MAX(int64) GROUP BY string),
+            \\  SUM(DISTINCT MAX(int64) GROUP BY string)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{ 4000, 2000 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_count_distinct",
+            .sql =
+            \\SELECT
+            \\  COUNT(int64 GROUP BY int64),
+            \\  COUNT(DISTINCT int64 GROUP BY int64),
+            \\  COUNT(MAX(int64) GROUP BY string),
+            \\  COUNT(DISTINCT MAX(int64) GROUP BY string),
+            \\  COUNT(string GROUP BY string),
+            \\  COUNT(DISTINCT string GROUP BY string)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{ 2, 2, 2, 1, 2, 2 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_multiple_count_star",
+            .sql =
+            \\SELECT
+            \\  COUNT(* GROUP BY int64),
+            \\  COUNT(* GROUP BY string)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{ 2, 2 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_many_clauses",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(DISTINCT row_id GROUP BY row_id ORDER BY row_id LIMIT 5)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{.{ 1, 2, 3, 4, 5 }},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_many_clauses_ignore_nulls",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(DISTINCT row_id IGNORE NULLS GROUP BY row_id ORDER BY row_id LIMIT 5)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{.{ 1, 2, 3, 4, 5 }},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_many_clauses_nullable_ignore_nulls",
+            .sql =
+            \\SELECT
+            \\  ARRAY_AGG(DISTINCT nullable_string IGNORE NULLS GROUP BY nullable_string ORDER BY nullable_string LIMIT 5)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{.{"not_null"}},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_group_by_ordinals",
+            .sql =
+            \\SELECT
+            \\  int32,
+            \\  int64,
+            \\  SUM(MIN(uint32) GROUP BY string)
+            \\FROM SimpleTypes
+            \\GROUP BY 1,2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 100, 200, 300 },
+                .{ 100, 2000, 300 },
+                .{ 1000, 200, 6000 },
+                .{ 1000, 2000, 6000 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_group_by_all",
+            .sql =
+            \\SELECT
+            \\  int32,
+            \\  int64,
+            \\  SUM(MIN(uint32) GROUP BY string)
+            \\FROM SimpleTypes
+            \\GROUP BY ALL
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 100, 200, 300 },
+                .{ 100, 2000, 300 },
+                .{ 1000, 200, 6000 },
+                .{ 1000, 2000, 6000 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_grouping_sets",
+            .sql =
+            \\SELECT
+            \\  GROUPING(int32) AS int32_is_aggregated_and_not_grouped,
+            \\  GROUPING(int64) AS int64_is_aggregated_and_not_grouped,
+            \\  int32,
+            \\  int64,
+            \\  SUM(MIN(uint32) GROUP BY string)
+            \\FROM SimpleTypes
+            \\GROUP BY GROUPING SETS (int32, int64)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 0, null, 200, 3300 },
+                .{ 1, 0, null, 2000, 3300 },
+                .{ 0, 1, 100, null, 600 },
+                .{ 0, 1, 1000, null, 6000 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_group_by_rollup",
+            .sql =
+            \\SELECT
+            \\  GROUPING(int32) AS int32_is_aggregated_and_not_grouped,
+            \\  GROUPING(int64) AS int64_is_aggregated_and_not_grouped,
+            \\  int32,
+            \\  int64,
+            \\  SUM(MIN(uint32) GROUP BY string)
+            \\FROM SimpleTypes
+            \\GROUP BY ROLLUP (int32, int64)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1, null, null, 600 },
+                .{ 0, 1, 100, null, 600 },
+                .{ 0, 0, 100, 200, 300 },
+                .{ 0, 0, 100, 2000, 300 },
+                .{ 0, 1, 1000, null, 6000 },
+                .{ 0, 0, 1000, 200, 6000 },
+                .{ 0, 0, 1000, 2000, 6000 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_group_by_cube",
+            .sql =
+            \\SELECT
+            \\  GROUPING(int32) AS int32_is_aggregated_and_not_grouped,
+            \\  GROUPING(int64) AS int64_is_aggregated_and_not_grouped,
+            \\  int32,
+            \\  int64,
+            \\  SUM(MIN(uint32) GROUP BY string)
+            \\FROM SimpleTypes
+            \\GROUP BY CUBE (int32, int64)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1, null, null, 600 },
+                .{ 1, 0, null, 200, 3300 },
+                .{ 1, 0, null, 2000, 3300 },
+                .{ 0, 1, 100, null, 600 },
+                .{ 0, 0, 100, 200, 300 },
+                .{ 0, 0, 100, 2000, 300 },
+                .{ 0, 1, 1000, null, 6000 },
+                .{ 0, 0, 1000, 200, 6000 },
+                .{ 0, 0, 1000, 2000, 6000 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_multiple_args",
+            .sql =
+            \\SELECT
+            \\  CORR(AVG(int64), CORR(int32, int64) GROUP BY string)
+            \\FROM SimpleTypes
+            ,
+            .rows = .{
+                .{-1},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_with_subquery_args",
+            .sql =
+            \\SELECT
+            \\  string,
+            \\  SUM(
+            \\    (SELECT MAX(SUM(int64) GROUP BY int32) FROM SimpleTypes)
+            \\    GROUP BY int32
+            \\  )
+            \\FROM SimpleTypes
+            \\GROUP BY string
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "evenstring", 8800 },
+                .{ "oddstring", 8800 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_prove_non_equivalence",
+            .sql =
+            \\WITH OriginalTable AS (
+            \\  SELECT 1 AS grain_key, 5 AS Y, 100 AS X1, 200 AS X2
+            \\  UNION ALL
+            \\  SELECT 2 AS grain_key, 30 AS Y, 500 AS X1, 800 AS X2
+            \\), TableWithDuplicates AS (
+            \\  SELECT
+            \\    grain_key, Y, X1, X2
+            \\  FROM OriginalTable CROSS JOIN UNNEST([1, 2, 3]) AS array_index
+            \\)
+            \\SELECT
+            \\  AVG(
+            \\    SUM(ANY_VALUE(X1) GROUP BY grain_key) +
+            \\    SUM(ANY_VALUE(X2) GROUP BY grain_key)
+            \\    GROUP BY Y
+            \\  ) AS grain_locking_today,
+            \\  AVG(
+            \\    ANY_VALUE(
+            \\      SUM(X1) + SUM(X2)
+            \\      GROUP BY Y
+            \\    )
+            \\    GROUP BY grain_key
+            \\  ) AS proposed_alternate_grain_locking
+            \\FROM TableWithDuplicates
+            ,
+            .rows = .{
+                .{ 800, 2400 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_collation_propagation_simple",
+            .unsupported_in_bigquery = "bq rejects multi-level aggregation combined with a COLLATE-annotated column (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\# Regression test for b/458961836
+            \\# Ensure that collation & annotations are propagated through MLA
+            \\SELECT
+            \\    ARRAY_LENGTH(ARRAY_AGG(DISTINCT max(z) GROUP BY x)) AS distinct_max_z,
+            \\    ARRAY_LENGTH(ARRAY_AGG(max(z) GROUP BY x)) AS all_max_z
+            \\FROM (
+            \\    SELECT 1 AS id, COLLATE('a', 'und:ci') AS x, COLLATE('e', 'und:ci') AS y, COLLATE('q', 'und:ci') AS z UNION ALL
+            \\    SELECT 2 AS id, COLLATE('A', 'und:ci') AS x, COLLATE('E', 'und:ci') AS y, COLLATE('Q', 'und:ci') AS z UNION ALL
+            \\    SELECT 3 AS id, COLLATE('b', 'und:ci') AS x, COLLATE('f', 'und:ci') AS y, COLLATE('Q', 'und:ci') AS z UNION ALL
+            \\    SELECT 4 AS id, COLLATE('B', 'und:ci') AS x, COLLATE('F', 'und:ci') AS y, COLLATE('q', 'und:ci') AS z
+            \\)
+            ,
+            .rows = .{
+                .{ 1, 2 },
+            },
+        },
+        .{
+            .desc = "multi_level_agg_collation_propagation_with_order_by_and_filtering",
+            .unsupported_in_bigquery = "bq rejects multi-level aggregation combined with a COLLATE-annotated column (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\# Regression test for b/458961836
+            \\# Ensure that collation & annotations are propagated in all modifiers of MLA.
+            \\SELECT
+            \\  ARRAY_LENGTH(
+            \\    ARRAY_AGG(
+            \\      STRING_AGG(DISTINCT z)
+            \\      WHERE x < 'Z'           -- Without collation, 'Z' < 'a'
+            \\      GROUP BY x
+            \\      HAVING max(y) = 'e' AND min(y) = 'e'
+            \\      ORDER BY max(z)
+            \\      )
+            \\   ) AS result
+            \\FROM (
+            \\    SELECT 1 AS id, COLLATE('a', 'und:ci') AS x, COLLATE('e', 'und:ci') AS y, COLLATE('q', 'und:ci') AS z UNION ALL
+            \\    SELECT 2 AS id, COLLATE('A', 'und:ci') AS x, COLLATE('E', 'und:ci') AS y, COLLATE('Q', 'und:ci') AS z UNION ALL
+            \\    SELECT 3 AS id, COLLATE('b', 'und:ci') AS x, COLLATE('f', 'und:ci') AS y, COLLATE('Q', 'und:ci') AS z UNION ALL
+            \\    SELECT 4 AS id, COLLATE('B', 'und:ci') AS x, COLLATE('F', 'und:ci') AS y, COLLATE('q', 'und:ci') AS z
+            \\)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_collation_propagation_with_distinct_and_filtering",
+            .unsupported_in_bigquery = "bq rejects multi-level aggregation combined with a COLLATE-annotated column (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\# Regression test for b/458961836
+            \\# Ensure that collation & annotations are propagated in all modifiers of MLA.
+            \\SELECT
+            \\   ARRAY_LENGTH(
+            \\    ARRAY_AGG(
+            \\      DISTINCT max(z)
+            \\      WHERE x < 'Z'           -- Without collation, 'Z' < 'a'
+            \\      GROUP BY x
+            \\      HAVING max(y) = 'e' AND min(y) = 'e'
+            \\    )
+            \\  ) AS result
+            \\FROM (
+            \\    SELECT 1 AS id, COLLATE('a', 'und:ci') AS x, COLLATE('e', 'und:ci') AS y, COLLATE('q', 'und:ci') AS z UNION ALL
+            \\    SELECT 2 AS id, COLLATE('A', 'und:ci') AS x, COLLATE('E', 'und:ci') AS y, COLLATE('Q', 'und:ci') AS z UNION ALL
+            \\    SELECT 3 AS id, COLLATE('b', 'und:ci') AS x, COLLATE('f', 'und:ci') AS y, COLLATE('Q', 'und:ci') AS z UNION ALL
+            \\    SELECT 4 AS id, COLLATE('B', 'und:ci') AS x, COLLATE('F', 'und:ci') AS y, COLLATE('q', 'und:ci') AS z
+            \\)
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "multi_level_agg_collation_propagation_with_distinct_and_order_by_and_filtering",
+            .unsupported_in_bigquery = "bq rejects multi-level aggregation combined with a COLLATE-annotated column (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\# Regression test for b/458961836
+            \\# Ensure that collation & annotations are propagated in all modifiers of MLA.
+            \\SELECT
+            \\  ARRAY_LENGTH(
+            \\    ARRAY_AGG(
+            \\      DISTINCT x
+            \\      WHERE x < 'Z'           -- Without collation, 'Z' < 'a'
+            \\      GROUP BY x
+            \\      ORDER BY x
+            \\      )
+            \\  ) AS result
+            \\FROM (
+            \\    SELECT 1 AS id, COLLATE('a', 'und:ci') AS x, COLLATE('e', 'und:ci') AS y, COLLATE('q', 'und:ci') AS z UNION ALL
+            \\    SELECT 2 AS id, COLLATE('A', 'und:ci') AS x, COLLATE('E', 'und:ci') AS y, COLLATE('Q', 'und:ci') AS z UNION ALL
+            \\    SELECT 3 AS id, COLLATE('b', 'und:ci') AS x, COLLATE('f', 'und:ci') AS y, COLLATE('Q', 'und:ci') AS z UNION ALL
+            \\    SELECT 4 AS id, COLLATE('B', 'und:ci') AS x, COLLATE('F', 'und:ci') AS y, COLLATE('q', 'und:ci') AS z
+            \\)
+            ,
+            .rows = .{
+                .{2},
+            },
+        },
+    },
+}

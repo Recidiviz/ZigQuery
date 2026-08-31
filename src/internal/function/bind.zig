@@ -338,6 +338,8 @@ pub const func_table = [_]FuncInfo{
     // Not deterministic: see fn_math.rand on why SQLITE_DETERMINISTIC would
     // collapse every RAND() in a query to one value.
     .{ .name = "rand", .handler = math.rand, .deterministic = false },
+    // Not a GoogleSQL builtin: encoder.LiteralFromValue's only way to embed a NaN Value as SQL text
+    .{ .name = "nan_literal", .handler = math.nanLiteral },
     .{ .name = "range_bucket", .min_args = 2, .handler = math.rangeBucket },
     .{ .name = "cosine_distance", .min_args = 2, .handler = math.cosineDistance },
     .{ .name = "euclidean_distance", .min_args = 2, .handler = math.euclideanDistance },

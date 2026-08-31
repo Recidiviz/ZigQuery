@@ -1,12 +1,12 @@
 //! Port of go-zetasqlite's REGEXP_* string functions (function_string.go
 //! REGEXP_CONTAINS/EXTRACT/EXTRACT_ALL/INSTR/REPLACE + their bind* wrappers).
-//! Matching is delegated to RE2 via the shim (src/regexp_ffi.zig), matching
+//! Matching is delegated to RE2 via the shim (src/shim_ffi.zig), matching
 //! Go's regexp package (RE2 syntax).
 
 const std = @import("std");
 const bind = @import("bind.zig");
 const value_mod = bind.value_mod;
-const re = @import("../../regexp_ffi.zig");
+const re = @import("../../shim_ffi.zig");
 
 const Value = bind.Value;
 const Error = bind.Error;

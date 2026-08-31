@@ -1,0 +1,436 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_string_aggregation",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_string_aggregation.test",
+    .cases = .{
+        .{
+            .desc = "string_agg_STRING_analytic_from_first_row",
+            .sql =
+            \\# STRING_AGG queries
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem)
+            \\    OVER(ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem)
+            \\    OVER(ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem)
+            \\    OVER(ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem)
+            \\    OVER(ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT cast('aσ' as STRING) elem UNION ALL
+            \\      SELECT 'bcπ'                     UNION ALL
+            \\      SELECT 'd⨝'                      UNION ALL
+            \\      SELECT ''                        UNION ALL
+            \\      SELECT null) order by elem
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_from_preceding_row",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND 2 PRECEDING),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT cast('aσ' as STRING) elem UNION ALL
+            \\      SELECT 'bcπ'                     UNION ALL
+            \\      SELECT 'd⨝'                      UNION ALL
+            \\      SELECT ''                        UNION ALL
+            \\      SELECT null) order by elem
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_from_current_row",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, "")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN CURRENT ROW AND CURRENT ROW),
+            \\  STRING_AGG(elem, "")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, "")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT cast('aσ' as STRING) elem UNION ALL
+            \\      SELECT 'bcπ'                     UNION ALL
+            \\      SELECT 'd⨝'                      UNION ALL
+            \\      SELECT ''                        UNION ALL
+            \\      SELECT null) order by elem
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_from_following_row",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT cast('aσ' as STRING) elem UNION ALL
+            \\      SELECT 'bcπ'                     UNION ALL
+            \\      SELECT 'd⨝'                      UNION ALL
+            \\      SELECT ''                        UNION ALL
+            \\      SELECT null) order by elem
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_BYTES_analytic_from_first_row",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem) OVER(PARTITION BY LENGTH(elem) ORDER BY elem),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT cast(b'aσ' as BYTES) elem UNION ALL
+            \\      SELECT b'bcπ'                    UNION ALL
+            \\      SELECT b'd⨝'                     UNION ALL
+            \\      SELECT b''                       UNION ALL
+            \\      SELECT null) order by elem
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_BYTES_analytic_from_preceding_row",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING),
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 2 PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT cast(b'aσ' as BYTES) elem UNION ALL
+            \\      SELECT b'bcπ'                    UNION ALL
+            \\      SELECT b'd⨝'                     UNION ALL
+            \\      SELECT b''                       UNION ALL
+            \\      SELECT null) order by elem
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_BYTES_analytic_from_current_row",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, b"")
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem DESC ROWS BETWEEN CURRENT ROW AND CURRENT ROW),
+            \\  STRING_AGG(elem, b"")
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem DESC ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, b"")
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem DESC ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT cast(b'aσ' as BYTES) elem UNION ALL
+            \\      SELECT b'bcπ'                    UNION ALL
+            \\      SELECT b'd⨝'                     UNION ALL
+            \\      SELECT b''                       UNION ALL
+            \\      SELECT null) order by elem
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_BYTES_analytic_from_following_row",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, b"; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, b"; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, b"; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, b"; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT cast(b'aσ' as BYTES) elem UNION ALL
+            \\      SELECT b'bcπ'                    UNION ALL
+            \\      SELECT b'd⨝'                     UNION ALL
+            \\      SELECT b''                       UNION ALL
+            \\      SELECT null) order by elem
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_from_first_row_non_null",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem)
+            \\    OVER(ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem)
+            \\    OVER(ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem)
+            \\    OVER(ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem)
+            \\    OVER(ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT 'aσ' elem UNION ALL
+            \\  SELECT 'bcπ' UNION ALL
+            \\  SELECT 'd⨝' UNION ALL
+            \\  SELECT '' UNION ALL
+            \\  SELECT 'xyz'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_from_preceding_row_non_null",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, ";")
+            \\    OVER(ORDER BY elem DESC ROWS BETWEEN 2 PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT 'aσ' elem UNION ALL
+            \\  SELECT 'bcπ' UNION ALL
+            \\  SELECT 'd⨝' UNION ALL
+            \\  SELECT '' UNION ALL
+            \\  SELECT 'xyz'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_from_current_row_non_null",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, "")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN CURRENT ROW AND CURRENT ROW),
+            \\  STRING_AGG(elem, "")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, "")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT 'aσ' elem UNION ALL
+            \\  SELECT 'bcπ' UNION ALL
+            \\  SELECT 'd⨝' UNION ALL
+            \\  SELECT '' UNION ALL
+            \\  SELECT 'xyz'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_from_following_row_non_null",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT 'aσ' elem UNION ALL
+            \\  SELECT 'bcπ' UNION ALL
+            \\  SELECT 'd⨝' UNION ALL
+            \\  SELECT '' UNION ALL
+            \\  SELECT 'xyz'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_BYTES_analytic_from_first_row_non_null",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem) OVER(PARTITION BY LENGTH(elem) ORDER BY elem),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT b'A' elem UNION ALL
+            \\  SELECT b'BC' UNION ALL
+            \\  SELECT b'D' UNION ALL
+            \\  SELECT b'' UNION ALL
+            \\  SELECT b'E' UNION ALL
+            \\  SELECT b'xyz'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_BYTES_analytic_from_preceding_row_non_null",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING),
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, b";")
+            \\    OVER(ORDER BY elem ASC ROWS BETWEEN 2 PRECEDING AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT b'A' elem UNION ALL
+            \\  SELECT b'BC' UNION ALL
+            \\  SELECT b'D' UNION ALL
+            \\  SELECT b'' UNION ALL
+            \\  SELECT b'E' UNION ALL
+            \\  SELECT b'xyz'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_BYTES_analytic_from_current_row_non_null",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, b"")
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem DESC ROWS BETWEEN CURRENT ROW AND CURRENT ROW),
+            \\  STRING_AGG(elem, b"")
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem DESC ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, b"")
+            \\    OVER(PARTITION BY LENGTH(elem)
+            \\         ORDER BY elem DESC ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT b'A' elem UNION ALL
+            \\  SELECT b'BC' UNION ALL
+            \\  SELECT b'D' UNION ALL
+            \\  SELECT b'' UNION ALL
+            \\  SELECT b'E' UNION ALL
+            \\  SELECT b'xyz'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_BYTES_analytic_from_following_row_non_null",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, b"; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, b"; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, b"; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, b"; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT b'A' elem UNION ALL
+            \\  SELECT b'BC' UNION ALL
+            \\  SELECT b'D' UNION ALL
+            \\  SELECT b'' UNION ALL
+            \\  SELECT b'E' UNION ALL
+            \\  SELECT b'xyz'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_with_longer_string",
+            .sql =
+            \\SELECT
+            \\  elem,
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING),
+            \\  STRING_AGG(elem, "; ")
+            \\    OVER(ORDER BY elem ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING)
+            \\FROM (
+            \\  SELECT 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzσ' elem UNION ALL
+            \\  SELECT 'bABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzcπ' UNION ALL
+            \\  SELECT 'd⨝ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' UNION ALL
+            \\  SELECT '' UNION ALL
+            \\  SELECT 'xyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' UNION ALL
+            \\  SELECT 'xyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' UNION ALL
+            \\  SELECT '甲乙丙丁戊己庚辛壬癸一二三四五六七八九十壹贰叁肆伍陆柒捌玖拾'
+            \\)
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "string_agg_STRING_analytic_from_first_row_for_multi_partition",
+            .sql =
+            \\SELECT
+            \\  part_id, elem,
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY part_id ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY part_id ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY part_id ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING),
+            \\  STRING_AGG(elem)
+            \\    OVER(PARTITION BY part_id ORDER BY elem ROWS BETWEEN UNBOUNDED PRECEDING
+            \\                                                     AND UNBOUNDED FOLLOWING)
+            \\FROM (SELECT 1 part_id, cast('aσ' as STRING) elem UNION ALL
+            \\      SELECT 1, 'bcπ'                     UNION ALL
+            \\      SELECT 1, 'd⨝'                     UNION ALL
+            \\      SELECT 1, ''                        UNION ALL
+            \\      SELECT 1, null                      UNION ALL
+            \\      SELECT 2, 'aσ'                      UNION ALL
+            \\      SELECT 2, 'bcπ'                     UNION ALL
+            \\      SELECT 2, 'd⨝'                     UNION ALL
+            \\      SELECT 2, ''                        UNION ALL
+            \\      SELECT 2, null) order by part_id, elem
+            ,
+            .nondeterministic = true,
+        },
+    },
+}

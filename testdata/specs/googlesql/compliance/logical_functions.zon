@@ -1,0 +1,418 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/logical_functions",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/logical_functions.test",
+    .cases = .{
+        .{
+            .desc = "logical_and_true_true",
+            .sql = "SELECT true AND TRUE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_and_true_false",
+            .sql = "SELECT true AND false",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_false_true",
+            .sql = "SELECT FALSE AND true",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_false_false",
+            .sql = "SELECT false AND false",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_true_null",
+            .sql = "SELECT true AND null",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_and_null_true",
+            .sql = "SELECT null AND true",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_and_false_null",
+            .sql = "SELECT false AND null",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_null_false",
+            .sql = "SELECT NULL AND false",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_null_null",
+            .sql = "SELECT null AND NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_and_true_and_true_false",
+            .sql = "SELECT true AND true AND false",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_true_and_true_true",
+            .sql = "SELECT true AND true AND true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_and_true_and_false_null",
+            .sql = "SELECT true AND false AND NULL",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_true_and_true_null",
+            .sql = "SELECT true AND true AND NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_or_true_true",
+            .sql = "SELECT true OR true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_true_false",
+            .sql = "SELECT true OR false",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_false_true",
+            .sql = "SELECT false OR true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_false_false",
+            .sql = "SELECT false OR FALSE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_or_true_null",
+            .sql = "SELECT true OR null",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_null_true",
+            .sql = "SELECT null OR true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_false_null",
+            .sql = "SELECT false OR null",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_or_null_false",
+            .sql = "SELECT null OR false",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_or_null_null",
+            .sql = "SELECT null OR null",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_or_false_or_true_false",
+            .sql = "SELECT false OR true OR false",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_false_or_false_false",
+            .sql = "SELECT false OR false OR false",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_or_false_or_null_true",
+            .sql = "SELECT false OR NULL OR true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_false_or_null_false",
+            .sql = "SELECT false OR NULL OR false",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_or_true_and_true_true",
+            .sql = "SELECT true OR true AND true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_false_and_true_true",
+            .sql = "SELECT false OR (true AND true)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_true_and_false_true",
+            .sql = "SELECT true OR false AND true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_and_false_true_true",
+            .sql = "SELECT (false AND true) OR true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_null_and_true_true",
+            .sql = "SELECT NULL OR (true AND true)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_true_and_null_true",
+            .sql = "SELECT true OR (NULL AND true)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_and_or_true_false_true",
+            .sql = "SELECT (true OR false) AND true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_and_or_false_false_true",
+            .sql = "SELECT (false OR false) AND true",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_or_true_true_false",
+            .sql = "SELECT (true OR true) AND false",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_false_or_true_true",
+            .sql = "SELECT false AND (true OR true)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_null_or_true_true",
+            .sql = "SELECT null AND (true OR true)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_and_null_or_false_false",
+            .sql = "SELECT null AND (false OR false)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_true_or_null_true",
+            .sql = "SELECT true AND (NULL OR true)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_and_true_or_null_false",
+            .sql = "SELECT true AND (NULL OR false)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_not_true",
+            .sql = "SELECT NOT true",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_not_false",
+            .sql = "SELECT NOT false",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_not_null",
+            .sql = "SELECT NOT null",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "logical_not_not_true",
+            .sql = "SELECT NOT NOT true",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_not_not_false",
+            .sql = "SELECT NOT NOT false",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_not_not_null",
+            .sql = "SELECT NOT NOT null",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "logical_not_and_true_false",
+            .sql = "SELECT NOT (TRUE AND FALSE)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_not_or_true_false",
+            .sql = "SELECT NOT (true OR false)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_and_true_not_false",
+            .sql = "SELECT true AND NOT false",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_or_false_not_false",
+            .sql = "SELECT false OR NOT false",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_not_and_true_null",
+            .sql = "SELECT NOT (TRUE AND NULL)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "logical_is_true_true",
+            .sql = "select true IS TRUE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_is_false_true",
+            .sql = "select false IS TRUE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_is_null_true",
+            .sql = "select NULL IS TRUE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_is_true_null",
+            .sql = "select TRUE IS NULL",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_is_true_false",
+            .sql = "select true IS FALSE",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_is_false_false",
+            .sql = "select false IS FALSE",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "logical_is_null_false",
+            .sql = "select NULL IS false",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "logical_is_false_null",
+            .sql = "select FALSE IS NULL",
+            .rows = .{
+                .{false},
+            },
+        },
+    },
+}

@@ -1,0 +1,16 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/math_functions",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/math_functions.test",
+    .cases = .{
+        .{
+            .desc = "math_abs_zero",
+            .sql = "SELECT IEEE_DIVIDE(1, -0.0), IEEE_DIVIDE(1, ABS(-0.0))",
+            .rows = .{
+                .{ -inf, inf },
+            },
+        },
+    },
+}

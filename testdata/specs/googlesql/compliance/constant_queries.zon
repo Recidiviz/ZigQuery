@@ -1,0 +1,105 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/constant_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/constant_queries.test",
+    .cases = .{
+        .{
+            .desc = "constant_1",
+            .sql = "SELECT NULL",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "constant_2",
+            .sql = "SELECT 1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "constant_3",
+            .sql = "SELECT 3.0",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "constant_4",
+            .sql = "SELECT 'hi'",
+            .rows = .{
+                .{"hi"},
+            },
+        },
+        .{
+            .desc = "constant_5",
+            .sql = "SELECT 1",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "constant_subquery_array",
+            .sql = "SELECT (SELECT [1])",
+            .rows = .{
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "constant_no_from_limit0",
+            .sql =
+            \\SELECT 1 as a
+            \\LIMIT 0
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "constant_no_from_limit1",
+            .sql =
+            \\SELECT 1 as a
+            \\LIMIT 1
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "constant_no_from_limit2",
+            .sql =
+            \\SELECT 1 as a
+            \\LIMIT 5
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "constant_no_from_limit_offset0",
+            .sql =
+            \\SELECT 1 as b, 'b' as b
+            \\LIMIT 0 OFFSET 1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "constant_no_from_limit_offset1",
+            .sql =
+            \\SELECT 1 as b, 'b' as b
+            \\LIMIT 1 OFFSET 1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "constant_no_from_limit_offset2",
+            .sql =
+            \\SELECT 1 as b, 'b' as b
+            \\LIMIT 1 OFFSET 0
+            ,
+            .rows = .{
+                .{ 1, "b" },
+            },
+        },
+    },
+}

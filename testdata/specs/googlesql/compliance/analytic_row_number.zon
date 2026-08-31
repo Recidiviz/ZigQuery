@@ -1,0 +1,106 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_row_number",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_row_number.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestTable AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as bool) as bool_val,
+            \\       cast(null as int64) as int64_val,
+            \\       cast(null as int32) as int32_val,
+            \\       cast(null as string) as str_val UNION ALL
+            \\  SELECT 2,  true,  null, null,  null  UNION ALL
+            \\  SELECT 3,  false, 1,    1,     "A"   UNION ALL
+            \\  SELECT 4,  true,  1,    2,     "A"   UNION ALL
+            \\  SELECT 5,  false, 1,    3,     "aA"   UNION ALL
+            \\  SELECT 6,  true,  2,    2,     "Aa"   UNION ALL
+            \\  SELECT 7,  false, 1,    1,     'a'   UNION ALL
+            \\  SELECT 8,  true,  2,    1,     "a"   UNION ALL
+            \\  SELECT 9,  false, 2,    3,     "b"   UNION ALL
+            \\  SELECT 10, true,  2,    1,     "B"
+            ,
+        },
+        .{
+            .desc = "row_number_1",
+            .sql =
+            \\SELECT ROW_NUMBER() OVER ()
+            \\FROM TestTable
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "row_number_2",
+            .sql =
+            \\SELECT bool_val, row_id, ROW_NUMBER() OVER (PARTITION BY bool_val
+            \\                                            ORDER BY row_id, int64_val)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, 1 },
+                .{ false, 3, 1 },
+                .{ false, 5, 2 },
+                .{ false, 7, 3 },
+                .{ false, 9, 4 },
+                .{ true, 2, 1 },
+                .{ true, 4, 2 },
+                .{ true, 6, 3 },
+                .{ true, 8, 4 },
+                .{ true, 10, 5 },
+            },
+        },
+        .{
+            .desc = "row_number_3",
+            .sql = "SELECT row_id, ROW_NUMBER() OVER (ROWS 2 PRECEDING) FROM TestTable",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "order_by_nulls_last_analytic_rownumber",
+            .sql =
+            \\SELECT int64_val, ROW_NUMBER() OVER (ORDER BY int64_val DESC NULLS LAST)
+            \\FROM TestTable t
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "order_by_nulls_first_analytic_rownumber",
+            .sql =
+            \\SELECT int64_val, ROW_NUMBER() OVER (ORDER BY int64_val DESC NULLS FIRST)
+            \\FROM TestTable t
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "row_number_flags_nondeterminism_precisely",
+            .sql =
+            \\# In this test, we don't even have an ORDER BY, but the tuples are identical in
+            \\# each partition, leading to a unique output. We make sure that the ref_impl
+            \\# doesn't flag it as non-deterministic.
+            \\WITH t AS (
+            \\  SELECT 1 AS id, 1 AS value UNION ALL
+            \\  SELECT 1 AS id, 1 AS value UNION ALL
+            \\  SELECT 1 AS id, 1 AS value UNION ALL
+            \\  SELECT 2 AS id, 2 AS value UNION ALL
+            \\  SELECT 2 AS id, 2 AS value UNION ALL
+            \\  SELECT 2 AS id, 2 AS value
+            \\)
+            \\SELECT ROW_NUMBER() OVER(PARTITION BY id)
+            \\FROM t
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{2},
+                .{3},
+                .{1},
+                .{2},
+                .{3},
+            },
+        },
+    },
+}

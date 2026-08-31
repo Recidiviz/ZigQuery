@@ -284,15 +284,40 @@ pub const BinaryExpression = struct {
     right: ?*SQLExpression = null,
     operator: []const u8 = "",
 
+    /// OR binds looser than AND, so an OR operand nested under an AND needs
+    /// parens to keep its grouping: writing `(a OR b) AND c` flat as
+    /// `a OR b AND c` reparses, by SQL's own precedence, as `a OR (b AND c)`.
+    /// Every other operator pair this builder produces — comparisons and IN
+    /// under AND/OR, AND under OR — already binds correctly unparenthesized.
+    fn operandNeedsParens(self: *const BinaryExpression, operand: *const SQLExpression) bool {
+        if (!std.mem.eql(u8, self.operator, "AND")) return false;
+        const inner = operand.binary_expression orelse return false;
+        return std.mem.eql(u8, inner.operator, "OR");
+    }
+
+    fn writeOperand(
+        self: *const BinaryExpression,
+        writer: *SQLWriter,
+        operand: *const SQLExpression,
+    ) Error!void {
+        if (self.operandNeedsParens(operand)) {
+            try writer.write("(");
+            try operand.writeSql(writer);
+            try writer.write(")");
+        } else {
+            try operand.writeSql(writer);
+        }
+    }
+
     pub fn writeSql(self: *const BinaryExpression, writer: *SQLWriter) Error!void {
         if (self.left) |left| {
-            try left.writeSql(writer);
+            try self.writeOperand(writer, left);
         }
         try writer.write(" ");
         try writer.write(self.operator);
         try writer.write(" ");
         if (self.right) |right| {
-            try right.writeSql(writer);
+            try self.writeOperand(writer, right);
         }
     }
 

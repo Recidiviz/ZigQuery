@@ -1,0 +1,148 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/struct_positional_accessor",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/struct_positional_accessor.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .unsupported_in_bigquery = "\"Statement not supported: CreateConstantStatement\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Tests for (broken link)
+            \\CREATE TEMP CONSTANT CInt64Literal = 1
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .unsupported_in_bigquery = "\"Statement not supported: CreateConstantStatement\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "CREATE TEMP CONSTANT CInt32Literal = 0",
+        },
+        .{
+            .desc = "table_struct_field_double",
+            .sql =
+            \\WITH t AS (SELECT STRUCT(3.14 as d,TRUE) AS s)
+            \\SELECT s[OFFSET(0)] AS c FROM t
+            ,
+            .rows = .{
+                .{3.14},
+            },
+        },
+        .{
+            .desc = "struct_offset_double",
+            .sql = "SELECT STRUCT(3.14,TRUE)[OFFSET(0)] AS c",
+            .rows = .{
+                .{3.14},
+            },
+        },
+        .{
+            .desc = "struct_offset_bool",
+            .sql = "SELECT STRUCT(3.14,TRUE)[OFFSET(1)] AS c",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "struct_ordinal_double",
+            .sql = "SELECT STRUCT(3.14,TRUE)[ORDINAL(1)] AS c",
+            .rows = .{
+                .{3.14},
+            },
+        },
+        .{
+            .desc = "struct_ordinal_bool",
+            .sql = "SELECT STRUCT(3.14,TRUE)[ORDINAL(2)] AS c",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "struct_offset_null",
+            .sql = "SELECT CAST(NULL AS STRUCT<DOUBLE>)[OFFSET(0)] AS c",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "table_struct_field_double_multiply_requested",
+            .sql =
+            \\WITH t AS (SELECT STRUCT(3.14 as d, TRUE) AS s)
+            \\SELECT s.d AS a, s[OFFSET(0)] AS b, s[ORDINAL(1)] AS c FROM t
+            ,
+            .rows = .{
+                .{ 3.14, 3.14, 3.14 },
+            },
+        },
+        .{
+            .desc = "table_struct_multiple_fields",
+            .sql =
+            \\WITH t AS (SELECT STRUCT(3.14 as d, TRUE as f) AS s)
+            \\SELECT s.d AS d, s.f AS f, s[OFFSET(0)] AS a, s[OFFSET(1)] AS b FROM t
+            ,
+            .rows = .{
+                .{ 3.14, true, 3.14, true },
+            },
+        },
+        .{
+            .desc = "table_struct_multiple_anon_fields",
+            .sql =
+            \\WITH t AS (SELECT STRUCT(3.14, TRUE) AS s)
+            \\SELECT s[OFFSET(0)] AS a, s[OFFSET(1)] AS b FROM t
+            ,
+            .rows = .{
+                .{ 3.14, true },
+            },
+        },
+        .{
+            .desc = "table_struct_same_name_field_double_multiply_requested",
+            .sql =
+            \\WITH t AS (SELECT STRUCT(3.14 as d, TRUE as d) AS s)
+            \\SELECT
+            \\  s[OFFSET(0)] AS a,
+            \\  s[ORDINAL(1)] AS b,
+            \\  s[OFFSET(1)] AS c,
+            \\  s[ORDINAL(2)] AS d
+            \\FROM t
+            ,
+            .rows = .{
+                .{ 3.14, 3.14, true, true },
+            },
+        },
+        .{
+            .desc = "table_nested_struct",
+            .sql =
+            \\WITH t AS (SELECT STRUCT("s" AS d, [1,2] AS d, b'' AS d) AS d)
+            \\SELECT
+            \\  t[OFFSET(0)][OFFSET(0)] AS a,
+            \\  t[ORDINAL(1)][OFFSET(1)] AS b,
+            \\  t[OFFSET(0)][OFFSET(1)] AS c,
+            \\  t[ORDINAL(1)][OFFSET(2)] AS d
+            \\FROM t
+            ,
+            .rows = .{
+                .{ "s", .{ 1, 2 }, .{ 1, 2 }, "" },
+            },
+        },
+        .{
+            .desc = "base_struct_access",
+            .sql = "SELECT STRUCT(3.14 as d, 2.78 as d)[1] AS c",
+            .rows = .{
+                .{2.78},
+            },
+        },
+        .{
+            .desc = "struct_positional_accessor_with_named_constant_int64",
+            .sql = "SELECT STRUCT(3.14 as a, 2.78 as b)[CInt64Literal] AS b",
+            .rows = .{
+                .{2.78},
+            },
+        },
+        .{
+            .desc = "struct_positional_accessor_with_named_constant_int32",
+            .sql = "SELECT STRUCT(3.14 as a, 2.78 as b)[CInt32Literal] AS a",
+            .rows = .{
+                .{3.14},
+            },
+        },
+    },
+}

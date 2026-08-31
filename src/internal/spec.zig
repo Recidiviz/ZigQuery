@@ -215,6 +215,13 @@ pub const OptionSpec = struct {
     value: []const u8 = "",
 };
 
+/// A dataset the catalog has been told exists, independent of any table it may or may not hold
+pub const DatasetSpec = struct {
+    /// `[project, dataset]`.
+    name_path: []const []const u8 = &.{},
+    created_at: []const u8 = "",
+};
+
 /// Go spec.go TableSpec. `updated_at`/`created_at` hold the RFC3339 strings
 /// Go's time.Time marshals to; they are round-tripped opaquely.
 pub const TableSpec = struct {

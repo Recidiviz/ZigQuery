@@ -1,0 +1,83 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/nano_timestamp",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/nano_timestamp.test",
+    .cases = .{
+        .{
+            .desc = "timestamp_to_string_1",
+            .sql =
+            \\# Note that the default time zone for compliance tests is 'America/Los_Angeles'.
+            \\# Note that converting timestamp to string without a specific time zone
+            \\# uses '+00'.
+            \\#
+            \\# The "timestamp_type_and_functions" label applies to all queries in this
+            \\# file related to the GoogleSQL V1 TIMESTAMP type.
+            \\select [cast(timestamp "2015-01-28" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.0" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.00" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.000" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.0000" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.00000" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.000000" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.0000000" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.00000000" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.000000000" as string)]
+            ,
+            .rows = .{
+                .{.{ "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08", "2015-01-28 00:00:00-08" }},
+            },
+        },
+        .{
+            .desc = "timestamp_to_string_2",
+            .sql =
+            \\# With FEATURE_TIMESTAMP_NANOS, GoogleSQL resolver can resolve up-to 9 digits
+            \\# subseconds TIMESTAMP literals. But the reference driver can only support
+            \\# 6-digit TIMESTAMP values. So the last 3 digits in the subseconds are truncated
+            \\# right after the literal is resolved.
+            \\select [cast(timestamp "2015-01-28 00:00:00" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.1" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.01" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.001" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.0001" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.00001" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.000001" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.0000001" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.00000001" as string),
+            \\        cast(timestamp "2015-01-28 00:00:00.000000001" as string)]
+            ,
+            .rows = .{
+                .{.{ "2015-01-28 00:00:00-08", "2015-01-28 00:00:00.100-08", "2015-01-28 00:00:00.010-08", "2015-01-28 00:00:00.001-08", "2015-01-28 00:00:00.000100-08", "2015-01-28 00:00:00.000010-08", "2015-01-28 00:00:00.000001-08", "2015-01-28 00:00:00.000000100-08", "2015-01-28 00:00:00.000000010-08", "2015-01-28 00:00:00.000000001-08" }},
+            },
+        },
+        .{
+            .desc = "literal_string_without_timezone_to_timestamp_1",
+            .sql = "select cast(\"2014-12-01 12:34:56.123456789\" as timestamp)",
+            .rows = .{
+                .{"2014-12-01 20:34:56.123456789+00"},
+            },
+        },
+        .{
+            .desc = "literal_string_with_timezone_to_timestamp_1",
+            .sql = "select cast(\"2014-12-01 12:34:56.123456789+07:30\" as timestamp)",
+            .rows = .{
+                .{"2014-12-01 05:04:56.123456789+00"},
+            },
+        },
+        .{
+            .desc = "literal_string_more_than_9_digits",
+            .sql = "select cast(\"2014-12-01 12:34:56.0123456789\" as timestamp)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "from_proto",
+            .unsupported_in_bigquery = "\"Function not found: from_proto\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "select from_proto(to_proto(TIMESTAMP \"9999-12-31 23:59:59.99999999+00\"))",
+            .rows = .{
+                .{"9999-12-31 23:59:59.999999990+00"},
+            },
+        },
+    },
+}

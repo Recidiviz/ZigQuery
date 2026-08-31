@@ -1,0 +1,1535 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/cast_function",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/cast_function.test",
+    .cases = .{
+        .{
+            .desc = "cast_function_1",
+            .sql =
+            \\# TODO: port the tests from functions/convert_test.cc here once
+            \\# the parser/analyzer supports parameters.
+            \\SELECT CAST(3.7 as int32)
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "cast_function_2",
+            .sql = "SELECT CAST(1 as int64)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "cast_function_3",
+            .sql = "SELECT CAST(3.7 as uint32)",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "cast_function_4",
+            .sql = "SELECT CAST(1 as uint64)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "cast_function_5",
+            .sql = "SELECT CAST(3.7 as float)",
+            .rows = .{
+                .{3.7},
+            },
+        },
+        .{
+            .desc = "cast_function_6",
+            .sql = "SELECT CAST(3 as double)",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "cast_function_7",
+            .sql = "SELECT CAST('a' as bytes)",
+            .rows = .{
+                .{"\x61"},
+            },
+        },
+        .{
+            .desc = "cast_function_8",
+            .sql = "SELECT CAST(CAST('a' as bytes) as string)",
+            .rows = .{
+                .{"a"},
+            },
+        },
+        .{
+            .desc = "cast_bounds_int32_too_small",
+            .sql = "SELECT CAST(-2147483649 AS INT32)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bounds_int32_min",
+            .sql = "SELECT CAST(-2147483648 AS INT32)",
+            .rows = .{
+                .{-2147483648},
+            },
+        },
+        .{
+            .desc = "cast_bounds_int32_max",
+            .sql = "SELECT CAST(2147483647 AS INT32)",
+            .rows = .{
+                .{2147483647},
+            },
+        },
+        .{
+            .desc = "cast_bounds_int32_too_big",
+            .sql = "SELECT CAST(2147483648 AS INT32)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bounds_uint32_too_small",
+            .sql = "SELECT CAST(-1 AS UINT32)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bounds_uint32_min",
+            .sql = "SELECT CAST(0 AS UINT32)",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "cast_bounds_uint32_max",
+            .sql = "SELECT CAST(4294967295 AS UINT32)",
+            .rows = .{
+                .{4294967295},
+            },
+        },
+        .{
+            .desc = "cast_bounds_uint32_too_big",
+            .sql = "SELECT CAST(4294967296 AS UINT32)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bounds_int64_min",
+            .sql = "SELECT CAST(-9223372036854775808 AS INT64)",
+            .rows = .{
+                .{-9223372036854775808},
+            },
+        },
+        .{
+            .desc = "cast_bounds_int64_max",
+            .sql = "SELECT CAST(9223372036854775807 AS INT64)",
+            .rows = .{
+                .{9223372036854775807},
+            },
+        },
+        .{
+            .desc = "cast_bounds_int64_too_big",
+            .sql = "SELECT CAST(9223372036854775808 AS INT64)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bounds_unit64_too_small",
+            .sql = "SELECT CAST(-1 AS uint64)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bounds_uint64_max",
+            .sql = "SELECT CAST(18446744073709551615 AS UINT64)",
+            .rows = .{
+                .{18446744073709551615},
+            },
+        },
+        .{
+            .desc = "cast_bounds_double_overflows_int64",
+            .sql =
+            \\# We get an inaccurate CAST result because double precision cannot represent
+            \\# the given number precisely. The string is represented as closely as possible,
+            \\# as a double. But that representation is larger than what can be represented by
+            \\# INT64 so it overflows when cast to INT64.
+            \\# Note that a different FPU may handle the original string differently leading
+            \\# to a different result.
+            \\SELECT CAST(9223372036854775754.5 AS INT64)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bounds_double_overflows_uint64",
+            .sql =
+            \\# We get an inaccurate CAST result because double precision cannot represent
+            \\# the given number precisely. The string is represented as closely as possible,
+            \\# as a double. But that representation is larger than what can be represented by
+            \\# UINT64 so it overflows when cast to UINT64.
+            \\# Note that a different FPU may handle the original string differently leading
+            \\# to a different result.
+            \\SELECT CAST(18446744073709551562.5 AS UINT64)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "boolean_1",
+            .sql = "SELECT CAST(1 > 0 AS BOOLEAN)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "int0_is_false",
+            .sql = "SELECT CAST(0 AS BOOLEAN)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "int1_is_true",
+            .sql = "SELECT CAST(1 AS BOOLEAN)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "int_neg1_is_true",
+            .sql = "SELECT CAST(-1 AS BOOLEAN)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "int_anynon0_is_true",
+            .sql = "SELECT CAST(42 AS BOOLEAN)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "string_true_to_true",
+            .sql = "SELECT CAST('true' AS BOOLEAN)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "string_TRUE_to_true",
+            .sql = "SELECT CAST('TRUE' AS BOOLEAN)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "string_TrUe_to_true",
+            .sql = "SELECT CAST('TrUe' AS BOOLEAN)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "string_false_to_false",
+            .sql = "SELECT CAST('false' AS BOOLEAN)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "string_FALSE_to_false",
+            .sql = "SELECT CAST('FALSE' AS BOOLEAN)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "string_fAlSe_to_false",
+            .sql = "SELECT CAST('fAlSe' AS BOOLEAN)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "true_to_string",
+            .sql = "SELECT CAST(true AS STRING)",
+            .rows = .{
+                .{"true"},
+            },
+        },
+        .{
+            .desc = "false_to_string",
+            .sql = "SELECT CAST(false AS STRING)",
+            .rows = .{
+                .{"false"},
+            },
+        },
+        .{
+            .desc = "string_to_timestamp",
+            .sql = "SELECT CAST('2000-01-23 12:13:14+05' AS TIMESTAMP)",
+            .rows = .{
+                .{"2000-01-23 07:13:14+00"},
+            },
+        },
+        .{
+            .desc = "string_to_timestamp_2",
+            .sql = "SELECT CAST('2000-01-22 23:13:14-08' AS TIMESTAMP)",
+            .rows = .{
+                .{"2000-01-23 07:13:14+00"},
+            },
+        },
+        .{
+            .desc = "timestamp_to_string",
+            .sql = "SELECT CAST(timestamp '2000-01-23 12:13:14+05' AS string)",
+            .rows = .{
+                .{"2000-01-22 23:13:14-08"},
+            },
+        },
+        .{
+            .desc = "timestamp_to_string_2",
+            .sql = "SELECT CAST(timestamp '2000-01-23 07:13:14+00' AS string)",
+            .rows = .{
+                .{"2000-01-22 23:13:14-08"},
+            },
+        },
+        .{
+            .desc = "null_to_datetime",
+            .sql = "SELECT CAST(null AS datetime)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "null_to_time",
+            .sql = "SELECT CAST(null AS time)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_time_and_back",
+            .sql =
+            \\SELECT CAST(null AS TIME),
+            \\       CAST('12:34:56.123456' AS TIME),
+            \\       CAST(CAST(null AS TIME) AS STRING),
+            \\       CAST(CAST('12:34:56.123456' AS TIME) AS STRING),
+            \\       CAST(TIME '12:34:56.123456' AS STRING),
+            \\       CAST(CAST(TIME '12:34:56.123456' AS STRING) AS TIME)
+            ,
+            .rows = .{
+                .{ null, "12:34:56.123456", null, "12:34:56.123456", "12:34:56.123456", "12:34:56.123456" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_time_and_back_nanos",
+            .sql =
+            \\SELECT CAST(null AS TIME),
+            \\       CAST('12:34:56.123456789' AS TIME),
+            \\       CAST(CAST(null AS TIME) AS STRING),
+            \\       CAST(CAST('12:34:56.123456789' AS TIME) AS STRING),
+            \\       CAST(TIME '12:34:56.123456789' AS STRING),
+            \\       CAST(CAST(TIME '12:34:56.123456789' AS STRING) AS TIME)
+            ,
+            .rows = .{
+                .{ null, "12:34:56.123456789", null, "12:34:56.123456789", "12:34:56.123456789", "12:34:56.123456789" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_datetime_and_back",
+            .sql =
+            \\SELECT CAST(null AS DATETIME),
+            \\       CAST('2006-01-02 03:04:05.123456' AS DATETIME),
+            \\       CAST(CAST(null AS DATETIME) AS STRING),
+            \\       CAST(CAST('2006-01-02 03:04:05.123456' AS DATETIME) AS STRING),
+            \\       CAST(DATETIME '2006-01-02 03:04:05.123456' AS STRING),
+            \\       CAST(CAST(DATETIME '2006-01-02 03:04:05.123456' AS STRING) AS DATETIME)
+            ,
+            .rows = .{
+                .{ null, "2006-01-02 03:04:05.123456", null, "2006-01-02 03:04:05.123456", "2006-01-02 03:04:05.123456", "2006-01-02 03:04:05.123456" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_datetime_and_back_nanos",
+            .sql =
+            \\SELECT CAST(null AS DATETIME),
+            \\       CAST('2006-01-02 03:04:05.123456789' AS DATETIME),
+            \\       CAST(CAST(null AS DATETIME) AS STRING),
+            \\       CAST(CAST('2006-01-02 03:04:05.123456789' AS DATETIME) AS STRING),
+            \\       CAST(DATETIME '2006-01-02 03:04:05.123456789' AS STRING),
+            \\       CAST(CAST(DATETIME '2006-01-02 03:04:05.123456789' AS STRING) AS DATETIME)
+            ,
+            .rows = .{
+                .{ null, "2006-01-02 03:04:05.123456789", null, "2006-01-02 03:04:05.123456789", "2006-01-02 03:04:05.123456789", "2006-01-02 03:04:05.123456789" },
+            },
+        },
+        .{
+            .desc = "cast_invalid_utf8_bytes_to_string_1",
+            .sql = "SELECT CAST(b'\\xe2\\x28\\xa1' AS STRING)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_convert_bytes_to_string_1",
+            .sql = "SELECT SAFE_CONVERT_BYTES_TO_STRING(b'\\xe2\\x28\\xa1')",
+            .rows = .{
+                .{"�(�"},
+            },
+        },
+        .{
+            .desc = "cast_invalid_utf8_bytes_to_string_2",
+            .sql = "SELECT CAST(b'𐌼₡\\xc2𐌼₡\\xa0\\xa1𐌼₡\\xf0\\x28\\x8c\\x28𐌼₡' AS STRING)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_convert_bytes_to_string_2",
+            .sql = "SELECT SAFE_CONVERT_BYTES_TO_STRING(b'𐌼₡\\xc2𐌼₡\\xa0\\xa1𐌼₡\\xf0\\x28\\x8c\\x28𐌼₡')",
+            .rows = .{
+                .{"𐌼₡�𐌼₡��𐌼₡�(�(𐌼₡"},
+            },
+        },
+        .{
+            .desc = "cast_hex_string_integers_1",
+            .sql =
+            \\SELECT CAST('0x121' AS INT32),
+            \\       CAST('-0x121' AS INT32),
+            \\       CAST('+0x121' AS INT32),
+            \\       CAST('   +0x121   ' AS INT32),
+            \\       CAST('0x121' AS UINT32),
+            \\       CAST('0xFFFFFFFF' AS UINT32),
+            \\       CAST('0x121abc' AS INT64),
+            \\       CAST('-0x121abc' AS INT64),
+            \\       CAST('0x121abc' AS UINT64),
+            \\       CAST('0X121abc' AS UINT64),
+            \\       CAST('0x121ABCDEF' AS UINT64),
+            \\       CAST('0xFFFFFFFFFFFFFFFF' AS UINT64)
+            ,
+            .rows = .{
+                .{ 289, -289, 289, 289, 289, 4294967295, 1186492, -1186492, 1186492, 1186492, 4859874799, 18446744073709551615 },
+            },
+        },
+        .{
+            .desc = "cast_hex_string_integers_from_subquery",
+            .sql =
+            \\# Set this in subqueryies to keep literals from being converted prior to
+            \\# execution.
+            \\SELECT CAST(A AS INT32),
+            \\       CAST(B AS INT32),
+            \\       CAST(C AS INT32),
+            \\       CAST(D AS INT32),
+            \\       CAST(E AS UINT32),
+            \\       CAST(F AS UINT32),
+            \\       CAST(G AS INT64),
+            \\       CAST(H AS INT64),
+            \\       CAST(I AS UINT64),
+            \\       CAST(J AS UINT64),
+            \\       CAST(K AS UINT64),
+            \\       CAST(L AS UINT64)
+            \\FROM (
+            \\    SELECT '0x121' AS A,
+            \\           '-0x121' AS B,
+            \\           '+0x121' AS C,
+            \\           '   +0x121   ' AS D,
+            \\           '0x121' AS E,
+            \\           '0xFFFFFFFF' AS F,
+            \\           '0x121abc' AS G,
+            \\           '-0x121abc' AS H,
+            \\           '0x121abc' AS I,
+            \\           '0X121abc' AS J,
+            \\           '0x121ABCDEF' AS K,
+            \\           '0xFFFFFFFFFFFFFFFF' AS L
+            \\)
+            ,
+            .rows = .{
+                .{ 289, -289, 289, 289, 289, 4294967295, 1186492, -1186492, 1186492, 1186492, 4859874799, 18446744073709551615 },
+            },
+        },
+        .{
+            .desc = "cast_hex_string_integers_mid_space",
+            .sql = "SELECT CAST('- 0x121' AS INT32)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_hex_string_integers_overflow_int32",
+            .sql = "SELECT CAST('0xFFFFFFFF' AS INT32)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_hex_string_integers_overflow_int64",
+            .sql = "SELECT CAST('0xFFFFFFFFFFFFFFFF' AS INT64)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_proto_to_bytes",
+            .sql =
+            \\SELECT CAST(NEW googlesql_test.NullableDate(DATE "1707-04-05" AS value)
+            \\            AS BYTES)
+            ,
+            .rows = .{
+                .{"\x08\xa3\x92\xfa\xff\xff\xff\xff\xff\xff\x01"},
+            },
+        },
+        .{
+            .desc = "cast_negative_one_to_int32",
+            .sql = "SELECT CAST(New googlesql_test.NullableInt(-1 AS value) AS BYTES)",
+            .rows = .{
+                .{"\x08\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01"},
+            },
+        },
+        .{
+            .desc = "make_proto_with_negative_enum",
+            .sql =
+            \\SELECT CAST(NEW googlesql_test.NullableEnum(
+            \\                CAST(-1 AS googlesql_test.TestEnum) AS value) AS BYTES)
+            ,
+            .rows = .{
+                .{"\x08\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01"},
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_all_formats",
+            .sql =
+            \\SELECT CAST(b'abc' as string FORMAT 'base2'),
+            \\       CAST(b'abc' as string FORMAT 'base8'),
+            \\       CAST(b'abc' as string FORMAT 'base16'),
+            \\       CAST(b'abc' as string FORMAT 'hex'),
+            \\       CAST(REPEAT(b'abc', 30) as string FORMAT 'base64'),
+            \\       CAST(REPEAT(b'abc', 30) as string FORMAT 'base64m'),
+            \\       CAST(b'abc' as string FORMAT 'ascii'),
+            \\       CAST(b'àbc' as string FORMAT 'utf8'),
+            \\       CAST(b'àbc' as string FORMAT 'utf-8'),
+            ,
+            .rows = .{
+                .{ "011000010110001001100011", "30261143", "616263", "616263", "YWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJj", "YWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJj\x0aYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJjYWJj", "abc", "àbc", "àbc" },
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_base32",
+            .sql = "SELECT CAST(b'abc' as string FORMAT 'base32')",
+            .rows = .{
+                .{"MFRGG==="},
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_format_string_error_propagation",
+            .sql =
+            \\# Test that the error when evaluating the format string expression is propagated
+            \\# correctly.
+            \\SELECT CAST(b'abc' as string FORMAT CAST(1/0 AS STRING))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bytes_to_string_format_ascii_with_invalid_input",
+            .sql =
+            \\# Test that input containing non-ascii characters fail for format 'ascii'.
+            \\SELECT CAST(b'àbc' as string FORMAT 'ascii')
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bytes_to_string_format_is_null",
+            .sql =
+            \\# Test when the format string is null.
+            \\SELECT CAST(b'abc' as string FORMAT CAST(NULL as STRING))
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_input_is_null",
+            .sql =
+            \\# Test when the input is null.
+            \\SELECT CAST(CAST(NULL as BYTES) as string FORMAT 'utf8')
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_format_is_invalid",
+            .sql =
+            \\# Test the case when format is invalid. Note that the format is an expression,
+            \\# not a literal. When the format is a literal, the validation is done at
+            \\# analysis time.
+            \\SELECT CAST(b'abc' as string FORMAT 'x' || 'y' || 'z')
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bytes_to_string_format_is_case_insensitive",
+            .sql =
+            \\# Test that the format is case insensitive
+            \\SELECT CAST(b'abc' as string FORMAT 'bAsE2')
+            ,
+            .rows = .{
+                .{"011000010110001001100011"},
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_invalid_input_for_format_ut8",
+            .sql =
+            \\# Test that an error is generated when the input cannot be converted
+            \\# to string using the given format
+            \\SELECT CAST(b'\xe2\x28\xa1' AS STRING FORMAT 'utf8')
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bytes_to_string_safe_cast_with_invalid_input",
+            .sql =
+            \\# Test that null is returned by SAFE_CAST when the input cannot be converted
+            \\# to string using the given format
+            \\SELECT SAFE_CAST(b'\xe2\x28\xa1' AS STRING FORMAT 'utf8')
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_safe_cast_with_invalid_format",
+            .sql =
+            \\# Test that null is returned by SAFE_CAST when the format string is invalid.
+            \\SELECT SAFE_CAST(b'abc' AS STRING FORMAT 'x' || 'y' || 'z')
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_expression_as_format",
+            .sql =
+            \\# Test that the format can be an expression.
+            \\SELECT CAST(b'abc' as string FORMAT 'b' || 'A' || 'sE2')
+            ,
+            .rows = .{
+                .{"011000010110001001100011"},
+            },
+        },
+        .{
+            .desc = "cast_bytes_to_string_with_format_table_scan",
+            .sql =
+            \\# Test scanning a table.
+            \\SELECT CAST(input as string FORMAT format_string), format_string
+            \\FROM (
+            \\    SELECT b'abc' as input, 'base2' as format_string
+            \\    UNION ALL
+            \\    SELECT b'abc', 'base8'
+            \\    UNION ALL
+            \\    SELECT b'def', 'base8'
+            \\    UNION ALL
+            \\    SELECT b'xyz', 'base64'
+            \\)
+            \\ORDER BY format_string, input
+            ,
+            .rows = .{
+                .{ "011000010110001001100011", "base2" },
+                .{ "eHl6", "base64" },
+                .{ "30261143", "base8" },
+                .{ "31062546", "base8" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_bytes_all_formats",
+            .sql =
+            \\SELECT CAST('011000010110001001100011' as bytes FORMAT 'base2'),
+            \\       CAST('30261143' as bytes FORMAT 'base8'),
+            \\       CAST('616263' as bytes FORMAT 'base16'),
+            \\       CAST('616263' as bytes FORMAT 'hex'),
+            \\       CAST('YWJjYWJj' as bytes FORMAT 'base64'),
+            \\       CAST('YWJj\nYWJj' as bytes FORMAT 'base64m'),
+            \\       CAST('abc' as bytes FORMAT 'ascii'),
+            \\       CAST('abc' as bytes FORMAT 'utf8'),
+            \\       CAST('abc' as bytes FORMAT 'utf-8'),
+            ,
+            .rows = .{
+                .{ "\x61\x62\x63", "\x61\x62\x63", "\x61\x62\x63", "\x61\x62\x63", "\x61\x62\x63\x61\x62\x63", "\x61\x62\x63\x61\x62\x63", "\x61\x62\x63", "\x61\x62\x63", "\x61\x62\x63" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_bytes_base32",
+            .sql = "SELECT CAST('MFRGG===' as bytes FORMAT 'base32'),",
+            .rows = .{
+                .{"\x61\x62\x63"},
+            },
+        },
+        .{
+            .desc = "cast_string_to_bytes_format_ascii_with_invalid_input",
+            .sql =
+            \\# Test that cast using format 'ascii' fails for input containing non-ascii characters.
+            \\SELECT CAST('àbc' as bytes FORMAT 'ascii')
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_to_bytes_format_is_null",
+            .sql =
+            \\# Test when the format string is null.
+            \\SELECT CAST('abc' as bytes FORMAT CAST(NULL as STRING)),
+            \\       CAST('abc' as bytes FORMAT NULL)
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "cast_string_to_bytes_input_is_null",
+            .sql =
+            \\# Test when the input string is null.
+            \\SELECT CAST(CAST(NULL as STRING) as bytes FORMAT 'utf8')
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_bytes_format_is_invalid",
+            .sql =
+            \\# Test when the format string is invalid.
+            \\SELECT CAST('abc' as bytes FORMAT 'x' || 'y' || 'z')
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_to_bytes_format_is_case_insensitive",
+            .sql =
+            \\# Test that the format is case insensitive
+            \\SELECT CAST('011000010110001001100011' as bytes FORMAT 'BaSe2')
+            ,
+            .rows = .{
+                .{"\x61\x62\x63"},
+            },
+        },
+        .{
+            .desc = "cast_string_to_bytes_invalid_input_with_format",
+            .sql =
+            \\# Test that an error is generated when the input cannot be converted
+            \\# to bytes using the given format
+            \\SELECT CAST('123' as bytes FORMAT 'base2')
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_to_bytes_safe_cast_invalid_input",
+            .sql =
+            \\# Test that null is returned by SAFE_CAST when the input cannot be converted
+            \\# to bytes using the given format
+            \\SELECT SAFE_CAST('123' as bytes FORMAT 'base2')
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_bytes_safe_cast_invalid_format",
+            .sql =
+            \\# Test that null is returned by SAFE_CAST when the format string is invalid.
+            \\# to bytes using the given format
+            \\SELECT SAFE_CAST('123' as bytes FORMAT 'x' || 'y' || 'z')
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_to_bytes_with_format_table_scan",
+            .sql =
+            \\# Test scanning a table.
+            \\SELECT CAST(input as bytes FORMAT format_string), format_string
+            \\FROM (
+            \\    SELECT '30261143' as input, 'base8' as format_string
+            \\    UNION ALL
+            \\    SELECT 'eHl6', 'base64'
+            \\    UNION ALL
+            \\    SELECT '011000010110001001100011', 'base2'
+            \\    UNION ALL
+            \\    SELECT '31062546', 'base8'
+            \\)
+            \\ORDER BY format_string, input
+            ,
+            .rows = .{
+                .{ "\x61\x62\x63", "base2" },
+                .{ "\x78\x79\x7a", "base64" },
+                .{ "\x61\x62\x63", "base8" },
+                .{ "\x64\x65\x66", "base8" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_timestamp_format_is_null",
+            .sql =
+            \\# null is returned if the format string is null.
+            \\SELECT CAST('1234' as timestamp FORMAT CAST(NULL as STRING)),
+            \\       CAST('1234' as timestamp FORMAT NULL)
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "cast_string_to_timestamp_time_zone_is_null",
+            .sql =
+            \\# null is returned if the time zone expression is null.
+            \\SELECT CAST('1234' as timestamp FORMAT 'yyyy' AT TIME ZONE CAST(NULL as STRING)),
+            \\       CAST('1234' as timestamp FORMAT 'yyyy' AT TIME ZONE NULL)
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "cast_string_to_timestamp_invalid_time_zone",
+            .sql =
+            \\# Test that errror is returned when given an invalid time zone. Note that the
+            \\# time zone is an expression, not a literal. If it is a literal, the error
+            \\# would have been caught at the analysis time.
+            \\SELECT CAST('1234' as timestamp FORMAT 'yyyy' at time zone 'a' || 'b' || 'c')
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_to_date_and_time_simple",
+            .sql =
+            \\# Test a simple case of string to date/datetime/time/timestamp with format.
+            \\# For the case where time zone is not specified, it's covered by file
+            \\# cast_timestamp_with_timezone.test.
+            \\SELECT
+            \\  CAST('1234-05-06' as date FORMAT 'yyyy-mm-dd'),
+            \\  CAST('1234-05-06 07:08:09' as datetime FORMAT 'yyyy-mm-dd hh24:mi:ss'),
+            \\  CAST('07:08:09' as time FORMAT 'hh24:mi:ss'),
+            \\  CAST('1234-05-06 07:08:09' as timestamp
+            \\    FORMAT 'yyyy-mm-dd hh24:mi:ss' at time zone '+7:00'),
+            ,
+            .rows = .{
+                .{ "1234-05-06", "1234-05-06 07:08:09", "07:08:09", "1234-05-06 00:08:09+00" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_default_value_date",
+            .sql =
+            \\# Test default value when casting string to date with format.
+            \\SELECT
+            \\  extract(year from d) = extract(year from CURRENT_DATE()),
+            \\  extract(month from d) = extract(month from CURRENT_DATE()),
+            \\  CAST(d as string FORMAT 'dd')
+            \\FROM (SELECT CAST('' as date format '') as d)
+            ,
+            .rows = .{
+                .{ true, true, "01" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_default_value_datetime",
+            .sql =
+            \\# Test default value when casting string to datetime with format.
+            \\SELECT
+            \\  extract(year from d) = extract(year from CURRENT_DATE()),
+            \\  extract(month from d) = extract(month from CURRENT_DATE()),
+            \\  CAST(d as string FORMAT 'dd hh24:mi:ss.ff6')
+            \\FROM (SELECT CAST('' as datetime format '') as d)
+            ,
+            .rows = .{
+                .{ true, true, "01 00:00:00.000000" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_default_value_time",
+            .sql =
+            \\# Test default value when casting string to time with format.
+            \\SELECT CAST('' as time format '')
+            ,
+            .rows = .{
+                .{"00:00:00"},
+            },
+        },
+        .{
+            .desc = "cast_string_to_default_value_timestamp",
+            .sql =
+            \\# Test default value when casting string to timestamp with format.
+            \\SELECT
+            \\  extract(year from d) = extract(year from CURRENT_DATE()),
+            \\  extract(month from d) = extract(month from CURRENT_DATE()),
+            \\  CAST(d as string FORMAT 'dd hh24:mi:ss.ff6')
+            \\FROM (SELECT CAST('' as timestamp format '') as d)
+            ,
+            .rows = .{
+                .{ true, true, "01 00:00:00.000000" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_timestamp_dst",
+            .sql =
+            \\# Test daylight saving time is correctly handled when casting string to
+            \\# timestamp with format.
+            \\# For time zone 'America/Los_Angeles', on 2021-11-01, the hour offset is -07,
+            \\# while on 2021-11-21, the hour offset is -08.
+            \\SELECT
+            \\  CAST('2021-11-01' as timestamp FORMAT 'YYYY-MM-DD' at time zone 'America/Los_Angeles'),
+            \\  CAST('2021-11-21' as timestamp FORMAT 'YYYY-MM-DD' at time zone 'America/Los_Angeles')
+            ,
+            .rows = .{
+                .{ "2021-11-01 07:00:00+00", "2021-11-21 08:00:00+00" },
+            },
+        },
+        .{
+            .desc = "cast_string_to_date_invalid_format",
+            .sql = "SELECT CAST('1234-05-06' as date FORMAT 'yyyy' || 'mi')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_to_datetime_invalid_format",
+            .sql = "SELECT CAST('1234-05-06' as datetime FORMAT 'yyyy' || 'mi' || 'tzh')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_to_time_invalid_format",
+            .sql = "SELECT CAST('1234-05-06' as time FORMAT 'yyyy' || 'mi')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_to_timestamp_invalid_format",
+            .sql = "SELECT CAST('1234-05-06' as timestamp FORMAT 'yyyy' || 'yyyy')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_date_and_time_to_string_success",
+            .sql =
+            \\# Test the success case of cast date/time to string with format
+            \\select cast(date'1234-05-06' as string format 'DD-MM YYYY'),
+            \\       cast(datetime '1234-05-06 07:08:09' as string
+            \\            format 'HH12:MI:SS PM DD/MM/YYYY'),
+            \\       cast(time '07:08:09' as string format 'HH24:MI:SS'),
+            \\       cast(timestamp '1234-05-06 07:08:09-10' as string
+            \\            format 'HH12:MI:SS PM DD/MM/YYYY  TZH:TZM' at time zone '-08:00')
+            ,
+            .rows = .{
+                .{ "06-05 1234", "07:08:09 AM 06/05/1234", "07:08:09", "09:08:09 AM 06/05/1234  -08:00" },
+            },
+        },
+        .{
+            .desc = "cast_date_and_time_to_string_with_null_format",
+            .sql =
+            \\# Test the success case of cast date/time to string with null format
+            \\select cast(date'1234-05-06' as string format cast(null as string)),
+            \\       cast(datetime '1234-05-06 07:08:09' as string format cast(null as string)),
+            \\       cast(time '07:08:09' as string format cast(null as string)),
+            \\       cast(timestamp '1234-05-06 07:08:09-10' as string format cast(null as string))
+            ,
+            .rows = .{
+                .{ null, null, null, null },
+            },
+        },
+        .{
+            .desc = "cast_timestamp_to_string_with_null_time_zone",
+            .sql =
+            \\# Test the case when timezone is null
+            \\select cast(timestamp '1234-05-06 07:08:09-10' as string
+            \\            format 'HH12:MI:SS PM DD/MM/YYYY  TZH:TZM' at time zone cast(null as string))
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_date_to_string_invalid_format",
+            .sql = "SELECT CAST(DATE'1234-05-06' as string FORMAT 'yyyy' || 'mi')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_datetime_to_string_invalid_format",
+            .sql = "SELECT CAST(DATETIME'1234-05-06' as string FORMAT 'yyyy' || 'mi' || 'tzh')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_time_to_string_invalid_format",
+            .sql = "SELECT CAST(TIME'01:02:03' as string FORMAT 'yyyy' || 'mi')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_timestamp_to_string_invalid_format",
+            .sql = "SELECT CAST(TIMESTAMP'1234-05-06' as string FORMAT 'a' || 'b')",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_number_to_string_null",
+            .sql =
+            \\# Test that when casting number to string, the output is null is the input is null, or
+            \\# the format string is null.
+            \\SELECT CAST(CAST(null as INT64) as string FORMAT '99'),
+            \\       CAST(1.23 as string FORMAT CAST(NULL as STRING))
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "cast_number_to_string_simple",
+            .sql =
+            \\# Test that the implementation is invoked.
+            \\select cast(cast(1.23 as int32) as STRING format '99.9'),
+            \\       cast(cast(1.23 as uint32) as STRING format '99.9'),
+            \\       cast(cast(1.23 as int64) as STRING format '99.9'),
+            \\       cast(cast(1.23 as uint64) as STRING format '99.9'),
+            \\       cast(cast(1.23 as float) as STRING format '99.9'),
+            \\       cast(cast(1.23 as double) as STRING format '99.9'),
+            \\       cast(cast(1.23 as numeric) as STRING format '99.9'),
+            \\       cast(cast(1.23 as bignumeric) as STRING format '99.9')
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_struct_type_parameters_valid_input",
+            .sql =
+            \\# Casting with type parameters succeeds.
+            \\select cast(([(BIGNUMERIC '0.12345', 'hey', null), (0.9876, 'hi', NUMERIC '0.55')], b'hello')
+            \\as STRUCT<ARRAY<STRUCT<BIGNUMERIC(2, 2), STRING(4), NUMERIC(2, 1)>>, BYTES(5)>)
+            ,
+            .rows = .{
+                .{.{ .{ .{ 0.12, "hey", null }, .{ 0.99, "hi", 0.6 } }, "\x68\x65\x6c\x6c\x6f" }},
+            },
+        },
+        .{
+            .desc = "cast_string_type_parameters_invalid_input",
+            .sql =
+            \\# Casting to STRING(L) fails if the casted string is longer than L.
+            \\select cast(123456 as STRING(5))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_numeric_type_parameters_invalid_input",
+            .sql =
+            \\# Casting to NUMERIC(P) fails if the casted numeric has more than P digits.
+            \\select cast(123456 as NUMERIC(5))
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_array_type_parameters_invalid_input",
+            .sql =
+            \\# Casting to an ARRAY fails if the elements of the ARRAY have type parameters
+            \\# that are violated.
+            \\select cast(['hello', 'hi'] as ARRAY<STRING(2)>)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_struct_type_parameters_invalid_input",
+            .sql = "select cast((b'hey', 2) as STRUCT<BYTES(2), INT64>)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_large_numeric_succeeds",
+            .sql = "select CAST(9999999999999999999999999999.999999999 as numeric)",
+            .rows = .{
+                .{9999999999999999999999999999.999999999},
+            },
+        },
+        .{
+            .desc = "cast_numeric_max_value_succeeds",
+            .sql = "select CAST(99999999999999999999999999999.999999999 as numeric)",
+            .rows = .{
+                .{99999999999999999999999999999.999999999},
+            },
+        },
+        .{
+            .desc = "cast_struct_with_large_floating_point",
+            .sql =
+            \\# Struct fields with large floating points are not implicitly coerced.
+            \\select cast((99999999999999999999999999.999999999, 99999999999999999999999999.999999999) as struct<numeric, bignumeric>)
+            ,
+            .rows = .{
+                .{.{ 100000000000000004764729344, 100000000000000004764729344 }},
+            },
+        },
+        .{
+            .desc = "cast_struct_with_large_floating_point_with_type_parameters",
+            .sql =
+            \\# Struct fields with large floating points and type parameters are not
+            \\# implicitly coerced.
+            \\select cast((99999999999999999999999999.999999999, 99999999999999999999999999.999999999) as struct<numeric(29,1), bignumeric(29,1)>)
+            ,
+            .rows = .{
+                .{.{ 100000000000000004764729344, 100000000000000004764729344 }},
+            },
+        },
+        .{
+            .desc = "cast_array_with_large_floating_point",
+            .sql =
+            \\# Arrays containing large floating point elements are implicitly coerced.
+            \\select cast([numeric '99999999999999999999999999.999999999'] as array<numeric>)
+            ,
+            .rows = .{
+                .{.{99999999999999999999999999.999999999}},
+            },
+        },
+        .{
+            .desc = "cast_array_with_large_floating_point_with_type_parameters",
+            .sql =
+            \\# Arrays containing large floating point elements with type parameters are
+            \\# implicitly coerced.
+            \\select cast([numeric '99999999999999999999999999.999999999'] as array<numeric(29,1)>)
+            ,
+            .rows = .{
+                .{.{100000000000000000000000000}},
+            },
+        },
+        .{
+            .desc = "cast_numeric_max_value_with_type_parameters_invalid_input",
+            .sql = "select CAST(9999999999999999999999999999.999999999 as numeric(29, 1))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_bytes_as_proto_overwrites_singular_numeric_field",
+            .sql =
+            \\# When a singular numeric field appears more than once in an encoded proto, the
+            \\# last occurrence should be accepted.
+            \\SELECT CAST(
+            \\  CONCAT(
+            \\    CAST(CAST("int64_key_1:11 int64_key_2:22" AS googlesql_test.KitchenSinkPB) AS BYTES),
+            \\    CAST(CAST("int64_key_1:1111 int64_key_2:2222" AS googlesql_test.KitchenSinkPB) AS BYTES)
+            \\  )
+            \\AS googlesql_test.KitchenSinkPB).int64_key_1
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_bytes_as_proto_merges_singular_nested_proto_non_repeated_field",
+            .sql =
+            \\# When a singular embedded message field appears more than once in a serialized
+            \\# proto, the multiple occurrences should be merged.
+            \\SELECT CAST(
+            \\  CONCAT(
+            \\    CAST(CAST("int64_key_1:11 int64_key_2:22 nested_value: {nested_int64: 123}" AS googlesql_test.KitchenSinkPB) AS BYTES),
+            \\    CAST(CAST("int64_key_1:1111 int64_key_2:2222 nested_value: {}" AS googlesql_test.KitchenSinkPB) AS BYTES)
+            \\  )
+            \\AS googlesql_test.KitchenSinkPB).nested_value.nested_int64
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_bytes_as_proto_merges_singular_nested_proto_repeated_field",
+            .sql =
+            \\# When a singular embedded message field appears more than once in a serialized
+            \\# proto, the multiple occurrences should be merged.
+            \\SELECT CAST(
+            \\  CONCAT(
+            \\    CAST(CAST("int64_key_1:11 int64_key_2:22 nested_value: {nested_repeated_int64: 100 nested_repeated_int64: 200}" AS googlesql_test.KitchenSinkPB) AS BYTES),
+            \\    CAST(CAST("int64_key_1:1111 int64_key_2:2222 nested_value: {nested_repeated_int64: 300 nested_repeated_int64: 400}" AS googlesql_test.KitchenSinkPB) AS BYTES)
+            \\  )
+            \\AS googlesql_test.KitchenSinkPB).nested_value.nested_repeated_int64
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_bytes_as_proto_merges_singular_group_non_repeated_field",
+            .sql =
+            \\# When a singular group appears more than once in a serialized proto, the
+            \\# multiple occurrences should be merged.
+            \\SELECT CAST(
+            \\  CONCAT(
+            \\    CAST(CAST("int64_key_1:11 int64_key_2:22 OptionalGroup: {int64_val: 123 string_val: 'a'}" AS googlesql_test.KitchenSinkPB) AS BYTES),
+            \\    CAST(CAST("int64_key_1:1111 int64_key_2:2222 OptionalGroup: {int64_val: 123123}" AS googlesql_test.KitchenSinkPB) AS BYTES)
+            \\  )
+            \\AS googlesql_test.KitchenSinkPB).OptionalGroup.string_val
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_bytes_as_proto_merges_singular_group_repeated_field",
+            .sql =
+            \\# When a singular group appears more than once in a serialized proto, the
+            \\# multiple occurrences should be merged.
+            \\SELECT CAST(
+            \\  CONCAT(
+            \\    CAST(CAST("int64_key_1:11 int64_key_2:22 OptionalGroup: {int64_val: 123 OptionalGroupNested: {int64_val: 12} }" AS googlesql_test.KitchenSinkPB) AS BYTES),
+            \\    CAST(CAST("int64_key_1:1111 int64_key_2:2222 OptionalGroup: {int64_val: 123123 OptionalGroupNested: {int64_val: 1212} }" AS googlesql_test.KitchenSinkPB) AS BYTES)
+            \\  )
+            \\AS googlesql_test.KitchenSinkPB).OptionalGroup.OptionalGroupNested
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_string_as_bool",
+            .sql = "select CAST(\"abc\" as BOOL)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_as_bool_1",
+            .sql = "select CAST(\"true\" as BOOL)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "cast_string_as_bool_2",
+            .sql =
+            \\select CAST(string_val as BOOL)
+            \\FROM (SELECT "abc" as string_val)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_as_bool_3",
+            .sql =
+            \\select CAST(string_val as BOOL)
+            \\FROM (SELECT "true" as string_val)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "cast_string_as_bool_4",
+            .sql =
+            \\select CAST(string_val as BOOL)
+            \\FROM unnest(["true", "abc"]) as string_val
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_as_bool_5",
+            .sql = "select CAST('abc' as BOOL)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_as_bool_6",
+            .sql = "select CAST('true' as BOOL)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "cast_invalid_string_to_int32",
+            .sql = "select cast(\"abc\" as int32) + cast(\"def\" as int32)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "invalid_cast_nested_inside_a_function",
+            .sql = "select SQRT(cast(9999999999 as int32))",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "invalid_safe_cast_nested_inside_a_function",
+            .sql = "select SQRT(safe_cast(9999999999 as int32))",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_overflowing_literal_into_int64",
+            .sql =
+            \\# INT64_MAX + 1 => 9223372036854775808
+            \\select cast(9223372036854775808 as int64), 9223372036854775808
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_overflowing_literal_into_int64",
+            .sql =
+            \\# INT64_MAX + 1 => 9223372036854775808
+            \\select safe_cast(9223372036854775808 as int64), 9223372036854775808
+            ,
+            .rows = .{
+                .{ null, 9223372036854775808 },
+            },
+        },
+        .{
+            .desc = "cast_invalid_literal_to_civil_time",
+            .sql = "select cast('abc' as time)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_overflowing_literal_to_civil_time",
+            .sql = "select cast('24:00:00' as time)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_invalid_literal_to_datetime_with_civil_time_enabled",
+            .sql = "select cast('abc' as datetime)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_timestamp_to_datetime_with_civil_time_enabled",
+            .sql = "select cast('2015-13-05 01:02:03' as datetime)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_utc_timestamp_to_datetime_with_civil_time_enabled",
+            .sql = "select cast('2006-01-02 01:02:03.123456 UTC' as datetime)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_array_with_literals_larger_than_target_element_type",
+            .unsupported_in_bigquery = "\"Type not found: INT32\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "select cast(ARRAY<INT64>[-21474836480|21474836470] as ARRAY<INT32>)",
+            .rows = .{
+                .{.{-10}},
+            },
+        },
+        .{
+            .desc = "cast_invalid_string_to_int64",
+            .sql = "select cast(\"abc\" as INT64)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_invalid_string_to_int64",
+            .sql = "select safe_cast(\"abc\" as INT64)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_array_with_invalid_string_literals",
+            .unsupported_in_bigquery = "\"Casting between arrays with incompatible element types is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "select cast([\"100\", \"abc\"] as ARRAY<INT64>)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_array_with_invalid_string_literals",
+            .unsupported_in_bigquery = "\"Casting between arrays with incompatible element types is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "select safe_cast([\"100\", \"abc\"] as ARRAY<INT64>)",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "cast_string_hex_literal_into_int32",
+            .sql = "select cast('-0x100' AS INT32)",
+            .rows = .{
+                .{-256},
+            },
+        },
+        .{
+            .desc = "cast_string_hex_literal_into_uint32",
+            .sql = "select cast('-0x100' AS UINT32)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_string_hex_literal_into_int64",
+            .sql = "select cast('-0x100' AS INT64)",
+            .rows = .{
+                .{-256},
+            },
+        },
+        .{
+            .desc = "cast_string_hex_literal_into_uint64",
+            .sql = "select cast('-0x100' AS UINT64)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_invalid_string_literal_into_numeric",
+            .sql = "select cast(\"abc\" as NUMERIC)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_invalid_string_literal_into_big_numeric",
+            .sql = "select cast(\"abc\" as BIGNUMERIC)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "nested_casts_of_invalid_literals",
+            .sql =
+            \\# Test case from b/79755993 (now fixed).
+            \\select CAST(CAST(- 1769384439 AS INT32) AS UINT32)
+            \\       & CAST(1834360097 AS UINT32)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_nested_casts_of_invalid_literals",
+            .sql =
+            \\# Test case from b/79755993 (now fixed).
+            \\select SAFE_CAST(CAST(- 1769384439 AS INT32) AS UINT32)
+            \\       & CAST(1834360097 AS UINT32)
+            ,
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "roundtrip_cast_negative_integer_zero_to_string",
+            .sql =
+            \\# Test case for CAST-ing and FORMAT-ing to canonicalized integer-type 0.
+            \\SELECT
+            \\  CAST(-0 AS STRING),
+            \\  CAST(-0 AS INT32),
+            \\  CAST(-0 AS INT64),
+            \\  CAST(CAST('-0' AS INT32) AS STRING),
+            \\  CAST(-CAST('0' AS INT32) AS STRING),
+            \\  CAST(CAST('-0' AS INT64) AS STRING),
+            \\  CAST(-CAST('0' AS INT64) AS STRING)
+            ,
+            .rows = .{
+                .{ "0", 0, 0, "0", "0", "0", "0" },
+            },
+        },
+        .{
+            .desc = "roundtrip_cast_negative_numeric_zero_to_string",
+            .sql =
+            \\SELECT
+            \\  CAST(-0 AS NUMERIC),
+            \\  CAST(-0 AS BIGNUMERIC),
+            \\  CAST(CAST(-0 AS NUMERIC) AS STRING),
+            \\  CAST(-CAST(0 AS NUMERIC) AS STRING),
+            \\  CAST(CAST(-0 AS BIGNUMERIC) AS STRING),
+            \\  CAST(-CAST(0 AS BIGNUMERIC) AS STRING)
+            ,
+            .rows = .{
+                .{ 0, 0, "0", "0", "0", "0" },
+            },
+        },
+        .{
+            .desc = "cast_negative_numeric_zero_to_uint32",
+            .sql = "SELECT CAST(-0 AS UINT32)",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "cast_negative_numeric_zero_to_uint64",
+            .sql = "SELECT CAST(-0 AS UINT64)",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "roundtrip_cast_negative_numeric_zero_to_uint32_1",
+            .sql = "SELECT CAST(CAST(-0 AS UINT32) AS STRING)",
+            .rows = .{
+                .{"0"},
+            },
+        },
+        .{
+            .desc = "roundtrip_cast_negative_numeric_zero_to_uint64_1",
+            .sql = "SELECT CAST(CAST(-0 AS UINT64) AS STRING)",
+            .rows = .{
+                .{"0"},
+            },
+        },
+        .{
+            .desc = "cast_string_type_parameters_and_collation_valid_input",
+            .unsupported_in_bigquery = "\"Type with collation name is not supported in cast\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Casting with type parameters and collation name succeeds.
+            \\select
+            \\  cast('abcde' as STRING(5) COLLATE 'und:ci') = 'ABCDE',
+            \\  cast('abcde' as STRING(5) COLLATE 'binary') = 'ABCDE'
+            ,
+            .rows = .{
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "cast_string_type_parameters_and_collation_invalid_input",
+            .unsupported_in_bigquery = "\"Type with collation name is not supported in cast\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Casting to STRING(L) fails if the casted string is longer than L.
+            \\select cast('abcdef' as STRING(5) COLLATE 'und:ci')
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_array_type_parameters_and_collation_valid_input",
+            .unsupported_in_bigquery = "\"Type with collation name is not supported in cast\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Casting with type parameters and collation name succeeds.
+            \\select
+            \\  'hi' in unnest(cast(['h', 'HI'] as ARRAY<STRING(2) COLLATE 'und:ci'>)),
+            \\  'hi' in unnest(cast(['h', 'HI'] as ARRAY<STRING(2) COLLATE 'binary'>)),
+            ,
+            .rows = .{
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "cast_array_type_parameters_and_collation_invalid_input",
+            .unsupported_in_bigquery = "\"Type with collation name is not supported in cast\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Casting to an ARRAY fails if the elements of the ARRAY have type parameters
+            \\# that are violated.
+            \\select cast(['hello', 'hi'] as ARRAY<STRING(2) COLLATE 'und:ci'>)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_struct_type_parameters_and_collation_valid_input",
+            .unsupported_in_bigquery = "\"Type with collation name is not supported in cast\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Casting with type parameters and collation name succeeds.
+            \\select
+            \\  cast(STRUCT<a BYTES, b STRING>(b'hey', 'abc') as STRUCT<a BYTES(4), b STRING COLLATE 'und:ci'>).b = 'ABC',
+            \\  cast(STRUCT<a BYTES, b STRING>(b'hey', 'abc') as STRUCT<a BYTES(4), b STRING COLLATE 'binary'>).b = 'ABC'
+            ,
+            .rows = .{
+                .{ true, false },
+            },
+        },
+        .{
+            .desc = "cast_struct_type_parameters_and_collation_invalid_input",
+            .unsupported_in_bigquery = "\"Type with collation name is not supported in cast\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Casting to an STRUCT fails if the field of the STRUCT have type parameters
+            \\# that are violated.
+            \\select
+            \\  cast((b'hey', 'abc') as STRUCT<BYTES(2), STRING COLLATE 'und:ci'>)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "cast_date_to_timestamp",
+            .sql = "SELECT CAST(x.date AS TIMESTAMP) as result FROM (SELECT DATE '2023-05-23' AS date) as x",
+            .rows = .{
+                .{"2023-05-23 07:00:00+00"},
+            },
+        },
+        .{
+            .desc = "cast_struct_to_struct",
+            .sql =
+            \\SELECT my_struct.a as result FROM
+            \\(SELECT CAST(x AS STRUCT<a INT64>) as my_struct FROM (SELECT STRUCT(1 as b) AS x))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "cast_range_with_truncation",
+            .unsupported_in_bigquery = "\"Timestamp precision type parameter is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\SELECT CAST(x AS RANGE<TIMESTAMP(0)>)
+            \\FROM (SELECT RANGE<TIMESTAMP> '[1970-01-01 00:00:00.123456+00, 2025-01-01 00:00:00.123456+00)' AS x)
+            ,
+            .rows = .{
+                .{"[1970-01-01 00:00:00+00, 2025-01-01 00:00:00+00)"},
+            },
+        },
+        .{
+            .desc = "cast_array_of_float_to_string",
+            .unsupported_in_bigquery = "\"Type not found: DOUBLE\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT CAST(ARRAY<DOUBLE>[1.0 + 0.1, 2.2, 3.3] AS ARRAY<STRING>)",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "struct_with_float_to_struct_with_string",
+            .sql = "SELECT CAST(STRUCT<DOUBLE, DOUBLE>(1.0 + 0.1, 2.2) AS STRUCT<STRING, STRING>)",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "map_with_float_to_map_with_string",
+            .unsupported_in_bigquery = "\"MAP datatype is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql = "SELECT CAST(MAP_FROM_ARRAY([STRUCT(1, 1.0 + 0.1), STRUCT(2, 2.2)]) AS MAP<STRING, STRING>)",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_structs_with_floats_in_different_fields",
+            .sql = "SELECT CAST(STRUCT<STRING, DOUBLE>(\"1.1\", 1.0 + 0.1) AS STRUCT<DOUBLE, STRING>)",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "cast_map_with_floats_in_different_fields",
+            .unsupported_in_bigquery = "\"MAP datatype is not supported\" (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# This case should be marked as non-deterministic because the DOUBLE in the
+            \\# value field potentially contains precision loss that is encoded in the string.
+            \\SELECT CAST(MAP_FROM_ARRAY([STRUCT<STRING, DOUBLE>("1.1", 1.0 + 0.1)]) AS MAP<DOUBLE, STRING>)
+            ,
+            .nondeterministic = true,
+        },
+    },
+}

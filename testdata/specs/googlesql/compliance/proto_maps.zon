@@ -1,0 +1,228 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/proto_maps",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/proto_maps.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table0 AS
+            \\SELECT 0 key, NEW googlesql_test.MessageWithMapField(
+            \\  [NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("foo" AS key, 123 AS value),
+            \\   NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("bar" AS key, 456 AS value)] AS string_int32_map
+            \\) value
+            ,
+        },
+        .{
+            .desc = "map_entry_key_null",
+            .sql =
+            \\SELECT NEW googlesql_test.MessageWithMapField(
+            \\  [NEW googlesql_test.MessageWithMapField.StringInt32MapEntry(CAST(NULL AS STRING) AS key, 123 AS value)] AS string_int32_map
+            \\) as pb
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "map_entry_value_null",
+            .sql =
+            \\SELECT NEW googlesql_test.MessageWithMapField(
+            \\  [NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("foo" AS key, CAST(NULL AS INT32) AS value)] AS string_int32_map
+            \\) as pb
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "lookup",
+            .sql = "SELECT value.string_int32_map[KEY(\"foo\")] FROM Table0",
+            .rows = .{
+                .{123},
+            },
+        },
+        .{
+            .desc = "lookup_safe",
+            .sql = "SELECT value.string_int32_map[SAFE_KEY(\"bar\")] FROM Table0",
+            .rows = .{
+                .{456},
+            },
+        },
+        .{
+            .desc = "map_lookup_with_conflicting_values_for_key_takes_last_matching_value",
+            .sql =
+            \\(SELECT [NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("foo" AS key, 123 AS value),
+            \\         NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("bar" AS key, 456 AS value),
+            \\         NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("foo" AS key, 789 AS value)][KEY("foo")])
+            ,
+            .rows = .{
+                .{789},
+            },
+        },
+        .{
+            .desc = "lookup_in_null",
+            .sql = "SELECT CAST(NULL AS ARRAY<googlesql_test.MessageWithMapField.StringInt32MapEntry>)[KEY(\"foo\")]",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "lookup_with_null_key",
+            .sql = "SELECT value.string_int32_map[KEY(NULL)] FROM Table0",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "lookup_with_missing_key",
+            .sql = "SELECT value.string_int32_map[KEY(\"not present in map\")] FROM Table0",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "lookup_with_missing_key_safe",
+            .sql = "SELECT value.string_int32_map[SAFE_KEY(\"not present in map\")] FROM Table0",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "lookup_depending_on_other_map_key",
+            .sql =
+            \\WITH Input AS (
+            \\    SELECT [NEW googlesql_test.MessageWithMapField.StringStringMapEntry("foo" AS key, "bar" AS value),
+            \\            NEW googlesql_test.MessageWithMapField.StringStringMapEntry("bar" AS key, "success" AS value)] AS map)
+            \\SELECT i.map[KEY(i.map[KEY("foo")])] FROM Input i
+            ,
+            .rows = .{
+                .{"success"},
+            },
+        },
+        .{
+            .desc = "proto_modify_map_null_map",
+            .sql = "SELECT PROTO_MODIFY_MAP(CAST(NULL AS ARRAY<googlesql_test.MessageWithMapField.StringInt32MapEntry>), \"foo\", 789) FROM Table0",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            .desc = "proto_modify_map_empty_map",
+            .sql = "SELECT PROTO_MODIFY_MAP(CAST([] AS ARRAY<googlesql_test.MessageWithMapField.StringInt32MapEntry>), \"foo\", 789) FROM Table0",
+            .rows = .{
+                .{.{.{"key: \"foo\" value: 789"}}},
+            },
+        },
+        .{
+            .desc = "proto_modify_map_duplicate_keys",
+            .sql = "SELECT PROTO_MODIFY_MAP(value.string_int32_map, \"foo\", 789, \"foo\", 10) FROM Table0",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "proto_modify_map_delete_key",
+            .sql = "SELECT PROTO_MODIFY_MAP(value.string_int32_map, \"bar\", NULL) FROM Table0",
+            .rows = .{
+                .{.{.{"key: \"foo\" value: 123"}}},
+            },
+        },
+        .{
+            .desc = "proto_modify_map_delete_duplicate_key",
+            .sql =
+            \\SELECT PROTO_MODIFY_MAP((NEW googlesql_test.MessageWithMapField(
+            \\    [NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("foo" AS key, 2 AS value),
+            \\     NEW googlesql_test.MessageWithMapField.StringInt32MapEntry("foo" AS key, 1 AS value)] AS string_int32_map)).string_int32_map, "foo", NULL)
+            ,
+            .rows = .{
+                .{.{}},
+            },
+        },
+        .{
+            .desc = "proto_modify_map_null_key",
+            .sql = "SELECT PROTO_MODIFY_MAP(value.string_int32_map, NULL, 789) FROM Table0",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "proto_map_contains_key",
+            .sql =
+            \\SELECT PROTO_MAP_CONTAINS_KEY(value.string_int32_map, "foo") has_foo,
+            \\       PROTO_MAP_CONTAINS_KEY(value.string_int32_map, "bar") has_bar,
+            \\       PROTO_MAP_CONTAINS_KEY(value.string_int32_map, CONCAT("ba", "r")) has_concat_making_bar,
+            \\       PROTO_MAP_CONTAINS_KEY(value.string_int32_map, "baz") has_baz,
+            \\       PROTO_MAP_CONTAINS_KEY(value.string_int32_map, NULL) has_null,
+            \\       PROTO_MAP_CONTAINS_KEY(CAST(NULL AS ARRAY<googlesql_test.MessageWithMapField.StringInt32MapEntry>), "foo") null_has_foo
+            \\FROM Table0
+            ,
+            .rows = .{
+                .{ true, true, true, false, false, null },
+            },
+        },
+        .{
+            .desc = "proto_modify_map_and_braced_constructors",
+            .sql =
+            \\SELECT NEW googlesql_test.MessageWithMapField {
+            \\  string_int32_map: PROTO_MODIFY_MAP(input.string_int32_map, "to_be_replaced", 5)
+            \\} AS result
+            \\FROM (
+            \\  SELECT AS VALUE NEW googlesql_test.MessageWithMapField {
+            \\    string_int32_map: [
+            \\      NEW googlesql_test.MessageWithMapField.StringInt32MapEntry{
+            \\        key: "key"
+            \\        value: 123
+            \\      },
+            \\      NEW googlesql_test.MessageWithMapField.StringInt32MapEntry{
+            \\        key: "to_be_replaced"
+            \\        value: 4
+            \\      }
+            \\    ]
+            \\  }
+            \\) AS input
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "map_lookup_with_ordinal",
+            .sql =
+            \\# If we handle proto maps, the last entry should win.
+            \\# If we do not, the order should be unaffected.
+            \\# Therefore we make the first and last the same.
+            \\SELECT NEW googlesql_test.MessageWithMapField(
+            \\    [
+            \\      NEW googlesql_test.MessageWithMapField.StringDoubleMapEntry("foo" AS key, 789.0 AS value),
+            \\      NEW googlesql_test.MessageWithMapField.StringDoubleMapEntry("foo" AS key, 456.0 AS value),
+            \\      NEW googlesql_test.MessageWithMapField.StringDoubleMapEntry("foo" AS key, 789.0 AS value)
+            \\    ] AS string_double_map).string_double_map[ORDINAL(1)]
+            \\AS result
+            ,
+            .rows = .{
+                .{.{"key: \"foo\" value: 789"}},
+            },
+        },
+        .{
+            .desc = "array_of_map_entry_does_not_deduplicate",
+            .sql =
+            \\# This test ensures that we don't interpret all arrays of map entries as
+            \\# protobuf maps for the purpose of deduplication. In the code, an array of map
+            \\# entries is considered to be *compatible* with proto maps. Be we want to make
+            \\# sure that they aren't treated as identical.
+            \\SELECT [
+            \\  NEW googlesql_test.MessageWithMapField.StringDoubleMapEntry("foo" AS key, 123.0 AS value),
+            \\  NEW googlesql_test.MessageWithMapField.StringDoubleMapEntry("foo" AS key, 456.0 AS value),
+            \\  NEW googlesql_test.MessageWithMapField.StringDoubleMapEntry("foo" AS key, 789.0 AS value)
+            \\]
+            \\AS result
+            ,
+            .rows = .{
+                .{.{ .{"key: \"foo\" value: 123"}, .{"key: \"foo\" value: 456"}, .{"key: \"foo\" value: 789"} }},
+            },
+        },
+        .{
+            .desc = "cast_null_struct_to_proto_map_entry",
+            .sql = "SELECT CAST(CAST(NULL AS STRUCT<key STRING, value INT32>) AS googlesql_test.MessageWithMapField.StringInt32MapEntry)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "safe_cast_null_struct_to_proto_map_entry",
+            .sql = "SELECT SAFE_CAST(CAST(NULL AS STRUCT<key STRING, value INT32>) AS googlesql_test.MessageWithMapField.StringInt32MapEntry)",
+            .rows = .{
+                .{null},
+            },
+        },
+    },
+}

@@ -1,0 +1,519 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/keys",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/keys.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE RawKeyTable AS
+            \\SELECT 1 AS id, b'0123456789abcdef' AS raw_key_bytes
+            \\UNION ALL
+            \\SELECT 2, REPEAT(b'0123456789abcdef', 2)
+            \\UNION ALL
+            \\SELECT 3, NULL
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# KEYS.NEW_KEYSET is volatile--it doesn't produce the same keyset each time--
+            \\# so we can't call it directly as part of this table creation. Instead, the
+            \\# base64 strings here represent a few different keysets created using
+            \\# KEYS.NEW_KEYSET and KEY.ADD_KEY_FROM_RAW_BYTES.
+            \\CREATE TABLE KeysetTable AS
+            \\SELECT
+            \\  1 AS kt_id,
+            \\  FROM_BASE64('CJmMp4UJEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIP7Xj33VJoXuk9KMRwXsjkuDmo5P40WUSaVtJAzyve80GAEQARiZjKeFCSAB') AS keyset,
+            \\  'abc' AS aad_string,
+            \\  b'\x00\x01\x02' AS aad_bytes
+            \\UNION ALL
+            \\SELECT
+            \\  2,
+            \\  FROM_BASE64('CNnv5+cHEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIJg18Y4DFqVKes4Acs3h55Fe7yqPrqao+rfu70el0KPRGAEQARjZ7+fnByAB'),
+            \\  '',
+            \\  b''
+            \\UNION ALL
+            \\SELECT
+            \\  3,
+            \\  FROM_BASE64('CKGMgekFEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIE4Tia+cXn5OC3blTmI6KkPOAeE9zg0LxpD96L92bWG2GAEQARihjIHpBSABEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIDEyMzQxMjM0MTIzNDEyMzQxMjM0MTIzNDEyMzQxMjM0GAEQARirptH5DSAD'),
+            \\  REPEAT('abc', 10),
+            \\  REPEAT(b'abc', 10)
+            \\UNION ALL
+            \\SELECT
+            \\  4,
+            \\  FROM_BASE64('CNCso94EEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIB2qbQpyD+/M1uDxXnmIUWKMxRuL0ZDAqDbg2v8cBXUgGAEQARjQrKPeBCABEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIDEyMzQxMjM0MTIzNDEyMzQxMjM0MTIzNDEyMzQxMjM0GAEQARjmu9iLBiADEmMKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIGFiY2RhYmNkYWJjZGFiY2RhYmNkYWJjZGFiY2RhYmNkGAEQARiCkKwaIAM='),
+            \\  '1234',
+            \\  b'1234'
+            \\UNION ALL
+            \\SELECT
+            \\  5,
+            \\  NULL,
+            \\  '1234',
+            \\  b'1234'
+            \\UNION ALL
+            \\SELECT
+            \\  6,
+            \\  FROM_BASE64('CKOPsoUIEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIDjN158ZUGzLVM9Wz5mkJ57rykSFOeAV2BkEksmaTdSEGAEQARijj7KFCCAB'),
+            \\  NULL,
+            \\  NULL
+            \\UNION ALL
+            \\SELECT
+            \\  7,
+            \\  NULL,
+            \\  NULL,
+            \\  NULL
+            ,
+        },
+        .{
+            .desc = "keys_1",
+            .sql = "SELECT KEYS.NEW_KEYSET('AEAD_AES_GCM_256') != b''",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "keys_2",
+            .sql = "SELECT KEYS.NEW_KEYSET(NULL)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "keys_5",
+            .sql =
+            \\SELECT
+            \\  KEYS.NEW_KEYSET('AEAD_AES_GCM_256') != KEYS.NEW_KEYSET('AEAD_AES_GCM_256')
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "keys_6",
+            .sql =
+            \\# KEYS.NEW_KEYSET should produce a different keyset for each invocation since
+            \\# individual keys are created using BoringSSL's random number generator.
+            \\SELECT
+            \\  COUNT(DISTINCT KEYS.NEW_KEYSET('AEAD_AES_GCM_256'))
+            \\FROM UNNEST(GENERATE_ARRAY(1, 100))
+            ,
+            .rows = .{
+                .{100},
+            },
+        },
+        .{
+            .desc = "keys_with_clause_1",
+            .sql =
+            \\# The WITH clause should have exactly-once semantics for evaluation of the
+            \\# expression.
+            \\WITH T AS (
+            \\  SELECT KEYS.NEW_KEYSET('AEAD_AES_GCM_256') AS keyset
+            \\)
+            \\SELECT keyset = keyset
+            \\FROM T
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "keys_with_clause_2",
+            .sql =
+            \\# Similarly, referencing the WITH clause multiple times as part of a join should
+            \\# result in the same value on both sides
+            \\WITH T AS (
+            \\  SELECT KEYS.NEW_KEYSET('AEAD_AES_GCM_256') AS keyset
+            \\)
+            \\SELECT T1.keyset = T2.keyset
+            \\FROM T T1 JOIN T T2 USING (keyset)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "rotate_keyset_1",
+            .sql =
+            \\SELECT
+            \\  KEYS.ROTATE_KEYSET(KEYS.NEW_KEYSET('AEAD_AES_GCM_256'),
+            \\                     'AEAD_AES_GCM_256') != b'',
+            \\  KEYS.KEYSET_LENGTH(
+            \\    KEYS.ROTATE_KEYSET(KEYS.NEW_KEYSET('AEAD_AES_GCM_256'),
+            \\                       'AEAD_AES_GCM_256'))
+            ,
+            .rows = .{
+                .{ true, 2 },
+            },
+        },
+        .{
+            .desc = "rotate_keyset_4",
+            .sql =
+            \\# KEYS.ROTATE_KEYSET should produce a different keyset for each invocation since
+            \\# individual keys are created using BoringSSL's random number generator.
+            \\SELECT
+            \\  KEYS.ROTATE_KEYSET(keyset, 'AEAD_AES_GCM_256') !=
+            \\    KEYS.ROTATE_KEYSET(keyset, 'AEAD_AES_GCM_256')
+            \\FROM (
+            \\  SELECT KEYS.NEW_KEYSET('AEAD_AES_GCM_256') AS keyset
+            \\)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "rotate_keyset_5",
+            .sql =
+            \\# KEYS.ROTATE_KEYSET should produce a different keyset for each invocation since
+            \\# individual keys are created using BoringSSL's random number generator.
+            \\SELECT
+            \\  COUNT(DISTINCT KEYS.ROTATE_KEYSET(keyset, 'AEAD_AES_GCM_256'))
+            \\FROM (SELECT KEYS.NEW_KEYSET('AEAD_AES_GCM_256') AS keyset),
+            \\UNNEST(GENERATE_ARRAY(1, 100))
+            ,
+            .rows = .{
+                .{100},
+            },
+        },
+        .{
+            .desc = "rotate_keyset_6",
+            .sql =
+            \\SELECT
+            \\  KEYS.KEYSET_LENGTH(KEYS.NEW_KEYSET('AEAD_AES_GCM_256'))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "rotate_keyset_7",
+            .sql =
+            \\# Rotating an empty keyset has the effect of creating a new keyset with a single
+            \\# key.
+            \\SELECT KEYS.KEYSET_LENGTH(KEYS.ROTATE_KEYSET(b'', 'AEAD_AES_GCM_256'))
+            ,
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "rotate_keyset_8",
+            .sql =
+            \\SELECT
+            \\  KEYS.KEYSET_LENGTH(
+            \\    KEYS.ROTATE_KEYSET(
+            \\      KEYS.ROTATE_KEYSET(
+            \\        KEYS.ROTATE_KEYSET(
+            \\          KEYS.ROTATE_KEYSET(
+            \\            KEYS.ROTATE_KEYSET(
+            \\              KEYS.ROTATE_KEYSET(
+            \\                KEYS.NEW_KEYSET('AEAD_AES_GCM_256'),
+            \\                'AEAD_AES_GCM_256'),
+            \\              'AEAD_AES_GCM_256'),
+            \\            'AEAD_AES_GCM_256'),
+            \\          'AEAD_AES_GCM_256'),
+            \\        'AEAD_AES_GCM_256'),
+            \\      'AEAD_AES_GCM_256')
+            \\    )
+            ,
+            .rows = .{
+                .{7},
+            },
+        },
+        .{
+            .desc = "rotate_keyset_with_clause_1",
+            .sql =
+            \\# The WITH clause should have exactly-once semantics for evaluation of the
+            \\# expression.
+            \\WITH T AS (
+            \\  SELECT KEYS.ROTATE_KEYSET(
+            \\    KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AEAD_AES_GCM_256') AS keyset
+            \\)
+            \\SELECT keyset = keyset
+            \\FROM T
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "rotate_keyset_with_clause_2",
+            .sql =
+            \\# Similarly, referencing the WITH clause multiple times as part of a join should
+            \\# result in the same value on both sides
+            \\WITH T AS (
+            \\  SELECT KEYS.ROTATE_KEYSET(
+            \\    KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AEAD_AES_GCM_256') AS keyset
+            \\)
+            \\SELECT T1.keyset = T2.keyset
+            \\FROM T T1 JOIN T T2 USING (keyset)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "keys_raw_bytes_from_table",
+            .sql =
+            \\SELECT
+            \\  KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\    KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AES_GCM', raw_key_bytes
+            \\  ) != b''
+            \\FROM RawKeyTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{true},
+                .{true},
+                .{null},
+            },
+        },
+        .{
+            .desc = "keys_raw_bytes_from_table_cbc_pkcs",
+            .sql =
+            \\SELECT
+            \\  KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\    KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AES_CBC_PKCS', raw_key_bytes
+            \\  ) != b''
+            \\FROM RawKeyTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{true},
+                .{true},
+                .{null},
+            },
+        },
+        .{
+            .desc = "keys_raw_bytes_from_table_mixed_types",
+            .sql =
+            \\# The order in which the keys are added determines their order in the keyset.
+            \\# Both TINK and RAW AES-GCM keys use AesGcmKey for their representation,
+            \\# whereas AES-CBC-PKCS keys use AesCbcPkcs7Key.
+            \\SELECT
+            \\  KEYS.KEYSET_TO_JSON(
+            \\    KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\      KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\        KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AES_CBC_PKCS', raw_key_bytes
+            \\      ), 'AES_GCM', raw_key_bytes
+            \\    )
+            \\  ) LIKE '%AesGcmKey%AesCbcPkcs7Key%AesGcmKey%'
+            \\FROM RawKeyTable
+            \\ORDER BY id
+            ,
+            .rows = .{
+                .{true},
+                .{true},
+                .{null},
+            },
+        },
+        .{
+            .desc = "keys_raw_bytes_null_keyset",
+            .sql =
+            \\SELECT KEYS.ADD_KEY_FROM_RAW_BYTES(NULL, 'AES_GCM', raw_key_bytes)
+            \\FROM RawKeyTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{null},
+                .{null},
+            },
+        },
+        .{
+            .desc = "keys_raw_bytes_volatile_output",
+            .sql =
+            \\# Even with an explicit raw key, we expect the output of
+            \\# KEYS.ADD_KEY_FROM_RAW_BYTES to differ across invocations since the nonce is
+            \\# random.
+            \\SELECT
+            \\  COUNT(DISTINCT keyset),
+            \\  COUNT(DISTINCT KEYS.ADD_KEY_FROM_RAW_BYTES(keyset, 'AES_GCM', raw_key_bytes)),
+            \\  COUNT(DISTINCT KEYS.ADD_KEY_FROM_RAW_BYTES(keyset, 'AES_CBC_PKCS',
+            \\                                             raw_key_bytes))
+            \\FROM RawKeyTable,
+            \\  UNNEST([KEYS.NEW_KEYSET('AEAD_AES_GCM_256')]) AS keyset,
+            \\  UNNEST(GENERATE_ARRAY(1, 100))
+            ,
+            .rows = .{
+                .{ 3, 200, 200 },
+            },
+        },
+        .{
+            .desc = "keys_with_clause_raw_key",
+            .sql =
+            \\# The WITH clause should have exactly-once semantics for evaluation of the
+            \\# expression.
+            \\WITH T AS (
+            \\  SELECT
+            \\    KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\      KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AES_GCM', raw_key_bytes
+            \\    ) AS keyset
+            \\  FROM RawKeyTable
+            \\)
+            \\SELECT keyset = keyset
+            \\FROM T
+            ,
+            .unordered = true,
+            .rows = .{
+                .{true},
+                .{true},
+                .{null},
+            },
+        },
+        .{
+            .desc = "keys_with_clause_raw_key_two_references",
+            .sql =
+            \\# Similarly, referencing the WITH clause multiple times as part of a join should
+            \\# result in the same value on both sides
+            \\WITH T AS (
+            \\  SELECT
+            \\    KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\      KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AES_GCM', raw_key_bytes
+            \\    ) AS keyset
+            \\  FROM RawKeyTable
+            \\)
+            \\SELECT T1.keyset = T2.keyset
+            \\FROM T T1 JOIN T T2 USING (keyset)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{true},
+                .{true},
+            },
+        },
+        .{
+            .desc = "keys_bad_key_length_1",
+            .sql =
+            \\# The key length must be either 16 or 32 bytes.
+            \\SELECT
+            \\  KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\    KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AES_GCM',
+            \\    RPAD(raw_key_bytes, 17, b'12')
+            \\  ) AS keyset
+            \\FROM RawKeyTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "keys_bad_key_length_2",
+            .sql =
+            \\# The key length must be either 16 or 32 bytes.
+            \\SELECT
+            \\  KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\    KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AES_GCM',
+            \\    RPAD(raw_key_bytes, 5, b'12')
+            \\  ) AS keyset
+            \\FROM RawKeyTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "keys_bad_key_length_3",
+            .sql =
+            \\# The key length must be 16, 24, or 32 bytes.
+            \\SELECT
+            \\  KEYS.ADD_KEY_FROM_RAW_BYTES(
+            \\    KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AES_CBC_PKCS',
+            \\    RPAD(raw_key_bytes, 5, b'12')
+            \\  ) AS keyset
+            \\FROM RawKeyTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "json_keyset_1",
+            .sql =
+            \\SELECT kt_id, KEYS.KEYSET_TO_JSON(keyset)
+            \\FROM KeysetTable
+            \\ORDER BY kt_id
+            ,
+            .rows = .{
+                .{ 1, "{\"key\":[{\"keyData\":{\"keyMaterialType\":\"SYMMETRIC\",\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiD+14991SaF7pPSjEcF7I5Lg5qOT+NFlEmlbSQM8r3vNA==\"},\"keyId\":2427045401,\"outputPrefixType\":\"TINK\",\"status\":\"ENABLED\"}],\"primaryKeyId\":2427045401}" },
+                .{ 2, "{\"key\":[{\"keyData\":{\"keyMaterialType\":\"SYMMETRIC\",\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiCYNfGOAxalSnrOAHLN4eeRXu8qj66mqPq37u9HpdCj0Q==\"},\"keyId\":2096756697,\"outputPrefixType\":\"TINK\",\"status\":\"ENABLED\"}],\"primaryKeyId\":2096756697}" },
+                .{ 3, "{\"key\":[{\"keyData\":{\"keyMaterialType\":\"SYMMETRIC\",\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiBOE4mvnF5+Tgt25U5iOipDzgHhPc4NC8aQ/ei/dm1htg==\"},\"keyId\":1562396193,\"outputPrefixType\":\"TINK\",\"status\":\"ENABLED\"},{\"keyData\":{\"keyMaterialType\":\"SYMMETRIC\",\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiAxMjM0MTIzNDEyMzQxMjM0MTIzNDEyMzQxMjM0MTIzNA==\"},\"keyId\":3744748331,\"outputPrefixType\":\"RAW\",\"status\":\"ENABLED\"}],\"primaryKeyId\":1562396193}" },
+                .{ 4, "{\"key\":[{\"keyData\":{\"keyMaterialType\":\"SYMMETRIC\",\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiAdqm0Kcg/vzNbg8V55iFFijMUbi9GQwKg24Nr/HAV1IA==\"},\"keyId\":1271453264,\"outputPrefixType\":\"TINK\",\"status\":\"ENABLED\"},{\"keyData\":{\"keyMaterialType\":\"SYMMETRIC\",\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiAxMjM0MTIzNDEyMzQxMjM0MTIzNDEyMzQxMjM0MTIzNA==\"},\"keyId\":1635130854,\"outputPrefixType\":\"RAW\",\"status\":\"ENABLED\"},{\"keyData\":{\"keyMaterialType\":\"SYMMETRIC\",\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiBhYmNkYWJjZGFiY2RhYmNkYWJjZGFiY2RhYmNkYWJjZA==\"},\"keyId\":55248898,\"outputPrefixType\":\"RAW\",\"status\":\"ENABLED\"}],\"primaryKeyId\":1271453264}" },
+                .{ 5, null },
+                .{ 6, "{\"key\":[{\"keyData\":{\"keyMaterialType\":\"SYMMETRIC\",\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiA4zdefGVBsy1TPVs+ZpCee68pEhTngFdgZBJLJmk3UhA==\"},\"keyId\":2158790563,\"outputPrefixType\":\"TINK\",\"status\":\"ENABLED\"}],\"primaryKeyId\":2158790563}" },
+                .{ 7, null },
+            },
+        },
+        .{
+            .desc = "json_keyset_2",
+            .sql =
+            \\# Every output from the comparison with 'keyset' should be true or NULL, since
+            \\# round-tripping should produce the same value.
+            \\SELECT kt_id, KEYS.KEYSET_FROM_JSON(KEYS.KEYSET_TO_JSON(keyset)) = keyset
+            \\FROM KeysetTable
+            \\ORDER BY kt_id
+            ,
+            .rows = .{
+                .{ 1, true },
+                .{ 2, true },
+                .{ 3, true },
+                .{ 4, true },
+                .{ 5, null },
+                .{ 6, true },
+                .{ 7, null },
+            },
+        },
+        .{
+            .desc = "json_keyset_3",
+            .sql =
+            \\# While not a target use case, it's possible to build JSON using SQL and then
+            \\# convert it to a keyset using KEYS.KEYSET_FROM_JSON. In reality, the
+            \\# expectation is that some users may want to import keysets represented as JSON
+            \\# from other systems. This test verifies that it is possible to create a keyset
+            \\# from JSON directly and that it round-trips back to serialized keyset form.
+            \\SELECT
+            \\  struct_keyset,
+            \\  TO_JSON_STRING(struct_keyset),
+            \\  TO_JSON_STRING(struct_keyset, true),
+            \\  KEYS.KEYSET_FROM_JSON(TO_JSON_STRING(struct_keyset)),
+            \\  -- pretty print the input JSON
+            \\  KEYS.KEYSET_FROM_JSON(TO_JSON_STRING(struct_keyset, true)),
+            \\  KEYS.KEYSET_TO_JSON(KEYS.KEYSET_FROM_JSON(TO_JSON_STRING(struct_keyset)))
+            \\FROM (
+            \\  SELECT
+            \\    STRUCT(
+            \\      ARRAY<STRUCT<keyId INT64, outputPrefixType STRING, status STRING>>[
+            \\        (1234, "TINK", "DESTROYED")
+            \\      ] AS key,
+            \\      4321 AS primaryKeyId
+            \\    ) AS struct_keyset
+            \\)
+            ,
+            .rows = .{
+                .{ .{ .{.{ 1234, "TINK", "DESTROYED" }}, 4321 }, "{\"key\":[{\"keyId\":1234,\"outputPrefixType\":\"TINK\",\"status\":\"DESTROYED\"}],\"primaryKeyId\":4321}", "{\x0a  \"key\": [\x0a    {\x0a      \"keyId\": 1234,\x0a      \"outputPrefixType\": \"TINK\",\x0a      \"status\": \"DESTROYED\"\x0a    }\x0a  ],\x0a  \"primaryKeyId\": 4321\x0a}", "\x08\xe1\x21\x12\x07\x10\x03\x18\xd2\x09\x20\x01", "\x08\xe1\x21\x12\x07\x10\x03\x18\xd2\x09\x20\x01", "{\"key\":[{\"keyId\":1234,\"outputPrefixType\":\"TINK\",\"status\":\"DESTROYED\"}],\"primaryKeyId\":4321}" },
+            },
+        },
+        .{
+            .desc = "safe_functions_3",
+            .sql =
+            \\SELECT
+            \\  -- Bad keyset
+            \\  SAFE.KEYS.KEYSET_TO_JSON(b'123'),
+            \\  -- Bad JSON
+            \\  SAFE.KEYS.KEYSET_FROM_JSON('{"key":123}')
+            ,
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "new_keyset_safe",
+            .sql = "SELECT SAFE.KEYS.NEW_KEYSET('AEAD_AES_GCM_256') != b'' as result",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "rotate_keyset_safe",
+            .sql = "SELECT SAFE.KEYS.ROTATE_KEYSET(KEYS.NEW_KEYSET('AEAD_AES_GCM_256'), 'AEAD_AES_GCM_256') != b'' as result",
+            .rows = .{
+                .{true},
+            },
+        },
+    },
+}

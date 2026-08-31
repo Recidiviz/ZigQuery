@@ -1,0 +1,1002 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/set_operation_inner_corresponding_by",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/set_operation_inner_corresponding_by.test",
+    .cases = .{
+        .{
+            .desc = "corresponding_by_literal_coercion_inner",
+            .unsupported_in_bigquery = "BigQuery has no INT32 SQL type: Type not found: INT32 (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# This file contains the compliance test cases for INNER CORRESPONDING BY. Test
+            \\# cases are divided into multiple sections.
+            \\## ===== Start section: Literal and type coercion for INNER CORRESPONDING BY =====  ##
+            \\# CORRESPONDING BY literal coercion INNER mode
+            \\SELECT 1 AS b, 1 AS a
+            \\UNION ALL CORRESPONDING BY (b)
+            \\SELECT CAST(1 AS INT32) AS b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "corresponding_by_literal_coercion_inner_coercion_with_subquery",
+            .unsupported_in_bigquery = "BigQuery has no INT32 SQL type: Type not found: INT32 (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY literal coercion INNER mode literal cocercion with subquery
+            \\(
+            \\  SELECT 1 AS a, 1 AS b
+            \\  UNION ALL CORRESPONDING BY (a, b)
+            \\  SELECT 1 AS b, NULL AS a
+            \\)
+            \\UNION ALL CORRESPONDING BY (a, b)
+            \\SELECT 1 AS b, CAST(1 AS INT32) AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1 },
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "corresponding_by_literal_coercion_inner_three_inputs",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT/INT32 SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY literal coercion INNER mode with three inputs but without padded NULL in any of the input
+            \\SELECT NULL AS a
+            \\UNION ALL CORRESPONDING BY (a)
+            \\SELECT CAST(1 AS FLOAT) AS a
+            \\UNION ALL CORRESPONDING BY (a)
+            \\SELECT CAST(1 AS INT32) AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "corresponding_by_type_coercion_inner_basic_type_coercion",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY Type coercion INNER mode basic type coercion
+            \\SELECT CAST(1 AS INT64) AS a, 1 AS b
+            \\UNION ALL CORRESPONDING BY (a)
+            \\SELECT CAST(1 AS FLOAT) AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "corresponding_by_type_coercion_inner_three_inputs",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT/INT32 SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY Type coercion INNER mode three inputs
+            \\SELECT CAST(1 AS INT64) AS a, 1 AS b, 1 AS c
+            \\UNION ALL CORRESPONDING BY (a, b)
+            \\SELECT 1 AS b, CAST(1 AS FLOAT) AS a, 1 AS e
+            \\UNION ALL CORRESPONDING BY (a, b)
+            \\SELECT 1 AS d, CAST(1 AS INT32) AS a, 1 AS b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "corresponding_by_type_coercion_inner_subquery",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT/INT32 SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY Type coercion INNER mode with subquery
+            \\SELECT 1 AS d, CAST(1 AS FLOAT) AS b, CAST(1 AS INT64) AS a
+            \\UNION ALL CORRESPONDING BY (b, a)
+            \\(
+            \\  SELECT CAST(1 AS FLOAT) AS a, CAST(1 AS INT32) AS b
+            \\  UNION ALL CORRESPONDING BY (a, b)
+            \\  SELECT 1 AS c, CAST(1 AS INT64) AS b, NULL AS a
+            \\)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+                .{ 1, null },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_type_coercion_non_selected_columns",
+            .unsupported_in_bigquery = "BigQuery has no INT32/FLOAT/DOUBLE SQL type: Type not found: INT32 (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY type coercion: non-selected columns are allowed to have incompatible types
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT32) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 2
+            \\  ),
+            \\  Table2 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, 's' AS b, 's' AS c
+            \\    UNION ALL
+            \\    SELECT 1, 't', 't'
+            \\  ),
+            \\  Table3 AS (
+            \\    SELECT CAST(1 AS FLOAT) AS a, CAST(1.0 AS DOUBLE) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2.0
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\UNION ALL CORRESPONDING BY (a)
+            \\SELECT a, b, c FROM Table2
+            \\UNION ALL CORRESPONDING BY (a)
+            \\SELECT a, c FROM Table3
+            ,
+            .unordered = true,
+            .rows = .{
+                .{1},
+                .{1},
+                .{1},
+                .{1},
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_type_coercion_sub_by_list",
+            .unsupported_in_bigquery = "BigQuery has no INT32 SQL type: Type not found: INT32 (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY literal and type coercion: by list does not include all the available columns
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT32) AS a, 's' AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 't', 1
+            \\  )
+            \\SELECT 1 AS a, 1 AS b, CAST(1 AS INT32) AS c
+            \\UNION DISTINCT CORRESPONDING BY (c, a)
+            \\SELECT c, a, b FROM Table1
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_except_all_2row_1row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\## ===== Start section: EXCEPT (ALL|DISTINCT) for INNER CORRESPONDING BY =====  ##
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row, row] EXCEPT ALL [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_except_all_2row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row, row] EXCEPT ALL [row, row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_except_all_1row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row] EXCEPT ALL [row, row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT 1 AS a, 1 AS b
+            \\EXCEPT ALL CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_except_all_2row_different_row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row1, row1] EXCEPT ALL [row2] = [row1, row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_except_distinct_2row_1row",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row, row] EXCEPT DISTINCT [row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_except_distinct_2row_different_row",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row1, row1] EXCEPT DISTINCT [row2] = [row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_except_all_2row_1row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row, row] EXCEPT ALL [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\EXCEPT ALL CORRESPONDING BY (c, a)
+            \\SELECT 2 AS b, 1 AS a, 2 AS b, 1 AS c
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_except_all_2row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row, row] EXCEPT ALL [row, row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\EXCEPT ALL CORRESPONDING BY (c, a)
+            \\SELECT b, a, b, c FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_except_all_1row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row] EXCEPT ALL [row, row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT 1 AS a, 2 AS b, 2 AS b, 1 AS c
+            \\EXCEPT ALL CORRESPONDING BY (c, a)
+            \\SELECT b, a, b, c FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_except_all_2row_different_row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row1, row1] EXCEPT ALL [row2] = [row1, row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\EXCEPT ALL CORRESPONDING BY (c, a)
+            \\SELECT 1 AS b, 2 AS a, 1 AS b, 2 AS c
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_except_distinct_2row_1row",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row, row] EXCEPT DISTINCT [row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING BY (c, a)
+            \\SELECT 2 AS b, 1 AS a, 2 AS b, 1 AS c
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_except_distinct_2row_different_row",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row1, row1] EXCEPT DISTINCT [row2] = [row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\EXCEPT DISTINCT CORRESPONDING BY (c, a)
+            \\SELECT 1 AS b, 2 AS a, 1 AS b, 2 AS c
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_except_all_2row_1row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row, row] EXCEPT ALL [row] = [row]
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\EXCEPT ALL CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a, 2 AS c, 't'
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_except_all_2row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row, row] EXCEPT ALL [row, row] = []
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\EXCEPT ALL CORRESPONDING BY (b, a)
+            \\(
+            \\  SELECT
+            \\    CAST(1 AS INT64) AS b, CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS c, 't'
+            \\  UNION ALL
+            \\  SELECT 1, 1, 2, 't'
+            \\)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_except_all_1row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row] EXCEPT ALL [row, row] = []
+            \\SELECT 2, 1 AS a, 1 AS b
+            \\EXCEPT ALL CORRESPONDING BY (b, a)
+            \\(
+            \\  SELECT
+            \\    CAST(1 AS INT64) AS b, CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS c, 't'
+            \\  UNION ALL
+            \\  SELECT 1, 1, 2, 't'
+            \\)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_except_all_2row_different_row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row1, row1] EXCEPT ALL [row2] = [row1, row1]
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\EXCEPT ALL CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a, 1 AS c, 1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_except_distinct_2row_1row",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row, row] EXCEPT DISTINCT [row] = []
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\EXCEPT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a, 2 AS c, 't'
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_except_distinct_2row_different_row",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row1, row1] EXCEPT DISTINCT [row2] = [row1]
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\EXCEPT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a, 1 AS c, 1
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_union_all_basic",
+            .sql =
+            \\## ===== Start section: UNION (ALL|DISTINCT) for INNER CORRESPONDING BY =====  ##
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row1] UNION ALL [row2] = [row1, row2]
+            \\SELECT 1 AS a, 1 AS b
+            \\UNION ALL CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_union_distinct_same_row",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row1, row1] union distinct [row1] = [row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\UNION DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_union_distinct_different_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row1] union distinct [row2] = [row1, row2]
+            \\SELECT 1 AS a, 1 AS b
+            \\UNION DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_union_all_basic",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row1] UNION ALL [row2] = [row1, row2]
+            \\SELECT 1 AS a, 2 AS b, 2 AS b, 1 AS c
+            \\UNION ALL CORRESPONDING BY (c, a)
+            \\SELECT 2 AS b, 1 AS a, 2 AS b, 1 AS c
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_union_distinct_same_row",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row1, row1] union distinct [row1] = [row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\UNION DISTINCT CORRESPONDING BY (c, a)
+            \\SELECT 2 AS b, 1 AS a, 2 AS b, 1 AS c
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_union_distinct_different_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row1] union distinct [row2] = [row1, row2]
+            \\SELECT 1 AS a, 2 AS b, 2 AS b, 1 AS c
+            \\UNION DISTINCT CORRESPONDING BY (c, a)
+            \\SELECT 1 AS b, 2 AS a, 1 AS b, 2 AS c
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_union_all_basic",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row1] UNION ALL [row2] = [row1, row2]
+            \\SELECT 2, 1 AS a, 1 AS b
+            \\UNION ALL CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a, 2 AS c, 2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_union_distinct_same_row",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row1, row1] union distinct [row1] = [row1]
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\UNION DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a, 2 AS c, 't'
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_union_distinct_different_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row1] union distinct [row2] = [row1, row2]
+            \\SELECT 2, 1 AS a, 1 AS b
+            \\UNION DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a, 1 AS c, 1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_intersect_all_multiple_same_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\## ===== Start section: INTERSECT (ALL|DISTINCT) for INNER CORRESPONDING BY =====  ##
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row, row] INTERSECT ALL [row, row] = [row, row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_intersect_all_single_same_row",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row, row] INTERSECT ALL [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_intersect_all_different_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row1, row1] INTERSECT ALL [row2] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_intersect_distinct_multiple_same_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row, row] INTERSECT DISTINCT [row, row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table1
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_intersect_distinct_single_same_row",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row, row] INTERSECT DISTINCT [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_no_extra_columns_intersect_distinct_different_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY scans don't have extra columns [row1, row1] INTERSECT DISTINCT [row2] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_intersect_all_multiple_same_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row, row] INTERSECT ALL [row, row] = [row, row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\INTERSECT ALL CORRESPONDING BY (c, a)
+            \\SELECT b, a, b, c FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_intersect_all_single_same_row",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row, row] INTERSECT ALL [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\INTERSECT ALL CORRESPONDING BY (c, a)
+            \\SELECT 2 AS b, 1 AS a, 2 AS b, 1 AS c
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_intersect_all_different_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row1, row1] INTERSECT ALL [row2] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\INTERSECT ALL CORRESPONDING BY (c, a)
+            \\SELECT 1 AS b, 2 AS a, 1 AS b, 2 AS c
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_intersect_distinct_multiple_same_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row, row] INTERSECT DISTINCT [row, row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING BY (c, a)
+            \\SELECT b, a, b, c FROM Table1
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_intersect_distinct_single_same_row",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row, row] INTERSECT DISTINCT [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING BY (c, a)
+            \\SELECT 2 AS b, 1 AS a, 2 AS b, 1 AS c
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_by_list_is_sub_list_of_available_columns_intersect_distinct_different_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY the by list is a sub list of the available output columns, non-selected columns have duplicates [row1, row1] INTERSECT DISTINCT [row2] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 2, 1
+            \\  )
+            \\SELECT a, b, b, c FROM Table1
+            \\INTERSECT DISTINCT CORRESPONDING BY (c, a)
+            \\SELECT 1 AS b, 2 AS a, 1 AS b, 2 AS c
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_intersect_all_multiple_same_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row, row] INTERSECT ALL [row, row] = [row, row]
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\INTERSECT ALL CORRESPONDING BY (b, a)
+            \\(
+            \\  SELECT
+            \\    CAST(1 AS INT64) AS b, CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS c, 't'
+            \\  UNION ALL
+            \\  SELECT 1, 1, 2, 't'
+            \\)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_intersect_all_single_same_row",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row, row] INTERSECT ALL [row] = [row]
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\INTERSECT ALL CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a, 2 AS c, 't'
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_intersect_all_different_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row1, row1] INTERSECT ALL [row2] = []
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\INTERSECT ALL CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a, 1 AS c, 1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_intersect_distinct_multiple_same_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row, row] INTERSECT DISTINCT [row, row] = [row]
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\INTERSECT DISTINCT CORRESPONDING BY (b, a)
+            \\(
+            \\  SELECT
+            \\    CAST(1 AS INT64) AS b, CAST(1 AS INT64) AS a, CAST(2 AS INT64) AS c, 't'
+            \\  UNION ALL
+            \\  SELECT 1, 1, 2, 't'
+            \\)
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_intersect_distinct_single_same_row",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row, row] INTERSECT DISTINCT [row] = [row]
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\INTERSECT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a, 2 AS c, 't'
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "inner_corresponding_by_scans_contain_anonymous_columns_intersect_distinct_different_rows",
+            .sql =
+            \\# INNER CORRESPONDING BY scans contain anonymous columns [row1, row1] INTERSECT DISTINCT [row2] = []
+            \\(
+            \\  SELECT CAST(2 AS INT64), CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b
+            \\  UNION ALL
+            \\  SELECT 2, 1, 1
+            \\)
+            \\INTERSECT DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a, 1 AS c, 1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "three_input_corresponding_by_inner_basic test case with dropped columns",
+            .unsupported_in_bigquery = "BigQuery has no DOUBLE SQL type: Type not found: DOUBLE (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\## ===== Start section: Multiple inputs for INNER CORRESPONDING BY =====  ##
+            \\# Three input CORRESPONDING BY: INNER mode basic test case with dropped columns
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT
+            \\      CAST(1 AS INT64) AS a, CAST(1 AS DOUBLE) AS b, CAST(100 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 1, 101
+            \\  ),
+            \\  Table2 AS (
+            \\    SELECT
+            \\      CAST(2 AS INT64) AS a,
+            \\      CAST(2 AS INT64) AS b,
+            \\      CAST(102 AS INT64) AS c,
+            \\      CAST(100 AS INT64) AS d
+            \\    UNION ALL
+            \\    SELECT 2, 2, 103, 101
+            \\  ),
+            \\  Table3 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS DOUBLE) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b, c FROM Table1
+            \\UNION ALL CORRESPONDING BY (b, a)
+            \\SELECT d, a, c, b FROM Table2
+            \\UNION ALL CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table3
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+                .{ 2, 2 },
+                .{ 2, 2 },
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "three_input_corresponding_by_inner_non-selected columns have different types",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# Three input CORRESPONDING BY: INNER mode non-selected columns have different types
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b, 'a' AS c
+            \\    UNION ALL
+            \\    SELECT 1, 1, 'b'
+            \\  ),
+            \\  Table2 AS (
+            \\    SELECT CAST(2 AS INT64) AS a, CAST(2 AS INT64) AS b, CAST(102 AS FLOAT) AS c
+            \\    UNION ALL
+            \\    SELECT 2, 2, 103
+            \\  ),
+            \\  Table3 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b, CAST(100 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 1, 1, 101
+            \\  )
+            \\SELECT a, b, c FROM Table1
+            \\UNION DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT c, b, a FROM Table2
+            \\UNION DISTINCT CORRESPONDING BY (b, a)
+            \\SELECT a, c, b FROM Table3
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+            },
+        },
+    },
+}

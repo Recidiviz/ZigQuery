@@ -1,0 +1,267 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/dml_update_struct",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/dml_update_struct.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# Tests for UPDATEs on struct columns. We use multiple test tables to keep test
+            \\# output sizes small, and also because there are various features that may not
+            \\# be supported by all engines.
+            \\CREATE TABLE Table1 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       STRUCT (cast(10 as int64) as value1,
+            \\               cast(11 as int64) as value2) struct_value
+            \\UNION ALL
+            \\SELECT 2, (20, 21)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table2 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       STRUCT (cast(10 as int64) as int64_value,
+            \\               cast([11, 12, 13] as ARRAY<INT64>) as array_value,
+            \\               cast([111, 112, 113] as ARRAY<INT64>) as array_value2)
+            \\       struct_value
+            \\UNION ALL
+            \\SELECT 2, (20, [21, 22, 23], [221, 222, 223])
+            \\UNION ALL
+            \\SELECT 3, (30, cast(NULL as ARRAY<INT64>), cast(NULL as ARRAY<INT64>))
+            \\UNION ALL
+            \\SELECT 4, NULL
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table3 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       STRUCT (cast(10 as int64) as int64_field,
+            \\               STRUCT(cast(11 as int64) as nested_value1,
+            \\                      cast(12 as int64) as nested_value2) as struct_field)
+            \\       struct_value
+            \\UNION ALL
+            \\SELECT 2, (20, CAST(NULL AS STRUCT<INT64, INT64>))
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table4 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       STRUCT (cast(10 as int64) as int64_field,
+            \\               STRUCT(cast(11 as int64) as nested_value,
+            \\                      cast([12, 13, 14] as ARRAY<INT64>) as nested_array_value)
+            \\               as struct_field)
+            \\       struct_value
+            \\UNION ALL
+            \\SELECT 2, (20, (21, [22, 23, 24]))
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# For testing long paths like s.a[0].b[1].c[2].d[3].
+            \\CREATE TABLE Table5 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       STRUCT ([
+            \\         STRUCT ([
+            \\           NULL,
+            \\           STRUCT ([
+            \\             NULL, NULL,
+            \\             STRUCT ([NULL, NULL, NULL, cast(10 as int64)] as array4)
+            \\           ] as array3)
+            \\         ] as array2)
+            \\       ] as array1) as struct_value
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE Table6 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       [
+            \\         STRUCT(100 as value1, 101 as value2),
+            \\         (110, 111),
+            \\         (120, 121)
+            \\       ] as array_value
+            \\UNION ALL
+            \\SELECT 2,
+            \\       [
+            \\         STRUCT(200 as value1, 201 as value2),
+            \\         (210, 211),
+            \\         (220, 221)
+            \\       ]
+            \\UNION ALL
+            \\SELECT 3, NULL
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# For testing long paths like s.a[0].s.b[1].s.c[2].s.d[3].
+            \\CREATE TABLE Table7 AS
+            \\SELECT cast(1 as int64) as primary_key,
+            \\       STRUCT (
+            \\         STRUCT (
+            \\           [ STRUCT (
+            \\               STRUCT (
+            \\                 [ NULL,
+            \\                   STRUCT (
+            \\                     STRUCT (
+            \\                       [ NULL, NULL,
+            \\                         STRUCT (
+            \\                           STRUCT (
+            \\                             [NULL, NULL, NULL, cast(10 as int64)] as array4
+            \\                           ) as struct4)
+            \\                       ] as array3) as struct3)
+            \\                 ] as array2) as struct2)
+            \\           ] as array1) as struct1) as struct_value
+            ,
+        },
+        .{
+            .desc = "assign_struct_field_in_null_struct",
+            .sql =
+            \\# Fails because there is a row where struct_value is NULL.
+            \\UPDATE Table2 SET struct_value.int64_value = 100 WHERE True
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_struct_with_set_null_struct",
+            .sql =
+            \\UPDATE Table2
+            \\SET struct_value.array_value[OFFSET(0)] = 1
+            \\WHERE struct_value IS NULL
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_duplicate_elements_array_struct_with_set",
+            .sql =
+            \\UPDATE Table2
+            \\SET struct_value.array_value[OFFSET(0)] = 100,
+            \\    struct_value.array_value[OFFSET(0)] = 200
+            \\WHERE primary_key <= 2
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_null_array_struct_with_set",
+            .sql = "UPDATE Table2 SET struct_value.array_value[OFFSET(0)] = 100 WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_struct_with_set_null_index",
+            .sql =
+            \\UPDATE Table2
+            \\SET struct_value.array_value[OFFSET(NULL)] = 100
+            \\WHERE primary_key <= 2
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_struct_with_set_negative_index",
+            .sql =
+            \\UPDATE Table2
+            \\SET struct_value.array_value[OFFSET(-1)] = 100
+            \\WHERE primary_key <= 2
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_struct_with_set_index_too_large",
+            .sql =
+            \\UPDATE Table2
+            \\SET struct_value.array_value[OFFSET(1000)] = 100
+            \\WHERE primary_key <= 2
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_array_struct_with_set_index_barely_too_large",
+            .sql =
+            \\UPDATE Table2
+            \\SET struct_value.array_value[OFFSET(3)] = 100
+            \\WHERE primary_key <= 2
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_duplicate_elements_array_of_structs_with_set",
+            .sql =
+            \\UPDATE Table6
+            \\SET array_value[OFFSET(0)].value1 = 1000,
+            \\    array_value[OFFSET(0)].value1 = 2000
+            \\WHERE primary_key != 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_duplicate_nonoverlapping_elements_array_of_structs_with_set",
+            .sql =
+            \\# TODO: Ideally the spec would allow this. See the comments for
+            \\# ResolvedUpdateItem in gen_resolved_ast.py.
+            \\UPDATE Table6
+            \\SET array_value[OFFSET(0)].value1 = 1000,
+            \\    array_value[OFFSET(0)].value2 = 2000
+            \\WHERE primary_key != 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_null_element_in_array_of_structs_with_set",
+            .sql = "UPDATE Table6 SET array_value[OFFSET(0)].value1 = 1000 WHERE True",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_element_in_array_of_structs_with_set_null_index",
+            .sql =
+            \\UPDATE Table6
+            \\SET array_value[OFFSET(NULL)].value1 = 1000
+            \\WHERE primary_key != 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_element_in_array_of_structs_with_set_negative_index",
+            .sql =
+            \\UPDATE Table6
+            \\SET array_value[OFFSET(-1)].value1 = 1000
+            \\WHERE primary_key != 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_element_in_array_of_structs_with_set_index_too_large",
+            .sql =
+            \\UPDATE Table6
+            \\SET array_value[OFFSET(1000)].value1 = 1000
+            \\WHERE primary_key != 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "update_element_in_array_of_structs_with_set_index_barely_too_large",
+            .sql =
+            \\UPDATE Table6
+            \\SET array_value[OFFSET(3)].value1 = 1000
+            \\WHERE primary_key != 3
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "assign_null_struct_subfield",
+            .sql =
+            \\# Fails because struct_value.struct_field is not set in all rows.
+            \\UPDATE Table3 SET struct_value.struct_field.nested_value1 = 1000 WHERE True
+            ,
+            .expect_error_any = true,
+        },
+    },
+}

@@ -1,0 +1,83 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/measures_with_udas",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/measures_with_udas.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# TODO: b/350555383 - Remove PlaceHolderTable once we support creating Measures
+            \\# in compliance tests.
+            \\CREATE TABLE PlaceholderTable AS SELECT 1 AS key
+            ,
+        },
+        .{
+            .desc = "measures_with_udas_simple",
+            .sql =
+            \\SELECT
+            \\  AGG(measure_sum_price_plus_sum_quantity_udf),
+            \\  AGG(measure_sum_price_uda),
+            \\  AGG(measure_count_price_uda),
+            \\  AGG(measure_sum_price_per_key_uda),
+            \\  AGG(measure_sum_count_price_per_country_uda)
+            \\FROM MeasureTable_SingleKey
+            ,
+            .rows = .{
+                .{ 800, 550, 10, 550, 10 },
+            },
+        },
+        .{
+            .desc = "measures_with_udas_complex",
+            .sql =
+            \\SELECT
+            \\  AGG(measure_sum_price_plus_sum_quantity_plus_ten_udf),
+            \\  AGG(measure_sum_max_price_per_country_uda),
+            \\  AGG(measure_sum_price_pseudocolumn_uda),
+            \\  AGG(measure_sum_price_plus_one_pseudocolumn_udf)
+            \\FROM MeasureTable_SingleKey
+            ,
+            .rows = .{
+                .{ 810, 200, 550, 551 },
+            },
+        },
+        .{
+            .desc = "measures_with_udas_simple_with_group_by",
+            .sql =
+            \\SELECT
+            \\  date_str,
+            \\  AGG(measure_sum_price_plus_sum_quantity_udf),
+            \\  AGG(measure_sum_price_uda),
+            \\  AGG(measure_count_price_uda),
+            \\  AGG(measure_sum_price_per_key_uda),
+            \\  AGG(measure_sum_count_price_per_country_uda)
+            \\FROM MeasureTable_SingleKey
+            \\GROUP BY date_str
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "Feb 2024", 400, 260, 4, 260, 4 },
+                .{ "Jan 2024", 400, 290, 6, 290, 6 },
+            },
+        },
+        .{
+            .desc = "measures_with_udas_complex_with_group_by",
+            .sql =
+            \\SELECT
+            \\  date_str,
+            \\  AGG(measure_sum_price_plus_sum_quantity_plus_ten_udf),
+            \\  AGG(measure_sum_max_price_per_country_uda),
+            \\  AGG(measure_sum_price_pseudocolumn_uda),
+            \\  AGG(measure_sum_price_plus_one_pseudocolumn_udf)
+            \\FROM MeasureTable_SingleKey
+            \\GROUP BY date_str
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ "Feb 2024", 410, 200, 260, 261 },
+                .{ "Jan 2024", 410, 160, 290, 291 },
+            },
+        },
+    },
+}

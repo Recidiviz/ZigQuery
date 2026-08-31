@@ -1,0 +1,211 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_any_value",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_any_value.test",
+    .cases = .{
+        .{
+            .desc = "analytic_any_value_numeric",
+            .sql =
+            \\SELECT numeric_val, ANY_VALUE(numeric_val) OVER test_window
+            \\FROM (SELECT CAST(NULL as NUMERIC) numeric_val UNION ALL
+            \\      SELECT 0.01 UNION ALL
+            \\      SELECT 3.5  UNION ALL
+            \\      SELECT -1.230000001)
+            \\WINDOW test_window AS (ROWS CURRENT ROW)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 0.01, 0.01 },
+                .{ -1.230000001, -1.230000001 },
+                .{ null, null },
+                .{ 3.5, 3.5 },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_array",
+            .sql =
+            \\SELECT row_id, array_val,
+            \\       ANY_VALUE(array_val) OVER (ORDER BY row_id
+            \\                                  ROWS BETWEEN 2 PRECEDING AND 2 PRECEDING)
+            \\FROM (SELECT 1 row_id, [1, 2, 3] array_val UNION ALL
+            \\      SELECT 2, [2, 3, 4] UNION ALL
+            \\      SELECT 3, CAST(null as ARRAY<int64>) UNION ALL
+            \\      SELECT 4, [6, 5])
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, .{ 1, 2, 3 }, null },
+                .{ 2, .{ 2, 3, 4 }, null },
+                .{ 3, null, .{ 1, 2, 3 } },
+                .{ 4, .{ 6, 5 }, .{ 2, 3, 4 } },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_rangetype_date_1",
+            .sql =
+            \\SELECT row_id, range_date_val, ANY_VALUE(range_date_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, CAST(NULL as RANGE<DATE>) AS range_date_val
+            \\  UNION ALL
+            \\  SELECT 2, RANGE<DATE> '[2020-01-01, 2020-12-31)')
+            \\WINDOW test_window AS (ROWS CURRENT ROW)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "[2020-01-01, 2020-12-31)", "[2020-01-01, 2020-12-31)" },
+                .{ 1, null, null },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_rangetype_date_2",
+            .sql =
+            \\SELECT row_id, range_date_val, ANY_VALUE(range_date_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, CAST(NULL as RANGE<DATE>) AS range_date_val
+            \\  UNION ALL
+            \\  SELECT 2, RANGE<DATE> '[2020-01-01, 2020-12-31)')
+            \\WINDOW test_window AS (ORDER BY row_id
+            \\                       ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null },
+                .{ 2, "[2020-01-01, 2020-12-31)", null },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_rangetype_timestamp_1",
+            .sql =
+            \\SELECT row_id, range_timestamp_val, ANY_VALUE(range_timestamp_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, CAST(NULL AS RANGE<TIMESTAMP>) AS range_timestamp_val
+            \\  UNION ALL
+            \\  SELECT 2, RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)')
+            \\WINDOW test_window AS (ROWS CURRENT ROW)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "[2020-01-01 08:00:00+00, 2020-12-31 08:00:00+00)", "[2020-01-01 08:00:00+00, 2020-12-31 08:00:00+00)" },
+                .{ 1, null, null },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_rangetype_timestamp_2",
+            .sql =
+            \\SELECT row_id, range_timestamp_val, ANY_VALUE(range_timestamp_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, CAST(NULL AS RANGE<TIMESTAMP>) AS range_timestamp_val
+            \\  UNION ALL
+            \\  SELECT 2, RANGE<TIMESTAMP> '[2020-01-01, 2020-12-31)')
+            \\WINDOW test_window AS (ORDER BY row_id
+            \\                       ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null },
+                .{ 2, "[2020-01-01 08:00:00+00, 2020-12-31 08:00:00+00)", null },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_rangetype_datetime_1",
+            .sql =
+            \\SELECT row_id, range_datetime_val, ANY_VALUE(range_datetime_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, CAST(NULL as RANGE<DATETIME>) AS range_datetime_val
+            \\  UNION ALL
+            \\  SELECT 2, RANGE<DATETIME> '[2020-01-01, 2020-12-31)')
+            \\WINDOW test_window AS (ROWS CURRENT ROW)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "[2020-01-01 00:00:00, 2020-12-31 00:00:00)", "[2020-01-01 00:00:00, 2020-12-31 00:00:00)" },
+                .{ 1, null, null },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_rangetype_datetime_2",
+            .sql =
+            \\SELECT row_id, range_datetime_val, ANY_VALUE(range_datetime_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, CAST(NULL as RANGE<DATETIME>) AS range_datetime_val
+            \\  UNION ALL
+            \\  SELECT 2, RANGE<DATETIME> '[2020-01-01, 2020-12-31)')
+            \\WINDOW test_window AS (ORDER BY row_id
+            \\                       ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null },
+                .{ 2, "[2020-01-01 00:00:00, 2020-12-31 00:00:00)", null },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_distinct_rangetype_date",
+            .sql =
+            \\SELECT row_id, range_date_val, ANY_VALUE(range_date_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, true AS bool_val, CAST(NULL as RANGE<DATE>) AS range_date_val
+            \\  UNION ALL
+            \\  SELECT 2, true, CAST(NULL AS RANGE<DATE>)
+            \\  UNION ALL
+            \\  SELECT 3, false, RANGE<DATE> '[UNBOUNDED, 2020-12-31)'
+            \\  UNION ALL
+            \\  SELECT 4, false, RANGE<DATE> '[UNBOUNDED, 2020-12-31)')
+            \\WINDOW test_window AS (PARTITION BY bool_val)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, "[NULL, 2020-12-31)", "[NULL, 2020-12-31)" },
+                .{ 4, "[NULL, 2020-12-31)", "[NULL, 2020-12-31)" },
+                .{ 1, null, null },
+                .{ 2, null, null },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_distinct_rangetype_timestamp",
+            .sql =
+            \\SELECT row_id, range_timestamp_val, ANY_VALUE(range_timestamp_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, true AS bool_val, CAST(NULL as RANGE<TIMESTAMP>) AS range_timestamp_val
+            \\  UNION ALL
+            \\  SELECT 2, true, CAST(NULL AS RANGE<TIMESTAMP>)
+            \\  UNION ALL
+            \\  SELECT 3, false, RANGE<TIMESTAMP> '[UNBOUNDED, 2020-12-31)'
+            \\  UNION ALL
+            \\  SELECT 4, false, RANGE<TIMESTAMP> '[UNBOUNDED, 2020-12-31)')
+            \\WINDOW test_window AS (PARTITION BY bool_val)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, "[NULL, 2020-12-31 08:00:00+00)", "[NULL, 2020-12-31 08:00:00+00)" },
+                .{ 4, "[NULL, 2020-12-31 08:00:00+00)", "[NULL, 2020-12-31 08:00:00+00)" },
+                .{ 1, null, null },
+                .{ 2, null, null },
+            },
+        },
+        .{
+            .desc = "analytic_any_value_distinct_rangetype_datetime",
+            .sql =
+            \\SELECT row_id, range_datetime_val, ANY_VALUE(range_datetime_val) OVER test_window
+            \\FROM (
+            \\  SELECT 1 AS row_id, true AS bool_val, CAST(NULL as RANGE<DATETIME>) AS range_datetime_val
+            \\  UNION ALL
+            \\  SELECT 2, true, CAST(NULL AS RANGE<DATETIME>)
+            \\  UNION ALL
+            \\  SELECT 3, false, RANGE<DATETIME> '[UNBOUNDED, 2020-12-31)'
+            \\  UNION ALL
+            \\  SELECT 4, false, RANGE<DATETIME> '[UNBOUNDED, 2020-12-31)')
+            \\WINDOW test_window AS (PARTITION BY bool_val)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, "[NULL, 2020-12-31 00:00:00)", "[NULL, 2020-12-31 00:00:00)" },
+                .{ 4, "[NULL, 2020-12-31 00:00:00)", "[NULL, 2020-12-31 00:00:00)" },
+                .{ 1, null, null },
+                .{ 2, null, null },
+            },
+        },
+    },
+}

@@ -1,0 +1,753 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/analytic_lead",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/analytic_lead.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TestTable AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as bool) as bool_val,
+            \\       cast(null as int64) as int64_val,
+            \\       cast(null as int32) as int32_val,
+            \\       cast(null as string) as str_val UNION ALL
+            \\  SELECT 2,  true,  null, null,  null  UNION ALL
+            \\  SELECT 3,  false, 1,    6,     "A"   UNION ALL
+            \\  SELECT 4,  true,  2,    2,     "A"   UNION ALL
+            \\  SELECT 5,  false, 1,    3,     "aA"   UNION ALL
+            \\  SELECT 6,  true,  2,    2,     "Aa"   UNION ALL
+            \\  SELECT 7,  false, 1,    5,     'a'   UNION ALL
+            \\  SELECT 8,  true,  4,    2,     "a"   UNION ALL
+            \\  SELECT 9,  false, 2,    3,     "b"   UNION ALL
+            \\  SELECT 10, true,  3,    1,     "B"
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableDateTimeBytes AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as date) as date_val,
+            \\       cast(null as timestamp) as timestamp_val,
+            \\       cast(null as bytes) as bytes_val UNION ALL
+            \\SELECT 2,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("1" as bytes) UNION ALL
+            \\SELECT 3,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("2" as bytes) UNION ALL
+            \\SELECT 4,
+            \\       cast('2015-01-01' as date),
+            \\       TIMESTAMP '2014-01-01 00:00:01.011011 UTC',
+            \\       cast("1" as bytes) UNION ALL
+            \\SELECT 5,
+            \\       cast('2015-01-01' as date),
+            \\       TIMESTAMP '2013-01-01 00:00:01.011011 UTC',
+            \\       cast("2" as bytes) UNION ALL
+            \\SELECT 6,
+            \\       cast('2014-01-01' as date),
+            \\       TIMESTAMP '2015-01-01 00:00:01.011011 UTC',
+            \\       cast("5" as bytes)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableRanges AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as bool) as bool_val,
+            \\       cast(null as range<date>) as range_date_val,
+            \\       cast(null as range<timestamp>) as range_timestamp_val UNION ALL
+            \\  SELECT 2,  true,  range<date> '[UNBOUNDED, 2020-01-01)', range<timestamp> '[UNBOUNDED, 2020-01-01)' UNION ALL
+            \\  SELECT 3,  false, range<date> '[UNBOUNDED, UNBOUNDED)', range<timestamp> '[UNBOUNDED, UNBOUNDED)' UNION ALL
+            \\  SELECT 4,  true,  range<date> '[2020-01-01, 2020-01-02)', range<timestamp> '[2020-01-01, 2020-01-02)' UNION ALL
+            \\  SELECT 5,  false, range<date> '[2020-01-02, 2020-01-03)', range<timestamp> '[2020-01-02, 2020-01-03)' UNION ALL
+            \\  SELECT 6,  true,  range<date> '[2020-01-03, 2020-01-04)', range<timestamp> '[2020-01-03, 2020-01-04)' UNION ALL
+            \\  SELECT 7,  false, range<date> '[2020-01-04, 2020-01-05)', range<timestamp> '[2020-01-04, 2020-01-05)' UNION ALL
+            \\  SELECT 8,  true,  range<date> '[2020-01-05, 2020-01-06)', range<timestamp> '[2020-01-05, 2020-01-06)' UNION ALL
+            \\  SELECT 9,  false, range<date> '[2020-01-06, 2020-01-07)', range<timestamp> '[2020-01-06, 2020-01-07)' UNION ALL
+            \\  SELECT 10, true,  range<date> '[2020-01-07, UNBOUNDED)', range<timestamp> '[2020-01-07, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TABLE TableDatetimeRanges AS
+            \\SELECT cast(1 as int64) as row_id,
+            \\       cast(null as bool) as bool_val,
+            \\       cast(null as range<datetime>) as range_datetime_val UNION ALL
+            \\  SELECT 2,  true,  range<datetime> '[UNBOUNDED, 2020-01-01)' UNION ALL
+            \\  SELECT 3,  false, range<datetime> '[UNBOUNDED, UNBOUNDED)' UNION ALL
+            \\  SELECT 4,  true,  range<datetime> '[2020-01-01, 2020-01-02)' UNION ALL
+            \\  SELECT 5,  false, range<datetime> '[2020-01-02, 2020-01-03)' UNION ALL
+            \\  SELECT 6,  true,  range<datetime> '[2020-01-03, 2020-01-04)' UNION ALL
+            \\  SELECT 7,  false, range<datetime> '[2020-01-04, 2020-01-05)' UNION ALL
+            \\  SELECT 8,  true,  range<datetime> '[2020-01-05, 2020-01-06)' UNION ALL
+            \\  SELECT 9,  false, range<datetime> '[2020-01-06, 2020-01-07)' UNION ALL
+            \\  SELECT 10, true,  range<datetime> '[2020-01-07, UNBOUNDED)'
+            ,
+        },
+        .{
+            .desc = "lead_offset_zero_offset",
+            .sql =
+            \\SELECT row_id, LEAD(row_id, 0) OVER test_window
+            \\FROM TestTable
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+                .{ 3, 3 },
+                .{ 4, 4 },
+                .{ 5, 5 },
+                .{ 6, 6 },
+                .{ 7, 7 },
+                .{ 8, 8 },
+                .{ 9, 9 },
+                .{ 10, 10 },
+            },
+        },
+        .{
+            .desc = "lead_default_offset",
+            .sql =
+            \\SELECT row_id,
+            \\       LEAD(row_id) OVER test_window,
+            \\       LEAD(row_id, 1) OVER test_window
+            \\FROM TestTable
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 2, 2 },
+                .{ 2, 3, 3 },
+                .{ 3, 4, 4 },
+                .{ 4, 5, 5 },
+                .{ 5, 6, 6 },
+                .{ 6, 7, 7 },
+                .{ 7, 8, 8 },
+                .{ 8, 9, 9 },
+                .{ 9, 10, 10 },
+                .{ 10, null, null },
+            },
+        },
+        .{
+            .desc = "lead_small_offset",
+            .sql =
+            \\SELECT row_id,
+            \\       LEAD(row_id, 3) OVER test_window,
+            \\       LEAD(row_id, 4) OVER test_window,
+            \\       LEAD(row_id, 100) OVER test_window
+            \\FROM TestTable
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 4, 5, null },
+                .{ 2, 5, 6, null },
+                .{ 3, 6, 7, null },
+                .{ 4, 7, 8, null },
+                .{ 5, 8, 9, null },
+                .{ 6, 9, 10, null },
+                .{ 7, 10, null, null },
+                .{ 8, null, null, null },
+                .{ 9, null, null, null },
+                .{ 10, null, null, null },
+            },
+        },
+        .{
+            .desc = "lead_large_offset",
+            .sql =
+            \\SELECT row_id,
+            \\       LEAD(row_id, 9223372036854775807) OVER test_window
+            \\FROM TestTable
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null },
+                .{ 2, null },
+                .{ 3, null },
+                .{ 4, null },
+                .{ 5, null },
+                .{ 6, null },
+                .{ 7, null },
+                .{ 8, null },
+                .{ 9, null },
+                .{ 10, null },
+            },
+        },
+        .{
+            .desc = "lead_bool",
+            .sql =
+            \\SELECT row_id, bool_val,
+            \\       LEAD(bool_val, 1, false) OVER test_window,
+            \\       LEAD(bool_val, 2) OVER test_window
+            \\FROM TestTable
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, true, false },
+                .{ 2, true, false, true },
+                .{ 3, false, true, false },
+                .{ 4, true, false, true },
+                .{ 5, false, true, false },
+                .{ 6, true, false, true },
+                .{ 7, false, true, false },
+                .{ 8, true, false, true },
+                .{ 9, false, true, null },
+                .{ 10, true, false, null },
+            },
+        },
+        .{
+            .desc = "lead_int32_uint32",
+            .sql =
+            \\SELECT row_id, int32_val,
+            \\       LEAD(int32_val, 5, -1) OVER test_window,
+            \\       LEAD(CAST(int32_val as uint32), 2, 100000) OVER test_window
+            \\FROM TestTable
+            \\WINDOW test_window AS (ORDER BY row_id DESC)
+            \\ORDER BY row_id DESC
+            ,
+            .rows = .{
+                .{ 10, 1, 3, 2 },
+                .{ 9, 3, 2, 5 },
+                .{ 8, 2, 6, 2 },
+                .{ 7, 5, null, 3 },
+                .{ 6, 2, null, 2 },
+                .{ 5, 3, -1, 6 },
+                .{ 4, 2, -1, null },
+                .{ 3, 6, -1, null },
+                .{ 2, null, -1, 100000 },
+                .{ 1, null, -1, 100000 },
+            },
+        },
+        .{
+            .desc = "lead_int64_uint64",
+            .sql =
+            \\SELECT row_id, int64_val,
+            \\       LEAD(int64_val * 2, 6, 9223372036854775807) OVER test_window,
+            \\       LEAD(CAST(int64_val as uint64), 6, 18446744073709551615) OVER test_window
+            \\FROM TestTable
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, 2, 1 },
+                .{ 2, null, 8, 4 },
+                .{ 3, 1, 4, 2 },
+                .{ 4, 2, 6, 3 },
+                .{ 5, 1, 9223372036854775807, 18446744073709551615 },
+                .{ 6, 2, 9223372036854775807, 18446744073709551615 },
+                .{ 7, 1, 9223372036854775807, 18446744073709551615 },
+                .{ 8, 4, 9223372036854775807, 18446744073709551615 },
+                .{ 9, 2, 9223372036854775807, 18446744073709551615 },
+                .{ 10, 3, 9223372036854775807, 18446744073709551615 },
+            },
+        },
+        .{
+            .desc = "lead_string",
+            .sql =
+            \\SELECT row_id, str_val,
+            \\       LEAD(str_val, 2, "default string value") OVER (ORDER BY row_id)
+            \\FROM TestTable
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "A" },
+                .{ 2, null, "A" },
+                .{ 3, "A", "aA" },
+                .{ 4, "A", "Aa" },
+                .{ 5, "aA", "a" },
+                .{ 6, "Aa", "a" },
+                .{ 7, "a", "b" },
+                .{ 8, "a", "B" },
+                .{ 9, "b", "default string value" },
+                .{ 10, "B", "default string value" },
+            },
+        },
+        .{
+            .desc = "lead_date",
+            .sql =
+            \\SELECT row_id, date_val,
+            \\       LEAD(date_val) OVER test_window
+            \\FROM TableDateTimeBytes
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "2014-01-01" },
+                .{ 2, "2014-01-01", "2014-01-01" },
+                .{ 3, "2014-01-01", "2015-01-01" },
+                .{ 4, "2015-01-01", "2015-01-01" },
+                .{ 5, "2015-01-01", "2014-01-01" },
+                .{ 6, "2014-01-01", null },
+            },
+        },
+        .{
+            .desc = "lead_date_default_expression",
+            .sql =
+            \\SELECT row_id, date_val,
+            \\       LEAD(date_val, 2, DATE '5555-11-22') OVER test_window
+            \\FROM TableDateTimeBytes
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "2014-01-01" },
+                .{ 2, "2014-01-01", "2015-01-01" },
+                .{ 3, "2014-01-01", "2015-01-01" },
+                .{ 4, "2015-01-01", "2014-01-01" },
+                .{ 5, "2015-01-01", "5555-11-22" },
+                .{ 6, "2014-01-01", "5555-11-22" },
+            },
+        },
+        .{
+            .desc = "lead_timestamp",
+            .sql =
+            \\SELECT row_id, timestamp_val,
+            \\       LEAD(timestamp_val) OVER test_window
+            \\FROM TableDateTimeBytes
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "2014-01-01 00:00:01.011011+00" },
+                .{ 2, "2014-01-01 00:00:01.011011+00", "2014-01-01 00:00:01.011011+00" },
+                .{ 3, "2014-01-01 00:00:01.011011+00", "2014-01-01 00:00:01.011011+00" },
+                .{ 4, "2014-01-01 00:00:01.011011+00", "2013-01-01 00:00:01.011011+00" },
+                .{ 5, "2013-01-01 00:00:01.011011+00", "2015-01-01 00:00:01.011011+00" },
+                .{ 6, "2015-01-01 00:00:01.011011+00", null },
+            },
+        },
+        .{
+            .desc = "lead_timestamp_default_expression",
+            .sql =
+            \\SELECT row_id, timestamp_val,
+            \\       LEAD(timestamp_val, 2, TIMESTAMP '7777-11-11 22:33:44.888888') OVER test_window
+            \\FROM TableDateTimeBytes
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "2014-01-01 00:00:01.011011+00" },
+                .{ 2, "2014-01-01 00:00:01.011011+00", "2014-01-01 00:00:01.011011+00" },
+                .{ 3, "2014-01-01 00:00:01.011011+00", "2013-01-01 00:00:01.011011+00" },
+                .{ 4, "2014-01-01 00:00:01.011011+00", "2015-01-01 00:00:01.011011+00" },
+                .{ 5, "2013-01-01 00:00:01.011011+00", "7777-11-12 06:33:44.888888+00" },
+                .{ 6, "2015-01-01 00:00:01.011011+00", "7777-11-12 06:33:44.888888+00" },
+            },
+        },
+        .{
+            .desc = "lead_bytes",
+            .sql =
+            \\SELECT row_id, bytes_val,
+            \\       LEAD(bytes_val) OVER test_window
+            \\FROM TableDateTimeBytes
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "\x31" },
+                .{ 2, "\x31", "\x32" },
+                .{ 3, "\x32", "\x31" },
+                .{ 4, "\x31", "\x32" },
+                .{ 5, "\x32", "\x35" },
+                .{ 6, "\x35", null },
+            },
+        },
+        .{
+            .desc = "lead_bytes_default_expression",
+            .sql =
+            \\SELECT row_id, bytes_val,
+            \\       LEAD(bytes_val, 2, b"xxx") OVER test_window
+            \\FROM TableDateTimeBytes
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "\x32" },
+                .{ 2, "\x31", "\x31" },
+                .{ 3, "\x32", "\x32" },
+                .{ 4, "\x31", "\x35" },
+                .{ 5, "\x32", "\x78\x78\x78" },
+                .{ 6, "\x35", "\x78\x78\x78" },
+            },
+        },
+        .{
+            .desc = "lead_array",
+            .sql =
+            \\SELECT row_id, array_val,
+            \\       LEAD(array_val) OVER (ORDER BY row_id)
+            \\FROM (SELECT 1 row_id, [1, 2, 3] array_val UNION ALL
+            \\      SELECT 2, [2, 3, 4] UNION ALL
+            \\      SELECT 3, [3, 4, 5] UNION ALL
+            \\      SELECT 5, CAST(null as ARRAY<int64>) UNION ALL
+            \\      SELECT 6, [6, 5] UNION ALL
+            \\      SELECT 7, CAST(null as ARRAY<int64>))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, .{ 1, 2, 3 }, .{ 2, 3, 4 } },
+                .{ 2, .{ 2, 3, 4 }, .{ 3, 4, 5 } },
+                .{ 3, .{ 3, 4, 5 }, null },
+                .{ 5, null, .{ 6, 5 } },
+                .{ 6, .{ 6, 5 }, null },
+                .{ 7, null, null },
+            },
+        },
+        .{
+            .desc = "lead_array_default_expression",
+            .sql =
+            \\SELECT row_id, array_val,
+            \\       LEAD(array_val, 2, [-1, -1, -1]) OVER (ORDER BY row_id)
+            \\FROM (SELECT 1 row_id, [1, 2, 3] array_val UNION ALL
+            \\      SELECT 2, [2, 3, 4] UNION ALL
+            \\      SELECT 3, [3, 4, 5] UNION ALL
+            \\      SELECT 5, CAST(null as ARRAY<int64>) UNION ALL
+            \\      SELECT 6, [6, 5] UNION ALL
+            \\      SELECT 7, CAST(null as ARRAY<int64>))
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, .{ 1, 2, 3 }, .{ 3, 4, 5 } },
+                .{ 2, .{ 2, 3, 4 }, null },
+                .{ 3, .{ 3, 4, 5 }, .{ 6, 5 } },
+                .{ 5, null, null },
+                .{ 6, .{ 6, 5 }, .{ -1, -1, -1 } },
+                .{ 7, null, .{ -1, -1, -1 } },
+            },
+        },
+        .{
+            .desc = "lead_range_date",
+            .sql =
+            \\SELECT row_id, range_date_val,
+            \\       LEAD(range_date_val, 2) OVER (ORDER BY row_id)
+            \\FROM TableRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "[NULL, NULL)" },
+                .{ 2, "[NULL, 2020-01-01)", "[2020-01-01, 2020-01-02)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02, 2020-01-03)" },
+                .{ 4, "[2020-01-01, 2020-01-02)", "[2020-01-03, 2020-01-04)" },
+                .{ 5, "[2020-01-02, 2020-01-03)", "[2020-01-04, 2020-01-05)" },
+                .{ 6, "[2020-01-03, 2020-01-04)", "[2020-01-05, 2020-01-06)" },
+                .{ 7, "[2020-01-04, 2020-01-05)", "[2020-01-06, 2020-01-07)" },
+                .{ 8, "[2020-01-05, 2020-01-06)", "[2020-01-07, NULL)" },
+                .{ 9, "[2020-01-06, 2020-01-07)", null },
+                .{ 10, "[2020-01-07, NULL)", null },
+            },
+        },
+        .{
+            .desc = "lead_range_date_partition_by",
+            .sql =
+            \\SELECT row_id, bool_val, range_date_val,
+            \\       LEAD(range_date_val, 2) OVER (PARTITION BY bool_val ORDER BY row_id)
+            \\FROM TableRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null, null },
+                .{ 3, false, "[NULL, NULL)", "[2020-01-04, 2020-01-05)" },
+                .{ 5, false, "[2020-01-02, 2020-01-03)", "[2020-01-06, 2020-01-07)" },
+                .{ 7, false, "[2020-01-04, 2020-01-05)", null },
+                .{ 9, false, "[2020-01-06, 2020-01-07)", null },
+                .{ 2, true, "[NULL, 2020-01-01)", "[2020-01-03, 2020-01-04)" },
+                .{ 4, true, "[2020-01-01, 2020-01-02)", "[2020-01-05, 2020-01-06)" },
+                .{ 6, true, "[2020-01-03, 2020-01-04)", "[2020-01-07, NULL)" },
+                .{ 8, true, "[2020-01-05, 2020-01-06)", null },
+                .{ 10, true, "[2020-01-07, NULL)", null },
+            },
+        },
+        .{
+            .desc = "lead_range_date_nulls_last",
+            .sql =
+            \\SELECT row_id, range_date_val,
+            \\       LEAD(range_date_val, 2) OVER (ORDER BY range_date_val NULLS LAST)
+            \\FROM TableRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "[NULL, 2020-01-01)", "[2020-01-01, 2020-01-02)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02, 2020-01-03)" },
+                .{ 4, "[2020-01-01, 2020-01-02)", "[2020-01-03, 2020-01-04)" },
+                .{ 5, "[2020-01-02, 2020-01-03)", "[2020-01-04, 2020-01-05)" },
+                .{ 6, "[2020-01-03, 2020-01-04)", "[2020-01-05, 2020-01-06)" },
+                .{ 7, "[2020-01-04, 2020-01-05)", "[2020-01-06, 2020-01-07)" },
+                .{ 8, "[2020-01-05, 2020-01-06)", "[2020-01-07, NULL)" },
+                .{ 9, "[2020-01-06, 2020-01-07)", null },
+                .{ 10, "[2020-01-07, NULL)", null },
+                .{ 1, null, null },
+            },
+        },
+        .{
+            .desc = "lead_range_date_default_expression",
+            .sql =
+            \\SELECT row_id, range_date_val,
+            \\       LEAD(range_date_val, 2, range<date> '[1000-01-01, 1100-01-01)') OVER (ORDER BY row_id)
+            \\FROM TableRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "[NULL, NULL)" },
+                .{ 2, "[NULL, 2020-01-01)", "[2020-01-01, 2020-01-02)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02, 2020-01-03)" },
+                .{ 4, "[2020-01-01, 2020-01-02)", "[2020-01-03, 2020-01-04)" },
+                .{ 5, "[2020-01-02, 2020-01-03)", "[2020-01-04, 2020-01-05)" },
+                .{ 6, "[2020-01-03, 2020-01-04)", "[2020-01-05, 2020-01-06)" },
+                .{ 7, "[2020-01-04, 2020-01-05)", "[2020-01-06, 2020-01-07)" },
+                .{ 8, "[2020-01-05, 2020-01-06)", "[2020-01-07, NULL)" },
+                .{ 9, "[2020-01-06, 2020-01-07)", "[1000-01-01, 1100-01-01)" },
+                .{ 10, "[2020-01-07, NULL)", "[1000-01-01, 1100-01-01)" },
+            },
+        },
+        .{
+            .desc = "lead_range_timestamp",
+            .sql =
+            \\SELECT row_id, range_timestamp_val,
+            \\       LEAD(range_timestamp_val, 2) OVER (ORDER BY row_id)
+            \\FROM TableRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "[NULL, NULL)" },
+                .{ 2, "[NULL, 2020-01-01 08:00:00+00)", "[2020-01-01 08:00:00+00, 2020-01-02 08:00:00+00)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02 08:00:00+00, 2020-01-03 08:00:00+00)" },
+                .{ 4, "[2020-01-01 08:00:00+00, 2020-01-02 08:00:00+00)", "[2020-01-03 08:00:00+00, 2020-01-04 08:00:00+00)" },
+                .{ 5, "[2020-01-02 08:00:00+00, 2020-01-03 08:00:00+00)", "[2020-01-04 08:00:00+00, 2020-01-05 08:00:00+00)" },
+                .{ 6, "[2020-01-03 08:00:00+00, 2020-01-04 08:00:00+00)", "[2020-01-05 08:00:00+00, 2020-01-06 08:00:00+00)" },
+                .{ 7, "[2020-01-04 08:00:00+00, 2020-01-05 08:00:00+00)", "[2020-01-06 08:00:00+00, 2020-01-07 08:00:00+00)" },
+                .{ 8, "[2020-01-05 08:00:00+00, 2020-01-06 08:00:00+00)", "[2020-01-07 08:00:00+00, NULL)" },
+                .{ 9, "[2020-01-06 08:00:00+00, 2020-01-07 08:00:00+00)", null },
+                .{ 10, "[2020-01-07 08:00:00+00, NULL)", null },
+            },
+        },
+        .{
+            .desc = "lead_range_timestamp_partition_by",
+            .sql =
+            \\SELECT row_id, bool_val, range_timestamp_val,
+            \\       LEAD(range_timestamp_val, 2) OVER (PARTITION BY bool_val ORDER BY row_id)
+            \\FROM TableRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null, null },
+                .{ 3, false, "[NULL, NULL)", "[2020-01-04 08:00:00+00, 2020-01-05 08:00:00+00)" },
+                .{ 5, false, "[2020-01-02 08:00:00+00, 2020-01-03 08:00:00+00)", "[2020-01-06 08:00:00+00, 2020-01-07 08:00:00+00)" },
+                .{ 7, false, "[2020-01-04 08:00:00+00, 2020-01-05 08:00:00+00)", null },
+                .{ 9, false, "[2020-01-06 08:00:00+00, 2020-01-07 08:00:00+00)", null },
+                .{ 2, true, "[NULL, 2020-01-01 08:00:00+00)", "[2020-01-03 08:00:00+00, 2020-01-04 08:00:00+00)" },
+                .{ 4, true, "[2020-01-01 08:00:00+00, 2020-01-02 08:00:00+00)", "[2020-01-05 08:00:00+00, 2020-01-06 08:00:00+00)" },
+                .{ 6, true, "[2020-01-03 08:00:00+00, 2020-01-04 08:00:00+00)", "[2020-01-07 08:00:00+00, NULL)" },
+                .{ 8, true, "[2020-01-05 08:00:00+00, 2020-01-06 08:00:00+00)", null },
+                .{ 10, true, "[2020-01-07 08:00:00+00, NULL)", null },
+            },
+        },
+        .{
+            .desc = "lead_range_timestamp_nulls_last",
+            .sql =
+            \\SELECT row_id, range_timestamp_val,
+            \\       LEAD(range_timestamp_val, 2) OVER (ORDER BY range_timestamp_val NULLS LAST)
+            \\FROM TableRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "[NULL, 2020-01-01 08:00:00+00)", "[2020-01-01 08:00:00+00, 2020-01-02 08:00:00+00)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02 08:00:00+00, 2020-01-03 08:00:00+00)" },
+                .{ 4, "[2020-01-01 08:00:00+00, 2020-01-02 08:00:00+00)", "[2020-01-03 08:00:00+00, 2020-01-04 08:00:00+00)" },
+                .{ 5, "[2020-01-02 08:00:00+00, 2020-01-03 08:00:00+00)", "[2020-01-04 08:00:00+00, 2020-01-05 08:00:00+00)" },
+                .{ 6, "[2020-01-03 08:00:00+00, 2020-01-04 08:00:00+00)", "[2020-01-05 08:00:00+00, 2020-01-06 08:00:00+00)" },
+                .{ 7, "[2020-01-04 08:00:00+00, 2020-01-05 08:00:00+00)", "[2020-01-06 08:00:00+00, 2020-01-07 08:00:00+00)" },
+                .{ 8, "[2020-01-05 08:00:00+00, 2020-01-06 08:00:00+00)", "[2020-01-07 08:00:00+00, NULL)" },
+                .{ 9, "[2020-01-06 08:00:00+00, 2020-01-07 08:00:00+00)", null },
+                .{ 10, "[2020-01-07 08:00:00+00, NULL)", null },
+                .{ 1, null, null },
+            },
+        },
+        .{
+            .desc = "lead_range_timestamp_default_expression",
+            .sql =
+            \\SELECT row_id, range_timestamp_val,
+            \\       LEAD(range_timestamp_val, 2, range<timestamp> '[1000-01-01, 1100-01-01)') OVER (ORDER BY row_id)
+            \\FROM TableRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "[NULL, NULL)" },
+                .{ 2, "[NULL, 2020-01-01 08:00:00+00)", "[2020-01-01 08:00:00+00, 2020-01-02 08:00:00+00)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02 08:00:00+00, 2020-01-03 08:00:00+00)" },
+                .{ 4, "[2020-01-01 08:00:00+00, 2020-01-02 08:00:00+00)", "[2020-01-03 08:00:00+00, 2020-01-04 08:00:00+00)" },
+                .{ 5, "[2020-01-02 08:00:00+00, 2020-01-03 08:00:00+00)", "[2020-01-04 08:00:00+00, 2020-01-05 08:00:00+00)" },
+                .{ 6, "[2020-01-03 08:00:00+00, 2020-01-04 08:00:00+00)", "[2020-01-05 08:00:00+00, 2020-01-06 08:00:00+00)" },
+                .{ 7, "[2020-01-04 08:00:00+00, 2020-01-05 08:00:00+00)", "[2020-01-06 08:00:00+00, 2020-01-07 08:00:00+00)" },
+                .{ 8, "[2020-01-05 08:00:00+00, 2020-01-06 08:00:00+00)", "[2020-01-07 08:00:00+00, NULL)" },
+                .{ 9, "[2020-01-06 08:00:00+00, 2020-01-07 08:00:00+00)", "[1000-01-01 07:52:58+00, 1100-01-01 07:52:58+00)" },
+                .{ 10, "[2020-01-07 08:00:00+00, NULL)", "[1000-01-01 07:52:58+00, 1100-01-01 07:52:58+00)" },
+            },
+        },
+        .{
+            .desc = "lead_range_datetime",
+            .sql =
+            \\SELECT row_id, range_datetime_val,
+            \\       LEAD(range_datetime_val, 2) OVER (ORDER BY row_id)
+            \\FROM TableDatetimeRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "[NULL, NULL)" },
+                .{ 2, "[NULL, 2020-01-01 00:00:00)", "[2020-01-01 00:00:00, 2020-01-02 00:00:00)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02 00:00:00, 2020-01-03 00:00:00)" },
+                .{ 4, "[2020-01-01 00:00:00, 2020-01-02 00:00:00)", "[2020-01-03 00:00:00, 2020-01-04 00:00:00)" },
+                .{ 5, "[2020-01-02 00:00:00, 2020-01-03 00:00:00)", "[2020-01-04 00:00:00, 2020-01-05 00:00:00)" },
+                .{ 6, "[2020-01-03 00:00:00, 2020-01-04 00:00:00)", "[2020-01-05 00:00:00, 2020-01-06 00:00:00)" },
+                .{ 7, "[2020-01-04 00:00:00, 2020-01-05 00:00:00)", "[2020-01-06 00:00:00, 2020-01-07 00:00:00)" },
+                .{ 8, "[2020-01-05 00:00:00, 2020-01-06 00:00:00)", "[2020-01-07 00:00:00, NULL)" },
+                .{ 9, "[2020-01-06 00:00:00, 2020-01-07 00:00:00)", null },
+                .{ 10, "[2020-01-07 00:00:00, NULL)", null },
+            },
+        },
+        .{
+            .desc = "lead_range_datetime_partition_by",
+            .sql =
+            \\SELECT row_id, bool_val, range_datetime_val,
+            \\       LEAD(range_datetime_val, 2) OVER (PARTITION BY bool_val ORDER BY row_id)
+            \\FROM TableDatetimeRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, null, null },
+                .{ 3, false, "[NULL, NULL)", "[2020-01-04 00:00:00, 2020-01-05 00:00:00)" },
+                .{ 5, false, "[2020-01-02 00:00:00, 2020-01-03 00:00:00)", "[2020-01-06 00:00:00, 2020-01-07 00:00:00)" },
+                .{ 7, false, "[2020-01-04 00:00:00, 2020-01-05 00:00:00)", null },
+                .{ 9, false, "[2020-01-06 00:00:00, 2020-01-07 00:00:00)", null },
+                .{ 2, true, "[NULL, 2020-01-01 00:00:00)", "[2020-01-03 00:00:00, 2020-01-04 00:00:00)" },
+                .{ 4, true, "[2020-01-01 00:00:00, 2020-01-02 00:00:00)", "[2020-01-05 00:00:00, 2020-01-06 00:00:00)" },
+                .{ 6, true, "[2020-01-03 00:00:00, 2020-01-04 00:00:00)", "[2020-01-07 00:00:00, NULL)" },
+                .{ 8, true, "[2020-01-05 00:00:00, 2020-01-06 00:00:00)", null },
+                .{ 10, true, "[2020-01-07 00:00:00, NULL)", null },
+            },
+        },
+        .{
+            .desc = "lead_range_datetime_nulls_last",
+            .sql =
+            \\SELECT row_id, range_datetime_val,
+            \\       LEAD(range_datetime_val, 2) OVER (ORDER BY range_datetime_val NULLS LAST)
+            \\FROM TableDatetimeRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, "[NULL, 2020-01-01 00:00:00)", "[2020-01-01 00:00:00, 2020-01-02 00:00:00)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02 00:00:00, 2020-01-03 00:00:00)" },
+                .{ 4, "[2020-01-01 00:00:00, 2020-01-02 00:00:00)", "[2020-01-03 00:00:00, 2020-01-04 00:00:00)" },
+                .{ 5, "[2020-01-02 00:00:00, 2020-01-03 00:00:00)", "[2020-01-04 00:00:00, 2020-01-05 00:00:00)" },
+                .{ 6, "[2020-01-03 00:00:00, 2020-01-04 00:00:00)", "[2020-01-05 00:00:00, 2020-01-06 00:00:00)" },
+                .{ 7, "[2020-01-04 00:00:00, 2020-01-05 00:00:00)", "[2020-01-06 00:00:00, 2020-01-07 00:00:00)" },
+                .{ 8, "[2020-01-05 00:00:00, 2020-01-06 00:00:00)", "[2020-01-07 00:00:00, NULL)" },
+                .{ 9, "[2020-01-06 00:00:00, 2020-01-07 00:00:00)", null },
+                .{ 10, "[2020-01-07 00:00:00, NULL)", null },
+                .{ 1, null, null },
+            },
+        },
+        .{
+            .desc = "lead_range_datetime_default_expression",
+            .sql =
+            \\SELECT row_id, range_datetime_val,
+            \\       LEAD(range_datetime_val, 2, range<datetime> '[1000-01-01, 1100-01-01)') OVER (ORDER BY row_id)
+            \\FROM TableDatetimeRanges
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, null, "[NULL, NULL)" },
+                .{ 2, "[NULL, 2020-01-01 00:00:00)", "[2020-01-01 00:00:00, 2020-01-02 00:00:00)" },
+                .{ 3, "[NULL, NULL)", "[2020-01-02 00:00:00, 2020-01-03 00:00:00)" },
+                .{ 4, "[2020-01-01 00:00:00, 2020-01-02 00:00:00)", "[2020-01-03 00:00:00, 2020-01-04 00:00:00)" },
+                .{ 5, "[2020-01-02 00:00:00, 2020-01-03 00:00:00)", "[2020-01-04 00:00:00, 2020-01-05 00:00:00)" },
+                .{ 6, "[2020-01-03 00:00:00, 2020-01-04 00:00:00)", "[2020-01-05 00:00:00, 2020-01-06 00:00:00)" },
+                .{ 7, "[2020-01-04 00:00:00, 2020-01-05 00:00:00)", "[2020-01-06 00:00:00, 2020-01-07 00:00:00)" },
+                .{ 8, "[2020-01-05 00:00:00, 2020-01-06 00:00:00)", "[2020-01-07 00:00:00, NULL)" },
+                .{ 9, "[2020-01-06 00:00:00, 2020-01-07 00:00:00)", "[1000-01-01 00:00:00, 1100-01-01 00:00:00)" },
+                .{ 10, "[2020-01-07 00:00:00, NULL)", "[1000-01-01 00:00:00, 1100-01-01 00:00:00)" },
+            },
+        },
+        .{
+            .desc = "lead_partitionby",
+            .sql =
+            \\SELECT bool_val, row_id, int64_val,
+            \\       LEAD(int64_val) OVER test_window
+            \\FROM TestTable
+            \\WINDOW test_window AS (PARTITION BY bool_val ORDER BY row_id)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1, null, null },
+                .{ false, 3, 1, 1 },
+                .{ false, 5, 1, 1 },
+                .{ false, 7, 1, 2 },
+                .{ false, 9, 2, null },
+                .{ true, 2, null, 2 },
+                .{ true, 4, 2, 2 },
+                .{ true, 6, 2, 4 },
+                .{ true, 8, 4, 3 },
+                .{ true, 10, 3, null },
+            },
+        },
+        .{
+            .desc = "lead_empty_input",
+            .sql =
+            \\SELECT bool_val, row_id, int64_val,
+            \\       LEAD(int64_val) OVER test_window
+            \\FROM TestTable WHERE row_id < 0
+            \\WINDOW test_window AS (ORDER BY row_id)
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "lead_null_default_expr",
+            .sql =
+            \\SELECT LEAD(int64_val, 2, NULL) OVER (ORDER BY int64_val)
+            \\FROM TestTable
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "lead_non_constant_default_expr",
+            .sql =
+            \\SELECT LEAD(int64_val, 2, row_id) OVER (ORDER BY int64_val)
+            \\FROM TestTable
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "lead_window_frame",
+            .sql =
+            \\SELECT row_id, LEAD(row_id, 2) OVER window_frame
+            \\FROM TestTable
+            \\WINDOW window_frame AS (ORDER BY row_id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)
+            ,
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "order_by_nulls_last_analytic_lead",
+            .sql =
+            \\SELECT int64_val, LEAD(int64_val, 1) OVER (ORDER BY int64_val DESC NULLS LAST)
+            \\FROM TestTable t
+            ,
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "order_by_nulls_first_analytic_lead",
+            .sql =
+            \\SELECT int64_val, LEAD(int64_val, 1) OVER (ORDER BY int64_val DESC NULLS FIRST)
+            \\FROM TestTable t
+            ,
+            .nondeterministic = true,
+        },
+    },
+}

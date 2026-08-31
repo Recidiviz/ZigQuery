@@ -1,0 +1,622 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/set_operation_strict_corresponding_by",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/set_operation_strict_corresponding_by.test",
+    .cases = .{
+        .{
+            .desc = "corresponding_by_literal_coercion_strict",
+            .unsupported_in_bigquery = "BigQuery has no INT32 SQL type: Type not found: INT32 (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# This file contains the compliance test cases for STRICT CORRESPONDING BY. Test
+            \\# cases are divided into multiple sections.
+            \\## ===== Start section: Literal and type coercion for STRICT CORRESPONDING BY =====  ##
+            \\# CORRESPONDING BY Literal coercion STRICT mode
+            \\SELECT 1 AS b, 1 AS a
+            \\UNION ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS a, CAST(1 AS INT32) AS b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "corresponding_by_literal_coercion_strict_coercion_with_subquery",
+            .unsupported_in_bigquery = "BigQuery has no INT32 SQL type: Type not found: INT32 (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY Literal coercion STRICT mode literal cocercion with subquery
+            \\(
+            \\  SELECT 1 AS a, 1 AS b
+            \\  UNION ALL STRICT CORRESPONDING BY (a, b)
+            \\  SELECT 1 AS b, NULL AS a
+            \\)
+            \\UNION ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT 1 AS b, CAST(1 AS INT32) AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ null, 1 },
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "corresponding_by_literal_coercion_strict_three_inputs",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT/INT32 SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY Literal coercion STRICT mode with three inputs but without padded NULL in any of the input
+            \\SELECT NULL AS a
+            \\UNION ALL STRICT CORRESPONDING BY (a)
+            \\SELECT CAST(1 AS FLOAT) AS a
+            \\UNION ALL STRICT CORRESPONDING BY (a)
+            \\SELECT CAST(1 AS INT32) AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{null},
+                .{1},
+                .{1},
+            },
+        },
+        .{
+            .desc = "corresponding_by_type_coercion_strict_basic_type_coercion",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY Type coercion STRICT mode basic type coercion
+            \\SELECT CAST(1 AS INT64) AS a, 1 AS b
+            \\UNION ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT 1 AS b, CAST(1 AS FLOAT) AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "corresponding_by_type_coercion_strict_three_inputs",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT/INT32 SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY Type coercion STRICT mode three inputs
+            \\SELECT CAST(1 AS INT64) AS a, 1 AS b, 1 AS c
+            \\UNION ALL STRICT CORRESPONDING BY (a, b, c)
+            \\SELECT 1 AS b, CAST(1 AS FLOAT) AS a, 1 AS c
+            \\UNION ALL STRICT CORRESPONDING BY (a, b, c)
+            \\SELECT 1 AS c, CAST(1 AS INT32) AS a, 1 AS b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1, 1 },
+                .{ 1, 1, 1 },
+                .{ 1, 1, 1 },
+            },
+        },
+        .{
+            .desc = "corresponding_by_type_coercion_strict_subquery",
+            .unsupported_in_bigquery = "BigQuery has no FLOAT/INT32 SQL type: Type not found: FLOAT (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# CORRESPONDING BY Type coercion STRICT mode with subquery
+            \\SELECT CAST(1 AS FLOAT) AS b, CAST(1 AS INT64) AS a
+            \\UNION ALL STRICT CORRESPONDING BY (b, a)
+            \\(
+            \\  SELECT CAST(1 AS FLOAT) AS a, CAST(1 AS INT32) AS b
+            \\  LEFT UNION ALL CORRESPONDING BY (a, b)
+            \\  SELECT NULL AS a, CAST(1 AS INT64) AS b
+            \\)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+                .{ 1, null },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_except_all_2row_1row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\## ===== Start section: EXCEPT (ALL|DISTINCT) for STRICT CORRESPONDING BY =====  ##
+            \\# STRICT CORRESPONDING BY same order [row, row] EXCEPT ALL [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT 1 AS a, 1 AS b
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_except_all_2row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row, row] EXCEPT ALL [row, row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT a, b FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_except_all_1row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row] EXCEPT ALL [row, row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT 1 AS a, 1 AS b
+            \\EXCEPT ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT a, b FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_except_all_2row_different_row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row1, row1] EXCEPT ALL [row2] = [row1, row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT 2 AS a, 2 AS b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_except_distinct_2row_1row",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row, row] EXCEPT DISTINCT [row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT DISTINCT STRICT CORRESPONDING BY (a, b)
+            \\SELECT 1 AS a, 1 AS b
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_except_distinct_2row_different_row",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row1, row1] EXCEPT DISTINCT [row2] = [row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT DISTINCT STRICT CORRESPONDING BY (a, b)
+            \\SELECT 2 AS a, 2 AS b
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_except_all_2row_1row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row, row] EXCEPT ALL [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_except_all_2row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row, row] EXCEPT ALL [row, row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_except_all_1row_2row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row] EXCEPT ALL [row, row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT 1 AS a, 1 AS b
+            \\EXCEPT ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table1
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_except_all_2row_different_row",
+            .unsupported_in_bigquery = "EXCEPT ALL is not supported. Only EXCEPT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row1, row1] EXCEPT ALL [row2] = [row1, row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_except_distinct_2row_1row",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row, row] EXCEPT DISTINCT [row] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT DISTINCT STRICT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_except_distinct_2row_different_row",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row1, row1] EXCEPT DISTINCT [row2] = [row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\EXCEPT DISTINCT STRICT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_union_all_basic",
+            .sql =
+            \\## ===== Start section: UNION (ALL|DISTINCT) for STRICT CORRESPONDING BY =====  ##
+            \\# STRICT CORRESPONDING BY same order [row1] UNION ALL [row2] = [row1, row2]
+            \\SELECT 1 AS a, 1 AS b
+            \\UNION ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT 1 AS a, 1 AS b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_union_distinct_same_row",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row1, row1] union distinct [row1] = [row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\UNION DISTINCT STRICT CORRESPONDING BY (a, b)
+            \\SELECT 1 AS a, 1 AS b
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_union_distinct_different_rows",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row1] union distinct [row2] = [row1, row2]
+            \\SELECT 1 AS a, 1 AS b
+            \\UNION DISTINCT STRICT CORRESPONDING BY (a, b)
+            \\SELECT 2 AS a, 2 AS b
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_union_all_basic",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row1] UNION ALL [row2] = [row1, row2]
+            \\SELECT 1 AS a, 1 AS b
+            \\UNION ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_union_distinct_same_row",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row1, row1] union distinct [row1] = [row1]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\UNION DISTINCT STRICT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_union_distinct_different_rows",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row1] union distinct [row2] = [row1, row2]
+            \\SELECT 1 AS a, 1 AS b
+            \\UNION DISTINCT STRICT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 2 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_intersect_all_multiple_same_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\## ===== Start section: INTERSECT (ALL|DISTINCT) for STRICT CORRESPONDING BY =====  ##
+            \\# STRICT CORRESPONDING BY same order [row, row] INTERSECT ALL [row, row] = [row, row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT a, b FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_intersect_all_single_same_row",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row, row] INTERSECT ALL [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT 1 AS a, 1 AS b
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_intersect_all_different_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row1, row1] INTERSECT ALL [row2] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL STRICT CORRESPONDING BY (a, b)
+            \\SELECT 2 AS a, 2 AS b
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_intersect_distinct_multiple_same_rows",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row, row] INTERSECT DISTINCT [row, row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT STRICT CORRESPONDING BY (a, b)
+            \\SELECT a, b FROM Table1
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_intersect_distinct_single_same_row",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row, row] INTERSECT DISTINCT [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT STRICT CORRESPONDING BY (a, b)
+            \\SELECT 1 AS a, 1 AS b
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_same_order_intersect_distinct_different_rows",
+            .sql =
+            \\# STRICT CORRESPONDING BY same order [row1, row1] INTERSECT DISTINCT [row2] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT STRICT CORRESPONDING BY (a, b)
+            \\SELECT 2 AS a, 2 AS b
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_intersect_all_multiple_same_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row, row] INTERSECT ALL [row, row] = [row, row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 1, 1 },
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_intersect_all_single_same_row",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row, row] INTERSECT ALL [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_intersect_all_different_rows",
+            .unsupported_in_bigquery = "INTERSECT ALL is not supported. Only INTERSECT DISTINCT is supported (recidiviz-bigquery-sandbox, 2026-08-25)",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row1, row1] INTERSECT ALL [row2] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT ALL STRICT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_intersect_distinct_multiple_same_rows",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row, row] INTERSECT DISTINCT [row, row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT STRICT CORRESPONDING BY (b, a)
+            \\SELECT b, a FROM Table1
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_intersect_distinct_single_same_row",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row, row] INTERSECT DISTINCT [row] = [row]
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT STRICT CORRESPONDING BY (b, a)
+            \\SELECT 1 AS b, 1 AS a
+            ,
+            .rows = .{
+                .{ 1, 1 },
+            },
+        },
+        .{
+            .desc = "strict_corresponding_by_different_order_intersect_distinct_different_rows",
+            .sql =
+            \\# STRICT CORRESPONDING BY different order [row1, row1] INTERSECT DISTINCT [row2] = []
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS INT64) AS b UNION ALL SELECT 1, 1
+            \\  )
+            \\SELECT a, b FROM Table1
+            \\INTERSECT DISTINCT STRICT CORRESPONDING BY (b, a)
+            \\SELECT 2 AS b, 2 AS a
+            ,
+            .rows = .{},
+        },
+        .{
+            .desc = "three_input_corresponding_by_strict_basic_test_case",
+            .sql =
+            \\## ===== Start section: Three-input test cases for STRICT CORRESPONDING BY =====  ##
+            \\# Three input CORRESPONDING BY: STRICT mode basic test case
+            \\WITH
+            \\  Table1 AS (
+            \\    SELECT CAST(1 AS INT64) AS a, CAST(1 AS DOUBLE) AS b, CAST(1 AS INT64) AS c
+            \\    UNION ALL
+            \\    SELECT 2, 2, 2
+            \\  )
+            \\SELECT a, b, c FROM Table1
+            \\UNION ALL STRICT CORRESPONDING BY (b, c, a)
+            \\SELECT c, a, b FROM Table1
+            \\UNION ALL STRICT CORRESPONDING BY (b, c, a)
+            \\SELECT b, a, c FROM Table1
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 2, 2 },
+                .{ 1, 1, 1 },
+                .{ 2, 2, 2 },
+                .{ 1, 1, 1 },
+                .{ 2, 2, 2 },
+                .{ 1, 1, 1 },
+            },
+        },
+    },
+}

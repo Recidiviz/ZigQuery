@@ -1,0 +1,439 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/call_sql_uda",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/call_sql_uda.test",
+    .cases = .{
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION NoAggregateAggregate() AS (
+            \\  (SELECT a + a FROM (SELECT 1 + 1 AS a))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION NonDeterministicAggregate() AS (
+            \\  ARRAY(SELECT e FROM UNNEST([1, 2]) AS e LIMIT 1)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION CurrentTimestampAggregate() AS (
+            \\  CURRENT_TIMESTAMP()
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\# This function is interesting because the FORMAT function considers the
+            \\# JSON_TYPE language feature during the runtime evaluation from the
+            \\# EvaluationContext.
+            \\CREATE TEMP AGGREGATE FUNCTION LanguageOptionsSensitiveAgg() AS (
+            \\  FORMAT("%2P", JSON '{"bool":false}')
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION CountAllPlusOne() AS (
+            \\  COUNT(*) + 1
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION CountAllTwice() AS (
+            \\  COUNT(*) + COUNT(*)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION CountAllPlusTwo() AS (CountAllPlusOne() + 1)",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION CountTimesTwoN(n INT64 NOT AGGREGATE) AS (
+            \\  COUNT(*) * (n + n)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql = "CREATE TEMP AGGREGATE FUNCTION SumSqaures(a INT64) AS (SUM(a * a))",
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION BunchOfAggs(a INT64) AS (
+            \\  STRUCT(
+            \\    SUM(a) AS asum,
+            \\    AVG(a) AS aavg,
+            \\    COUNT(DISTINCT a) AS acount,
+            \\    COUNTIF(MOD(a, 2) = 0) AS aevens)
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION PipeConcat(a STRING, b STRING) AS (
+            \\  # STRING_AGG is not directly useful because ORDER BY it not allowed in
+            \\  # CREATE AGGREGATE FUNCTION body expressions. This usefully tests the
+            \\  # WITH expression inside these functions which seems like a potential source
+            \\  # of trouble given that in this case it creates an otherwise unreachable
+            \\  # ResolvedAST shape. (You can't trivally convert this to a subquery.)
+            \\  WITH (arr AS ARRAY_AGG(STRUCT(a, b)),
+            \\        ARRAY_TO_STRING(ARRAY(
+            \\          SELECT CONCAT(e.a, ',', e.b)
+            \\          FROM UNNEST(arr) AS e
+            \\          ORDER BY e.b, e.a), '|'))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION BunchOfAggs2(a INT64, b INT64 NOT AGGREGATE) AS (
+            \\  STRUCT(
+            \\    SUM(a) AS asum,
+            \\    SUM(b) AS bsum,
+            \\    b AS b,
+            \\    b + SUM(a) AS b_plus_asum
+            \\  )
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION PipeConcatSep(a STRING, b STRING, sep STRING NOT AGGREGATE) AS (
+            \\  WITH (arr AS ARRAY_AGG(STRUCT(a, b)),
+            \\        ARRAY_TO_STRING(ARRAY(
+            \\          SELECT CONCAT(e.a, ',', e.b)
+            \\          FROM UNNEST(arr) AS e
+            \\          ORDER BY e.b, e.a), sep))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION BunchOfArgsTemplate(a ANY TYPE) AS (
+            \\  STRUCT(
+            \\    ARRAY_AGG(a) AS aarr,
+            \\    COUNT(a) AS acount,
+            \\    MIN(a) AS amin,
+            \\    MAX(a) AS amax
+            \\  )
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION UsesArgNameAsInternalAliasIdentity(arg0 STRING) AS (
+            \\  ARRAY_AGG((SELECT arg0 FROM (SELECT arg0 AS arg0)))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION UsesArgNameAsInternalAlias(arg0 STRING) AS (
+            \\  ARRAY_AGG((SELECT arg0 FROM (SELECT "c" AS arg0)))
+            \\)
+            ,
+        },
+        .{
+            .desc = "prepare_database",
+            .sql =
+            \\CREATE TEMP AGGREGATE FUNCTION IgnoresFirstArg(arg0 BOOL NOT AGGREGATE, arg1 STRING)
+            \\RETURNS STRING AS (MIN(arg1 HAVING MIN arg1))
+            ,
+        },
+        .{
+            .desc = "call_non_aggregating_udaf",
+            .sql =
+            \\SELECT NoAggregateAggregate()
+            \\FROM UNNEST([1, 2, 3, 4, 5]) e
+            ,
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "call_non_aggregating_udaf_twice_group_all",
+            .sql =
+            \\SELECT COUNT(*), NoAggregateAggregate() + NoAggregateAggregate()
+            \\FROM UNNEST([1, 2, 3, 4, 5]) e
+            ,
+            .rows = .{
+                .{ 5, 8 },
+            },
+        },
+        .{
+            .desc = "call_non_aggregating_udaf_twice_multiple_groups",
+            .sql =
+            \\SELECT COUNT(*), NoAggregateAggregate() + NoAggregateAggregate()
+            \\FROM UNNEST([1, 2, 3, 4, 5]) e
+            \\GROUP BY MOD(e, 3)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 2, 8 },
+                .{ 1, 8 },
+                .{ 2, 8 },
+            },
+        },
+        .{
+            .desc = "call_no_argument_aggregating_udaf",
+            .sql =
+            \\SELECT CountAllPlusOne()
+            \\FROM UNNEST([1, 2, 3, 4, 5]) e
+            ,
+            .rows = .{
+                .{6},
+            },
+        },
+        .{
+            .desc = "call_several_no_argument_udafs",
+            .sql =
+            \\SELECT CountAllTwice() + CountAllTwice(), CountAllTwice(), CountAllPlusOne() - 1
+            \\FROM UNNEST([1, 2, 3, 4, 5]) e
+            ,
+            .rows = .{
+                .{ 20, 10, 5 },
+            },
+        },
+        .{
+            .desc = "call_several_no_argument_udafs_multiple_groups",
+            .sql =
+            \\SELECT CountAllTwice() + CountAllTwice(), CountAllTwice(), CountAllPlusOne() - 1
+            \\FROM UNNEST([1, 2, 3, 4, 5]) e
+            \\GROUP BY MOD(e, 3)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 8, 4, 2 },
+                .{ 4, 2, 1 },
+                .{ 8, 4, 2 },
+            },
+        },
+        .{
+            .desc = "call_no_argument_aggregating_two_levels_deep",
+            .sql =
+            \\SELECT CountAllPlusTwo()
+            \\FROM UNNEST([1, 2, 3, 4, 5]) e
+            ,
+            .rows = .{
+                .{7},
+            },
+        },
+        .{
+            .desc = "call_no_argument_aggregating_two_levels_deep_from_subquery",
+            .sql =
+            \\SELECT (SELECT CountAllPlusTwo() FROM UNNEST(arr))
+            \\FROM (SELECT [1, 2, 3, 4, 5] AS arr)
+            \\GROUP BY 1
+            \\HAVING true
+            ,
+            .rows = .{
+                .{7},
+            },
+        },
+        .{
+            .desc = "call_sum_squares_gba",
+            .sql =
+            \\SELECT SumSqaures(a)
+            \\FROM UNNEST([1, 2, 3, 4, 5]) AS a
+            ,
+            .rows = .{
+                .{55},
+            },
+        },
+        .{
+            .desc = "call_sum_squares_gbk",
+            .sql =
+            \\SELECT offset < 2, offset < 4, SumSqaures(a)
+            \\FROM UNNEST([1, 2, 3, 4, 5]) AS a WITH OFFSET
+            \\GROUP BY 1, 2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, false, 25 },
+                .{ false, true, 25 },
+                .{ true, true, 5 },
+            },
+        },
+        .{
+            .desc = "call_bunch_of_aggs_gba",
+            .sql =
+            \\SELECT BunchOfAggs(a)
+            \\FROM UNNEST([1, 2, 3, 4, 5]) AS a
+            ,
+            .rows = .{
+                .{.{ 15, 3, 5, 2 }},
+            },
+        },
+        .{
+            .desc = "call_bunch_of_aggs_gbk",
+            .sql =
+            \\SELECT offset < 2, offset < 4, BunchOfAggs(a)
+            \\FROM UNNEST([1, 2, 3, 4, 5]) AS a WITH OFFSET
+            \\GROUP BY 1, 2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, false, .{ 5, 5, 1, 0 } },
+                .{ false, true, .{ 7, 3.5, 2, 1 } },
+                .{ true, true, .{ 3, 1.5, 2, 1 } },
+            },
+        },
+        .{
+            .desc = "call_pipe_concat_gba",
+            .sql =
+            \\SELECT PipeConcat(a, UPPER(a))
+            \\FROM UNNEST(['a', 'b', 'c', 'd', 'e', 'f']) AS a
+            ,
+            .rows = .{
+                .{"a,A|b,B|c,C|d,D|e,E|f,F"},
+            },
+        },
+        .{
+            .desc = "call_pipe_concat_gbk",
+            .sql =
+            \\SELECT MOD(offset, 2) = 0, MOD(offset, 3) = 0, PipeConcat(a, UPPER(a))
+            \\FROM UNNEST(['a', 'b', 'c', 'd', 'e', 'f']) AS a WITH OFFSET
+            \\GROUP BY 1, 2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, false, "b,B|f,F" },
+                .{ false, true, "d,D" },
+                .{ true, false, "c,C|e,E" },
+                .{ true, true, "a,A" },
+            },
+        },
+        .{
+            .desc = "call_count_plus_two_times_n_gba",
+            .sql =
+            \\SELECT CountTimesTwoN(0),
+            \\       CountTimesTwoN(1),
+            \\       CountTimesTwoN(2),
+            \\       CountTimesTwoN(5)
+            \\FROM UNNEST([1, 2, 3, 4, 5])
+            ,
+            .rows = .{
+                .{ 0, 10, 20, 50 },
+            },
+        },
+        .{
+            .desc = "call_count_plus_two_times_n_gbk",
+            .sql =
+            \\SELECT MOD(offset, 2) = 0, MOD(offset, 3) = 0,
+            \\       CountTimesTwoN(0),
+            \\       CountTimesTwoN(1),
+            \\       CountTimesTwoN(2),
+            \\       CountTimesTwoN(5)
+            \\FROM UNNEST([1, 2, 3, 4, 5]) WITH OFFSET
+            \\GROUP BY 1, 2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, false, 0, 2, 4, 10 },
+                .{ false, true, 0, 2, 4, 10 },
+                .{ true, false, 0, 4, 8, 20 },
+                .{ true, true, 0, 2, 4, 10 },
+            },
+        },
+        .{
+            .desc = "call_bunch_of_aggs2_gba",
+            .sql =
+            \\SELECT BunchOfAggs2(a, 12)
+            \\FROM UNNEST([1, 2, 3, 4, 5]) AS a
+            ,
+            .rows = .{
+                .{.{ 15, 60, 12, 27 }},
+            },
+        },
+        .{
+            .desc = "call_bunch_of_aggs2_gbk",
+            .sql =
+            \\SELECT offset < 2, offset < 4, BunchOfAggs2(a, 14)
+            \\FROM UNNEST([1, 2, 3, 4, 5]) AS a WITH OFFSET
+            \\GROUP BY 1, 2
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ false, false, .{ 5, 14, 14, 19 } },
+                .{ false, true, .{ 7, 28, 14, 21 } },
+                .{ true, true, .{ 3, 28, 14, 17 } },
+            },
+        },
+        .{
+            .desc = "call_pipe_concat_sep_gba",
+            .sql =
+            \\SELECT PipeConcatSep(a, UPPER(a), '%')
+            \\FROM UNNEST(['a', 'b', 'c', 'd', 'e', 'f']) AS a
+            ,
+            .rows = .{
+                .{"a,A%b,B%c,C%d,D%e,E%f,F"},
+            },
+        },
+        .{
+            .desc = "call_non_deterministic_uda",
+            .sql = "SELECT NonDeterministicAggregate() IS NOT NULL FROM (SELECT 1)",
+            .nondeterministic = true,
+        },
+        .{
+            .desc = "calls_language_options_sensitive_agg",
+            .sql = "SELECT LanguageOptionsSensitiveAgg() FROM (SELECT 1)",
+            .rows = .{
+                .{"{\x0a  \"bool\": false\x0a}"},
+            },
+        },
+        .{
+            .desc = "call_current_timestamp_agg",
+            .sql = "SELECT CurrentTimestampAggregate()=CURRENT_TIMESTAMP() as result FROM (SELECT 1)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "repro351956030",
+            .sql = "SELECT UsesArgNameAsInternalAliasIdentity('a') FROM (SELECT 1)",
+            .rows = .{
+                .{.{"a"}},
+            },
+        },
+        .{
+            .desc = "repro351956030_2",
+            .sql = "SELECT UsesArgNameAsInternalAlias('a') FROM (SELECT 1)",
+            .rows = .{
+                .{.{"c"}},
+            },
+        },
+        .{
+            .desc = "repro351956030_3",
+            .unsupported_in_bigquery = "\"Unsupported having modifier in the aggregate function min.\" (recidiviz-bigquery-sandbox, 2026-08-26)",
+            .sql =
+            \\SELECT IgnoresFirstArg(false, "abcd"), ANY_VALUE("abcd" HAVING MIN "abcd")
+            \\FROM UNNEST([1])
+            ,
+            .rows = .{
+                .{ "abcd", "abcd" },
+            },
+        },
+    },
+}

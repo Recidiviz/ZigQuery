@@ -1,0 +1,387 @@
+// Imported from GoogleSQL's own compliance-testdata suite
+// (third_party/googlesql/googlesql/compliance/testdata, Apache-2.0).
+.{
+    .spec = "googlesql/compliance/struct_queries",
+    .dialect = .googlesql,
+    .upstream = "https://github.com/google/googlesql/blob/master/googlesql/compliance/testdata/struct_queries.test",
+    .cases = .{
+        .{
+            .desc = "struct_1",
+            .sql = "SELECT (SELECT t FROM (SELECT 3 a, 5 b) t).b",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "struct_2",
+            .sql = "SELECT (SELECT t FROM (SELECT 3 a, 5 b) t).a",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "struct_3",
+            .sql = "SELECT x.a, x.b, x.a + x.b FROM (SELECT (SELECT t FROM (SELECT 3 a, 5 b) t) x)",
+            .rows = .{
+                .{ 3, 5, 8 },
+            },
+        },
+        .{
+            .desc = "struct_with_zero_field",
+            .sql =
+            \\# Create struct with zero field.
+            \\SELECT STRUCT()
+            ,
+            .rows = .{
+                .{"{}"},
+            },
+        },
+        .{
+            .desc = "struct_with_one_field",
+            .sql =
+            \\# Create struct with one field.
+            \\SELECT STRUCT(1)
+            ,
+            .rows = .{
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "struct_with_duplicate_field_names_of_different_types",
+            .sql =
+            \\# Create struct with duplicate field names of different types.
+            \\SELECT STRUCT("abc" AS a, 3 AS a)
+            ,
+            .rows = .{
+                .{.{ "abc", 3 }},
+            },
+        },
+        .{
+            .desc = "struct_with_duplicate_field_names_of_the_same_type",
+            .sql =
+            \\# Create struct with duplicate field names of the same type.
+            \\SELECT STRUCT("abc" AS a, "3" AS a)
+            ,
+            .rows = .{
+                .{.{ "abc", "3" }},
+            },
+        },
+        .{
+            .desc = "struct_with_anonymous_field_names_of_different_types",
+            .sql =
+            \\# Create struct with anonymous fields of different types.
+            \\SELECT STRUCT("abc", 3)
+            ,
+            .rows = .{
+                .{.{ "abc", 3 }},
+            },
+        },
+        .{
+            .desc = "struct_with_anonymous_field_names_of_the_same_type",
+            .sql =
+            \\# Create struct with anonymous fields of the same type.
+            \\SELECT STRUCT("abc", "3")
+            ,
+            .rows = .{
+                .{.{ "abc", "3" }},
+            },
+        },
+        .{
+            .desc = "struct_from_subquery",
+            .sql =
+            \\# Create struct from a table subquery.
+            \\SELECT STRUCT(2*v) FROM (SELECT 1 AS v) t
+            ,
+            .rows = .{
+                .{.{2}},
+            },
+        },
+        .{
+            .desc = "struct_containing_struct",
+            .sql =
+            \\# Create struct containing struct.
+            \\SELECT STRUCT(STRUCT(11, 12))
+            ,
+            .rows = .{
+                .{.{.{ 11, 12 }}},
+            },
+        },
+        .{
+            .desc = "struct_containing_array",
+            .sql =
+            \\# Create struct containing array.
+            \\SELECT STRUCT(ARRAY<INT64>[21, 22])
+            ,
+            .rows = .{
+                .{.{.{ 21, 22 }}},
+            },
+        },
+        .{
+            .desc = "struct_containing_array_of_struct",
+            .sql =
+            \\# Create struct containing array of struct.
+            \\SELECT STRUCT(ARRAY<STRUCT<INT64, INT64>>[(11, 12), (21, 22)])
+            ,
+            .rows = .{
+                .{.{.{ .{ 11, 12 }, .{ 21, 22 } }}},
+            },
+        },
+        .{
+            .desc = "struct_access_field",
+            .sql =
+            \\# Accessing struct field.
+            \\SELECT s.a FROM (SELECT STRUCT("abc" AS a, 3 AS b) s) t
+            ,
+            .rows = .{
+                .{"abc"},
+            },
+        },
+        .{
+            .desc = "struct_select_as_value",
+            .sql =
+            \\# Select a struct constructed like (x,y) as a value.
+            \\SELECT STRUCT("abc", 3)
+            ,
+            .rows = .{
+                .{.{ "abc", 3 }},
+            },
+        },
+        .{
+            .desc = "struct_alias",
+            .sql =
+            \\# Select an alias from the from clause, get it as a struct.
+            \\SELECT t from (SELECT STRUCT("abc" AS a, 3 AS b) t ) x
+            ,
+            .rows = .{
+                .{.{ "abc", 3 }},
+            },
+        },
+        .{
+            .desc = "struct_cast",
+            .sql =
+            \\# Cast struct.
+            \\SELECT CAST(STRUCT<DOUBLE, INT32>(3.5, 5) AS STRUCT<INT64, DOUBLE>)
+            ,
+            .rows = .{
+                .{.{ 4, 5 }},
+            },
+        },
+        .{
+            .desc = "struct_union",
+            .sql =
+            \\# Union structs.
+            \\SELECT STRUCT("abc" AS a, 3 AS b)
+            \\UNION ALL
+            \\SELECT STRUCT("def" AS a, 5 AS b)
+            \\UNION ALL
+            \\SELECT STRUCT("def" AS a, 5 AS b)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{.{ "abc", 3 }},
+                .{.{ "def", 5 }},
+                .{.{ "def", 5 }},
+            },
+        },
+        .{
+            .desc = "struct_union_distinct",
+            .sql =
+            \\# Union distinct structs.
+            \\SELECT STRUCT("abc" AS a, 3 AS b)
+            \\UNION DISTINCT
+            \\SELECT STRUCT("def" AS a, 5 AS b)
+            \\UNION DISTINCT
+            \\SELECT STRUCT("def" AS a, 5 AS b)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{.{ "abc", 3 }},
+                .{.{ "def", 5 }},
+            },
+        },
+        .{
+            .desc = "struct_union_distinct_null",
+            .sql =
+            \\# Union distinct structs with null
+            \\SELECT STRUCT("abc" AS a, NULL AS b)
+            \\UNION DISTINCT
+            \\SELECT STRUCT(NULL AS a, 5 AS b)
+            \\UNION DISTINCT
+            \\SELECT STRUCT(NULL AS a, 5 AS b)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{.{ null, 5 }},
+                .{.{ "abc", null }},
+            },
+        },
+        .{
+            .desc = "struct_union_different_names",
+            .sql =
+            \\# The following functions are currently not working in the analyzer.
+            \\# We will implement them later.
+            \\# Union anonymous structs with matching types, different names.
+            \\SELECT STRUCT("abc" AS a, 3 AS b)
+            \\UNION ALL
+            \\SELECT STRUCT("def" AS c, 5 AS d)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{.{ "abc", 3 }},
+                .{.{ "def", 5 }},
+            },
+        },
+        .{
+            .desc = "struct_union_requiring_coercion",
+            .sql =
+            \\# Union structs requiring coercion.
+            \\SELECT STRUCT<INT64, DOUBLE>(3, 5.5)
+            \\UNION ALL
+            \\SELECT STRUCT<DOUBLE, INT32>(1.4, 2)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{.{ 3, 5.5 }},
+                .{.{ 1.4, 2 }},
+            },
+        },
+        .{
+            .desc = "struct_union_distinct_requiring_coercion",
+            .sql =
+            \\SELECT STRUCT<INT64, DOUBLE>(3, 5.5)
+            \\UNION DISTINCT
+            \\SELECT STRUCT<DOUBLE, INT32>(1.4, 2)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{.{ 1.4, 2 }},
+                .{.{ 3, 5.5 }},
+            },
+        },
+        .{
+            .desc = "struct_case_requiring_coercion",
+            .sql =
+            \\# Case with structs values requiring coercion.
+            \\SELECT CASE
+            \\  WHEN TRUE THEN STRUCT(1.4, 1)
+            \\  ELSE STRUCT(3, 3.5)
+            \\END
+            ,
+            .rows = .{
+                .{.{ 1.4, 1 }},
+            },
+        },
+        .{
+            .desc = "struct_equality",
+            .sql =
+            \\# Struct equality.
+            \\SELECT STRUCT(3 AS a, 5.5 AS b) = STRUCT(3 AS c, 5.5 AS d)
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "empty_struct_equality",
+            .sql =
+            \\# Comparisons of empty STRUCT
+            \\SELECT
+            \\  STRUCT<>() = STRUCT<>(),
+            \\  STRUCT<>() <> STRUCT<>(),
+            \\  STRUCT<>() = CAST(NULL AS STRUCT<>),
+            \\  STRUCT<>() <> CAST(NULL AS STRUCT<>),
+            \\  STRUCT<>() = null_struct,
+            \\  STRUCT<>() <> null_struct,
+            \\  null_struct = CAST(NULL AS STRUCT<>),
+            \\  null_struct <> CAST(NULL AS STRUCT<>),
+            \\  null_struct = null_struct,
+            \\  null_struct <> null_struct
+            \\FROM (SELECT CAST(NULL AS STRUCT<>) AS null_struct)
+            ,
+            .rows = .{
+                .{ true, false, null, null, null, null, null, null, null, null },
+            },
+        },
+        .{
+            .desc = "struct_in",
+            .sql =
+            \\# IN on struct.
+            \\SELECT STRUCT(3, 5) IN (STRUCT(3, 5), STRUCT(4, 6))
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "struct_equality_null_field",
+            .sql =
+            \\# CASE and NULLIF on struct with null field.
+            \\SELECT
+            \\  CASE s WHEN STRUCT(1, 2) THEN 1
+            \\         WHEN STRUCT(NULL, 2) THEN 2
+            \\         ELSE 3
+            \\  END AS value1,
+            \\  NULLIF(s, (NULL, 2)) AS value2
+            \\FROM (SELECT STRUCT(1 AS x, 2 AS y) AS s
+            \\      UNION ALL SELECT STRUCT(NULL AS x, 2 AS y) AS s
+            \\      UNION ALL SELECT STRUCT(3 AS x, 2 AS y) AS s)
+            ,
+            .unordered = true,
+            .rows = .{
+                .{ 3, .{ null, 2 } },
+                .{ 1, .{ 1, 2 } },
+                .{ 3, .{ 3, 2 } },
+            },
+        },
+        .{
+            .desc = "struct_from_table_reference",
+            .sql =
+            \\# b/28942765
+            \\SELECT CAST(q AS STRUCT<a INT64>) FROM (SELECT 1) AS q
+            ,
+            .rows = .{
+                .{.{1}},
+            },
+        },
+        .{
+            .desc = "literal_struct_with_non_coercible_fields",
+            .sql = "select cast((5, '2014-01-01') AS STRUCT<STRING, INT32>)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "literal_values_cannot_be_coerced_to_target_types",
+            .sql = "select cast((-1, -1) AS STRUCT<INT32, UINT32>)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "invalid_casts_nested_inside_struct_literals",
+            .sql = "select cast((-1, cast(-1 AS INT32)) AS STRUCT<INT32, UINT32>)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "non_literals_cannot_be_coerced_to_target_types",
+            .sql = "select cast(cast((-1, -1) AS STRUCT<INT64, INT64>) AS STRUCT<INT32, UINT32>)",
+            .expect_error_any = true,
+        },
+        .{
+            .desc = "struct_with_type_modifiers",
+            .unsupported_in_bigquery = "STRUCT<...>(...) literal with type modifiers (STRING(5)/NUMERIC(10,2)/TIMESTAMP(12)) is rejected (recidiviz-bigquery-sandbox, 2026-08-23)",
+            .sql =
+            \\with tbl as (
+            \\  SELECT
+            \\    STRUCT<a STRING(5) COLLATE "und:ci", b NUMERIC(10, 2), c TIMESTAMP(12)>
+            \\    ("abc", 123.456, TIMESTAMP "2001-01-01") as s1,
+            \\    STRUCT<a STRING(5) COLLATE "und:ci", b NUMERIC(10, 1), c TIMESTAMP(6)>
+            \\    ("ABC", 123.456, TIMESTAMP "2001-01-02 1:2:3.123456789012") as s2
+            \\)
+            \\SELECT
+            \\  s1, s2,
+            \\  s1.a = s2.a  -- returns true since the collation is "und:ci"
+            \\FROM tbl
+            ,
+            .rows = .{
+                .{ .{ "abc", 123.46, "2001-01-01 08:00:00+00" }, .{ "ABC", 123.5, "2001-01-02 09:02:03.123456+00" }, true },
+            },
+        },
+    },
+}
