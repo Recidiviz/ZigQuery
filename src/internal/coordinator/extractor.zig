@@ -20,6 +20,8 @@
 
 const std = @import("std");
 const pb = @import("../../proto/resolved_ast.zig");
+const bind = @import("../../internal/function/bind.zig");
+const agg_opt = @import("../function/aggregate_option.zig");
 const value_mod = @import("../value.zig");
 const encoder = @import("../encoder.zig");
 const spec = @import("../spec.zig");
@@ -38,101 +40,52 @@ const TransformContext = context.TransformContext;
 // Function-name normalization (Go: getZetasqliteFuncName + function maps)
 // ----------------------------------------------------------------------
 
-/// Names of internal/function_register.go normalFuncs. Go additionally
-/// registers a "safe_<name>" map key for each entry (setupNormalFuncMap);
-/// `existsNormalFunc` below reproduces that without duplicating the table.
-const normal_func_names = std.StaticStringMap(void).initComptime(.{
-    .{"add"},                          .{"subtract"},                 .{"multiply"},
-    .{"divide"},                       .{"equal"},                    .{"not_equal"},
-    .{"greater"},                      .{"greater_or_equal"},         .{"less"},
-    .{"less_or_equal"},                .{"bitwise_not"},              .{"bitwise_left_shift"},
-    .{"bitwise_right_shift"},          .{"bitwise_and"},              .{"bitwise_or"},
-    .{"bitwise_xor"},                  .{"in_array"},                 .{"get_struct_field"},
-    .{"get_json_field"},               .{"subscript"},                .{"array_at_offset"},
-    .{"array_at_ordinal"},             .{"safe_negate"},              .{"is_distinct_from"},
-    .{"is_not_distinct_from"},         .{"session_user"},             .{"generate_uuid"},
-    .{"error"},                        .{"current_date"},             .{"extract"},
-    .{"extract_date"},                 .{"date"},                     .{"date_add"},
-    .{"date_sub"},                     .{"date_diff"},                .{"date_trunc"},
-    .{"date_from_unix_date"},          .{"format_date"},              .{"last_day"},
-    .{"parse_date"},                   .{"unix_date"},                .{"current_datetime"},
-    .{"datetime"},                     .{"datetime_add"},             .{"datetime_sub"},
-    .{"datetime_diff"},                .{"datetime_trunc"},           .{"format_datetime"},
-    .{"parse_datetime"},               .{"current_time"},             .{"time"},
-    .{"time_add"},                     .{"time_sub"},                 .{"time_diff"},
-    .{"time_trunc"},                   .{"format_time"},              .{"parse_time"},
-    .{"current_timestamp"},            .{"string"},                   .{"timestamp"},
-    .{"timestamp_add"},                .{"timestamp_sub"},            .{"timestamp_diff"},
-    .{"timestamp_trunc"},              .{"format_timestamp"},         .{"parse_timestamp"},
-    .{"date_bucket"},                  .{"datetime_bucket"},          .{"timestamp_bucket"},
-    .{"timestamp_seconds"},            .{"timestamp_millis"},         .{"timestamp_micros"},
-    .{"unix_seconds"},                 .{"unix_millis"},              .{"unix_micros"},
-    .{"like"},                         .{"between"},                  .{"in"},
-    .{"is_null"},                      .{"is_true"},                  .{"is_false"},
-    .{"not"},                          .{"and"},                      .{"or"},
-    .{"coalesce"},                     .{"if"},                       .{"ifnull"},
-    .{"nullif"},                       .{"length"},                   .{"cast"},
-    .{"interval"},                     .{"make_interval"},            .{"justify_days"},
-    .{"justify_hours"},                .{"justify_interval"},         .{"parse_numeric"},
-    .{"parse_bignumeric"},             .{"farm_fingerprint"},         .{"md5"},
-    .{"sha1"},                         .{"sha256"},                   .{"sha512"},
-    .{"ascii"},                        .{"byte_length"},              .{"char_length"},
-    .{"chr"},                          .{"code_points_to_bytes"},     .{"code_points_to_string"},
-    .{"collate"},                      .{"concat"},                   .{"contains_substr"},
-    .{"ends_with"},                    .{"format"},                   .{"from_base32"},
-    .{"from_base64"},                  .{"from_hex"},                 .{"initcap"},
-    .{"instr"},                        .{"left"},                     .{"lpad"},
-    .{"lower"},                        .{"ltrim"},                    .{"normalize"},
-    .{"normalize_and_casefold"},       .{"regexp_contains"},          .{"regexp_extract"},
-    .{"regexp_extract_all"},           .{"regexp_instr"},             .{"regexp_replace"},
-    .{"replace"},                      .{"repeat"},                   .{"reverse"},
-    .{"right"},                        .{"rpad"},                     .{"rtrim"},
-    .{"safe_convert_bytes_to_string"}, .{"soundex"},                  .{"split"},
-    .{"edit_distance"},                .{"starts_with"},              .{"strpos"},
-    .{"substr"},                       .{"to_base32"},                .{"to_base64"},
-    .{"to_code_points"},               .{"to_hex"},                   .{"translate"},
-    .{"trim"},                         .{"unicode"},                  .{"upper"},
-    .{"json_extract"},                 .{"json_extract_scalar"},      .{"json_extract_array"},
-    .{"json_extract_string_array"},    .{"json_query"},               .{"json_value"},
-    .{"json_query_array"},             .{"json_value_array"},         .{"parse_json"},
-    .{"to_json"},                      .{"to_json_string"},           .{"bool"},
-    .{"int64"},                        .{"double"},                   .{"float64"},
-    .{"json_type"},                    .{"lax_bool"},                 .{"lax_int64"},
-    .{"lax_float64"},                  .{"lax_string"},               .{"json_array"},
-    .{"json_object"},                  .{"json_set"},                 .{"json_remove"},
-    .{"json_strip_nulls"},             .{"json_array_append"},        .{"json_array_insert"},
-    .{"json_keys"},                    .{"json_flatten"},             .{"abs"},
-    .{"sign"},                         .{"is_inf"},                   .{"is_nan"},
-    .{"ieee_divide"},                  .{"rand"},                     .{"sqrt"},
-    .{"pow"},                          .{"power"},                    .{"exp"},
-    .{"ln"},                           .{"log"},                      .{"log10"},
-    .{"greatest"},                     .{"least"},                    .{"div"},
-    .{"mod"},                          .{"round"},                    .{"trunc"},
-    .{"ceil"},                         .{"ceiling"},                  .{"floor"},
-    .{"cos"},                          .{"cosh"},                     .{"acos"},
-    .{"acosh"},                        .{"sin"},                      .{"sinh"},
-    .{"asin"},                         .{"asinh"},                    .{"tan"},
-    .{"tanh"},                         .{"atan"},                     .{"atanh"},
-    .{"atan2"},                        .{"range_bucket"},             .{"cbrt"},
-    .{"cot"},                          .{"coth"},                     .{"csc"},
-    .{"csch"},                         .{"sec"},                      .{"sech"},
-    .{"cosine_distance"},              .{"euclidean_distance"},       .{"array_concat"},
-    .{"array_first"},                  .{"array_last"},               .{"array_slice"},
-    .{"array_length"},                 .{"array_to_string"},          .{"generate_array"},
-    .{"generate_date_array"},          .{"generate_timestamp_array"}, .{"array_reverse"},
-    .{"make_array"},                   .{"make_struct"},              .{"hll_count_extract"},
-    .{"bit_count"},                    .{"distinct"},                 .{"bit_cast_to_int32"},
-    .{"bit_cast_to_int64"},            .{"bit_cast_to_uint32"},       .{"bit_cast_to_uint64"},
-    .{"limit"},                        .{"order_by"},                 .{"ignore_nulls"},
-    .{"having_max"},                   .{"having_min"},               .{"eval_javascript"},
-    .{"net_host"},                     .{"net_ip_from_string"},       .{"net_ip_in_net"},
-    .{"net_ip_net_mask"},              .{"net_ip_to_string"},         .{"net_ip_trunc"},
-    .{"net_ipv4_from_int64"},          .{"net_ipv4_to_int64"},        .{"net_public_suffix"},
-    .{"net_reg_domain"},               .{"net_safe_ip_from_string"},  .{"range"},
-    .{"range_start"},                  .{"range_end"},                .{"range_overlaps"},
-    .{"range_intersect"},              .{"range_contains"},           .{"generate_range_array"},
-    .{"range_is_start_unbounded"},     .{"range_is_end_unbounded"},
-});
+/// None of these currently reach a lookup: the
+/// analyzer rewrites ARRAY_FIRST/LAST/SLICE into other builtins and resolves
+/// COLLATE as an annotation.
+const unported_func_names = [_][:0]const u8{
+    "collate",
+    "eval_javascript",
+};
+
+/// Go's normalFuncs: every name registered as a `zetasqlite_<name>` scalar.
+/// Built from the same tables register.zig walks to create them, so the
+/// extractor cannot claim a function that was never registered.
+///
+/// Go additionally registers a "safe_<name>" key per entry
+/// (setupNormalFuncMap); `existsNormalFunc` below reproduces that rather than
+/// doubling the map.
+fn buildFunctionNames() std.StaticStringMap(void) {
+    comptime {
+        // The aggregate modifiers (DISTINCT / LIMIT / ORDER BY / ...) are
+        // plain normalFuncs entries in Go; here they live beside the
+        // aggregates they mark, so both tables feed the map.
+        const total = bind.func_table.len +
+            agg_opt.option_func_table.len +
+            unported_func_names.len;
+        @setEvalBranchQuota(20 * total);
+
+        var entries: [total]struct { []const u8 } = undefined;
+        var i: usize = 0;
+        for (bind.func_table) |info| {
+            entries[i] = .{info.name};
+            i += 1;
+        }
+        for (agg_opt.option_func_table) |info| {
+            entries[i] = .{info.name};
+            i += 1;
+        }
+        for (unported_func_names) |name| {
+            entries[i] = .{name};
+            i += 1;
+        }
+
+        const final = entries;
+        return .initComptime(final);
+    }
+}
+
+const normal_func_names = buildFunctionNames();
 
 /// internal/function_register.go aggregateFuncs names.
 const aggregate_func_names = std.StaticStringMap(void).initComptime(.{
@@ -218,7 +171,7 @@ fn getZetasqliteFuncName(
     const full_name = stripFunctionGroup(raw_name);
 
     // funcName := strings.ReplaceAll(fullName, ".", "_")
-    const func_name = try replaceDots(alloc, full_name);
+    var func_name = try replaceDots(alloc, full_name);
 
     const exists_current_time = current_time_func_names.has(func_name);
     const exists_normal = existsNormalFunc(func_name);
@@ -228,32 +181,51 @@ fn getZetasqliteFuncName(
     var func_prefix: []const u8 = "zetasqlite";
     const error_mode = fcb.error_mode orelse .DEFAULT_ERROR_MODE;
     if (error_mode == .SAFE_ERROR_MODE) {
-        // Go: "SAFE is not supported for function %s"
-        if (!exists_normal) return error.UnsupportedFunction;
+        if (!exists_normal) return safeUnsupported(func_name, exists_aggregate, exists_window);
         func_prefix = "zetasqlite_safe";
     }
-
-    if (std.mem.startsWith(u8, func_name, "$")) {
+    // The operator names the analyzer spells with a leading `$` ($add,
+    // $interval, ...) are registered under the bare name, so this strip has to
+    // happen before any lookup — and it is itself the answer: a `$` name maps
+    // unconditionally, without consulting a table. Deciding it from
+    // `exists_normal` instead reads "$interval" against a map keyed on
+    // "interval" and rejects every operator in the language.
+    const is_operator = std.mem.startsWith(u8, func_name, "$");
+    if (is_operator) {
+        func_name = func_name[1..];
         if (is_window_func) {
-            return std.fmt.allocPrint(alloc, "{s}_window_{s}", .{ func_prefix, func_name[1..] });
+            return std.fmt.allocPrint(alloc, "{s}_window_{s}", .{ func_prefix, func_name });
         }
-        return std.fmt.allocPrint(alloc, "{s}_{s}", .{ func_prefix, func_name[1..] });
-    } else if (exists_current_time) {
         return std.fmt.allocPrint(alloc, "{s}_{s}", .{ func_prefix, func_name });
-    } else if (exists_normal) {
+    }
+
+    if (exists_current_time or exists_normal) {
         return std.fmt.allocPrint(alloc, "{s}_{s}", .{ func_prefix, func_name });
     } else if (!is_window_func and exists_aggregate) {
         return std.fmt.allocPrint(alloc, "{s}_{s}", .{ func_prefix, func_name });
     } else if (is_window_func and exists_window) {
         return std.fmt.allocPrint(alloc, "{s}_window_{s}", .{ func_prefix, func_name });
     } else {
-        // Go: builtins with no runtime mapping -> "%s function is
-        // unimplemented"; otherwise getFuncName recovers the registered UDF
-        // name from FunctionNamePath (formatPath joins with "_", which the
-        // "."->"_" replacement above already produced).
-        if (is_builtin) return error.UnsupportedFunction;
+        if (is_builtin) {
+            value_mod.setDiagnostic("{s} is not implemented", .{func_name});
+            return error.UnsupportedFunction;
+        }
         return func_name;
     }
+}
+
+/// BigQuery words the rejection by what kind of function SAFE was applied to, and lower-
+/// cases the name — which is the spelling the analyzer hands us. Measured against
+/// BigQuery (recidiviz-bigquery-sandbox, 2026-08-07).
+fn safeUnsupported(name: []const u8, is_aggregate: bool, is_window: bool) Error {
+    if (is_aggregate) {
+        value_mod.setDiagnostic("SAFE is unsupported with aggregate function {s}", .{name});
+    } else if (is_window) {
+        value_mod.setDiagnostic("SAFE is unsupported with analytic function {s}", .{name});
+    } else {
+        value_mod.setDiagnostic("SAFE with function {s} is not supported.", .{name});
+    }
+    return error.UnsupportedFunction;
 }
 
 fn replaceDots(alloc: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]u8 {
@@ -577,6 +549,15 @@ fn exprTypeProto(expr: *const pb.AnyResolvedExprProto) Error!*pb.TypeProto {
     };
     const p = parent orelse return error.InvalidAST;
     return p.type orelse error.InvalidAST;
+}
+
+/// The result kind of a resolved expression, read off its ResolvedExpr base.
+/// TYPE_UNKNOWN when the base or its type is absent, which the transformer
+/// reads as non-primitive; a missing type costs a fast path, never an error.
+fn resultKindOf(base: ?*const pb.ResolvedExprProto) pb.TypeKind {
+    const parent = base orelse return .TYPE_UNKNOWN;
+    const tp = parent.type orelse return .TYPE_UNKNOWN;
+    return tp.type_kind orelse .TYPE_UNKNOWN;
 }
 
 /// Unwraps AnyResolvedFunctionCallBaseProto down to the shared
@@ -1964,13 +1945,20 @@ pub const NodeExtractor = struct {
             signature.arguments = args_info;
         }
 
+        const result_kind = resultKindOf(node.parent);
+
         // Translate MIN_BY/MAX_BY to ANY_VALUE with HAVING MIN/MAX:
         // MIN_BY(x, y) -> ANY_VALUE(x HAVING MIN y).
         if (std.mem.eql(u8, original_func_name, "min_by") or
             std.mem.eql(u8, original_func_name, "max_by"))
         {
-            // requires exactly 2 arguments
-            if (arguments.items.len != 2) return error.UnsupportedFunction;
+            if (arguments.items.len != 2) {
+                value_mod.setDiagnostic(
+                    "{s} requires exactly 2 arguments, got {d}",
+                    .{ original_func_name, arguments.items.len },
+                );
+                return error.UnsupportedFunction;
+            }
             const having_func: []const u8 = if (std.mem.eql(u8, original_func_name, "min_by"))
                 "zetasqlite_having_min"
             else
@@ -1991,6 +1979,9 @@ pub const NodeExtractor = struct {
                 .name = "zetasqlite_any_value",
                 .arguments = wrapped_args,
                 .signature = signature,
+                // ANY_VALUE(x) returns x's type, which is what MIN_BY(x, y)
+                // resolved to.
+                .result_kind = result_kind,
             };
             return .{ .type = .function, .function = fn_data };
         }
@@ -2000,6 +1991,7 @@ pub const NodeExtractor = struct {
             .name = func_name,
             .arguments = try arguments.toOwnedSlice(alloc),
             .signature = signature,
+            .result_kind = result_kind,
         };
         return .{ .type = .function, .function = fn_data };
     }
@@ -2201,8 +2193,10 @@ pub const NodeExtractor = struct {
 
         var frame_clause = try windowFuncFixedRange(alloc, function.name);
         if (frame_clause != null and node.window_frame != null) {
-            // Go: "%s: window framing clause is not allowed for analytic
-            // function"
+            value_mod.setDiagnostic(
+                "{s}: window framing clause is not allowed for analytic function",
+                .{function.name},
+            );
             return error.UnsupportedFunction;
         }
         if (frame_clause == null) {
@@ -2284,7 +2278,14 @@ pub const NodeExtractor = struct {
         const args = try alloc.alloc(ExpressionData, 2);
         args[0] = expr_data;
         args[1] = .{ .type = .literal, .literal = idx_literal };
-        return types_data.newFunctionCallExpressionData(alloc, "zetasqlite_get_struct_field", args);
+        const data = try types_data.newFunctionCallExpressionData(
+            alloc,
+            "zetasqlite_get_struct_field",
+            args,
+        );
+        // The field's type is what this call returns.
+        data.function.?.result_kind = resultKindOf(node.parent);
+        return data;
     }
 
     /// Go extractGetJsonFieldData: JSON field access lowers to
@@ -2305,7 +2306,13 @@ pub const NodeExtractor = struct {
         const args = try alloc.alloc(ExpressionData, 2);
         args[0] = expr_data;
         args[1] = .{ .type = .literal, .literal = name_literal };
-        return types_data.newFunctionCallExpressionData(alloc, "zetasqlite_get_json_field", args);
+        const data = try types_data.newFunctionCallExpressionData(
+            alloc,
+            "zetasqlite_get_json_field",
+            args,
+        );
+        data.function.?.result_kind = resultKindOf(node.parent);
+        return data;
     }
 
     /// Go extractMakeStructData: becomes zetasqlite_make_struct(name1,
@@ -2330,7 +2337,13 @@ pub const NodeExtractor = struct {
             field_args[i * 2 + 1] = try self.ExtractExpressionData(alloc, field, ctx);
         }
 
-        return types_data.newFunctionCallExpressionData(alloc, "zetasqlite_make_struct", field_args);
+        const data = try types_data.newFunctionCallExpressionData(
+            alloc,
+            "zetasqlite_make_struct",
+            field_args,
+        );
+        data.function.?.result_kind = resultKindOf(parent);
+        return data;
     }
 };
 
@@ -2784,4 +2797,22 @@ test "extract STRUCT field access becomes zetasqlite_get_struct_field" {
     try testing.expectEqualStrings("zetasqlite_get_struct_field", function.name);
     try testing.expectEqual(@as(usize, 2), function.arguments.len);
     try value_mod.expectValueEqual(.{ .int = 1 }, function.arguments[1].literal.?.value);
+}
+
+test "normal_func_names covers every registered scalar exactly once" {
+    // The map merges two tables, and StaticStringMap accepts a duplicate key
+    // silently — so a name landing in both would go unnoticed here and
+    // register a function twice in register.zig.
+    var seen: std.StringHashMap(void) = .init(std.testing.allocator);
+    defer seen.deinit();
+    for (normal_func_names.keys()) |name| {
+        try std.testing.expect(!seen.contains(name));
+        try seen.put(name, {});
+    }
+    for (bind.func_table) |info| try std.testing.expect(existsNormalFunc(info.name));
+    for (agg_opt.option_func_table) |info| try std.testing.expect(existsNormalFunc(info.name));
+
+    // Go's setupNormalFuncMap alias.
+    try std.testing.expect(existsNormalFunc("safe_add"));
+    try std.testing.expect(!existsNormalFunc("safe_nonesuch"));
 }

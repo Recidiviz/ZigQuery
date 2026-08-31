@@ -57,7 +57,10 @@
         .{
             .desc = "safe sum",
             .sql = "SELECT SAFE.SUM(x) AS sum FROM UNNEST([1, 2, 3, 4, 5, 4, 3, 2, 1]) AS x",
-            .expect_error = "SAFE is not supported for function SUM",
+            // Only the error name reaches the caller: nothing along this path formats a
+            // message. BigQuery says `SAFE is unsupported with aggregate function sum`,
+            // and the Go wording is quoted at extractor.zig:180 but never emitted.
+            .expect_error = "SAFE is unsupported with aggregate function sum",
             .rows = .{},
         },
     },

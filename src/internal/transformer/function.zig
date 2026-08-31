@@ -8,8 +8,12 @@
 //! - the special zetasqlite_ifnull / zetasqlite_if / zetasqlite_case_*
 //!   rewrites into CASE expression objects
 //! - window specification construction (PARTITION BY / ORDER BY / frame)
-//! - the fast-path lowering of primitive-typed comparison/logical functions
-//!   into native SQL operators (canOptimizeFunction/optimizeFunctionToSQL)
+//! - the fast-path lowering of comparison/logical functions into native SQL
+//!   operators (canOptimizeFunction/optimizeFunctionToSQL)
+//!
+//! A kind lowers to a native operator when SQLite compares its stored form the
+//! way GoogleSQL compares the value. `isPrimitiveKind` carries that argument;
+//! `codec_sortable.zig` carries the proof.
 //!
 //! The Go funcMap CallSQL branch (user-defined FunctionSpec) is skipped for
 //! this milestone: no UDFs are registered yet, so the map is always empty
@@ -21,6 +25,8 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const common = @import("common.zig");
+const pb = @import("../../proto/resolved_ast.zig");
+const spec = @import("../spec.zig");
 
 const Error = types_data.Error;
 const ExpressionData = types_data.ExpressionData;
@@ -128,10 +134,6 @@ pub fn transform(
         try partition_by.ensureTotalCapacity(alloc, ws_data.partition_by.len);
         for (ws_data.partition_by) |part_data| {
             const expr = try coord.transformExpression(part_data.*, ctx);
-            // This used to apply COLLATE zetasqlite_collate so SQLite
-            // partitioned on the decoded value. Unnecessary since the encodings
-            // became memcomparable: SQLite's own byte comparison is now the
-            // right one, and the collation no longer exists.
             try partition_by.append(alloc, expr);
         }
 
@@ -183,9 +185,10 @@ pub fn transform(
         window_spec = ws;
     }
 
-    // Fast path optimization: bypass function calls for primitive type
-    // operations (avoids per-call decode/encode overhead).
-    if (canOptimizeFunction(function)) {
+    // Fast path: bypass the UDF for operations SQLite can do on the stored
+    // form, saving a decode per argument and an encode per result, per row. A
+    // windowed call keeps its OVER clause by staying a function call.
+    if (window_spec == null and canOptimizeFunction(function)) {
         return optimizeFunctionToSQL(alloc, function.name, args.items);
     }
 
@@ -227,118 +230,255 @@ fn isZeroExpressionData(e: ExpressionData) bool {
         e.subquery == null;
 }
 
-/// Go functionToOperator.
-const function_to_operator = std.StaticStringMap([]const u8).initComptime(.{
+/// A function that lowers to a native SQLite operator, and the shape it lowers
+/// into. Everything the three consumers need: the gate (`canOptimizeFunction`),
+/// the operand predicate (`isPrimitiveSQLiteType`), the renderer
+/// (`optimizeFunctionToSQL`).
+const Lowering = struct {
+    op: []const u8,
+    form: Form,
+    min_args: u8,
+    /// null: variadic.
+    max_args: ?u8 = null,
+    operands: Operands = .primitive,
+
+    const Form = enum {
+        /// `a OP b`, folded left for more than two: `a OP b OP c`.
+        infix,
+        /// `a OP (b, c, ...)`.
+        in_list,
+        /// `OP (a)`.
+        prefix,
+        /// `a IS NULL`.
+        is_null,
+        /// `a BETWEEN b AND c`.
+        between,
+    };
+
+    const Operands = enum {
+        /// The operator compares stored values: every argument must satisfy
+        /// `isPrimitiveSQLiteType`.
+        primitive,
+        /// The operator inspects only NULL-ness, which every encoding
+        /// preserves. Any argument will do.
+        any,
+    };
+};
+
+const lowerings = std.StaticStringMap(Lowering).initComptime(.{
     // Comparison operators.
-    .{ "zetasqlite_equal", "=" },
-    .{ "zetasqlite_not_equal", "!=" },
-    .{ "zetasqlite_less", "<" },
-    .{ "zetasqlite_greater", ">" },
-    .{ "zetasqlite_less_or_equal", "<=" },
-    .{ "zetasqlite_greater_or_equal", ">=" },
-    .{ "zetasqlite_in", "IN" },
+    .{ "zetasqlite_equal", Lowering{ .op = "=", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zetasqlite_not_equal", Lowering{ .op = "!=", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zetasqlite_less", Lowering{ .op = "<", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zetasqlite_greater", Lowering{ .op = ">", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zetasqlite_less_or_equal", Lowering{ .op = "<=", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zetasqlite_greater_or_equal", Lowering{ .op = ">=", .form = .infix, .min_args = 2, .max_args = 2 } },
+    // NULL-safe equality: `a IS b` is TRUE when both are NULL and `a = b`
+    // otherwise. operators.md#is_operators
+    .{ "zetasqlite_is_not_distinct_from", Lowering{ .op = "IS", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zetasqlite_is_distinct_from", Lowering{ .op = "IS NOT", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zetasqlite_between", Lowering{ .op = "BETWEEN", .form = .between, .min_args = 3, .max_args = 3 } },
+    .{ "zetasqlite_in", Lowering{ .op = "IN", .form = .in_list, .min_args = 2 } },
     // Logical operators.
-    .{ "zetasqlite_and", "AND" },
-    .{ "zetasqlite_or", "OR" },
-    .{ "zetasqlite_not", "NOT" },
+    .{ "zetasqlite_and", Lowering{ .op = "AND", .form = .infix, .min_args = 2 } },
+    .{ "zetasqlite_or", Lowering{ .op = "OR", .form = .infix, .min_args = 2 } },
+    .{ "zetasqlite_not", Lowering{ .op = "NOT", .form = .prefix, .min_args = 1, .max_args = 1 } },
+    // Lowers over ARRAY and STRUCT too, by the .any operand rule.
+    .{ "zetasqlite_is_null", Lowering{ .op = "IS NULL", .form = .is_null, .min_args = 1, .max_args = 1, .operands = .any } },
 });
 
-/// Go canOptimizeFunction: name must map to an operator, argument counts
-/// must fit the operator shape, and every argument must be a primitive
-/// SQLite-compatible type or itself an optimizable expression.
+/// Whether the call can be lowered: the name maps to an operator, the argument
+/// count fits its shape, and — unless the operator only looks at NULL-ness —
+/// every argument is stored in a form SQLite compares the way GoogleSQL does.
 fn canOptimizeFunction(function: *const types_data.FunctionCallData) bool {
-    if (function_to_operator.get(function.name) == null) return false;
+    const l = lowerings.get(function.name) orelse return false;
 
-    // Check argument count requirements.
-    if (std.mem.eql(u8, function.name, "zetasqlite_not")) {
-        if (function.arguments.len != 1) return false;
-    } else if (std.mem.eql(u8, function.name, "zetasqlite_and") or
-        std.mem.eql(u8, function.name, "zetasqlite_or"))
-    {
-        if (function.arguments.len < 2) return false;
-    } else {
-        // Comparison operators (zetasqlite_in included, exactly like Go).
-        if (function.arguments.len != 2) return false;
+    if (function.arguments.len < l.min_args) return false;
+    if (l.max_args) |max| {
+        if (function.arguments.len > max) return false;
     }
 
-    for (function.arguments) |arg| {
-        if (!isPrimitiveSQLiteType(arg)) return false;
+    if (l.operands == .primitive) {
+        for (function.arguments) |arg| {
+            if (!isPrimitiveSQLiteType(arg)) return false;
+        }
     }
     return true;
 }
 
-/// Go optimizeFunctionToSQL: converts functions to direct SQL operators.
+/// Parenthesises a binary operand, whose precedence against its parent
+/// `BinaryExpression` is otherwise whatever SQLite's grammar assigns: the
+/// builder renders `left OP right` bare, so nesting an OR under an AND reads
+/// back as `a OR (b AND c)`. Every other expression kind self-delimits.
+///
+/// A one-element `ListExpression` renders as `(expr)`.
+fn grouped(alloc: std.mem.Allocator, e: *SQLExpression) Error!*SQLExpression {
+    if (e.type != .binary) return e;
+    const one = try alloc.alloc(*SQLExpression, 1);
+    one[0] = e;
+    return sqlbuilder.newListExpression(alloc, one);
+}
+
+/// Renders the lowered form, one arm per `Lowering.Form`.
 fn optimizeFunctionToSQL(
     alloc: std.mem.Allocator,
     function_name: []const u8,
     args: []const *SQLExpression,
 ) Error!*SQLExpression {
-    // Go: "unknown optimizable function: %s"
-    const operator = function_to_operator.get(function_name) orelse
-        return error.UnsupportedFunction;
+    // canOptimizeFunction, the only caller, has looked this up and
+    // range-checked args.len against it.
+    const l = lowerings.get(function_name) orelse return error.InvalidAST;
 
-    if (std.mem.eql(u8, function_name, "zetasqlite_and") or
-        std.mem.eql(u8, function_name, "zetasqlite_or"))
-    {
-        // Go: "%s expected at least 2 arguments, got %d"
-        if (args.len < 2) return error.InvalidAST;
-        // Chain multiple arguments with the operator.
-        var result = args[0];
-        for (args[1..]) |arg| {
-            result = try sqlbuilder.newBinaryExpression(alloc, result, operator, arg);
-        }
-        return result;
-    } else if (std.mem.eql(u8, function_name, "zetasqlite_not")) {
-        // Go: "%s expected only 1 argument, got %d"
-        if (args.len != 1) return error.InvalidAST;
-        return sqlbuilder.newNotExpression(alloc, args[0]);
-    } else if (std.mem.eql(u8, function_name, "zetasqlite_in")) {
-        return sqlbuilder.newBinaryExpression(
-            alloc,
-            args[0],
-            operator,
-            try sqlbuilder.newListExpression(alloc, args[1..]),
-        );
-    } else {
-        // Comparison operators. Go: "%s expected 2 arguments, got %d"
-        if (args.len != 2) return error.InvalidAST;
-        return sqlbuilder.newBinaryExpression(alloc, args[0], operator, args[1]);
+    switch (l.form) {
+        .infix => {
+            if (args.len < 2) return error.InvalidAST;
+            var result = try grouped(alloc, args[0]);
+            for (args[1..]) |arg| {
+                result = try sqlbuilder.newBinaryExpression(
+                    alloc,
+                    result,
+                    l.op,
+                    try grouped(alloc, arg),
+                );
+            }
+            return result;
+        },
+        .in_list => {
+            if (args.len < 2) return error.InvalidAST;
+            const list = try alloc.alloc(*SQLExpression, args.len - 1);
+            for (args[1..], list) |arg, *slot| slot.* = try grouped(alloc, arg);
+            return sqlbuilder.newBinaryExpression(
+                alloc,
+                try grouped(alloc, args[0]),
+                l.op,
+                try sqlbuilder.newListExpression(alloc, list),
+            );
+        },
+        .prefix => {
+            if (args.len != 1) return error.InvalidAST;
+            // newNotExpression renders `NOT (x)`, parentheses included.
+            return sqlbuilder.newNotExpression(alloc, args[0]);
+        },
+        .is_null => {
+            if (args.len != 1) return error.InvalidAST;
+            return sqlbuilder.newBinaryExpression(
+                alloc,
+                try grouped(alloc, args[0]),
+                "IS",
+                try sqlbuilder.newLiteralExpression(alloc, "NULL"),
+            );
+        },
+        .between => {
+            if (args.len != 3) return error.InvalidAST;
+            // BETWEEN's AND is part of its syntax: the bounds group, the
+            // joiner does not.
+            const bounds = try sqlbuilder.newBinaryExpression(
+                alloc,
+                try grouped(alloc, args[1]),
+                "AND",
+                try grouped(alloc, args[2]),
+            );
+            return sqlbuilder.newBinaryExpression(
+                alloc,
+                try grouped(alloc, args[0]),
+                l.op,
+                bounds,
+            );
+        },
     }
 }
 
-/// Go isPrimitiveSQLiteType.
+/// Whether a value of this kind is stored in a form SQLite's own operators
+/// compare the way GoogleSQL does.
+///
+/// Two groups qualify. The scalars travel natively: INT/UINT as INTEGER, FLOAT
+/// and DOUBLE as REAL, BOOL as INTEGER 0/1. The rest are BLOBs carrying the
+/// memcomparable encoding, where `memcmp` equals `value.compareForCollation`
+/// (pinned by `test "memcmp over encodings matches compareForCollation"` in
+/// `codec_sortable.zig`), and `compareForCollation` is built from `Value.eq`
+/// and `Value.gt` — what the comparison UDFs themselves call.
+///
+/// Two supporting facts, neither local to this file:
+///
+/// - Every value crossing the SQLite boundary is encoded top-level through
+///   `encoder.encodeTo`, `unnest_vtab.xColumn` and `zetasqlite_get_struct_field`
+///   results included. An operator sees RANGE in its ordered form, never the
+///   self-delimiting one an ARRAY or STRUCT nests.
+/// - `spec.sqliteTypeName` declares these columns TEXT (BYTES: BLOB), and
+///   neither affinity coerces a BLOB value, so the stored bytes reach the
+///   comparison intact.
+///
+/// The exclusions and their reasons. ARRAY, STRUCT, JSON and INTERVAL take the
+/// self-delimiting codec, whose uvarint length prefixes sort by length before
+/// content; byte equality on a STRUCT also answers FALSE where GoogleSQL
+/// answers NULL for a NULL field. An ENUM literal decodes to a `.string` Value
+/// while `sqliteTypeName` declares the column INT; enums reach the engine only
+/// as date-part and NORMALIZE-mode markers passed to functions.
+fn isPrimitiveKind(k: pb.TypeKind) bool {
+    return switch (k) {
+        // Native storage classes.
+        .TYPE_INT32,
+        .TYPE_INT64,
+        .TYPE_UINT32,
+        .TYPE_UINT64,
+        .TYPE_BOOL,
+        .TYPE_FLOAT,
+        .TYPE_DOUBLE,
+        // Memcomparable BLOBs.
+        .TYPE_STRING,
+        .TYPE_BYTES,
+        .TYPE_DATE,
+        .TYPE_TIME,
+        .TYPE_DATETIME,
+        .TYPE_TIMESTAMP,
+        .TYPE_NUMERIC,
+        .TYPE_BIGNUMERIC,
+        .TYPE_RANGE,
+        => true,
+        else => false,
+    };
+}
+
+/// Whether this operand may meet a native SQLite operator. See
+/// `isPrimitiveKind` for why a kind qualifies.
 fn isPrimitiveSQLiteType(expr: ExpressionData) bool {
     switch (expr.type) {
         .literal => {
             const literal = expr.literal orelse return false;
-            // Go: nil Value (SQL NULL) is not primitive.
+            // A SQL NULL is not primitive. Every operator in the table agrees
+            // with its UDF on NULL, so the cost is a constant-folding
+            // opportunity and the gain is lowered SQL free of `null IS NULL`.
             return switch (literal.value) {
-                .int, .float, .bool, .string => true,
+                .int,
+                .float,
+                .bool,
+                .string,
+                .bytes,
+                .date,
+                .time,
+                .datetime,
+                .timestamp,
+                .numeric,
+                .range,
+                => true,
                 else => false,
             };
         },
         .column => {
             const column = expr.column orelse return false;
             const t = column.type orelse return false;
-            return switch (t.typeKind()) {
-                .TYPE_INT32,
-                .TYPE_INT64,
-                .TYPE_UINT32,
-                .TYPE_UINT64,
-                .TYPE_BOOL,
-                .TYPE_FLOAT,
-                .TYPE_DOUBLE,
-                .TYPE_STRING,
-                => true,
-                else => false,
-            };
+            return isPrimitiveKind(t.typeKind());
         },
         .function => {
-            // Optimizable functions can be treated as primitive for further
-            // optimization.
             const function = expr.function orelse return false;
-            if (function_to_operator.get(function.name) == null) return false;
-            return canOptimizeFunction(function);
+            // A lowered operator yields SQLite's own 0/1, which is how BOOL is
+            // stored.
+            if (canOptimizeFunction(function)) return true;
+            // A UDF call yields the engine's encoding for its result type, an
+            // operand like any other when that type qualifies. Covers both the
+            // functions with no operator mapping and the mapped ones that fail
+            // the gate: `zetasqlite_in` over a STRUCT returns an encoded BOOL.
+            return isPrimitiveKind(function.result_kind);
         },
         else => return false,
     }
@@ -468,7 +608,7 @@ test "fast-path lowering of primitive comparisons and logic" {
         try testing.expectEqualStrings("NOT (true)", try expr.toString(a));
     }
 
-    // IN (only the two-argument form optimizes, like Go).
+    // IN, at every list length.
     {
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = try literalExprData(a, .{ .int = 1 });
@@ -476,6 +616,41 @@ test "fast-path lowering of primitive comparisons and logic" {
         const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_in", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("1 IN (2)", try expr.toString(a));
+    }
+    {
+        const fn_args = try a.alloc(ExpressionData, 4);
+        fn_args[0] = try literalExprData(a, .{ .int = 5 });
+        fn_args[1] = try literalExprData(a, .{ .int = 1 });
+        fn_args[2] = try literalExprData(a, .{ .int = 5 });
+        fn_args[3] = try literalExprData(a, .{ .int = 10 });
+        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_in", fn_args);
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings("5 IN (1,5,10)", try expr.toString(a));
+    }
+
+    // BETWEEN's AND is syntax: the bounds group, the joiner does not.
+    {
+        const fn_args = try a.alloc(ExpressionData, 3);
+        fn_args[0] = try literalExprData(a, .{ .int = 5 });
+        fn_args[1] = try literalExprData(a, .{ .int = 1 });
+        fn_args[2] = try literalExprData(a, .{ .int = 10 });
+        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_between", fn_args);
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings("5 BETWEEN 1 AND 10", try expr.toString(a));
+    }
+
+    // NULL-safe equality maps onto SQLite's IS.
+    {
+        const fn_args = try a.alloc(ExpressionData, 2);
+        fn_args[0] = try literalExprData(a, .{ .int = 1 });
+        fn_args[1] = try literalExprData(a, .{ .int = 1 });
+        const data = try types_data.newFunctionCallExpressionData(
+            a,
+            "zetasqlite_is_not_distinct_from",
+            fn_args,
+        );
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings("1 IS 1", try expr.toString(a));
     }
 
     // NULL literal argument defeats the fast path -> plain function call.
@@ -487,6 +662,171 @@ test "fast-path lowering of primitive comparisons and logic" {
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("zetasqlite_equal(1, null)", try expr.toString(a));
     }
+}
+
+/// A column reference of the given kind, registered in the fragment context so
+/// the ColumnRef transformer resolves it.
+fn columnExprData(
+    ctx: *context.TransformContext,
+    id: i64,
+    name: []const u8,
+    kind: pb.TypeKind,
+) !ExpressionData {
+    const a = ctx.alloc;
+    const info = try a.create(context.ColumnInfo);
+    info.* = .{ .name = name, .id = id };
+    try ctx.fragmentContext().addAvailableColumn(id, info);
+    try ctx.fragmentContext().registerColumnScope(id, "t");
+
+    const t = try a.create(spec.Type);
+    t.* = .{ .kind = @intFromEnum(kind) };
+    const ref = try a.create(types_data.ColumnRefData);
+    ref.* = .{ .column_name = name, .column_id = id, .table_name = "t", .type = t };
+    return .{ .type = .column, .column = ref };
+}
+
+test "every memcomparable kind lowers; the self-delimiting ones do not" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var coord = coordinator.QueryCoordinator.init(a);
+    const ctx = try testCtx(a);
+
+    // The kinds codec_sortable.zig owns, plus the natively stored scalars.
+    for ([_]pb.TypeKind{
+        .TYPE_STRING,   .TYPE_BYTES,
+        .TYPE_DATE,     .TYPE_TIME,
+        .TYPE_DATETIME, .TYPE_TIMESTAMP,
+        .TYPE_NUMERIC,  .TYPE_BIGNUMERIC,
+        .TYPE_RANGE,    .TYPE_INT64,
+        .TYPE_DOUBLE,   .TYPE_BOOL,
+    }, 0..) |kind, i| {
+        const id: i64 = @intCast(i * 2);
+        const fn_args = try a.alloc(ExpressionData, 2);
+        fn_args[0] = try columnExprData(ctx, id, "x", kind);
+        fn_args[1] = try columnExprData(ctx, id + 1, "y", kind);
+        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_less", fn_args);
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings("`x` < `y`", try expr.toString(a));
+    }
+
+    // The self-delimiting codec sorts by length before content, so these stay
+    // on the UDF.
+    for ([_]pb.TypeKind{ .TYPE_ARRAY, .TYPE_STRUCT, .TYPE_JSON, .TYPE_INTERVAL }, 0..) |kind, i| {
+        const id: i64 = @intCast(100 + i * 2);
+        const fn_args = try a.alloc(ExpressionData, 2);
+        fn_args[0] = try columnExprData(ctx, id, "x", kind);
+        fn_args[1] = try columnExprData(ctx, id + 1, "y", kind);
+        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings("zetasqlite_equal(`x`, `y`)", try expr.toString(a));
+    }
+}
+
+test "IS NULL lowers over any kind; a primitive result type makes any call an operand" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var coord = coordinator.QueryCoordinator.init(a);
+    const ctx = try testCtx(a);
+
+    // IS NULL inspects only NULL-ness, so an ARRAY column lowers here while
+    // `=` on one does not.
+    {
+        const fn_args = try a.alloc(ExpressionData, 1);
+        fn_args[0] = try columnExprData(ctx, 1, "arr", .TYPE_ARRAY);
+        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_is_null", fn_args);
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings("`arr` IS NULL", try expr.toString(a));
+    }
+
+    // A call with no operator mapping is an operand when its result type
+    // qualifies: zetasqlite_array_length returns INT64, a native INTEGER.
+    {
+        const inner_args = try a.alloc(ExpressionData, 1);
+        inner_args[0] = try columnExprData(ctx, 2, "arr", .TYPE_ARRAY);
+        var inner = try types_data.newFunctionCallExpressionData(
+            a,
+            "zetasqlite_array_length",
+            inner_args,
+        );
+        inner.function.?.result_kind = .TYPE_INT64;
+
+        const fn_args = try a.alloc(ExpressionData, 2);
+        fn_args[0] = inner;
+        fn_args[1] = try literalExprData(a, .{ .int = 0 });
+        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings(
+            "zetasqlite_array_length(`arr`) = 0",
+            try expr.toString(a),
+        );
+    }
+
+    // TYPE_UNKNOWN, the default every transformer-synthesized node carries,
+    // is not an operand.
+    {
+        const inner_args = try a.alloc(ExpressionData, 1);
+        inner_args[0] = try columnExprData(ctx, 3, "arr", .TYPE_ARRAY);
+        const inner = try types_data.newFunctionCallExpressionData(
+            a,
+            "zetasqlite_array_length",
+            inner_args,
+        );
+
+        const fn_args = try a.alloc(ExpressionData, 2);
+        fn_args[0] = inner;
+        fn_args[1] = try literalExprData(a, .{ .int = 0 });
+        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings(
+            "zetasqlite_equal(zetasqlite_array_length(`arr`), 0)",
+            try expr.toString(a),
+        );
+    }
+}
+
+test "a lowered operand keeps its parentheses when the parent binds tighter" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var coord = coordinator.QueryCoordinator.init(a);
+    const ctx = try testCtx(a);
+
+    // AND binds tighter than OR, so the OR operand carries the grouping:
+    // bare, `a OR b AND c` reads back as `a OR (b AND c)`.
+    const or_args = try a.alloc(ExpressionData, 2);
+    or_args[0] = try columnExprData(ctx, 1, "a", .TYPE_BOOL);
+    or_args[1] = try columnExprData(ctx, 2, "b", .TYPE_BOOL);
+    const or_data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_or", or_args);
+
+    const and_args = try a.alloc(ExpressionData, 2);
+    and_args[0] = or_data;
+    and_args[1] = try columnExprData(ctx, 3, "c", .TYPE_BOOL);
+    const and_data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_and", and_args);
+
+    const expr = try transform(&coord, and_data, ctx);
+    try testing.expectEqualStrings(
+        "(`a` OR `b`) AND `c`",
+        try expr.toString(a),
+    );
+
+    // The reverse nesting groups correctly bare, and must stay bare.
+    const and2_args = try a.alloc(ExpressionData, 2);
+    and2_args[0] = try columnExprData(ctx, 1, "a", .TYPE_BOOL);
+    and2_args[1] = try columnExprData(ctx, 2, "b", .TYPE_BOOL);
+    const and2 = try types_data.newFunctionCallExpressionData(a, "zetasqlite_and", and2_args);
+
+    const or2_args = try a.alloc(ExpressionData, 2);
+    or2_args[0] = and2;
+    or2_args[1] = try columnExprData(ctx, 3, "c", .TYPE_BOOL);
+    const or2 = try types_data.newFunctionCallExpressionData(a, "zetasqlite_or", or2_args);
+
+    const expr2 = try transform(&coord, or2, ctx);
+    try testing.expectEqualStrings(
+        "(`a` AND `b`) OR `c`",
+        try expr2.toString(a),
+    );
 }
 
 test "current-time literal injection" {

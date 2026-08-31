@@ -33,6 +33,7 @@ const std = @import("std");
 const zetasqlite = @import("zetasqlite");
 const driver = zetasqlite.driver;
 const schema = @import("schema.zig");
+const pb = @import("../../proto/bigquery.zig");
 
 pub const Error = error{
     /// `queryParameters` was not an array, or an element was not an object.
@@ -44,28 +45,36 @@ pub const Error = error{
 /// Converts a `queryParameters` array into driver parameters.
 ///
 /// Element order is preserved, which is what positional binding needs; named
-/// parameters are matched by name at bind time, so their order does not
-/// matter.
+/// parameters are matched by name at bind time, so their order does not matter.
 pub fn parse(arena: std.mem.Allocator, v: std.json.Value) Error![]const driver.Param {
     if (v != .array) return error.InvalidParameter;
-    const items = v.array.items;
-    const out = try arena.alloc(driver.Param, items.len);
-    for (items, 0..) |item, i| {
-        if (item != .object) return error.InvalidParameter;
-        const obj = item.object;
-        const ptype = obj.get("parameterType");
+    const items = try arena.alloc(*pb.QueryParameter, v.array.items.len);
+    for (v.array.items, 0..) |item, i| {
+        items[i] = pb.QueryParameter.jsonDecode(arena, item, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidParameter,
+        };
+    }
+    return parseTyped(arena, items);
+}
 
+/// The same, for a caller that already decoded the request.
+pub fn parseTyped(
+    arena: std.mem.Allocator,
+    params: []const *pb.QueryParameter,
+) Error![]const driver.Param {
+    const out = try arena.alloc(driver.Param, params.len);
+    for (params, 0..) |p, i| {
         out[i] = .{
             // Stored without the `@` sigil: SQLite reports the placeholder as
             // "@name" and the driver strips it before looking the arg up.
             // An absent or empty name means a positional `?` parameter.
             .name = blk: {
-                const n = obj.get("name") orelse break :blk null;
-                if (n != .string or n.string.len == 0) break :blk null;
-                break :blk n.string;
+                const n = p.name orelse break :blk null;
+                break :blk if (n.len == 0) null else n;
             },
-            .value = try cellFor(arena, ptype, obj.get("parameterValue")),
-            .type_text = try typeText(arena, ptype),
+            .value = try cellFor(arena, p.parameter_type, p.parameter_value),
+            .type_text = try typeText(arena, p.parameter_type),
         };
     }
     return out;
@@ -80,29 +89,27 @@ pub fn parse(arena: std.mem.Allocator, v: std.json.Value) Error![]const driver.P
 /// existed, so an exotic type is never worse off than it was.
 pub fn typeText(
     arena: std.mem.Allocator,
-    ptype: ?std.json.Value,
+    ptype: ?*const pb.QueryParameterType,
 ) std.mem.Allocator.Error!?[]const u8 {
     const t = ptype orelse return null;
-    const name = typeNameOf(t) orelse return null;
+    const name = t.type orelse return null;
 
     if (std.mem.eql(u8, name, "ARRAY")) {
-        const elem = t.object.get("arrayType") orelse return null;
-        const inner = try typeText(arena, elem) orelse return null;
+        const inner = try typeText(arena, t.array_type) orelse return null;
         const text: []const u8 = try std.fmt.allocPrint(arena, "ARRAY<{s}>", .{inner});
         return text;
     }
 
     if (std.mem.eql(u8, name, "STRUCT")) {
-        const fields = structTypesOf(t);
-        if (fields.len == 0) return null;
+        if (t.struct_types.len == 0) return null;
         var out: std.ArrayList(u8) = .empty;
         try out.appendSlice(arena, "STRUCT<");
-        for (fields, 0..) |field, i| {
+        for (t.struct_types, 0..) |field, i| {
             if (i > 0) try out.appendSlice(arena, ", ");
-            const inner = try typeText(arena, fieldTypeOf(field)) orelse return null;
+            const inner = try typeText(arena, field.type) orelse return null;
             // An anonymous field is a legal STRUCT member; naming it with
             // empty backticks would not be.
-            const fname = fieldNameOf(field);
+            const fname = field.name orelse "";
             if (fname.len > 0) {
                 try out.append(arena, '`');
                 try out.appendSlice(arena, fname);
@@ -123,113 +130,79 @@ pub fn typeText(
 /// The value tree, shaped by the declared type.
 fn cellFor(
     arena: std.mem.Allocator,
-    ptype: ?std.json.Value,
-    pvalue: ?std.json.Value,
+    ptype: ?*const pb.QueryParameterType,
+    pvalue: ?*const pb.QueryParameterValue,
 ) Error!driver.Cell {
     // No parameterValue at all is how a NULL parameter arrives.
     const val = pvalue orelse return .null;
-    if (val != .object) return error.InvalidParameter;
-    const name = if (ptype) |t| (typeNameOf(t) orelse "") else "";
+    const name = if (ptype) |t| (t.type orelse "") else "";
 
     if (std.mem.eql(u8, name, "ARRAY")) {
-        const elem = ptype.?.object.get("arrayType");
         // A present parameterValue with no arrayValues is an empty array, not
         // a NULL one — the same rule the insertAll path follows.
-        const arr = val.object.get("arrayValues") orelse return .{ .array = &.{} };
-        if (arr != .array) return error.InvalidParameter;
-        const cells = try arena.alloc(driver.Cell, arr.array.items.len);
-        for (arr.array.items, 0..) |item, i| {
-            cells[i] = try cellFor(arena, elem, item);
-        }
+        const elem = if (ptype) |t| t.array_type else null;
+        const cells = try arena.alloc(driver.Cell, val.array_values.len);
+        for (val.array_values, 0..) |item, i| cells[i] = try cellFor(arena, elem, item);
         return .{ .array = cells };
     }
 
     if (std.mem.eql(u8, name, "STRUCT")) {
-        const fields = structTypesOf(ptype.?);
-        const members = val.object.get("structValues");
+        const fields = if (ptype) |t| t.struct_types else &.{};
         const out = try arena.alloc(driver.Cell.Field, fields.len);
         for (fields, 0..) |field, i| {
-            const fname = fieldNameOf(field);
-            // Fields follow structTypes order, not the value object's key
-            // order: castParamValue matches struct fields against the
-            // declared type *by position*, so taking the value's order would
-            // silently transpose them.
-            const sub = if (members) |m|
-                (if (m == .object) m.object.get(fname) else null)
-            else
-                null;
+            const fname = field.name orelse "";
+            // Fields follow structTypes order, not the value map's order:
+            // castParamValue matches struct fields against the declared type
+            // *by position*, so taking the value's order would transpose them.
             out[i] = .{
                 .name = fname,
-                .value = try cellFor(arena, fieldTypeOf(field), sub),
+                .value = try cellFor(arena, field.type, structValue(val, fname)),
             };
         }
         return .{ .struct_ = out };
     }
 
-    const scalar = val.object.get("value") orelse return .null;
-    return scalarCell(arena, name, scalar);
+    const scalar = val.value orelse return .null;
+    const text = scalar.value orelse return .null;
+    return scalarCell(arena, name, text);
+}
+
+fn structValue(
+    val: *const pb.QueryParameterValue,
+    name: []const u8,
+) ?*const pb.QueryParameterValue {
+    for (val.struct_values) |entry| {
+        if (std.mem.eql(u8, entry.key orelse "", name)) return entry.value;
+    }
+    return null;
 }
 
 /// A leaf `parameterValue.value` under its declared type.
+///
+/// Everything arrives as text — a client that sent a bare JSON number had it
+/// rendered on the way in — and is cast to the resolved type at bind time,
+/// exactly as the REST surface intends. Pre-parsing "5" here would duplicate
+/// `castParamValue` and would be wrong when the declared type is STRING and the
+/// text merely looks numeric: `WHERE external_id = @id` with id "0012".
 fn scalarCell(
     arena: std.mem.Allocator,
     type_name: []const u8,
-    v: std.json.Value,
+    text: []const u8,
 ) Error!driver.Cell {
-    return switch (v) {
-        .null => .null,
-        // Clients that send raw JSON scalars rather than stringifying them.
-        .bool => |b| .{ .bool = b },
-        .integer => |i| .{ .int = i },
-        .float => |f| .{ .float = f },
-        .number_string => |s| .{ .string = s },
-        .string => |s| blk: {
-            // BYTES arrives base64-encoded. Binding the encoded text would
-            // store the base64 itself: castParamValue's TYPE_BYTES arm takes
-            // the bytes as they are, it does not decode.
-            if (std.mem.eql(u8, type_name, "BYTES")) {
-                const dec = std.base64.standard.Decoder;
-                const n = dec.calcSizeForSlice(s) catch return error.InvalidBase64Value;
-                const buf = try arena.alloc(u8, n);
-                dec.decode(buf, s) catch return error.InvalidBase64Value;
-                break :blk .{ .bytes = buf };
-            }
-            // Cell.json exists so a JSON payload is bound as JSON rather than
-            // re-quoted by ToJSON, which is what binding it as a string does.
-            if (std.mem.eql(u8, type_name, "JSON")) break :blk .{ .json = s };
-            // Everything else stays text and is cast to the resolved type at
-            // bind time, exactly as the REST surface intends.
-            break :blk .{ .string = s };
-        },
-        // A scalar cannot be either of these; reject rather than guess.
-        .array, .object => error.InvalidParameter,
-    };
-}
-
-fn typeNameOf(ptype: std.json.Value) ?[]const u8 {
-    if (ptype != .object) return null;
-    const t = ptype.object.get("type") orelse return null;
-    return if (t == .string) t.string else null;
-}
-
-fn structTypesOf(ptype: std.json.Value) []const std.json.Value {
-    if (ptype != .object) return &.{};
-    const f = ptype.object.get("structTypes") orelse return &.{};
-    return if (f == .array) f.array.items else &.{};
-}
-
-fn fieldTypeOf(field: std.json.Value) ?std.json.Value {
-    if (field != .object) return null;
-    return field.object.get("type");
-}
-
-/// A struct field's declared name. BigQuery always sends one for a
-/// StructQueryParameter; an anonymous field stays unnamed, which is a legal
-/// STRUCT in GoogleSQL.
-fn fieldNameOf(field: std.json.Value) []const u8 {
-    if (field != .object) return "";
-    const n = field.object.get("name") orelse return "";
-    return if (n == .string) n.string else "";
+    // BYTES arrives base64-encoded. Binding the encoded text would store the
+    // base64 itself: castParamValue's TYPE_BYTES arm takes the bytes as they
+    // are, it does not decode.
+    if (std.mem.eql(u8, type_name, "BYTES")) {
+        const dec = std.base64.standard.Decoder;
+        const n = dec.calcSizeForSlice(text) catch return error.InvalidBase64Value;
+        const buf = try arena.alloc(u8, n);
+        dec.decode(buf, text) catch return error.InvalidBase64Value;
+        return .{ .bytes = buf };
+    }
+    // Cell.json exists so a JSON payload is bound as JSON rather than re-quoted
+    // by ToJSON, which is what binding it as a string does.
+    if (std.mem.eql(u8, type_name, "JSON")) return .{ .json = text };
+    return .{ .string = text };
 }
 
 const testing = std.testing;
@@ -445,4 +418,23 @@ test "a non-array body is rejected" {
         error.InvalidParameter,
         parse(arena, try parseJson(arena, "[1]")),
     );
+}
+
+test "a client that sends a raw JSON scalar gets it as text" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // google-cloud-bigquery stringifies these; a hand-written body need not.
+    // Either way the driver casts the text to the resolved type at bind time.
+    const v = try parseJson(arena,
+        \\[{"name":"n","parameterType":{"type":"INT64"},"parameterValue":{"value":5}},
+        \\ {"name":"b","parameterType":{"type":"BOOL"},"parameterValue":{"value":true}},
+        \\ {"name":"f","parameterType":{"type":"FLOAT64"},"parameterValue":{"value":1.5}}]
+    );
+    const params = try parse(arena, v);
+    try testing.expectEqualStrings("5", params[0].value.string);
+    try testing.expectEqualStrings("true", params[1].value.string);
+    // The client's own spelling, not a reformatting of it.
+    try testing.expectEqualStrings("1.5", params[2].value.string);
 }

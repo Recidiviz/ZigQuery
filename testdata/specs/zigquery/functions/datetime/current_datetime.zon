@@ -10,5 +10,19 @@
                 .{"2006-01-02T22:04:05"},
             },
         },
+        .{
+            .desc = "current_datetime reads its zone argument",
+            .sql = "SELECT CURRENT_DATETIME(), CURRENT_DATETIME(\"Asia/Tokyo\"), CURRENT_DATETIME(\"America/Los_Angeles\")",
+            .rows = .{
+                .{ "2006-01-02T22:04:05", "2006-01-03T07:04:05", "2006-01-02T14:04:05" },
+            },
+        },
+        .{
+            .desc = "current_datetime propagates a NULL zone",
+            .sql = "SELECT CURRENT_DATETIME(CAST(NULL AS STRING))",
+            .rows = .{
+                .{null},
+            },
+        },
     },
 }

@@ -1,0 +1,39 @@
+.{
+    .spec = "zigquery/functions/datetime/datetime_bucket",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "datetime_bucket keeps the origin's time of day",
+            // An origin at 06:07 with 90-minute buckets: 07:35 belongs to the bucket that
+            // opened at 06:07, not to an aligned 07:30. Measured
+            // (recidiviz-bigquery-sandbox, 2026-08-07).
+            .sql =
+            \\SELECT DATETIME_BUCKET(
+            \\  DATETIME '2024-03-14 07:35:00', INTERVAL 90 MINUTE, DATETIME '2000-01-15 06:07:00')
+            ,
+            .rows = .{
+                .{"2024-03-14T06:07:00"},
+            },
+        },
+        .{
+            .desc = "datetime_bucket takes a month width, which DATE and DATETIME alone accept",
+            .sql =
+            \\SELECT
+            \\  DATETIME_BUCKET(DATETIME '2024-03-14 07:35:00', INTERVAL 1 MONTH, DATETIME '2000-01-31 00:00:00'),
+            \\  DATETIME_BUCKET(DATETIME '2024-03-14 07:35:00', INTERVAL 5 MONTH)
+            ,
+            .rows = .{
+                .{ "2024-02-29T00:00:00", "2024-03-01T00:00:00" },
+            },
+        },
+        .{
+            .desc = "datetime_bucket rejects a mixed width on the count alone",
+            // DATETIME takes every part, so the only structural rule left is that exactly
+            // one is non-zero, and that is what the message says.
+            .sql = "SELECT DATETIME_BUCKET(DATETIME '2024-03-14 00:00:00', INTERVAL '1 2:0:0' DAY TO SECOND)",
+            .expect_error = "Exactly one non-zero INTERVAL part in bucket width is required; error in DATETIME_BUCKET expression",
+            .rows = .{},
+        },
+    },
+}

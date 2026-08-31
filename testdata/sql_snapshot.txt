@@ -149,7 +149,7 @@ FROM (
 SELECT  
 zetasqlite_any_value(zetasqlite_get_struct_field(`$array_6`.`value`, 0), zetasqlite_having_max(zetasqlite_get_struct_field(`$array_6`.`value`, 1))) AS `$agg1__2`  
 FROM zetasqlite_unnest(X'0e030f03046e616d650405616c6963650573636f7265010500000000000000036361740404636174310f03046e616d650403626f620573636f7265010a00000000000000036361740404636174310f03046e616d6504056361726f6c0573636f726501010000000000000003636174040463617432') AS `$array_6`  
-WHERE zetasqlite_equal(zetasqlite_get_struct_field(`$array_6`.`value`, 2), X'6063617431')
+WHERE zetasqlite_get_struct_field(`$array_6`.`value`, 2) = X'6063617431'
 ) AS `aggregate_scan_4`;
 
 ### bigquery/functions/aggregate/min_by	returns value at the minimum key
@@ -212,7 +212,7 @@ FROM (
 SELECT  
 zetasqlite_any_value(zetasqlite_get_struct_field(`$array_6`.`value`, 0), zetasqlite_having_min(zetasqlite_get_struct_field(`$array_6`.`value`, 1))) AS `$agg1__2`  
 FROM zetasqlite_unnest(X'0e030f03046e616d650405616c6963650573636f7265010500000000000000036361740404636174310f03046e616d650403626f620573636f7265010a00000000000000036361740404636174310f03046e616d6504056361726f6c0573636f726501010000000000000003636174040463617432') AS `$array_6`  
-WHERE zetasqlite_equal(zetasqlite_get_struct_field(`$array_6`.`value`, 2), X'6063617431')
+WHERE zetasqlite_get_struct_field(`$array_6`.`value`, 2) = X'6063617431'
 ) AS `aggregate_scan_4`;
 
 ### bigquery/functions/dlp/dlp_deterministic_decrypt	round-trip recovers plaintext STRING
@@ -705,7 +705,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-CASE WHEN true THEN X'60494e543634' ELSE zetasqlite_cast(zetasqlite_is_null(123), X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
+CASE WHEN true THEN X'60494e543634' ELSE zetasqlite_cast(123 IS NULL, X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### bigquery/functions/utility/typeof	string literal reports STRING
@@ -713,7 +713,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-CASE WHEN true THEN X'60535452494e47' ELSE zetasqlite_cast(zetasqlite_is_null(X'6068656c6c6f'), X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
+CASE WHEN true THEN X'60535452494e47' ELSE zetasqlite_cast(X'6068656c6c6f' IS NULL, X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### bigquery/functions/utility/typeof	floating-point literal reports DOUBLE
@@ -721,7 +721,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-CASE WHEN true THEN X'60444f55424c45' ELSE zetasqlite_cast(zetasqlite_is_null(4.7), X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
+CASE WHEN true THEN X'60444f55424c45' ELSE zetasqlite_cast(4.7 IS NULL, X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### bigquery/functions/utility/typeof	NULL collapses to INT64 supertype
@@ -729,7 +729,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-CASE WHEN true THEN X'60494e543634' ELSE zetasqlite_cast(zetasqlite_is_null(null), X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
+CASE WHEN true THEN X'60494e543634' ELSE zetasqlite_cast(null IS NULL, X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### bigquery/functions/vector/vector_index_statistics	VECTOR_INDEX.STATISTICS lowers to an empty subquery
@@ -752,46 +752,38 @@ FROM zetasqlite_unnest(X'0e01012a00000000000000') AS `$array_5`
 
 ### googlesql/functions/aggregate/any_value	upstream Example — ANY_VALUE returns one row from the group
 SELECT
-`picked__3` AS `picked`
+NOT (`$agg1__2` IS NULL) AS `picked`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(`$agg1__2`)) AS `picked__3`  
-FROM (
-SELECT    
-zetasqlite_any_value(`$array_5`.`value`) AS `$agg1__2`    
+zetasqlite_any_value(`$array_5`.`value`) AS `$agg1__2`  
 FROM zetasqlite_unnest(X'0e0304056170706c65040662616e616e61040470656172') AS `$array_5`
-) AS `aggregate_scan_4`
-) AS `project_scan_3`;
+) AS `aggregate_scan_4`;
 
 ### googlesql/functions/aggregate/any_value	HAVING MAX picks the value associated with the largest sold count
-SELECT
-`ok__14` AS `ok`
-FROM (
-WITH `Store` AS 	(  
-SELECT    
-20 AS `sold__9`,      
-X'606170706c6573' AS `fruit__10`    
-UNION ALL    
-SELECT    
-30 AS `sold__9`,      
-X'607065617273' AS `fruit__10`    
-UNION ALL    
-SELECT    
-30 AS `sold__9`,      
-X'6062616e616e6173' AS `fruit__10`    
-UNION ALL    
-SELECT    
-10 AS `sold__9`,      
-X'606f72616e676573' AS `fruit__10`  )
-  
+WITH `Store` AS 	(
 SELECT  
-zetasqlite_in(`$agg1__13`, X'607065617273', X'6062616e616e6173') AS `ok__14`  
+20 AS `sold__9`,    
+X'606170706c6573' AS `fruit__10`  
+UNION ALL  
+SELECT  
+30 AS `sold__9`,    
+X'607065617273' AS `fruit__10`  
+UNION ALL  
+SELECT  
+30 AS `sold__9`,    
+X'6062616e616e6173' AS `fruit__10`  
+UNION ALL  
+SELECT  
+10 AS `sold__9`,    
+X'606f72616e676573' AS `fruit__10`)
+
+SELECT
+`$agg1__13` IN (X'607065617273',X'6062616e616e6173') AS `ok`
 FROM (
-SELECT    
-zetasqlite_any_value(`wrs20`.`fruit__10`, zetasqlite_having_max(`wrs20`.`sold__9`)) AS `$agg1__13`    
+SELECT  
+zetasqlite_any_value(`wrs20`.`fruit__10`, zetasqlite_having_max(`wrs20`.`sold__9`)) AS `$agg1__13`  
 FROM `Store` AS `wrs20`
-) AS `aggregate_scan_19`
-) AS `with_scan_3`;
+) AS `aggregate_scan_19`;
 
 ### googlesql/functions/aggregate/any_value	HAVING MIN picks the value associated with the smallest sold count
 WITH `Store` AS 	(
@@ -839,16 +831,12 @@ FROM zetasqlite_unnest(X'0e03000000') AS `$array_5`
 
 ### googlesql/functions/aggregate/any_value	NULLs are skipped when at least one non-NULL value exists
 SELECT
-`picked_non_null__3` AS `picked_non_null`
+NOT (`$agg1__2` IS NULL) AS `picked_non_null`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(`$agg1__2`)) AS `picked_non_null__3`  
-FROM (
-SELECT    
-zetasqlite_any_value(`$array_5`.`value`) AS `$agg1__2`    
+zetasqlite_any_value(`$array_5`.`value`) AS `$agg1__2`  
 FROM zetasqlite_unnest(X'0e030001070000000000000000') AS `$array_5`
-) AS `aggregate_scan_4`
-) AS `project_scan_3`;
+) AS `aggregate_scan_4`;
 
 ### googlesql/functions/aggregate/any_value	ANY_VALUE inside a GROUP BY query
 SELECT
@@ -862,7 +850,7 @@ FROM (
 SELECT    
 `cat__4`,      
 `$agg1__2`,      
-zetasqlite_not(zetasqlite_is_null(`$agg1__2`)) AS `picked__5`    
+NOT (`$agg1__2` IS NULL) AS `picked__5`    
 FROM (
 SELECT      
 `cat__3` AS `cat__4`,        
@@ -896,48 +884,36 @@ PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
 SELECT name, kind, spec FROM zetasqlite_catalog;
 SELECT
-`$col1__3` AS `$col1`
+NOT (`$agg1__2` IS NULL) AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(`$agg1__2`)) AS `$col1__3`  
-FROM (
-SELECT    
-zetasqlite_approx_quantiles(`$array_5`.`value`, 2) AS `$agg1__2`    
+zetasqlite_approx_quantiles(`$array_5`.`value`, 2) AS `$agg1__2`  
 FROM zetasqlite_unnest(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000') AS `$array_5`
-) AS `aggregate_scan_4`
-) AS `project_scan_3`;
+) AS `aggregate_scan_4`;
 
 ### googlesql/functions/aggregate/approximate/approx_top_count	approx_top_count returns array of structs
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
 SELECT name, kind, spec FROM zetasqlite_catalog;
 SELECT
-`$col1__3` AS `$col1`
+NOT (`$agg1__2` IS NULL) AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(`$agg1__2`)) AS `$col1__3`  
-FROM (
-SELECT    
-zetasqlite_approx_top_count(`$array_5`.`value`, 2) AS `$agg1__2`    
+zetasqlite_approx_top_count(`$array_5`.`value`, 2) AS `$agg1__2`  
 FROM zetasqlite_unnest(X'0e03040161040161040162') AS `$array_5`
-) AS `aggregate_scan_4`
-) AS `project_scan_3`;
+) AS `aggregate_scan_4`;
 
 ### googlesql/functions/aggregate/approximate/approx_top_sum	approx_top_sum runs over weighted inputs
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
 SELECT name, kind, spec FROM zetasqlite_catalog;
 SELECT
-`$col1__3` AS `$col1`
+NOT (`$agg1__2` IS NULL) AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(`$agg1__2`)) AS `$col1__3`  
-FROM (
-SELECT    
-zetasqlite_approx_top_sum(`$array_5`.`value`, 1, 2) AS `$agg1__2`    
+zetasqlite_approx_top_sum(`$array_5`.`value`, 1, 2) AS `$agg1__2`  
 FROM zetasqlite_unnest(X'0e02040161040162') AS `$array_5`
-) AS `aggregate_scan_4`
-) AS `project_scan_3`;
+) AS `aggregate_scan_4`;
 
 ### googlesql/functions/aggregate/array_agg	aggregate ints into array
 PRAGMA user_version;
@@ -1759,7 +1735,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000') THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000'), 0) THEN zetasqlite_error(X'6041525241595f46495253542063616e6e6f74206765742074686520666972737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_offset(X'0e03010100000000000000010200000000000000010300000000000000', 0) END AS `$col1__3`) AS `$col1__1`
+CASE WHEN X'0e03010100000000000000010200000000000000010300000000000000' IS NULL THEN null WHEN zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000') = 0 THEN zetasqlite_error(X'6041525241595f46495253542063616e6e6f74206765742074686520666972737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_offset(X'0e03010100000000000000010200000000000000010300000000000000', 0) END AS `$col1__3`) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/array/array_includes	array_includes basic input
@@ -1771,7 +1747,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000'), zetasqlite_is_null(2)) THEN null ELSE EXISTS (SELECT      
+CASE WHEN (X'0e03010100000000000000010200000000000000010300000000000000' IS NULL) OR (2 IS NULL) THEN null ELSE EXISTS (SELECT      
 1 AS `$col1__5`      
 FROM zetasqlite_unnest(X'0e03010100000000000000010200000000000000010300000000000000') AS `$array_10`      
 WHERE `$array_10`.`value` = 2) END AS `$col1__6`) AS `$col1__1`
@@ -1786,7 +1762,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000'), zetasqlite_is_null(X'0e02010100000000000000010300000000000000')) THEN null ELSE CASE WHEN zetasqlite_equal(zetasqlite_array_length(X'0e02010100000000000000010300000000000000'), 0) THEN true ELSE (SELECT      
+CASE WHEN (X'0e03010100000000000000010200000000000000010300000000000000' IS NULL) OR (X'0e02010100000000000000010300000000000000' IS NULL) THEN null ELSE CASE WHEN zetasqlite_array_length(X'0e02010100000000000000010300000000000000') = 0 THEN true ELSE (SELECT      
 `$agg1__5`      
 FROM (
 SELECT        
@@ -1804,7 +1780,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000'), zetasqlite_is_null(X'0e02010400000000000000010200000000000000')) THEN null ELSE EXISTS (SELECT      
+CASE WHEN (X'0e03010100000000000000010200000000000000010300000000000000' IS NULL) OR (X'0e02010400000000000000010200000000000000' IS NULL) THEN null ELSE EXISTS (SELECT      
 1 AS `$col1__5`      
 FROM zetasqlite_unnest(X'0e03010100000000000000010200000000000000010300000000000000') AS `$array_10`      
 WHERE zetasqlite_in_array(`$array_10`.`value`, X'0e02010400000000000000010200000000000000')) END AS `$col1__6`) AS `$col1__1`
@@ -1826,7 +1802,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000') THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000'), 0) THEN zetasqlite_error(X'6041525241595f4c4153542063616e6e6f742067657420746865206c61737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_ordinal(X'0e03010100000000000000010200000000000000010300000000000000', zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000')) END AS `$col1__3`) AS `$col1__1`
+CASE WHEN X'0e03010100000000000000010200000000000000010300000000000000' IS NULL THEN null WHEN zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000') = 0 THEN zetasqlite_error(X'6041525241595f4c4153542063616e6e6f742067657420746865206c61737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_ordinal(X'0e03010100000000000000010200000000000000010300000000000000', zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000')) END AS `$col1__3`) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/array/array_length	length of three-element array
@@ -1857,14 +1833,14 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000') THEN null ELSE (SELECT      
+CASE WHEN X'0e03010100000000000000010200000000000000010300000000000000' IS NULL THEN null ELSE (SELECT      
 `e__3`      
 FROM (
 SELECT        
 `$array_11`.`value` AS `e__3`,          
 `$array_11`.`key` AS `idx__4`        
 FROM zetasqlite_unnest(X'0e03010100000000000000010200000000000000010300000000000000') AS `$array_11`        
-WHERE zetasqlite_not(zetasqlite_is_null(`$array_11`.`value`))
+WHERE NOT (`$array_11`.`value` IS NULL)
 ) AS `filter_scan_10`      
 ORDER BY `e__3` DESC, `idx__4` ASC      
 LIMIT 1) END AS `$col1__5`) AS `$col1__1`
@@ -1879,14 +1855,14 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000') THEN null ELSE (SELECT      
+CASE WHEN X'0e03010100000000000000010200000000000000010300000000000000' IS NULL THEN null ELSE (SELECT      
 `e__3`      
 FROM (
 SELECT        
 `$array_11`.`value` AS `e__3`,          
 `$array_11`.`key` AS `idx__4`        
 FROM zetasqlite_unnest(X'0e03010100000000000000010200000000000000010300000000000000') AS `$array_11`        
-WHERE zetasqlite_not(zetasqlite_is_null(`$array_11`.`value`))
+WHERE NOT (`$array_11`.`value` IS NULL)
 ) AS `filter_scan_10`      
 ORDER BY `e__3` ASC, `idx__4` ASC      
 LIMIT 1) END AS `$col1__5`) AS `$col1__1`
@@ -1912,7 +1888,7 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_to_json_string((SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000'), zetasqlite_is_null(1), zetasqlite_is_null(3)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000' IS NULL) OR (1 IS NULL) OR (3 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -1923,7 +1899,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -2221,7 +2197,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_current_date(1136239445000000000))) AS `$col1__1`
+NOT (zetasqlite_current_date(1136239445000000000) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/date/date	date from y/m/d
@@ -2427,7 +2403,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_current_datetime(1136239445000000000))) AS `$col1__1`
+NOT (zetasqlite_current_datetime(1136239445000000000) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/datetime/datetime	construct datetime
@@ -2711,7 +2687,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-CASE WHEN true THEN X'60494e543634' ELSE zetasqlite_cast(zetasqlite_is_null(zetasqlite_error(X'60616263')), X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
+CASE WHEN true THEN X'60494e543634' ELSE zetasqlite_cast(zetasqlite_error(X'60616263') IS NULL, X'607b226e616d65223a22222c226b696e64223a352c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) END AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/debug/error	unselected_cases_dont_run
@@ -3157,7 +3133,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_farm_fingerprint(X'60'))) AS `$col1__1`
+NOT (zetasqlite_farm_fingerprint(X'60') IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/hash/highway_fingerprint128	returns 16-byte BYTES
@@ -3221,7 +3197,7 @@ SELECT
 `$col1__3` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_greater_or_equal(zetasqlite_hll_count_extract(`$agg1__2`), 0) AS `$col1__3`  
+zetasqlite_hll_count_extract(`$agg1__2`) >= 0 AS `$col1__3`  
 FROM (
 SELECT    
 zetasqlite_hll_count_init(`$array_5`.`value`) AS `$agg1__2`    
@@ -3237,7 +3213,7 @@ SELECT
 `$col1__3` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_greater(zetasqlite_byte_length(`$agg1__2`), 0) AS `$col1__3`  
+zetasqlite_byte_length(`$agg1__2`) > 0 AS `$col1__3`  
 FROM (
 SELECT    
 zetasqlite_hll_count_init(`$array_5`.`value`) AS `$agg1__2`    
@@ -3309,7 +3285,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_justify_days(zetasqlite_interval(30, X'60444159')))) AS `$col1__1`
+NOT (zetasqlite_justify_days(zetasqlite_interval(30, X'60444159')) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/interval/justify_hours	JUSTIFY_HOURS executes without error
@@ -3320,7 +3296,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_justify_hours(zetasqlite_interval(24, X'60484f5552')))) AS `$col1__1`
+NOT (zetasqlite_justify_hours(zetasqlite_interval(24, X'60484f5552')) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/interval/justify_interval	JUSTIFY_INTERVAL executes without error
@@ -3331,7 +3307,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_justify_interval(zetasqlite_interval(90, X'60444159')))) AS `$col1__1`
+NOT (zetasqlite_justify_interval(zetasqlite_interval(90, X'60444159')) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/interval/make_interval	MAKE_INTERVAL executes without error
@@ -3342,7 +3318,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_make_interval(1, 2, 3, 0, 0, 0))) AS `$col1__1`
+NOT (zetasqlite_make_interval(1, 2, 3, 0, 0, 0) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/json/bool	bool basic behaviour
@@ -4426,8 +4402,8 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null((SELECT    
-X'7880000000000000000000000000000000ec58dfa74641af52ad0d16e77d576624' AS `$col1__2`))) AS `$col1__1`
+NOT ((SELECT    
+X'7880000000000000000000000000000000ec58dfa74641af52ad0d16e77d576624' AS `$col1__2`) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/math/pi_numeric	PI_NUMERIC returns a non-NULL numeric value
@@ -4438,8 +4414,8 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null((SELECT    
-X'70800000000000000000000000bb40e64e' AS `$col1__2`))) AS `$col1__1`
+NOT ((SELECT    
+X'70800000000000000000000000bb40e64e' AS `$col1__2`) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/math/pow	2 to the 3
@@ -4472,7 +4448,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_and(zetasqlite_greater_or_equal(zetasqlite_rand(), 0.0), zetasqlite_less(zetasqlite_rand(), 1.0)) AS `$col1__1`
+(zetasqlite_rand() >= 0.0) AND (zetasqlite_rand() < 1.0) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/math/range_bucket	bucket index when value falls between boundaries
@@ -4794,7 +4770,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_net_ip_net_mask(4, 24))) AS `$col1__1`
+NOT (zetasqlite_net_ip_net_mask(4, 24) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/net/net_ip_to_string	dotted-decimal preserved through byte form
@@ -5231,7 +5207,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_session_user())) AS `$col1__1`
+NOT (zetasqlite_session_user() IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/string/ascii	uppercase letter
@@ -5450,7 +5426,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_equal(zetasqlite_from_base32(zetasqlite_to_base32(X'686869')), X'686869') AS `$col1__1`
+zetasqlite_from_base32(zetasqlite_to_base32(X'686869')) = X'686869' AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/string/from_base64	base64 round-trip
@@ -6167,7 +6143,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_current_time(1136239445000000000))) AS `$col1__1`
+NOT (zetasqlite_current_time(1136239445000000000) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/time/extract	EXTRACT(MINUTE FROM TIME)
@@ -6266,7 +6242,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_current_timestamp(1136239445000000000))) AS `$col1__1`
+NOT (zetasqlite_current_timestamp(1136239445000000000) IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/timestamp/extract	EXTRACT(YEAR FROM TIMESTAMP)
@@ -6310,7 +6286,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_null(zetasqlite_string(X'5880061aedf0376f00', X'60555443'))) AS `$col1__1`
+NOT (zetasqlite_string(X'5880061aedf0376f00', X'60555443') IS NULL) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### googlesql/functions/timestamp/timestamp	timestamp from string round-trips through unix seconds
@@ -6807,7 +6783,7 @@ SELECT
 `option_name`,  
 `option_value`
 FROM zetasqlite_info_schema_table_options('opts_demo_ds')
-WHERE `table_name` = X'606f7074735f64656d6f5f74626c' AND `option_name` = X'606465736372697074696f6e';
+WHERE (`table_name` = X'606f7074735f64656d6f5f74626c') AND (`option_name` = X'606465736372697074696f6e');
 
 ### googlesql/information_schema/tables	TABLES lists every table in the dataset
 PRAGMA user_version;
@@ -6830,7 +6806,7 @@ SELECT
 `is_insertable_into` AS `is_insertable_into__6`,      
 `creation_time` AS `creation_time__7`    
 FROM zetasqlite_info_schema_tables('tables_demo_ds')    
-WHERE zetasqlite_in(`table_name`, X'607461626c65735f64656d6f5f61', X'607461626c65735f64656d6f5f62')
+WHERE `table_name` IN (X'607461626c65735f64656d6f5f61',X'607461626c65735f64656d6f5f62')
 ) AS `filter_scan_4`  
 ORDER BY `table_name__3` ASC
 ) AS `order_by_scan_3`;
@@ -9075,7 +9051,7 @@ SELECT
 `r3__3` AS `r3`
 FROM (
 SELECT  
-zetasqlite_is_distinct_from(1, 2) AS `r1__1`,    
+1 IS NOT 2 AS `r1__1`,    
 zetasqlite_is_distinct_from(null, null) AS `r2__2`,    
 zetasqlite_is_distinct_from(1, null) AS `r3__3`
 ) AS `project_scan_3`;
@@ -9155,9 +9131,9 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_sum((SELECT    
-CASE WHEN zetasqlite_is_not_distinct_from(`k__7`, X'6061') THEN `v__8` ELSE null END AS `$col1__17`)) AS `a__10`,    
+CASE WHEN `k__7` IS X'6061' THEN `v__8` ELSE null END AS `$col1__17`)) AS `a__10`,    
 zetasqlite_sum((SELECT    
-CASE WHEN zetasqlite_is_not_distinct_from(`k__7`, X'6062') THEN `v__8` ELSE null END AS `$col1__21`)) AS `b__11`  
+CASE WHEN `k__7` IS X'6062' THEN `v__8` ELSE null END AS `$col1__21`)) AS `b__11`  
 FROM (
 SELECT    
 X'6061' AS `k__7`,      
@@ -9178,43 +9154,23 @@ PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
 SELECT name, kind, spec FROM zetasqlite_catalog;
 SELECT
-`in_range__1` AS `in_range`,  
-`out_of_range__2` AS `out_of_range`
-FROM (
-SELECT  
-zetasqlite_between(5, 1, 10) AS `in_range__1`,    
-zetasqlite_between(11, 1, 10) AS `out_of_range__2`
-) AS `project_scan_3`;
+5 BETWEEN 1 AND 10 AS `in_range`,  
+11 BETWEEN 1 AND 10 AS `out_of_range`;
 
 ### googlesql/syntax/query/predicates	IN list literal
 SELECT
-`hit__1` AS `hit`,  
-`miss__2` AS `miss`
-FROM (
-SELECT  
-zetasqlite_in(5, 1, 5, 10) AS `hit__1`,    
-zetasqlite_in(6, 1, 5, 10) AS `miss__2`
-) AS `project_scan_3`;
+5 IN (1,5,10) AS `hit`,  
+6 IN (1,5,10) AS `miss`;
 
 ### googlesql/syntax/query/predicates	NOT IN
 SELECT
-`r__1` AS `r`
-FROM (
-SELECT  
-zetasqlite_not(zetasqlite_in(5, 1, 2, 3)) AS `r__1`
-) AS `project_scan_3`;
+NOT (5 IN (1,2,3)) AS `r`;
 
 ### googlesql/syntax/query/predicates	IS NULL / IS NOT NULL
 SELECT
-`is_null_yes__1` AS `is_null_yes`,  
-`is_null_no__2` AS `is_null_no`,  
-`not_null__3` AS `not_null`
-FROM (
-SELECT  
-zetasqlite_is_null(null) AS `is_null_yes__1`,    
-zetasqlite_is_null(1) AS `is_null_no__2`,    
-zetasqlite_not(zetasqlite_is_null(1)) AS `not_null__3`
-) AS `project_scan_3`;
+null IS NULL AS `is_null_yes`,  
+1 IS NULL AS `is_null_no`,  
+NOT (1 IS NULL) AS `not_null`;
 
 ### googlesql/syntax/query/predicates	LIKE wildcard
 SELECT
@@ -9584,7 +9540,7 @@ SELECT
 1 AS `a__1`,        
 2 AS `b__2`
 ) AS `project_scan_7` CROSS JOIN zetasqlite_unnest(zetasqlite_make_array(zetasqlite_make_struct(X'6076616c', `a__1`, X'60636f6c', X'6061'), zetasqlite_make_struct(X'6076616c', `b__2`, X'60636f6c', X'6062'))) AS `$array_6`    
-WHERE zetasqlite_not(zetasqlite_is_null(zetasqlite_get_struct_field(`$array_6`.`value`, 0)))
+WHERE NOT (zetasqlite_get_struct_field(`$array_6`.`value`, 0) IS NULL)
 ) AS `project_scan_4`  
 ORDER BY `col__4` ASC
 ) AS `order_by_scan_3`;
@@ -11676,48 +11632,38 @@ SELECT
 ) AS `project_scan_3`;
 
 ### zigquery/functions/array/array	array scan left outer join
-SELECT
-`item__4` AS `item`,  
-`item_in_stock__6` AS `item_in_stock`
-FROM (
-WITH `produce` AS 	(  
-SELECT    
-X'606c657474756365' AS `item__3`    
-UNION ALL    
-SELECT    
-X'6062616e616e61' AS `item__3`  )
-  
+WITH `produce` AS 	(
 SELECT  
-`with_ref_scan_14`.`item__4`,    
-zetasqlite_not(zetasqlite_is_null(`$array_13`.`value`)) AS `item_in_stock__6`  
+X'606c657474756365' AS `item__3`  
+UNION ALL  
+SELECT  
+X'6062616e616e61' AS `item__3`)
+
+SELECT
+`with_ref_scan_14`.`item__4` AS `item`,  
+NOT (`$array_13`.`value` IS NULL) AS `item_in_stock`
 FROM (
-SELECT    
-`wrs14`.`item__3` AS `item__4`    
+SELECT  
+`wrs14`.`item__3` AS `item__4`  
 FROM `produce` AS `wrs14`
-) AS `with_ref_scan_14` LEFT JOIN zetasqlite_unnest(X'0e0104076c657474756365') AS `$array_13` ON `$array_13`.`value` = `with_ref_scan_14`.`item__4`
-) AS `with_scan_3`;
+) AS `with_ref_scan_14` LEFT JOIN zetasqlite_unnest(X'0e0104076c657474756365') AS `$array_13` ON `$array_13`.`value` = `with_ref_scan_14`.`item__4`;
 
 ### zigquery/functions/array/array	array scan inner join
-SELECT
-`item__4` AS `item`,  
-`item_in_stock__6` AS `item_in_stock`
-FROM (
-WITH `produce` AS 	(  
-SELECT    
-X'606c657474756365' AS `item__3`    
-UNION ALL    
-SELECT    
-X'6062616e616e61' AS `item__3`  )
-  
+WITH `produce` AS 	(
 SELECT  
-`with_ref_scan_14`.`item__4`,    
-zetasqlite_not(zetasqlite_is_null(`$array_13`.`value`)) AS `item_in_stock__6`  
+X'606c657474756365' AS `item__3`  
+UNION ALL  
+SELECT  
+X'6062616e616e61' AS `item__3`)
+
+SELECT
+`with_ref_scan_14`.`item__4` AS `item`,  
+NOT (`$array_13`.`value` IS NULL) AS `item_in_stock`
 FROM (
-SELECT    
-`wrs14`.`item__3` AS `item__4`    
+SELECT  
+`wrs14`.`item__3` AS `item__4`  
 FROM `produce` AS `wrs14`
-) AS `with_ref_scan_14` INNER JOIN zetasqlite_unnest(X'0e0104076c657474756365') AS `$array_13` ON `$array_13`.`value` = `with_ref_scan_14`.`item__4`
-) AS `with_scan_3`;
+) AS `with_ref_scan_14` INNER JOIN zetasqlite_unnest(X'0e0104076c657474756365') AS `$array_13` ON `$array_13`.`value` = `with_ref_scan_14`.`item__4`;
 
 ### zigquery/functions/array/array	array function with struct
 
@@ -11759,9 +11705,9 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_is_null(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000') THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000'), 0) THEN zetasqlite_error(X'6041525241595f46495253542063616e6e6f74206765742074686520666972737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_offset(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000', 0) END AS `$col1__4`) AS `$col1__1`,    
+CASE WHEN X'0e04010100000000000000010200000000000000010300000000000000010400000000000000' IS NULL THEN null WHEN zetasqlite_array_length(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000') = 0 THEN zetasqlite_error(X'6041525241595f46495253542063616e6e6f74206765742074686520666972737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_offset(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000', 0) END AS `$col1__4`) AS `$col1__1`,    
 (SELECT    
-CASE WHEN zetasqlite_is_null(null) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(null), 0) THEN zetasqlite_error(X'6041525241595f46495253542063616e6e6f74206765742074686520666972737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_offset(null, 0) END AS `$col1__6`) AS `$col2__2`
+CASE WHEN null IS NULL THEN null WHEN zetasqlite_array_length(null) = 0 THEN zetasqlite_error(X'6041525241595f46495253542063616e6e6f74206765742074686520666972737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_offset(null, 0) END AS `$col1__6`) AS `$col2__2`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/array/array_first	array_first function empty
@@ -11770,7 +11716,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_is_null(X'0e00') THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e00'), 0) THEN zetasqlite_cast(zetasqlite_error(X'6041525241595f46495253542063616e6e6f74206765742074686520666972737420656c656d656e74206f6620616e20656d707479206172726179'), X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) ELSE zetasqlite_array_at_offset(X'0e00', 0) END AS `$col1__3`) AS `$col1__1`
+CASE WHEN X'0e00' IS NULL THEN null WHEN zetasqlite_array_length(X'0e00') = 0 THEN zetasqlite_cast(zetasqlite_error(X'6041525241595f46495253542063616e6e6f74206765742074686520666972737420656c656d656e74206f6620616e20656d707479206172726179'), X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) ELSE zetasqlite_array_at_offset(X'0e00', 0) END AS `$col1__3`) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/array/array_last	array_last function
@@ -11783,9 +11729,9 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_is_null(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000') THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000'), 0) THEN zetasqlite_error(X'6041525241595f4c4153542063616e6e6f742067657420746865206c61737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_ordinal(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000', zetasqlite_array_length(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000')) END AS `$col1__4`) AS `$col1__1`,    
+CASE WHEN X'0e04010100000000000000010200000000000000010300000000000000010400000000000000' IS NULL THEN null WHEN zetasqlite_array_length(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000') = 0 THEN zetasqlite_error(X'6041525241595f4c4153542063616e6e6f742067657420746865206c61737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_ordinal(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000', zetasqlite_array_length(X'0e04010100000000000000010200000000000000010300000000000000010400000000000000')) END AS `$col1__4`) AS `$col1__1`,    
 (SELECT    
-CASE WHEN zetasqlite_is_null(null) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(null), 0) THEN zetasqlite_error(X'6041525241595f4c4153542063616e6e6f742067657420746865206c61737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_ordinal(null, zetasqlite_array_length(null)) END AS `$col1__6`) AS `$col2__2`
+CASE WHEN null IS NULL THEN null WHEN zetasqlite_array_length(null) = 0 THEN zetasqlite_error(X'6041525241595f4c4153542063616e6e6f742067657420746865206c61737420656c656d656e74206f6620616e20656d707479206172726179') ELSE zetasqlite_array_at_ordinal(null, zetasqlite_array_length(null)) END AS `$col1__6`) AS `$col2__2`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/array/array_last	array_last function empty
@@ -11794,7 +11740,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_is_null(X'0e00') THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e00'), 0) THEN zetasqlite_cast(zetasqlite_error(X'6041525241595f4c4153542063616e6e6f742067657420746865206c61737420656c656d656e74206f6620616e20656d707479206172726179'), X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) ELSE zetasqlite_array_at_ordinal(X'0e00', zetasqlite_array_length(X'0e00')) END AS `$col1__3`) AS `$col1__1`
+CASE WHEN X'0e00' IS NULL THEN null WHEN zetasqlite_array_length(X'0e00') = 0 THEN zetasqlite_cast(zetasqlite_error(X'6041525241595f4c4153542063616e6e6f742067657420746865206c61737420656c656d656e74206f6620616e20656d707479206172726179'), X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) ELSE zetasqlite_array_at_ordinal(X'0e00', zetasqlite_array_length(X'0e00')) END AS `$col1__3`) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/array/array_length	array_length function
@@ -11815,7 +11761,7 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_array_length(null) AS `$col1__1`,    
-zetasqlite_is_null(zetasqlite_array_length(null)) AS `$col2__2`
+zetasqlite_array_length(null) IS NULL AS `$col2__2`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/array/array_length	array length comparison
@@ -11854,7 +11800,7 @@ SELECT
 4 AS `col1__23`,    
 X'0e03010100000000000000010200000000000000010300000000000000' AS `arr_col__24`
 ) AS `set_op_scan_16` ON `idx__10` = `idx__22`
-WHERE zetasqlite_not_equal(zetasqlite_array_length(`arr_col__12`), zetasqlite_array_length(`arr_col__24`));
+WHERE zetasqlite_array_length(`arr_col__12`) != zetasqlite_array_length(`arr_col__24`);
 
 ### zigquery/functions/array/array_reverse	array_reverse function
 PRAGMA user_version;
@@ -11895,7 +11841,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05040161040162040163040164040165'), zetasqlite_is_null(1), zetasqlite_is_null(3)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05040161040162040163040164040165'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05040161040162040163040164040165' IS NULL) OR (1 IS NULL) OR (3 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05040161040162040163040164040165') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -11906,7 +11852,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05040161040162040163040164040165') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -11927,7 +11873,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000'), zetasqlite_is_null(-3), zetasqlite_is_null(-1)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000' IS NULL) OR (-3 IS NULL) OR (-1 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -11938,7 +11884,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -11959,7 +11905,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05040161040162040163040164040165'), zetasqlite_is_null(0), zetasqlite_is_null(2)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05040161040162040163040164040165'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05040161040162040163040164040165' IS NULL) OR (0 IS NULL) OR (2 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05040161040162040163040164040165') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -11970,7 +11916,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05040161040162040163040164040165') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -11991,7 +11937,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000'), zetasqlite_is_null(2), zetasqlite_is_null(10)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000' IS NULL) OR (2 IS NULL) OR (10 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12002,7 +11948,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12023,7 +11969,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05040161040162040163040164040165'), zetasqlite_is_null(-30), zetasqlite_is_null(2)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05040161040162040163040164040165'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05040161040162040163040164040165' IS NULL) OR (-30 IS NULL) OR (2 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05040161040162040163040164040165') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12034,7 +11980,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05040161040162040163040164040165') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12055,7 +12001,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05040161040162040163040164040165'), zetasqlite_is_null(5), zetasqlite_is_null(30)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05040161040162040163040164040165'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05040161040162040163040164040165' IS NULL) OR (5 IS NULL) OR (30 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05040161040162040163040164040165') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12066,7 +12012,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05040161040162040163040164040165') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12087,7 +12033,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000'), zetasqlite_is_null(3), zetasqlite_is_null(1)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000' IS NULL) OR (3 IS NULL) OR (1 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12098,7 +12044,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05010100000000000000010200000000000000010300000000000000010400000000000000010500000000000000') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12119,7 +12065,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(null), zetasqlite_is_null(0), zetasqlite_is_null(2)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(null), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (null IS NULL) OR (0 IS NULL) OR (2 IS NULL) THEN null WHEN zetasqlite_array_length(null) = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12130,7 +12076,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(null) AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12151,7 +12097,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000'), zetasqlite_is_null(null), zetasqlite_is_null(2)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e03010100000000000000010200000000000000010300000000000000' IS NULL) OR (null IS NULL) OR (2 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12162,7 +12108,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e03010100000000000000010200000000000000010300000000000000') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12183,7 +12129,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e03010100000000000000010200000000000000010300000000000000'), zetasqlite_is_null(0), zetasqlite_is_null(null)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e03010100000000000000010200000000000000010300000000000000' IS NULL) OR (0 IS NULL) OR (null IS NULL) THEN null WHEN zetasqlite_array_length(X'0e03010100000000000000010200000000000000010300000000000000') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12194,7 +12140,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e03010100000000000000010200000000000000010300000000000000') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12215,7 +12161,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e00'), zetasqlite_is_null(0), zetasqlite_is_null(2)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e00'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e00' IS NULL) OR (0 IS NULL) OR (2 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e00') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12226,7 +12172,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e00') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12247,7 +12193,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05040161040162040163040164040165'), zetasqlite_is_null(-4), zetasqlite_is_null(3)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05040161040162040163040164040165'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05040161040162040163040164040165' IS NULL) OR (-4 IS NULL) OR (3 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05040161040162040163040164040165') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12258,7 +12204,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05040161040162040163040164040165') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12279,7 +12225,7 @@ SELECT
 FROM (
 SELECT  
 (SELECT    
-CASE WHEN zetasqlite_or(zetasqlite_is_null(X'0e05010a00000000000000011400000000000000011e00000000000000012800000000000000013200000000000000'), zetasqlite_is_null(2), zetasqlite_is_null(2)) THEN null WHEN zetasqlite_equal(zetasqlite_array_length(X'0e05010a00000000000000011400000000000000011e00000000000000012800000000000000013200000000000000'), 0) THEN X'0e00' ELSE (SELECT      
+CASE WHEN (X'0e05010a00000000000000011400000000000000011e00000000000000012800000000000000013200000000000000' IS NULL) OR (2 IS NULL) OR (2 IS NULL) THEN null WHEN zetasqlite_array_length(X'0e05010a00000000000000011400000000000000011e00000000000000012800000000000000013200000000000000') = 0 THEN X'0e00' ELSE (SELECT      
 (SELECT        
 zetasqlite_array(`e__7`)        
 FROM (
@@ -12290,7 +12236,7 @@ SELECT
 `$array_14`.`value` AS `e__7`,              
 `$array_14`.`key` AS `idx__8`            
 FROM zetasqlite_unnest(X'0e05010a00000000000000011400000000000000011e00000000000000012800000000000000013200000000000000') AS `$array_14`            
-WHERE zetasqlite_between(`$array_14`.`key`, `start_offset__5`, `end_offset__6`)
+WHERE `$array_14`.`key` BETWEEN `start_offset__5` AND `end_offset__6`
 ) AS `filter_scan_13`          
 ORDER BY `idx__8` ASC
 ) AS `order_by_scan_12`) AS `injected__10`      
@@ -12817,6 +12763,28 @@ SELECT
 zetasqlite_current_date(1136239445000000000) AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/date/current_date	current_date reads its zone argument
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_current_date(1136239445000000000) AS `$col1__1`,    
+zetasqlite_current_date(X'60417369612f546f6b796f', 1136239445000000000) AS `$col2__2`,    
+zetasqlite_current_date(X'60416d65726963612f4c6f735f416e67656c6573', 1136239445000000000) AS `$col3__3`,    
+zetasqlite_current_date(X'60555443', 1136239445000000000) AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/current_date	current_date propagates a NULL zone
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_current_date(null, 1136239445000000000) AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/date/date	date operator
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -12830,6 +12798,16 @@ zetasqlite_add(X'40800000000000485f', 1) AS `day_later__1`,
 zetasqlite_subtract(X'40800000000000485f', 7) AS `week_ago__2`
 ) AS `project_scan_3`;
 
+### zigquery/functions/date/date	date from a TIMESTAMP in a named zone
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_date(X'5880045ee0ae7dae00', X'60416d65726963612f4c6f735f416e67656c6573') AS `$col1__1`,    
+zetasqlite_date(X'5880045ee0ae7dae00', X'60417369612f546f6b796f') AS `$col2__2`
+) AS `project_scan_3`;
+
 ### zigquery/functions/date/date_add	date_add
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -12841,6 +12819,26 @@ SELECT
 zetasqlite_date_add(X'408000000000004bba', 1, X'604d4f4e5448') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/date/date_add	date_add year clamps February 29th to the 28th
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_date_add(X'408000000000004d46', 1, X'6059454152') AS `$col1__1`,    
+zetasqlite_date_add(X'408000000000004d46', 4, X'6059454152') AS `$col2__2`,    
+zetasqlite_date_add(X'408000000000004d54', 3, X'6059454152') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_add	date_add week is seven days
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_date_add(X'408000000000004d54', 2, X'605745454b') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/date/date_add	date_add quarter
 SELECT
 `$col1__1` AS `$col1`,  
@@ -12849,6 +12847,80 @@ FROM (
 SELECT  
 zetasqlite_date_add(X'408000000000004b9e', 1, X'6051554152544552') AS `$col1__1`,    
 zetasqlite_date_add(X'408000000000004ceb', 1, X'6051554152544552') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_bucket	date_bucket floors toward -infinity, so it holds before the origin
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+SELECT
+`d__1` AS `d`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+`d__1`,    
+`$col2__2`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `d__1`,      
+zetasqlite_date_bucket(`$array_5`.`value`, zetasqlite_interval(2, X'60444159')) AS `$col2__2`    
+FROM zetasqlite_unnest(X'0e040974e3ffffffffffff0976e3ffffffffffff0977e3ffffffffffff0979e3ffffffffffff') AS `$array_5`
+) AS `project_scan_4`  
+ORDER BY `d__1` ASC
+) AS `order_by_scan_3`;
+
+### zigquery/functions/date/date_bucket	date_bucket with a month width lands on the origin's day of month, clamped short
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_date_bucket(X'408000000000004d54', zetasqlite_interval(1, X'604d4f4e5448'), X'408000000000002aeb') AS `$col1__1`,    
+zetasqlite_date_bucket(X'408000000000004d46', zetasqlite_interval(1, X'604d4f4e5448'), X'408000000000002aeb') AS `$col2__2`,    
+zetasqlite_date_bucket(X'407fffffffffff9c69', zetasqlite_interval(1, X'604d4f4e5448'), X'408000000000002aeb') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_bucket	date_bucket with a mid-month origin turns the bucket over on that day
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_date_bucket(X'408000000000004d54', zetasqlite_interval(1, X'604d4f4e5448'), X'408000000000002adb') AS `$col1__1`,    
+zetasqlite_date_bucket(X'408000000000004d56', zetasqlite_interval(1, X'604d4f4e5448'), X'408000000000002adb') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_bucket	date_bucket with a multi-month width counts from the origin, not from January
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_date_bucket(X'408000000000004d54', zetasqlite_interval(5, X'604d4f4e5448')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_bucket	date_bucket rejects a width with a part a DATE has no meaning for
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_date_bucket(X'408000000000004d54', zetasqlite_interval(1, X'60484f5552')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_bucket	date_bucket rejects a width of zero
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_date_bucket(X'408000000000004d54', zetasqlite_interval(0, X'60444159')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_bucket	date_bucket rejects a negative width
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_date_bucket(X'408000000000004d54', zetasqlite_interval(-2, X'60444159')) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/date/date_diff	date_diff with week
@@ -12920,6 +12992,34 @@ SELECT
 zetasqlite_date_diff(X'408000000000004960', X'40800000000000444a', X'60444159') AS `days_diff__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/date/date_diff	date_diff counts boundaries of the weekday the part names
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_date_diff(X'408000000000004d54', X'408000000000004d4f', X'605745454b5f5341545552444159') AS `$col1__1`,    
+zetasqlite_date_diff(X'408000000000004d54', X'408000000000004d4f', X'605745454b5f5448555253444159') AS `$col2__2`,    
+zetasqlite_date_diff(X'408000000000004d4f', X'408000000000004d54', X'605745454b5f5341545552444159') AS `$col3__3`,    
+zetasqlite_date_diff(X'408000000000004d54', X'408000000000004d53', X'605745454b5f5448555253444159') AS `$col4__4`,    
+zetasqlite_date_diff(X'408000000000004d54', X'408000000000004d53', X'605745454b5f465249444159') AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_diff	date_diff in ISOWEEK counts Monday boundaries across a year end
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_date_diff(X'40800000000000447c', X'408000000000004475', X'6049534f5745454b') AS `$col1__1`,    
+zetasqlite_date_diff(X'40800000000000446e', X'40800000000000446d', X'6049534f5745454b') AS `$col2__2`,    
+zetasqlite_date_diff(X'408000000000004475', X'40800000000000447c', X'6049534f5745454b') AS `$col3__3`
+) AS `project_scan_3`;
+
 ### zigquery/functions/date/date_from_unix_date	date_from_unix_date
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -12940,6 +13040,26 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_date_sub(X'408000000000004bf7', 1, X'604d4f4e5448') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_sub	date_sub year and week
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_date_sub(X'408000000000004d46', 1, X'6059454152') AS `$col1__1`,    
+zetasqlite_date_sub(X'408000000000004d54', 3, X'605745454b') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_sub	date_sub month across the start of the year
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_date_sub(X'408000000000004d19', 2, X'604d4f4e5448') AS `$col1__1`,    
+zetasqlite_date_sub(X'408000000000004d19', 14, X'604d4f4e5448') AS `$col2__2`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/date/date_trunc	date_trunc with quarter
@@ -12993,6 +13113,44 @@ SELECT
 zetasqlite_date_trunc(X'408000000000004443', X'6059454152') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/date/date_trunc	date_trunc to WEEK(<weekday>) backs up to that weekday
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_date_trunc(X'408000000000004d54', X'605745454b') AS `$col1__1`,    
+zetasqlite_date_trunc(X'408000000000004d54', X'605745454b5f5745444e4553444159') AS `$col2__2`,    
+zetasqlite_date_trunc(X'408000000000004d54', X'605745454b5f5341545552444159') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_trunc	date_trunc to ISOWEEK lands on the Monday
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_date_trunc(X'408000000000004d55', X'6049534f5745454b') AS `$col1__1`,    
+zetasqlite_date_trunc(X'408000000000004b9e', X'6049534f5745454b') AS `$col2__2`,    
+zetasqlite_date_trunc(X'408000000000004d51', X'6049534f5745454b') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/date_trunc	date_trunc to ISOYEAR anchors on January 4th
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_date_trunc(X'408000000000004969', X'6049534f59454152') AS `$col1__1`,    
+zetasqlite_date_trunc(X'408000000000004ad6', X'6049534f59454152') AS `$col2__2`,    
+zetasqlite_date_trunc(X'4080000000000040d9', X'6049534f59454152') AS `$col3__3`,    
+zetasqlite_date_trunc(X'408000000000004db1', X'6049534f59454152') AS `$col4__4`
+) AS `project_scan_3`;
+
 ### zigquery/functions/date/extract	extract date
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -13015,6 +13173,50 @@ zetasqlite_extract(`$array_4`.`value`, X'6049534f5745454b') AS `$col5__5`,
 zetasqlite_extract(`$array_4`.`value`, X'605745454b') AS `$col6__6`,    
 zetasqlite_extract(`$array_4`.`value`, X'60444159') AS `$col7__7`  
 FROM zetasqlite_unnest(X'0e01099841000000000000') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/extract	extract WEEK counts from the year's first Sunday, not the ISO week
+SELECT
+`d__1` AS `d`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+`d__1`,    
+`$col2__2`,    
+`$col3__3`,    
+`$col4__4`,    
+`$col5__5`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `d__1`,      
+zetasqlite_extract(`$array_5`.`value`, X'605745454b') AS `$col2__2`,      
+zetasqlite_extract(`$array_5`.`value`, X'605745454b5f4d4f4e444159') AS `$col3__3`,      
+zetasqlite_extract(`$array_5`.`value`, X'605745454b5f5341545552444159') AS `$col4__4`,      
+zetasqlite_extract(`$array_5`.`value`, X'6049534f5745454b') AS `$col5__5`    
+FROM zetasqlite_unnest(X'0e03099e4b00000000000009544d00000000000009774e000000000000') AS `$array_5`
+) AS `project_scan_4`  
+ORDER BY `d__1` ASC
+) AS `order_by_scan_3`;
+
+### zigquery/functions/date/extract	extract DAYOFYEAR and DAYOFWEEK
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_extract(X'408000000000004e78', X'604441594f4659454152') AS `$col1__1`,    
+zetasqlite_extract(X'408000000000004d54', X'604441594f465745454b') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/extract	extract rejects a part an INTERVAL has no field for
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_extract(X'0d0b312d32203320343a353a36', X'6051554152544552') AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/date/format_date	format date with %t
@@ -13070,6 +13272,178 @@ SELECT
 zetasqlite_format_date(X'6025453459', X'40800000000000379e') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/date/format_date	format_date %U counts weeks from the year's first Sunday
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'602555', X'408000000000004b9e') AS `$col1__1`,    
+zetasqlite_format_date(X'602555', X'408000000000004e77') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %W counts weeks from the year's first Monday
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'602557', X'408000000000004b9e') AS `$col1__1`,    
+zetasqlite_format_date(X'602557', X'408000000000004e77') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %V is the ISO week, which disagrees with %U and %W at New Year
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'602556', X'408000000000004b9e') AS `$col1__1`,    
+zetasqlite_format_date(X'602556', X'408000000000004e77') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %G and %g are the ISO year, not the calendar year
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_format_date(X'602547', X'408000000000004b9e') AS `$col1__1`,    
+zetasqlite_format_date(X'602567', X'408000000000004b9e') AS `$col2__2`,    
+zetasqlite_format_date(X'602547', X'408000000000004e77') AS `$col3__3`,    
+zetasqlite_format_date(X'602567', X'408000000000004e77') AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %u is the weekday Monday=1..7, not a week number
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'602575', X'408000000000004b9e') AS `$col1__1`,    
+zetasqlite_format_date(X'602575', X'408000000000004e77') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %w is the weekday Sunday=0..6
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'602577', X'408000000000004b9e') AS `$col1__1`,    
+zetasqlite_format_date(X'602577', X'408000000000004e77') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %e pads a single-digit day with a space, %d with a zero
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'605b25655d', X'408000000000004d4b') AS `$col1__1`,    
+zetasqlite_format_date(X'605b25645d', X'408000000000004d4b') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %j is the day of the year, zero-padded to three digits
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'60256a', X'408000000000004d0f') AS `$col1__1`,    
+zetasqlite_format_date(X'60256a', X'408000000000004e78') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %Q is the quarter, taken from the month
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_format_date(X'602551', X'408000000000004d64') AS `$col1__1`,    
+zetasqlite_format_date(X'602551', X'408000000000004d65') AS `$col2__2`,    
+zetasqlite_format_date(X'602551', X'408000000000004d66') AS `$col3__3`,    
+zetasqlite_format_date(X'602551', X'408000000000004dc1') AS `$col4__4`,    
+zetasqlite_format_date(X'602551', X'408000000000004e78') AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date with the name elements %A %a %B %C
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_date(X'6025417c25617c25427c2543', X'408000000000004b9e') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date with %F and the literal elements %n %t %%
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'602546', X'408000000000004b9e') AS `$col1__1`,    
+zetasqlite_format_date(X'6061256e62257463252564', X'408000000000004b9e') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %E4Y zero-pads, and signs a year before 1 CE
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_date(X'6025453459', X'407ffffffffffa8622') AS `$col1__1`,    
+zetasqlite_format_date(X'6025453459', zetasqlite_date_from_unix_date(-1000000)) AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date copies an unknown element through verbatim
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_date(X'605b25215d5b25715d5b254f595d', X'408000000000004b9e') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date copies through an element no DATE can answer
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_date(X'605b25485d5b25495d5b256c5d5b25735d5b25585d5b257a5d5b25457a5d5b25725d5b254533535d', X'408000000000004b9e') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date drops the E from an unrecognised %E combination
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_date(X'605b2545785d5b2545345d5b61255d', X'408000000000004b9e') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date renders the %O alternate-numeric forms as their plain counterparts
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_date(X'605b254f645d5b254f6d5d5b254f795d5b254f755d5b254f565d', X'408000000000004b9e') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/format_date	format_date %J is the ISO day of the year, not the ISO year
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_format_date(X'60254a', X'408000000000004b9e') AS `$col1__1`,    
+zetasqlite_format_date(X'60256a', X'408000000000004b9e') AS `$col2__2`,    
+zetasqlite_format_date(X'602547', X'408000000000004b9e') AS `$col3__3`
+) AS `project_scan_3`;
+
 ### zigquery/functions/date/last_day	last_day
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -13111,6 +13485,56 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_last_day(X'408000000000003771', X'605745454b5f4d4f4e444159') AS `last_day__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/last_day	last_day with the remaining WEEK(<weekday>) start days
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_last_day(X'408000000000003771', X'605745454b5f54554553444159') AS `$col1__1`,    
+zetasqlite_last_day(X'408000000000003771', X'605745454b5f5745444e4553444159') AS `$col2__2`,    
+zetasqlite_last_day(X'408000000000003771', X'605745454b5f5448555253444159') AS `$col3__3`,    
+zetasqlite_last_day(X'408000000000003771', X'605745454b5f465249444159') AS `$col4__4`,    
+zetasqlite_last_day(X'408000000000003771', X'605745454b5f5341545552444159') AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/last_day	last_day week start days wrap rather than skipping a week
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_last_day(X'408000000000003770', X'605745454b') AS `$col1__1`,    
+zetasqlite_last_day(X'408000000000003770', X'605745454b5f4d4f4e444159') AS `$col2__2`,    
+zetasqlite_last_day(X'408000000000003770', X'6049534f5745454b') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/last_day	last_day with quarter
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_last_day(X'408000000000004d38', X'6051554152544552') AS `$col1__1`,    
+zetasqlite_last_day(X'408000000000004e4a', X'6051554152544552') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/last_day	last_day with isoyear ends on a Sunday, rarely December 31st
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_last_day(X'408000000000004db1', X'6049534f59454152') AS `$col1__1`,    
+zetasqlite_last_day(X'408000000000004c43', X'6049534f59454152') AS `$col2__2`,    
+zetasqlite_last_day(X'408000000000004e77', X'6049534f59454152') AS `$col3__3`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/date/parse_date	base date is epoch
@@ -13294,6 +13718,120 @@ SELECT
 zetasqlite_parse_date(X'602541202562202565', X'605468757273646179204465632032352032303038') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/date/parse_date	parse date with %B, the full month name
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'602542202564202559', X'60446563656d6265722032352032303038') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date with %A, the full weekday name
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'602541202542202564202559', X'6053756e646179204a616e756172792030312032303233') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date with %C%y, century then two-digit year
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'6025432579', X'6032303234') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date with %j, the day of the year
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'60255920256a', X'603230303820313030') AS `$col1__1`,    
+zetasqlite_parse_date(X'60255920256a', X'603230303720313030') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date with %% matching a literal percent
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'6025252559', X'602532303234') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date with %E4Y
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'60254534592d256d2d2564', X'60323032342d30332d3135') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date rejects a clock element, which no DATE can carry
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'602548', X'603130') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date rejects %Ez, which only a TIMESTAMP can carry
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'6025457a', X'602b30393a3030') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date rejects a misspelled full month name
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'602542', X'60536d61726368') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date rejects a misspelled short month name
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'602562', X'6058797a') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date rejects a misspelled weekday name
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'602541', X'6046756e646179') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date rejects a malformed century
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'602543', X'603278') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date rejects an unknown %E combination
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'60254578', X'6078') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/date/parse_date	parse date rejects an element with no parser
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_date(X'602551', X'6031') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/date/unix_date	unix_date
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -13316,6 +13854,26 @@ SELECT
 zetasqlite_current_datetime(1136239445000000000) AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/datetime/current_datetime	current_datetime reads its zone argument
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_current_datetime(1136239445000000000) AS `$col1__1`,    
+zetasqlite_current_datetime(X'60417369612f546f6b796f', 1136239445000000000) AS `$col2__2`,    
+zetasqlite_current_datetime(X'60416d65726963612f4c6f735f416e67656c6573', 1136239445000000000) AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/current_datetime	current_datetime propagates a NULL zone
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_current_datetime(null, 1136239445000000000) AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/datetime/datetime	datetime
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -13332,6 +13890,144 @@ zetasqlite_datetime(X'5880045ed84cb94600', X'60416d65726963612f4c6f735f416e67656
 ### zigquery/functions/datetime/datetime	datetime literal
 SELECT
 X'508005f132968c7700' AS `$col1`;
+
+### zigquery/functions/datetime/datetime	datetime from a DATE, with and without a TIME
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_datetime(X'40800000000000379e', X'488000000cfdf06e00') AS `$col1__1`,    
+zetasqlite_datetime(X'40800000000000379e') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime of a DATETIME is the identity
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime(X'5080045ee0ae7dae00') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime takes every spelling of a numeric zone offset
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b30393a3030') AS `$col1__1`,    
+zetasqlite_datetime(X'588006139da1773000', X'602b393a3030') AS `$col2__2`,    
+zetasqlite_datetime(X'588006139da1773000', X'602b30393030') AS `$col3__3`,    
+zetasqlite_datetime(X'588006139da1773000', X'602b303930') AS `$col4__4`,    
+zetasqlite_datetime(X'588006139da1773000', X'602b39') AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime reads a single-digit minute field, and a zero offset either way
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b30393a35') AS `$col1__1`,    
+zetasqlite_datetime(X'588006139da1773000', X'602d3037') AS `$col2__2`,    
+zetasqlite_datetime(X'588006139da1773000', X'602d30') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime accepts the offset bounds, which are plus and minus 14 hours
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b31343a3030') AS `$col1__1`,    
+zetasqlite_datetime(X'588006139da1773000', X'602d31343a3030') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime rejects an offset past 14 hours
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b31353a3030') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime rejects an hour field of 24
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b32343a3030') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime rejects a minute field of 60
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b30393a3630') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime rejects a seconds field on a zone offset
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b30393a30303a3030') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime rejects three colon-free digits whose first two are not an hour
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b393030') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime rejects a signed zone that is not digits
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006139da1773000', X'602b6162') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime follows US daylight saving into November
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_datetime(X'58800625d8aca63000', X'60416d65726963612f4c6f735f416e67656c6573') AS `$col1__1`,    
+zetasqlite_datetime(X'58800626292403b000', X'60416d65726963612f4c6f735f416e67656c6573') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime reads New York on the same US rule, five hours further east
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_datetime(X'5880061c6aafb13000', X'60416d65726963612f4e65775f596f726b') AS `$col1__1`,    
+zetasqlite_datetime(X'5880060efac0d41000', X'60416d65726963612f4e65775f596f726b') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime	datetime follows New Zealand daylight saving, which runs the other half of the year
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_datetime(X'588006155831f97000', X'60506163696669632f4175636b6c616e64') AS `$col1__1`,    
+zetasqlite_datetime(X'58800615948b7f9000', X'60506163696669632f4175636b6c616e64') AS `$col2__2`,    
+zetasqlite_datetime(X'58800622f05c855000', X'60506163696669632f4175636b6c616e64') AS `$col3__3`,    
+zetasqlite_datetime(X'5880062354f1ba3000', X'60506163696669632f4175636b6c616e64') AS `$col4__4`
+) AS `project_scan_3`;
 
 ### zigquery/functions/datetime/datetime_add	datetime_add (case 512)
 PRAGMA user_version;
@@ -13352,6 +14048,43 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_datetime_add(X'508005f35bc79bc000', 1, X'604d4f4e5448') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime_add	datetime_add rejects a part it cannot express
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime_add(X'5080045ee0ae7dae00', 1, X'604e414e4f5345434f4e44') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime_bucket	datetime_bucket keeps the origin's time of day
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime_bucket(X'5080061399edc07100', zetasqlite_interval(90, X'604d494e555445'), X'5080035e1ffd7da900') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime_bucket	datetime_bucket takes a month width, which DATE and DATETIME alone accept
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_datetime_bucket(X'5080061399edc07100', zetasqlite_interval(1, X'604d4f4e5448'), X'5080035f5cba752000') AS `$col1__1`,    
+zetasqlite_datetime_bucket(X'5080061399edc07100', zetasqlite_interval(5, X'604d4f4e5448')) AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime_bucket	datetime_bucket rejects a mixed width on the count alone
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime_bucket(X'5080061393928b8000', X'0d0b302d30203120323a303a30') AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/datetime/datetime_diff	datetime_diff with week day (case 463)
@@ -13469,6 +14202,14 @@ zetasqlite_datetime_diff(X'5080056092080b4000', X'508005607dea33e000', X'6057454
 zetasqlite_datetime_diff(X'5080056092080b4000', X'508005607dea33e000', X'6049534f5745454b') AS `$col3__3`
 ) AS `project_scan_3`;
 
+### zigquery/functions/datetime/datetime_diff	datetime_diff rejects a part it cannot express
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime_diff(X'50800613b05b86d9c0', X'50800613b05b779780', X'604e414e4f5345434f4e44') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/datetime/datetime_sub	datetime_sub (case 514)
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -13488,6 +14229,14 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_datetime_sub(X'508005f826e3eda000', 1, X'604d4f4e5448') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime_sub	datetime_sub rejects a part it cannot express
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime_sub(X'5080045ee0ae7dae00', 1, X'604e414e4f5345434f4e44') AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/datetime/datetime_trunc	datetime_trunc with quarter
@@ -13551,6 +14300,28 @@ SELECT
 zetasqlite_datetime_trunc(X'508005188323906000', X'6049534f59454152') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/datetime/datetime_trunc	datetime_trunc keeps the unit it is asked for
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_datetime_trunc(X'50800613b05b7979c0', X'604d4943524f5345434f4e44') AS `$col1__1`,    
+zetasqlite_datetime_trunc(X'50800613b05b7979c0', X'604d494c4c495345434f4e44') AS `$col2__2`,    
+zetasqlite_datetime_trunc(X'50800613b05b7979c0', X'605345434f4e44') AS `$col3__3`,    
+zetasqlite_datetime_trunc(X'50800613b05b7979c0', X'604d494e555445') AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/datetime_trunc	datetime_trunc rejects a part it cannot express
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_datetime_trunc(X'50800613b05b7979c0', X'604e414e4f5345434f4e44') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/datetime/format_datetime	format_datetime with %c
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -13602,6 +14373,40 @@ SELECT
 zetasqlite_format_datetime(X'6025453459', X'5080045ee0af3a0f4e') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/datetime/format_datetime	format_datetime carries the date and clock elements together
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_datetime(X'60254120256a2025552f25572f25562025472d256720257525772025492570202551', X'508005f1337b6e3700') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/format_datetime	format_datetime %c space-pads a single-digit day
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_datetime(X'602563', X'508005f1337bf78b40') AS `$col1__1`,    
+zetasqlite_format_datetime(X'602563', X'508005f24d1dbecb40') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/format_datetime	format_datetime carries every fractional-second width
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_datetime(X'605b254531535d5b254536535d5b254537535d5b254539535d5b25452a535d', X'508005f1337bff2c60') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/format_datetime	format_datetime renders the %O alternate-numeric forms
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_datetime(X'605b254f645d5b254f6d5d5b254f795d5b254f485d5b254f4d5d5b254f535d5b254f595d', X'508005f1337bf78b40') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/datetime/parse_datetime	parse datetime
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -13647,6 +14452,52 @@ SELECT
 zetasqlite_parse_datetime(X'602546', X'6030332d312d31') AS `$col1__1`,    
 zetasqlite_parse_datetime(X'602546', X'603030332d30312d31') AS `$col2__2`,    
 zetasqlite_parse_datetime(X'602546', X'60303030332d312d3131') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/parse_datetime	parse datetime with %E4S
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_datetime(X'6025592d256d2d25642025483a254d3a25453453', X'60323032342d30332d31352031303a32303a33302e31323334') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/parse_datetime	parse datetime with an explicit %E<n>S precision
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_parse_datetime(X'6025592d256d2d25642025483a254d3a25453353', X'60323032342d30332d31352031303a32303a33302e313233') AS `$col1__1`,    
+zetasqlite_parse_datetime(X'6025592d256d2d25642025483a254d3a25453653', X'60323032342d30332d31352031303a32303a33302e313233343536') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/parse_datetime	parse datetime rejects %Ez, which only a TIMESTAMP can carry
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_datetime(X'6025457a', X'602b30393a3030') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/parse_datetime	parse datetime %E<n>S consumes at most n fractional digits
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_parse_datetime(X'6025592d256d2d25642025483a254d3a25453353', X'60323032342d30332d31352031303a32303a33302e313233') AS `$col1__1`,    
+zetasqlite_parse_datetime(X'6025592d256d2d25642025483a254d3a25453153', X'60323032342d30332d31352031303a32303a33302e31') AS `$col2__2`,    
+zetasqlite_parse_datetime(X'6025592d256d2d25642025483a254d3a25452a53', X'60323032342d30332d31352031303a32303a33302e313233343536') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/datetime/parse_datetime	parse datetime rejects more fractional digits than %E<n>S allows
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_datetime(X'6025592d256d2d25642025483a254d3a25453353', X'60323032342d30332d31352031303a32303a33302e313233343536') AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/debug/error	error
@@ -14633,7 +15484,7 @@ FROM (
 SELECT  
 zetasqlite_least(X'6061', X'6062') AS `$col1__1`,    
 zetasqlite_greatest(X'6061', X'6062') AS `$col2__2`,    
-zetasqlite_between(X'6062', X'6061', X'6063') AS `$col3__3`
+X'6062' BETWEEN X'6061' AND X'6063' AS `$col3__3`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/math/least	least greatest between integer
@@ -14645,7 +15496,7 @@ FROM (
 SELECT  
 zetasqlite_least(1, 2) AS `$col1__1`,    
 zetasqlite_greatest(1, 2) AS `$col2__2`,    
-zetasqlite_between(2, 1, 3) AS `$col3__3`
+2 BETWEEN 1 AND 3 AS `$col3__3`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/math/least	least greatest date
@@ -15453,6 +16304,462 @@ SELECT
 zetasqlite_format(X'602566202545', 1.1, 2.2) AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/string/format	format + signs a non-negative value, including zero
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`,  
+`$col6__6` AS `$col6`,  
+`$col7__7` AS `$col7`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252b645d', 5) AS `$col1__1`,    
+zetasqlite_format(X'605b252b645d', -5) AS `$col2__2`,    
+zetasqlite_format(X'605b252b645d', 0) AS `$col3__3`,    
+zetasqlite_format(X'605b252b785d', 255) AS `$col4__4`,    
+zetasqlite_format(X'605b252b6f5d', 8) AS `$col5__5`,    
+zetasqlite_format(X'605b252b675d', 1.5) AS `$col6__6`,    
+zetasqlite_format(X'605b252b655d', -1.5) AS `$col7__7`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format space reserves the sign column, and + outranks it
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`,  
+`$col6__6` AS `$col6`
+FROM (
+SELECT  
+zetasqlite_format(X'605b2520645d', 5) AS `$col1__1`,    
+zetasqlite_format(X'605b2520645d', 0) AS `$col2__2`,    
+zetasqlite_format(X'605b2520645d', -5) AS `$col3__3`,    
+zetasqlite_format(X'605b2520785d', 255) AS `$col4__4`,    
+zetasqlite_format(X'605b2520665d', -1.5) AS `$col5__5`,    
+zetasqlite_format(X'605b25202b645d', 5) AS `$col6__6`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format ignores a sign flag for the string verbs
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252b735d', X'606162') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format - left-justifies within the width
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252d3130645d', 42) AS `$col1__1`,    
+zetasqlite_format(X'605b252d3130735d', X'606162') AS `$col2__2`,    
+zetasqlite_format(X'605b252d382e32665d', 3.14159) AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format takes flags in any order, repeated, and lets - outrank 0
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252b303130645d', 42) AS `$col1__1`,    
+zetasqlite_format(X'605b252d2b3130645d', 42) AS `$col2__2`,    
+zetasqlite_format(X'605b252b2b645d', 42) AS `$col3__3`,    
+zetasqlite_format(X'605b25302d3130645d', 42) AS `$col4__4`,    
+zetasqlite_format(X'605b252d3038645d', 42) AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format # introduces the base, and leaves a zero value bare
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`,  
+`$col6__6` AS `$col6`
+FROM (
+SELECT  
+zetasqlite_format(X'605b2523785d', 255) AS `$col1__1`,    
+zetasqlite_format(X'605b2523585d', 255) AS `$col2__2`,    
+zetasqlite_format(X'605b25236f5d', 8) AS `$col3__3`,    
+zetasqlite_format(X'605b2523785d', 0) AS `$col4__4`,    
+zetasqlite_format(X'605b25236f5d', 0) AS `$col5__5`,    
+zetasqlite_format(X'605b2523303130785d', 255) AS `$col6__6`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format # keeps the decimal point with nothing after it
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_format(X'605b25232e30665d', 1.0) AS `$col1__1`,    
+zetasqlite_format(X'605b25232e30655d', 1.0) AS `$col2__2`,    
+zetasqlite_format(X'605b2523665d', 1.0) AS `$col3__3`,    
+zetasqlite_format(X'605b2523655d', 1.5) AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format # keeps the trailing zeros %g would trim
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_format(X'605b2523675d', 1.0) AS `$col1__1`,    
+zetasqlite_format(X'605b2523675d', 1234.5) AS `$col2__2`,    
+zetasqlite_format(X'605b25232e33675d', 1.0) AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format ' groups decimal digits in threes with a comma
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_format(X'605b2527645d', -1234567) AS `$col1__1`,    
+zetasqlite_format(X'605b2527645d', 1000) AS `$col2__2`,    
+zetasqlite_format(X'605b252b27645d', 1234567) AS `$col3__3`,    
+zetasqlite_format(X'605b2527303132645d', 1234567) AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format ' groups hexadecimal in fours with a colon
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`,  
+`$col6__6` AS `$col6`,  
+`$col7__7` AS `$col7`
+FROM (
+SELECT  
+zetasqlite_format(X'605b2527785d', 255) AS `$col1__1`,    
+zetasqlite_format(X'605b2527785d', 65535) AS `$col2__2`,    
+zetasqlite_format(X'605b2527785d', 1048575) AS `$col3__3`,    
+zetasqlite_format(X'605b2527785d', 12345678) AS `$col4__4`,    
+zetasqlite_format(X'605b2527785d', 123456789012) AS `$col5__5`,    
+zetasqlite_format(X'605b2527585d', 12345678) AS `$col6__6`,    
+zetasqlite_format(X'605b252723785d', 12345678) AS `$col7__7`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format ' groups octal in fours with a comma
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_format(X'605b25276f5d', 8) AS `$col1__1`,    
+zetasqlite_format(X'605b25276f5d', 4095) AS `$col2__2`,    
+zetasqlite_format(X'605b25276f5d', 55555) AS `$col3__3`,    
+zetasqlite_format(X'605b25276f5d', 32768) AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format ' groups a float's integer part, and is ignored elsewhere
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_format(X'605b2527665d', 1234.5) AS `$col1__1`,    
+zetasqlite_format(X'605b2527465d', 1234.5) AS `$col2__2`,    
+zetasqlite_format(X'605b2527675d', 1234.5) AS `$col3__3`,    
+zetasqlite_format(X'605b2527655d', 1234.5) AS `$col4__4`,    
+zetasqlite_format(X'605b2527735d', X'606162') AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format takes width and precision from arguments with *
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252a645d', 8, 42) AS `$col1__1`,    
+zetasqlite_format(X'605b252e2a665d', 3, 1.23456) AS `$col2__2`,    
+zetasqlite_format(X'605b252a2e2a665d', 10, 2, 1.5) AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format precision on an integer is a minimum digit count
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252e35645d', 42) AS `$col1__1`,    
+zetasqlite_format(X'605b252e32645d', -7) AS `$col2__2`,    
+zetasqlite_format(X'605b252e30645d', 0) AS `$col3__3`,    
+zetasqlite_format(X'605b25382e33645d', 42) AS `$col4__4`,    
+zetasqlite_format(X'605b253031302e33645d', 42) AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format precision truncates a string rather than padding it
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252e32735d', X'60616263646566') AS `$col1__1`,    
+zetasqlite_format(X'605b2531302e33735d', X'60616263646566') AS `$col2__2`,    
+zetasqlite_format(X'605b252d31302e33735d', X'60616263646566') AS `$col3__3`,    
+zetasqlite_format(X'605b252e32745d', 12345) AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format pads the string verbs to the width, always with spaces
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_format(X'605b253130735d', X'606162') AS `$col1__1`,    
+zetasqlite_format(X'605b25303130735d', X'606162') AS `$col2__2`,    
+zetasqlite_format(X'605b253130745d', 42) AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format rounds a float to the precision, zero decimals included
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`,  
+`$col6__6` AS `$col6`,  
+`$col7__7` AS `$col7`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252e30665d', 1.5) AS `$col1__1`,    
+zetasqlite_format(X'605b252e30665d', 2.5) AS `$col2__2`,    
+zetasqlite_format(X'605b252e30655d', 1234.0) AS `$col3__3`,    
+zetasqlite_format(X'605b25352e32665d', 3.14159) AS `$col4__4`,    
+zetasqlite_format(X'605b253031322e33665d', 3.14159) AS `$col5__5`,    
+zetasqlite_format(X'605b2530382e32655d', 1234.5) AS `$col6__6`,    
+zetasqlite_format(X'605b252b2e30665d', 0.0) AS `$col7__7`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format %g picks decimal or scientific by the exponent
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`,  
+`$col6__6` AS `$col6`,  
+`$col7__7` AS `$col7`,  
+`$col8__8` AS `$col8`,  
+`$col9__9` AS `$col9`
+FROM (
+SELECT  
+zetasqlite_format(X'602567', 1.5) AS `$col1__1`,    
+zetasqlite_format(X'602567', 392.65) AS `$col2__2`,    
+zetasqlite_format(X'602567', 0.0) AS `$col3__3`,    
+zetasqlite_format(X'602567', -0.5) AS `$col4__4`,    
+zetasqlite_format(X'602567', 100000.0) AS `$col5__5`,    
+zetasqlite_format(X'602567', 1e+06) AS `$col6__6`,    
+zetasqlite_format(X'602567', 1e-05) AS `$col7__7`,    
+zetasqlite_format(X'602567', 1.23456789e+08) AS `$col8__8`,    
+zetasqlite_format(X'602567', 3.9265e+07) AS `$col9__9`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format %g precision is a significant-digit count, and %G upcases
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`,  
+`$col6__6` AS `$col6`
+FROM (
+SELECT  
+zetasqlite_format(X'60252e3367', 1234.5678) AS `$col1__1`,    
+zetasqlite_format(X'60252e313067', zetasqlite_divide(1.0, 3.0)) AS `$col2__2`,    
+zetasqlite_format(X'60252e3167', 0.0001234) AS `$col3__3`,    
+zetasqlite_format(X'60252e3067', 1234.0) AS `$col4__4`,    
+zetasqlite_format(X'602567', zetasqlite_divide(1.0, 3.0)) AS `$col5__5`,    
+zetasqlite_format(X'602547', 1.234e-06) AS `$col6__6`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format spells a non-finite float to match the verb's case
+SELECT
+`$col1__2` AS `$col1`,  
+`lbl__3` AS `lbl`
+FROM (
+SELECT  
+`$col1__2`,    
+`lbl__3`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `$unnest1__1`,      
+zetasqlite_format(X'6025667c25467c25657c25457c25677c2547', zetasqlite_get_struct_field(`$array_5`.`value`, 0), zetasqlite_get_struct_field(`$array_5`.`value`, 0), zetasqlite_get_struct_field(`$array_5`.`value`, 0), zetasqlite_get_struct_field(`$array_5`.`value`, 0), zetasqlite_get_struct_field(`$array_5`.`value`, 0), zetasqlite_get_struct_field(`$array_5`.`value`, 0)) AS `$col1__2`,      
+zetasqlite_get_struct_field(`$array_5`.`value`, 1) AS `lbl__3`    
+FROM zetasqlite_unnest(zetasqlite_make_array(zetasqlite_make_struct(X'6064', zetasqlite_ieee_divide(1.0, 0.0), X'606c626c', X'60615f696e66'), zetasqlite_make_struct(X'6064', zetasqlite_ieee_divide(-1.0, 0.0), X'606c626c', X'60625f6e696e66'))) AS `$array_5`
+) AS `project_scan_4`  
+ORDER BY `lbl__3` ASC
+) AS `order_by_scan_3`;
+
+### zigquery/functions/string/format	format signs an infinity but never zero-pads one
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format(X'605b252b665d', zetasqlite_ieee_divide(1.0, 0.0)) AS `$col1__1`,    
+zetasqlite_format(X'605b253038665d', zetasqlite_ieee_divide(1.0, 0.0)) AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format renders a negative octal or hexadecimal as sign and magnitude
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_format(X'60256f', -1) AS `$col1__1`,    
+zetasqlite_format(X'60256f', -8) AS `$col2__2`,    
+zetasqlite_format(X'602578', -255) AS `$col3__3`,    
+zetasqlite_format(X'602558', -255) AS `$col4__4`,    
+zetasqlite_format(X'605b253038785d', -255) AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format spells a NULL argument out for %t and %T
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_format(X'6030302d25742d3030', null) AS `$col1__1`,    
+zetasqlite_format(X'6030302d25542d3030', null) AS `$col2__2`,    
+zetasqlite_format(X'6030302d25542d3030', null) AS `$col3__3`,    
+zetasqlite_format(X'6025747c2573', null, X'6078') AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format with a NULL format string is NULL
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(null, 1) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format rejects a specifier it does not know
+SELECT
+`$col1__2` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(`$array_4`.`value`, 1) AS `$col1__2`  
+FROM zetasqlite_unnest(X'0e0104022571') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format rejects a format string ending in a bare percent
+SELECT
+`$col1__2` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(`$array_4`.`value`, 1) AS `$col1__2`  
+FROM zetasqlite_unnest(X'0e01040125') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format rejects a format with more specifiers than arguments
+SELECT
+`$col1__2` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(`$array_4`.`value`) AS `$col1__2`  
+FROM zetasqlite_unnest(X'0e0104022564') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format rejects an argument the specifier cannot take
+SELECT
+`$col1__2` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(`$array_4`.`value`, 1) AS `$col1__2`  
+FROM zetasqlite_unnest(X'0e0104022573') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format rejects an argument the numeric verbs cannot take
+SELECT
+`$col1__2` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(`$array_4`.`value`, 1.5) AS `$col1__2`  
+FROM zetasqlite_unnest(X'0e0104022564') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format rejects a string where a float verb wants a number
+SELECT
+`$col1__2` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(`$array_4`.`value`, X'6061') AS `$col1__2`  
+FROM zetasqlite_unnest(X'0e0104022566') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format requires an integer for a * width or precision
+SELECT
+`$col1__3` AS `$col1`
+FROM (
+SELECT  
+(SELECT    
+zetasqlite_format(`$array_6`.`value`, 1.5, 2) AS `$col1__2`    
+FROM zetasqlite_unnest(X'0e010403252a64') AS `$array_6`) AS `$col1__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format requires an integer for a * precision as well
+SELECT
+`$col1__2` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(`$array_4`.`value`, 1.5, 2.0) AS `$col1__2`  
+FROM zetasqlite_unnest(X'0e010404252e2a66') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format reports the offending specifier once a row has already succeeded
+SELECT
+`$col1__2` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format(`$array_4`.`value`, 1) AS `$col1__2`  
+FROM zetasqlite_unnest(X'0e020402256404022571') AS `$array_4`
+) AS `project_scan_3`;
+
+### zigquery/functions/string/format	format %% is a literal percent
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format(X'605b25255d') AS `$col1__1`,    
+zetasqlite_format(X'6061252562252563') AS `$col2__2`
+) AS `project_scan_3`;
+
 ### zigquery/functions/string/from_base32	from_base32
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -15844,8 +17151,8 @@ FROM (
 SELECT  
 X'6054686520726564206261726e' AS `a__1`,    
 X'6054686520526564204261726e' AS `b__2`,    
-zetasqlite_equal(zetasqlite_normalize(X'6054686520726564206261726e'), zetasqlite_normalize(X'6054686520526564204261726e')) AS `$col3__3`,    
-zetasqlite_equal(zetasqlite_normalize_and_casefold(X'6054686520726564206261726e'), zetasqlite_normalize_and_casefold(X'6054686520526564204261726e')) AS `$col4__4`
+zetasqlite_normalize(X'6054686520726564206261726e') = zetasqlite_normalize(X'6054686520526564204261726e') AS `$col3__3`,    
+zetasqlite_normalize_and_casefold(X'6054686520726564206261726e') = zetasqlite_normalize_and_casefold(X'6054686520526564204261726e') AS `$col4__4`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/string/normalize_and_casefold	normalize_and_casefold with params
@@ -15869,10 +17176,10 @@ X'60c385' AS `b__6`  )
 SELECT  
 `wrs13`.`a__5` AS `a__7`,    
 `wrs13`.`b__6` AS `b__8`,    
-zetasqlite_equal(zetasqlite_normalize_and_casefold(`wrs13`.`a__5`, X'604e4644'), zetasqlite_normalize_and_casefold(`wrs13`.`b__6`, X'604e4644')) AS `nfd__9`,    
-zetasqlite_equal(zetasqlite_normalize_and_casefold(`wrs13`.`a__5`, X'604e4643'), zetasqlite_normalize_and_casefold(`wrs13`.`b__6`, X'604e4643')) AS `nfc__10`,    
-zetasqlite_equal(zetasqlite_normalize_and_casefold(`wrs13`.`a__5`, X'604e464b44'), zetasqlite_normalize_and_casefold(`wrs13`.`b__6`, X'604e464b44')) AS `nkfd__11`,    
-zetasqlite_equal(zetasqlite_normalize_and_casefold(`wrs13`.`a__5`, X'604e464b43'), zetasqlite_normalize_and_casefold(`wrs13`.`b__6`, X'604e464b43')) AS `nkfc__12`  
+zetasqlite_normalize_and_casefold(`wrs13`.`a__5`, X'604e4644') = zetasqlite_normalize_and_casefold(`wrs13`.`b__6`, X'604e4644') AS `nfd__9`,    
+zetasqlite_normalize_and_casefold(`wrs13`.`a__5`, X'604e4643') = zetasqlite_normalize_and_casefold(`wrs13`.`b__6`, X'604e4643') AS `nfc__10`,    
+zetasqlite_normalize_and_casefold(`wrs13`.`a__5`, X'604e464b44') = zetasqlite_normalize_and_casefold(`wrs13`.`b__6`, X'604e464b44') AS `nkfd__11`,    
+zetasqlite_normalize_and_casefold(`wrs13`.`a__5`, X'604e464b43') = zetasqlite_normalize_and_casefold(`wrs13`.`b__6`, X'604e464b43') AS `nkfc__12`  
 FROM `Strings` AS `wrs13`
 ) AS `with_scan_3`;
 
@@ -16975,7 +18282,7 @@ FROM (
 SELECT  
 zetasqlite_translate(X'60c398c3b8c390c3b0c490c491c581c582c4b1c58ac58b', zetasqlite_concat(zetasqlite_chr(216), zetasqlite_chr(248), zetasqlite_chr(208), zetasqlite_chr(240), zetasqlite_chr(272), zetasqlite_chr(273), zetasqlite_chr(321), zetasqlite_chr(322), zetasqlite_chr(305), zetasqlite_chr(330), zetasqlite_chr(331)), X'604f6f446444644c6c694e6e') AS `got__1`,    
 X'604f6f446444644c6c694e6e' AS `expected__2`,    
-zetasqlite_equal(zetasqlite_translate(X'60c398c3b8c390c3b0c490c491c581c582c4b1c58ac58b', zetasqlite_concat(zetasqlite_chr(216), zetasqlite_chr(248), zetasqlite_chr(208), zetasqlite_chr(240), zetasqlite_chr(272), zetasqlite_chr(273), zetasqlite_chr(321), zetasqlite_chr(322), zetasqlite_chr(305), zetasqlite_chr(330), zetasqlite_chr(331)), X'604f6f446444644c6c694e6e'), X'604f6f446444644c6c694e6e') AS `pass__3`
+zetasqlite_translate(X'60c398c3b8c390c3b0c490c491c581c582c4b1c58ac58b', zetasqlite_concat(zetasqlite_chr(216), zetasqlite_chr(248), zetasqlite_chr(208), zetasqlite_chr(240), zetasqlite_chr(272), zetasqlite_chr(273), zetasqlite_chr(321), zetasqlite_chr(322), zetasqlite_chr(305), zetasqlite_chr(330), zetasqlite_chr(331)), X'604f6f446444644c6c694e6e') = X'604f6f446444644c6c694e6e' AS `pass__3`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/string/trim	trim
@@ -17042,6 +18349,26 @@ SELECT
 zetasqlite_current_time(1136239445000000000) AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/time/current_time	current_time reads its zone argument
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_current_time(1136239445000000000) AS `$col1__1`,    
+zetasqlite_current_time(X'60417369612f546f6b796f', 1136239445000000000) AS `$col2__2`,    
+zetasqlite_current_time(X'60416d65726963612f4c6f735f416e67656c6573', 1136239445000000000) AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/current_time	current_time propagates a NULL zone
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_current_time(null, 1136239445000000000) AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/time/format_time	format_time with %k %l
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -17077,6 +18404,88 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_format_time(X'6025452a53', X'488000000cfeaccf4e') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/format_time	format_time %I is the 12-hour clock, zero-padded 01-12
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_format_time(X'602549', X'48800000006b49d200') AS `$col1__1`,    
+zetasqlite_format_time(X'602549', X'4880000000e8754700') AS `$col2__2`,    
+zetasqlite_format_time(X'602549', X'488000000a0eebb000') AS `$col3__3`,    
+zetasqlite_format_time(X'602549', X'488000000af760f700') AS `$col4__4`,    
+zetasqlite_format_time(X'602549', X'4880000013b28d8e00') AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/format_time	format_time %l is the same 12-hour clock, space-padded 1-12
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_format_time(X'605b256c5d', X'48800000006b49d200') AS `$col1__1`,    
+zetasqlite_format_time(X'605b256c5d', X'4880000000e8754700') AS `$col2__2`,    
+zetasqlite_format_time(X'605b256c5d', X'488000000a0eebb000') AS `$col3__3`,    
+zetasqlite_format_time(X'605b256c5d', X'488000000af760f700') AS `$col4__4`,    
+zetasqlite_format_time(X'605b256c5d', X'4880000013b28d8e00') AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/format_time	format_time %P and %p straddle noon
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_format_time(X'6025507c2570', X'4880000007d2b75000') AS `$col1__1`,    
+zetasqlite_format_time(X'6025507c2570', X'488000000a0eebb000') AS `$col2__2`,    
+zetasqlite_format_time(X'6025507c2570', X'488000000af760f700') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/format_time	format_time %k is the 24-hour clock, space-padded
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_format_time(X'605b256b5d', X'4880000007d2b75000') AS `$col1__1`,    
+zetasqlite_format_time(X'605b256b5d', X'4880000013b28d8e00') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/format_time	format_time with %E4S
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_time(X'6025453453', X'488000000cfeaccf4e') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/format_time	format_time %r is the 12-hour clock with a meridiem
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_format_time(X'602572', X'4880000007d4811380') AS `$col1__1`,    
+zetasqlite_format_time(X'602572', X'488000000af7ea4b40') AS `$col2__2`,    
+zetasqlite_format_time(X'602572', X'48800000006b49d200') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/format_time	format_time copies through an element no TIME can answer
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_time(X'605b25415d5b25425d5b256a5d5b25515d5b25475d5b25735d5b254534595d5b25785d', X'4880000007d4811380') AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/time/parse_time	parse_time with %R
@@ -17138,6 +18547,32 @@ SELECT
 zetasqlite_parse_time(X'6025493a254d', X'6030373a33303a3030') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/time/parse_time	parse time reads %p to place the 12-hour clock
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_parse_time(X'6025493a254d202570', X'6030393a323020616d') AS `$col1__1`,    
+zetasqlite_parse_time(X'6025493a254d202570', X'6030393a323020706d') AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/parse_time	parse time rejects a meridiem that is neither am nor pm
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_time(X'6025492570', X'6030397878') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/parse_time	parse time rejects a date element, which no TIME can carry
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_time(X'602559', X'6032303234') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/time/time	time
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -17159,6 +18594,14 @@ SELECT
 zetasqlite_time(X'5080045ee0ae7dae00') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/time/time	time of a TIME is the identity
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_time(X'488000000cfdf06e00') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/time/time_add	time_add
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -17168,6 +18611,22 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_time_add(X'488000000cfdf06e00', 10, X'604d494e555445') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/time_add	time_add by HOUR
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_time_add(X'488000000cfdf06e00', 2, X'60484f5552') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/time_add	time_add rejects a part it cannot express
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_time_add(X'488000000cfdf06e00', 1, X'604e414e4f5345434f4e44') AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/time/time_diff	time_diff
@@ -17203,6 +18662,28 @@ SELECT
 zetasqlite_time_trunc(X'488000000cfdf06e00', X'60484f5552') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/time/time_trunc	time_trunc keeps the unit it is asked for
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_time_trunc(X'4880000008ab1699c0', X'604d4943524f5345434f4e44') AS `$col1__1`,    
+zetasqlite_time_trunc(X'4880000008ab1699c0', X'604d494c4c495345434f4e44') AS `$col2__2`,    
+zetasqlite_time_trunc(X'4880000008ab1699c0', X'605345434f4e44') AS `$col3__3`,    
+zetasqlite_time_trunc(X'4880000008ab1699c0', X'604d494e555445') AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/functions/time/time_trunc	time_trunc rejects a part it cannot express
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_time_trunc(X'488000000d009f1340', X'604e414e4f5345434f4e44') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/timestamp/current_timestamp	current_timestamp
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -17233,6 +18714,20 @@ zetasqlite_extract(`wrs8`.`timestamp_value__1`, X'60444159', X'60416d65726963612
 zetasqlite_extract_date(`wrs8`.`timestamp_value__1`) AS `$col3__5`  
 FROM `Input` AS `wrs8`
 ) AS `with_scan_3`;
+
+### zigquery/functions/timestamp/extract	extract TIME and DATETIME from a timestamp
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_extract_time(X'5080061399ef02c280') AS `$col1__1`,    
+zetasqlite_extract_time(X'5880061399ef00e040') AS `$col2__2`,    
+zetasqlite_extract_time(X'5880061399ef00e040', X'60417369612f546f6b796f') AS `$col3__3`,    
+zetasqlite_extract_datetime(X'5880061399ef00e040') AS `$col4__4`
+) AS `project_scan_3`;
 
 ### zigquery/functions/timestamp/format_timestamp	format timestamp with %t
 PRAGMA user_version;
@@ -17307,6 +18802,42 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_format_timestamp(X'6025457a', X'5880045ee0af3a0f4e') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/format_timestamp	format_timestamp %z is the offset as +HHMM, %Ez as +HH:MM
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'60257a7c25457a', X'58800613a7b062e000') AS `$col1__1`,    
+zetasqlite_format_timestamp(X'60257a7c25457a', X'58800613a7b062e000', X'60417369612f546f6b796f') AS `$col2__2`,    
+zetasqlite_format_timestamp(X'60257a7c25457a', X'58800613a7b062e000', X'60416d65726963612f4c6f735f416e67656c6573') AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/format_timestamp	format_timestamp %s is the count of seconds since the epoch
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'602573', X'58800613a7b062e000') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/format_timestamp	format_timestamp renders the zone argument's local wall clock
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', X'58800613a7b062e000', X'60417369612f546f6b796f') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/format_timestamp	format_timestamp answers every element, being the widest type
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'605b25415d5b25485d5b257a5d5b25635d5b254a5d5b25725d5b25735d5b25457a5d', X'588005f1337bf78b40') AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/timestamp/parse_timestamp	parse timestamp with %a %b %e %I:%M:%S %Y
@@ -17406,6 +18937,78 @@ SELECT
 zetasqlite_parse_timestamp(X'6025612025622025652025493a254d3a2553', X'60546875204465632032352030373a33303a30302032303038') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp with %s, seconds since the epoch
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_parse_timestamp(X'602573', X'6031373130343630383030')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp with %Ez accepting a literal Z for UTC
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_parse_timestamp(X'6025592d256d2d25645425483a254d3a255325457a', X'60323032342d30332d31355431303a32303a33305a')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp with %Ez accepting a signed offset
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_parse_timestamp(X'6025592d256d2d25645425483a254d3a255325457a', X'60323032342d30332d31355431303a32303a33302b30393a3030')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp reads its third argument as the zone of a naive input
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_parse_timestamp(X'6025592d256d2d25642025483a254d3a2553', X'60323030382d31322d32352031353a33303a3030', X'60416d65726963612f4c6f735f416e67656c6573')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp rejects %z, which has no parser
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_timestamp(X'60257a', X'602b30393a3030') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp rejects a short unix-seconds field
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_timestamp(X'602573', X'60313731303436303830') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp rejects a non-numeric unix-seconds field
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_timestamp(X'602573', X'6031373130343630387878') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp rejects an offset that is neither Z nor signed
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_timestamp(X'60255925457a', X'6032303234555443') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/parse_timestamp	parse timestamp rejects a signed offset without a colon
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_parse_timestamp(X'60255925457a', X'60323032342b3039303030') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/timestamp/string	string
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -17415,6 +19018,34 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_string(X'5880045ee0ae7dae00', X'60555443') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/string	string extracts a JSON string
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_string(X'080822707572706c6522') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/string	string rejects JSON that is not a string
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_string(X'080474727565') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/string	safe.string turns that rejection into NULL
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_safe_string(X'080474727565') AS `$col1__1`,    
+zetasqlite_safe_string(X'080432303035') AS `$col2__2`,    
+zetasqlite_safe_string(X'08046e756c6c') AS `$col3__3`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/timestamp/timestamp	timestamp
@@ -17483,6 +19114,22 @@ SELECT
 zetasqlite_cast(zetasqlite_timestamp(X'60323032322d30382d30315430363a34373a35312e3132333435362d30373a3030'), X'607b226e616d65223a22222c226b696e64223a31392c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', X'607b226e616d65223a22222c226b696e64223a382c227369676e61747572654b696e64223a302c22656c656d656e7454797065223a6e756c6c2c226669656c645479706573223a6e756c6c7d', false) AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/timestamp/timestamp	timestamp applies its zone argument to a naive input carrying a fraction
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a25452a53', zetasqlite_timestamp(X'60323032342d30312d30312031323a30303a30302e313233343536', X'60417369612f546f6b796f')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/timestamp	timestamp of a TIMESTAMP is the identity
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_timestamp(X'5880045ee0ae7dae00')) AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/timestamp/timestamp_add	timestamp_add
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -17492,6 +19139,77 @@ SELECT
 FROM (
 SELECT  
 zetasqlite_timestamp_add(X'5880045ee0ae7dae00', 10, X'604d494e555445') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/timestamp_add	timestamp_add by DAY
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_timestamp_add(X'5880045ee0ae7dae00', 2, X'60444159')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/timestamp_add	timestamp_add rejects a part it cannot express
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_timestamp_add(X'5880045ee0ae7dae00', 1, X'604e414e4f5345434f4e44') AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/timestamp_bucket	timestamp_bucket buckets from the default 1950-01-01 origin
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+SELECT
+`$col1__7` AS `$col1`
+FROM (
+WITH `some_timestamps` AS 	(  
+SELECT    
+X'587ffdc1db230e3400' AS `my_timestamp__5`    
+UNION ALL    
+SELECT    
+X'587ffdc1e45b664000' AS `my_timestamp__5`    
+UNION ALL    
+SELECT    
+X'587ffdc1f8793da000' AS `my_timestamp__5`    
+UNION ALL    
+SELECT    
+X'587ffdc2035ebcf400' AS `my_timestamp__5`  )
+  
+SELECT  
+`$col1__7`  
+FROM (
+SELECT    
+`wrs20`.`my_timestamp__5` AS `my_timestamp__6`,      
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_timestamp_bucket(`wrs20`.`my_timestamp__5`, zetasqlite_interval(12, X'60484f5552'))) AS `$col1__7`    
+FROM `some_timestamps` AS `wrs20`
+) AS `project_scan_19`  
+ORDER BY `my_timestamp__6` ASC
+) AS `with_scan_3`;
+
+### zigquery/functions/timestamp/timestamp_bucket	timestamp_bucket takes an explicit origin as its third argument
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_timestamp_bucket(X'5880060de19bfb3c00', zetasqlite_interval(1, X'60484f5552'), X'588000000035a4e900')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/timestamp_bucket	timestamp_bucket rejects a month width, which is not a fixed duration
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_timestamp_bucket(X'5880061393928b8000', zetasqlite_interval(1, X'604d4f4e5448')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/timestamp_bucket	timestamp_bucket rejects a width mixing days with sub-second parts
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_timestamp_bucket(X'5880061393928b8000', X'0d0b302d30203120323a303a30') AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/functions/timestamp/timestamp_diff	timestamp diff with week day
@@ -17565,6 +19283,22 @@ SELECT
 zetasqlite_timestamp_sub(X'5880045ee0ae7dae00', 10, X'604d494e555445') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/timestamp/timestamp_sub	timestamp_sub by DAY
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_timestamp_sub(X'5880045ee0ae7dae00', 2, X'60444159')) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/timestamp_sub	timestamp_sub rejects a part it cannot express
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_timestamp_sub(X'5880045ee0ae7dae00', 1, X'604e414e4f5345434f4e44') AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/timestamp/timestamp_trunc	timestamp_trunc with quarter
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -17618,6 +19352,30 @@ SELECT
 zetasqlite_timestamp_trunc(X'588005188323906000', X'6049534f59454152') AS `$col1__1`
 ) AS `project_scan_3`;
 
+### zigquery/functions/timestamp/timestamp_trunc	timestamp_trunc keeps the unit it is asked for
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`,  
+`$col5__5` AS `$col5`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025483a254d3a25452a53', zetasqlite_timestamp_trunc(X'58800613b05b7979c0', X'604d4943524f5345434f4e44')) AS `$col1__1`,    
+zetasqlite_format_timestamp(X'6025483a254d3a25452a53', zetasqlite_timestamp_trunc(X'58800613b05b7979c0', X'604d494c4c495345434f4e44')) AS `$col2__2`,    
+zetasqlite_format_timestamp(X'6025483a254d3a25452a53', zetasqlite_timestamp_trunc(X'58800613b05b7979c0', X'605345434f4e44')) AS `$col3__3`,    
+zetasqlite_format_timestamp(X'6025483a254d3a25452a53', zetasqlite_timestamp_trunc(X'58800613b05b7979c0', X'604d494e555445')) AS `$col4__4`,    
+zetasqlite_format_timestamp(X'6025483a254d3a25452a53', zetasqlite_timestamp_trunc(X'58800613b05b7979c0', X'60484f5552')) AS `$col5__5`
+) AS `project_scan_3`;
+
+### zigquery/functions/timestamp/timestamp_trunc	timestamp_trunc truncates in the zone it is given
+SELECT
+`$col1__1` AS `$col1`
+FROM (
+SELECT  
+zetasqlite_format_timestamp(X'6025592d256d2d25642025483a254d3a2553', zetasqlite_timestamp_trunc(X'58800613a81bacb200', X'60444159', X'60417369612f546f6b796f')) AS `$col1__1`
+) AS `project_scan_3`;
+
 ### zigquery/functions/timestamp/unix_micros	unix_micros
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -17661,6 +19419,15 @@ FROM (
 SELECT  
 zetasqlite_length(zetasqlite_generate_uuid()) AS `$col1__1`
 ) AS `project_scan_3`;
+
+### zigquery/functions/utility/safe_prefix	safe on a function that is neither aggregate nor analytic
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+
+### zigquery/functions/utility/safe_prefix	safe names the function it was applied to
+
+### zigquery/functions/utility/safe_prefix	a function with no implementation names itself
 
 ### zigquery/functions/window/cume_dist	cume_dist
 PRAGMA user_version;
@@ -17835,6 +19602,108 @@ FROM `finishers` AS `wrs32`
 ) AS `with_ref_scan_32`  
 ORDER BY `division__30` ASC, `finish_time__29` ASC
 ) AS `analytic_scan_31`;
+
+### zigquery/functions/window/distinct	distinct over a frame containing null
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+SELECT
+`m__5` AS `m`,  
+`s__6` AS `s`,  
+`c__7` AS `c`
+FROM (
+SELECT  
+`x__1`,    
+zetasqlite_window_min(`x__1`, zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `m__5`,    
+zetasqlite_window_sum(`x__1`, zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `s__6`,    
+zetasqlite_window_count(`x__1`, zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `c__7`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `x__1`    
+FROM zetasqlite_unnest(X'0e0401010000000000000000010200000000000000010100000000000000') AS `$array_5`
+) AS `array_scan_5`
+) AS `analytic_scan_4`;
+
+### zigquery/functions/window/distinct	signed zero is one group for every spelling of distinct
+SELECT
+`w__11` AS `w`,  
+`a__14` AS `a`,  
+`g__18` AS `g`,  
+`d__22` AS `d`
+FROM (
+SELECT  
+`x__1`,    
+`a__14`,    
+`g__18`,    
+`d__22`,    
+zetasqlite_window_count(`x__1`, zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `w__11`  
+FROM (
+SELECT    
+`$array_6`.`value` AS `x__1`,      
+(SELECT      
+`$agg1__13`      
+FROM (
+SELECT        
+zetasqlite_count(`$array_9`.`value`, zetasqlite_distinct()) AS `$agg1__13`        
+FROM zetasqlite_unnest(X'0e02020000000000000000020000000000000080') AS `$array_9`
+) AS `aggregate_scan_8`) AS `a__14`,      
+(SELECT      
+`$agg1__17`      
+FROM (
+SELECT        
+zetasqlite_count_star() AS `$agg1__17`        
+FROM (
+SELECT          
+`$array_14`.`value` AS `y__16`          
+FROM zetasqlite_unnest(X'0e02020000000000000000020000000000000080') AS `$array_14`          
+GROUP BY zetasqlite_group_by(`$array_14`.`value`)
+) AS `aggregate_scan_13`
+) AS `aggregate_scan_11`) AS `g__18`,      
+(SELECT      
+`$agg1__21`      
+FROM (
+SELECT        
+zetasqlite_count_star() AS `$agg1__21`        
+FROM (
+SELECT          
+`$array_18`.`value` AS `y__20`          
+FROM zetasqlite_unnest(X'0e02020000000000000000020000000000000080') AS `$array_18`          
+GROUP BY zetasqlite_group_by(`$array_18`.`value`)
+) AS `aggregate_scan_17`
+) AS `aggregate_scan_16`) AS `d__22`    
+FROM zetasqlite_unnest(X'0e02020000000000000000020000000000000080') AS `$array_6`
+) AS `project_scan_5`
+) AS `analytic_scan_4`;
+
+### zigquery/functions/window/distinct	a frame reaching forward is recomputed per row
+SELECT
+`x__1` AS `x`,  
+`a__3` AS `a`
+FROM (
+SELECT  
+`x__1`,    
+zetasqlite_window_array_agg(`x__1`) OVER (ORDER BY `x__1` ASC ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS `a__3`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `x__1`    
+FROM zetasqlite_unnest(X'0e03010100000000000000010200000000000000010300000000000000') AS `$array_5`
+) AS `array_scan_5`  
+ORDER BY `x__1` ASC
+) AS `analytic_scan_4`;
+
+### zigquery/functions/window/distinct	percentile_disc over a frame with duplicates
+SELECT
+`p__3` AS `p`
+FROM (
+SELECT  
+`x__1`,    
+zetasqlite_window_percentile_disc(`x__1`, 0.5, zetasqlite_ignore_nulls()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS `p__3`  
+FROM (
+SELECT    
+`$array_5`.`value` AS `x__1`    
+FROM zetasqlite_unnest(X'0e03010300000000000000010100000000000000010100000000000000') AS `$array_5`
+) AS `array_scan_5`
+) AS `analytic_scan_4`;
 
 ### zigquery/functions/window/first_value	window first_value
 PRAGMA user_version;
@@ -19037,6 +20906,8 @@ FROM `Numbers` AS `wrs29`
 ORDER BY `x__9` ASC
 ) AS `analytic_scan_28`;
 
+### zigquery/functions/window/rank	safe rank
+
 ### zigquery/functions/window/row_number	window row_number
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -19170,7 +21041,7 @@ SELECT
 `wrs32`.`category__24` AS `category__32`,        
 `wrs32`.`num__26` AS `num__33`      
 FROM `Numbers` AS `wrs32`
-) AS `with_ref_scan_32` ON `item__27` = `item__30` AND `category__29` = `category__32`
+) AS `with_ref_scan_32` ON (`item__27` = `item__30`) AND (`category__29` = `category__32`)
 ) AS `join_scan_30`  
 ORDER BY `category__29` ASC, `purchases__28` ASC
 ) AS `analytic_scan_29`;
@@ -19490,7 +21361,7 @@ SELECT
 `wrs20`.`iteration__19` AS `iteration__45`,      
 `wrs20`.`distance_meters__20` AS `distance_meters__46`    
 FROM `CTE_1` AS `wrs20`    
-WHERE zetasqlite_equal(`wrs20`.`iteration__19`, zetasqlite_multiply(500, 1))    
+WHERE `wrs20`.`iteration__19` = zetasqlite_multiply(500, 1)    
 UNION ALL    
 SELECT    
 `table_scan_25`.`id` AS `id__41`,      
@@ -19500,7 +21371,7 @@ zetasqlite_add(`recursive_ref_scan_26`.`pos__44`, 1) AS `pos__44`,
 zetasqlite_add(`recursive_ref_scan_26`.`iteration__45`, 1) AS `iteration__45`,      
 zetasqlite_add(`recursive_ref_scan_26`.`distance_meters__46`, zetasqlite_coalesce(`table_scan_25`.`length_m`, 0.0)) AS `distance_meters__46`    
 FROM `grid_interior_resources` AS `table_scan_25` INNER JOIN `CTE_2` AS `recursive_ref_scan_26` ON `recursive_ref_scan_26`.`id__41` = `table_scan_25`.`upline_parent`    
-WHERE zetasqlite_less(`recursive_ref_scan_26`.`iteration__45`, zetasqlite_multiply(500, 2))  )
+WHERE `recursive_ref_scan_26`.`iteration__45` < zetasqlite_multiply(500, 2)  )
 ,   
 `CTE_3` AS 	(  
 SELECT    
@@ -19511,7 +21382,7 @@ SELECT
 `wrs32`.`iteration__45` AS `iteration__71`,      
 `wrs32`.`distance_meters__46` AS `distance_meters__72`    
 FROM `CTE_2` AS `wrs32`    
-WHERE zetasqlite_equal(`wrs32`.`iteration__45`, zetasqlite_multiply(500, 2))    
+WHERE `wrs32`.`iteration__45` = zetasqlite_multiply(500, 2)    
 UNION ALL    
 SELECT    
 `table_scan_37`.`id` AS `id__67`,      
@@ -19521,7 +21392,7 @@ zetasqlite_add(`recursive_ref_scan_38`.`pos__70`, 1) AS `pos__70`,
 zetasqlite_add(`recursive_ref_scan_38`.`iteration__71`, 1) AS `iteration__71`,      
 zetasqlite_add(`recursive_ref_scan_38`.`distance_meters__72`, zetasqlite_coalesce(`table_scan_37`.`length_m`, 0.0)) AS `distance_meters__72`    
 FROM `grid_interior_resources` AS `table_scan_37` INNER JOIN `CTE_3` AS `recursive_ref_scan_38` ON `recursive_ref_scan_38`.`id__67` = `table_scan_37`.`upline_parent`    
-WHERE zetasqlite_less(`recursive_ref_scan_38`.`iteration__71`, zetasqlite_multiply(500, 3))  )
+WHERE `recursive_ref_scan_38`.`iteration__71` < zetasqlite_multiply(500, 3)  )
   
 SELECT  
 `id__105`,    
@@ -19548,7 +21419,7 @@ SELECT
 `wrs48`.`iteration__45` AS `iteration__109`,      
 `wrs48`.`distance_meters__46` AS `distance_meters__110`    
 FROM `CTE_2` AS `wrs48`    
-WHERE zetasqlite_greater(`wrs48`.`iteration__45`, zetasqlite_multiply(500, 1))    
+WHERE `wrs48`.`iteration__45` > zetasqlite_multiply(500, 1)    
 UNION ALL    
 SELECT    
 `wrs52`.`id__67` AS `id__105`,      
@@ -19558,7 +21429,7 @@ SELECT
 `wrs52`.`iteration__71` AS `iteration__109`,      
 `wrs52`.`distance_meters__72` AS `distance_meters__110`    
 FROM `CTE_3` AS `wrs52`    
-WHERE zetasqlite_greater(`wrs52`.`iteration__71`, zetasqlite_multiply(500, 2))
+WHERE `wrs52`.`iteration__71` > zetasqlite_multiply(500, 2)
 ) AS `set_op_scan_41` LEFT JOIN (
 SELECT    
 `id` AS `id__111`,      
@@ -19672,7 +21543,7 @@ SELECT
 zetasqlite_add(`rrs12`.`n__3`, 1) AS `n__3`,      
 X'6070726f6772657373' AS `status__4`    
 FROM `T1` AS `rrs12`    
-WHERE zetasqlite_and(`rrs12`.`n__3` < 5, zetasqlite_in(`rrs12`.`status__4`, X'607374617274', X'6070726f6772657373', X'60616374697665'))  )
+WHERE (`rrs12`.`n__3` < 5) AND (`rrs12`.`status__4` IN (X'607374617274',X'6070726f6772657373',X'60616374697665'))  )
   
 SELECT  
 `n__9`,    
@@ -19734,7 +21605,7 @@ SELECT
 zetasqlite_add(`recursive_ref_scan_16`.`id__5`, 1) AS `id__5`,      
 zetasqlite_concat(`recursive_ref_scan_16`.`name__6`, X'605f6368696c64') AS `name__6`    
 FROM `T1` AS `recursive_ref_scan_16` INNER JOIN `T0` AS `project_scan_17` ON `recursive_ref_scan_16`.`id__5` = `project_scan_17`.`id__1`    
-WHERE zetasqlite_in(`recursive_ref_scan_16`.`id__5`, 1, 2, 3)  )
+WHERE `recursive_ref_scan_16`.`id__5` IN (1,2,3)  )
   
 SELECT  
 `id__13`,    
@@ -19759,7 +21630,7 @@ SELECT
 `$agg1__2`
 FROM (
 SELECT  
-zetasqlite_sum(CASE WHEN zetasqlite_equal(zetasqlite_get_struct_field(`$array_3`.`value`, 0), X'60666f6f') THEN zetasqlite_get_struct_field(`$array_3`.`value`, 1) ELSE null END) AS `$agg1__2`  
+zetasqlite_sum(CASE WHEN zetasqlite_get_struct_field(`$array_3`.`value`, 0) = X'60666f6f' THEN zetasqlite_get_struct_field(`$array_3`.`value`, 1) ELSE null END) AS `$agg1__2`  
 FROM zetasqlite_unnest(X'0e030f02046e616d650403666f6f0376616c010a000000000000000f02046e616d6504036261720376616c0128000000000000000f02046e616d650403666f6f0376616c011400000000000000') AS `$array_3`
 ) AS `aggregate_scan_2`) ) AS `$col1`;
 
@@ -20153,162 +22024,6 @@ SELECT
 FROM `test_dataset_target`;
 DROP TABLE IF EXISTS `test_dataset_target`;
 
-### zigquery/syntax/pipe/distinct	distinct union
-PRAGMA user_version;
-SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
-SELECT name, kind, spec FROM zetasqlite_catalog;
-SELECT
-`x__5` AS `x`,  
-`x__5` AS `y`
-FROM (
-WITH `toks` AS 	(  
-SELECT    
-true AS `x__1`,      
-1 AS `y__2`  )
-  
-SELECT  
-`wrs8`.`x__1` AS `x__5`  
-FROM `toks` AS `wrs8`  
-GROUP BY zetasqlite_group_by(`wrs8`.`x__1`)
-) AS `with_scan_3`;
-
-### zigquery/syntax/pipe/limit	limit offset test
-PRAGMA user_version;
-SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
-SELECT name, kind, spec FROM zetasqlite_catalog;
-CREATE TABLE `IconNames` AS SELECT
-`FirstName__5` AS `FirstName`,  
-`LastName__6` AS `LastName`
-FROM (
-SELECT  
-X'604b796c6965' AS `FirstName__5`,    
-X'604d696e6f677565' AS `LastName__6`  
-UNION ALL  
-SELECT  
-X'60526f62796e' AS `FirstName__5`,    
-null AS `LastName__6`
-) AS `set_op_scan_4`;
-INSERT INTO `IconNames`
- (`FirstName`, `LastName`) 
-VALUES 
-(X'60426a6f726b',null);
-SELECT
-`FirstName__1` AS `FirstName`,  
-`LastName__2` AS `LastName`
-FROM (
-SELECT  
-`FirstName__1`,    
-`LastName__2`  
-FROM (
-SELECT    
-`FirstName` AS `FirstName__1`,      
-`LastName` AS `LastName__2`    
-FROM `IconNames`
-) AS `table_scan_5`  
-ORDER BY `FirstName__1` ASC  
-LIMIT 1 OFFSET 1
-) AS `limit_scan_3`;
-DROP TABLE IF EXISTS `IconNames`;
-
-### zigquery/syntax/pipe/order_by	order by
-PRAGMA user_version;
-SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
-SELECT name, kind, spec FROM zetasqlite_catalog;
-SELECT
-`x__7` AS `x`,  
-`y__8` AS `y`
-FROM (
-SELECT  
-`x__7`,    
-`y__8`  
-FROM (
-SELECT    
-1 AS `x__7`,      
-true AS `y__8`    
-UNION ALL    
-SELECT    
-9 AS `x__7`,      
-true AS `y__8`    
-UNION ALL    
-SELECT    
-null AS `x__7`,      
-false AS `y__8`
-) AS `set_op_scan_4`  
-ORDER BY `x__7` ASC
-) AS `order_by_scan_3`;
-
-### zigquery/syntax/pipe/order_by	order by with nulls last
-SELECT
-`x__7` AS `x`,  
-`y__8` AS `y`
-FROM (
-SELECT  
-`x__7`,    
-`y__8`  
-FROM (
-SELECT    
-1 AS `x__7`,      
-true AS `y__8`    
-UNION ALL    
-SELECT    
-9 AS `x__7`,      
-true AS `y__8`    
-UNION ALL    
-SELECT    
-null AS `x__7`,      
-false AS `y__8`
-) AS `set_op_scan_4`  
-ORDER BY `x__7` IS NOT NULL DESC, `x__7` ASC
-) AS `order_by_scan_3`;
-
-### zigquery/syntax/pipe/order_by	order by desc
-SELECT
-`x__7` AS `x`,  
-`y__8` AS `y`
-FROM (
-SELECT  
-`x__7`,    
-`y__8`  
-FROM (
-SELECT    
-1 AS `x__7`,      
-true AS `y__8`    
-UNION ALL    
-SELECT    
-9 AS `x__7`,      
-true AS `y__8`    
-UNION ALL    
-SELECT    
-null AS `x__7`,      
-false AS `y__8`
-) AS `set_op_scan_4`  
-ORDER BY `x__7` DESC
-) AS `order_by_scan_3`;
-
-### zigquery/syntax/pipe/order_by	order by nulls first
-SELECT
-`x__7` AS `x`,  
-`y__8` AS `y`
-FROM (
-SELECT  
-`x__7`,    
-`y__8`  
-FROM (
-SELECT    
-1 AS `x__7`,      
-true AS `y__8`    
-UNION ALL    
-SELECT    
-9 AS `x__7`,      
-true AS `y__8`    
-UNION ALL    
-SELECT    
-null AS `x__7`,      
-false AS `y__8`
-) AS `set_op_scan_4`  
-ORDER BY `x__7` IS NOT NULL ASC, `x__7` DESC
-) AS `order_by_scan_3`;
-
 ### zigquery/syntax/query/array_subscript	array index access operator
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -20491,6 +22206,25 @@ FROM (
 SELECT  
 zetasqlite_nullif(null, 0) AS `$col1__1`
 ) AS `project_scan_3`;
+
+### zigquery/syntax/query/distinct	distinct union
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+SELECT
+`x__5` AS `x`,  
+`x__5` AS `y`
+FROM (
+WITH `toks` AS 	(  
+SELECT    
+true AS `x__1`,      
+1 AS `y__2`  )
+  
+SELECT  
+`wrs8`.`x__1` AS `x__5`  
+FROM `toks` AS `wrs8`  
+GROUP BY zetasqlite_group_by(`wrs8`.`x__1`)
+) AS `with_scan_3`;
 
 ### zigquery/syntax/query/except	except (case 627)
 PRAGMA user_version;
@@ -20956,6 +22690,64 @@ GROUP BY zetasqlite_group_by(`items__7`)
 ORDER BY `sum_total__9` DESC
 ) AS `order_by_scan_3`;
 
+### zigquery/syntax/query/group_by	arrays group by element sequence, not by joined text
+SELECT
+`n__5` AS `n`,  
+`c__2` AS `c`
+FROM (
+SELECT  
+`n__5`,    
+`c__2`  
+FROM (
+SELECT    
+`arr__4`,      
+`c__2`,      
+zetasqlite_array_length(`arr__4`) AS `n__5`    
+FROM (
+SELECT      
+zetasqlite_get_struct_field(`$unnest1__1`, 0) AS `arr__4`,        
+zetasqlite_count_star() AS `c__2`      
+FROM (
+SELECT        
+`$array_7`.`value` AS `$unnest1__1`,          
+zetasqlite_array_length(zetasqlite_get_struct_field(`$array_7`.`value`, 0)) AS `n__3`        
+FROM zetasqlite_unnest(X'0e020f01036172720e010404617c7c620f01036172720e02040161040162') AS `$array_7`
+) AS `project_scan_6`      
+GROUP BY zetasqlite_group_by(zetasqlite_get_struct_field(`$unnest1__1`, 0))
+) AS `aggregate_scan_5`
+) AS `project_scan_4`  
+ORDER BY `n__5` ASC
+) AS `order_by_scan_3`;
+
+### zigquery/syntax/query/group_by	structs group by field values, not by joined text
+SELECT
+`k__5` AS `k`,  
+`c__2` AS `c`
+FROM (
+SELECT  
+`k__5`,    
+`c__2`  
+FROM (
+SELECT    
+`s__4`,      
+`c__2`,      
+zetasqlite_get_struct_field(`s__4`, 0) AS `k__5`    
+FROM (
+SELECT      
+zetasqlite_get_struct_field(`$unnest1__1`, 0) AS `s__4`,        
+zetasqlite_count_star() AS `c__2`      
+FROM (
+SELECT        
+`$array_7`.`value` AS `$unnest1__1`,          
+zetasqlite_get_struct_field(zetasqlite_get_struct_field(`$array_7`.`value`, 0), 0) AS `k__3`        
+FROM zetasqlite_unnest(X'0e020f0101730f02016b0404617c7c62016a04000f0101730f02016b040161016a040162') AS `$array_7`
+) AS `project_scan_6`      
+GROUP BY zetasqlite_group_by(zetasqlite_get_struct_field(`$unnest1__1`, 0))
+) AS `aggregate_scan_5`
+) AS `project_scan_4`  
+ORDER BY `k__5` ASC
+) AS `order_by_scan_3`;
+
 ### zigquery/syntax/query/join	inner join with using
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -21193,6 +22985,44 @@ SELECT
 FROM `tmp` AS `wrs12`
 ) AS `with_scan_7` ON `id__1` = `id__3`;
 
+### zigquery/syntax/query/limit	limit offset test
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+CREATE TABLE `IconNames` AS SELECT
+`FirstName__5` AS `FirstName`,  
+`LastName__6` AS `LastName`
+FROM (
+SELECT  
+X'604b796c6965' AS `FirstName__5`,    
+X'604d696e6f677565' AS `LastName__6`  
+UNION ALL  
+SELECT  
+X'60526f62796e' AS `FirstName__5`,    
+null AS `LastName__6`
+) AS `set_op_scan_4`;
+INSERT INTO `IconNames`
+ (`FirstName`, `LastName`) 
+VALUES 
+(X'60426a6f726b',null);
+SELECT
+`FirstName__1` AS `FirstName`,  
+`LastName__2` AS `LastName`
+FROM (
+SELECT  
+`FirstName__1`,    
+`LastName__2`  
+FROM (
+SELECT    
+`FirstName` AS `FirstName__1`,      
+`LastName` AS `LastName__2`    
+FROM `IconNames`
+) AS `table_scan_5`  
+ORDER BY `FirstName__1` ASC  
+LIMIT 1 OFFSET 1
+) AS `limit_scan_3`;
+DROP TABLE IF EXISTS `IconNames`;
+
 ### zigquery/syntax/query/operators_arith	unary plus operator
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -21310,6 +23140,92 @@ SELECT
 SELECT
 100 != 10 AS `$col1`;
 
+### zigquery/syntax/query/operators_compare	ordering over date columns
+SELECT
+X'407ffffffffffffdde' < X'408000000000004d4a' AS `$col1`,  
+X'408000000000004d4a' < X'407ffffffffffffdde' AS `$col2`,  
+X'407ffffffffffffdde' = X'407ffffffffffffdde' AS `$col3`,  
+X'407ffffffffffffdde' BETWEEN X'407ffffffffffffdde' AND X'408000000000004d4a' AS `$col4`;
+
+### zigquery/syntax/query/operators_compare	ordering over timestamp, datetime and time columns
+SELECT
+X'587ff8463988a66080' < X'58800612ceaee3edc0' AS `$col1`,  
+X'507ff8463988a66080' < X'50800612ceaee3edc0' AS `$col2`,  
+X'48800000036c8bc080' < X'488000000e55adddc0' AS `$col3`;
+
+### zigquery/syntax/query/operators_compare	ordering over bytes columns is unsigned byte order
+SELECT
+X'6800ff' < X'680100' AS `$col1`,  
+X'6800' < X'6800ff' AS `$col2`,  
+X'6800ff' IN (X'6800ff',X'680100') AS `$col3`;
+
+### zigquery/syntax/query/operators_compare	ordering over numeric and bignumeric columns crosses zero
+SELECT
+X'707fffffffffffffffffffffffa697d100' < X'708000000000000000000000000ee6b280' AS `$col1`,  
+X'707fffffffffffffffffffffffa697d100' < X'7080000000000000000000000000000000' AS `$col2`,  
+X'787ffffffc4a717738acec1362cd61555e7046d08adea4e8f00000000000000000' < X'7880000003b58e88c75313ec9d329eaaa18fb92f75215b17100000000000000000' AS `$col3`;
+
+### zigquery/syntax/query/operators_compare	equality over range columns
+SELECT
+`a__1` = `a__1` AS `$col1`,  
+`a__1` = `b__2` AS `$col2`,  
+`a__1` IS `a__1` AS `$col3`
+FROM (
+SELECT  
+zetasqlite_range(X'408000000000004d0b', X'408000000000004d2a') AS `a__1`,    
+zetasqlite_range(X'408000000000004d0b', X'408000000000004d47') AS `b__2`
+) AS `project_scan_4`;
+
+### zigquery/syntax/query/operators_compare	is distinct from over columns, including nulls
+SELECT
+X'408000000000004d0b' IS X'408000000000004d0b' AS `$col1`,  
+X'408000000000004d0b' IS null AS `$col2`,  
+null IS null AS `$col3`,  
+X'408000000000004d0b' IS NOT null AS `$col4`;
+
+### zigquery/syntax/query/operators_compare	is null over array and struct columns
+SELECT
+X'0e02010100000000000000010200000000000000' IS NULL AS `$col1`,  
+X'0f010178010100000000000000' IS NULL AS `$col2`,  
+null IS NULL AS `$col3`;
+
+### zigquery/syntax/query/operators_compare	stored columns compare and order the same as literals
+PRAGMA user_version;
+SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
+SELECT name, kind, spec FROM zetasqlite_catalog;
+CREATE TABLE `Sortable` (`d` TEXT,`ts` TEXT,`n` TEXT,`b` BLOB) ;
+INSERT INTO `Sortable`
+ (`d`, `ts`, `n`, `b`) 
+VALUES 
+(X'407ffffffffffffdde',X'587ff8463988a66080',X'707fffffffffffffffffffffffa697d100',X'6800ff'),(X'408000000000004d4a',X'58800612ceaee3edc0',X'708000000000000000000000000ee6b280',X'680100');
+SELECT
+`d__1` AS `d`,  
+`$col2__5` AS `$col2`,  
+`$col3__6` AS `$col3`,  
+`$col4__7` AS `$col4`,  
+`$col5__8` AS `$col5`
+FROM (
+SELECT  
+`d__1`,    
+`$col2__5`,    
+`$col3__6`,    
+`$col4__7`,    
+`$col5__8`  
+FROM (
+SELECT    
+`d` AS `d__1`,      
+`ts` AS `ts__2`,      
+`n` AS `n__3`,      
+`b` AS `b__4`,      
+`d` < X'408000000000002acd' AS `$col2__5`,      
+`ts` < X'5880035d013b37e000' AS `$col3__6`,      
+`n` < X'7080000000000000000000000000000000' AS `$col4__7`,      
+`b` > X'6800' AS `$col5__8`    
+FROM `Sortable`
+) AS `project_scan_4`  
+ORDER BY `d__1` DESC
+) AS `order_by_scan_3`;
+
 ### zigquery/syntax/query/operators_field_access	field access operator
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
@@ -21335,7 +23251,7 @@ NOT (1 = 2) AS `$col1`;
 
 ### zigquery/syntax/query/operators_logical	and operator
 SELECT
-1 = 1 AND 2 = 2 AS `$col1`;
+(1 = 1) AND (2 = 2) AS `$col1`;
 
 ### zigquery/syntax/query/operators_logical	and operator with true and true
 SELECT
@@ -21395,7 +23311,7 @@ zetasqlite_and(null, null) AS `$col1__1`
 
 ### zigquery/syntax/query/operators_logical	or operator
 SELECT
-1 = 2 OR 1 = 1 AS `$col1`;
+(1 = 2) OR (1 = 1) AS `$col1`;
 
 ### zigquery/syntax/query/operators_logical	or operator with true and true
 SELECT
@@ -21453,31 +23369,109 @@ SELECT
 zetasqlite_or(null, null) AS `$col1__1`
 ) AS `project_scan_3`;
 
-### zigquery/syntax/query/order_by	ProjectScan with order by column does not output ordered column
+### zigquery/syntax/query/operators_logical	or nested inside and keeps its grouping
+SELECT
+(true OR false) AND false AS `$col1`,  
+true OR (false AND false) AS `$col2`;
+
+### zigquery/syntax/query/order_by	order by
 PRAGMA user_version;
 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog';
 SELECT name, kind, spec FROM zetasqlite_catalog;
 SELECT
-`name__3` AS `name`,  
-`cols__4` AS `cols`
+`x__7` AS `x`,  
+`y__8` AS `y`
 FROM (
-WITH `names` AS 	(  
-SELECT    
-X'60666f6f' AS `name__1`,      
-X'0e02040178040179' AS `cols__2`  )
-  
 SELECT  
-`name__3`,    
-`cols__4`  
+`x__7`,    
+`y__8`  
 FROM (
 SELECT    
-`wrs9`.`name__1` AS `name__3`,      
-`wrs9`.`cols__2` AS `cols__4`,      
-zetasqlite_safe_array_at_offset(`wrs9`.`cols__2`, 0) AS `$orderbycol2__5`    
-FROM `names` AS `wrs9`
-) AS `project_scan_8`  
-ORDER BY `name__3` ASC, `$orderbycol2__5` ASC
-) AS `with_scan_3`;
+1 AS `x__7`,      
+true AS `y__8`    
+UNION ALL    
+SELECT    
+9 AS `x__7`,      
+true AS `y__8`    
+UNION ALL    
+SELECT    
+null AS `x__7`,      
+false AS `y__8`
+) AS `set_op_scan_4`  
+ORDER BY `x__7` ASC
+) AS `order_by_scan_3`;
+
+### zigquery/syntax/query/order_by	order by with nulls last
+SELECT
+`x__7` AS `x`,  
+`y__8` AS `y`
+FROM (
+SELECT  
+`x__7`,    
+`y__8`  
+FROM (
+SELECT    
+1 AS `x__7`,      
+true AS `y__8`    
+UNION ALL    
+SELECT    
+9 AS `x__7`,      
+true AS `y__8`    
+UNION ALL    
+SELECT    
+null AS `x__7`,      
+false AS `y__8`
+) AS `set_op_scan_4`  
+ORDER BY `x__7` IS NOT NULL DESC, `x__7` ASC
+) AS `order_by_scan_3`;
+
+### zigquery/syntax/query/order_by	order by desc
+SELECT
+`x__7` AS `x`,  
+`y__8` AS `y`
+FROM (
+SELECT  
+`x__7`,    
+`y__8`  
+FROM (
+SELECT    
+1 AS `x__7`,      
+true AS `y__8`    
+UNION ALL    
+SELECT    
+9 AS `x__7`,      
+true AS `y__8`    
+UNION ALL    
+SELECT    
+null AS `x__7`,      
+false AS `y__8`
+) AS `set_op_scan_4`  
+ORDER BY `x__7` DESC
+) AS `order_by_scan_3`;
+
+### zigquery/syntax/query/order_by	order by nulls first
+SELECT
+`x__7` AS `x`,  
+`y__8` AS `y`
+FROM (
+SELECT  
+`x__7`,    
+`y__8`  
+FROM (
+SELECT    
+1 AS `x__7`,      
+true AS `y__8`    
+UNION ALL    
+SELECT    
+9 AS `x__7`,      
+true AS `y__8`    
+UNION ALL    
+SELECT    
+null AS `x__7`,      
+false AS `y__8`
+) AS `set_op_scan_4`  
+ORDER BY `x__7` IS NOT NULL ASC, `x__7` DESC
+) AS `order_by_scan_3`;
 
 ### zigquery/syntax/query/parameters	single statement with named params
 PRAGMA user_version;
@@ -21603,13 +23597,13 @@ SELECT
 `wrs36`.`product__37` AS `product__46`,    
 `wrs36`.`year__40` AS `year__47`,    
 zetasqlite_sum((SELECT    
-CASE WHEN zetasqlite_is_not_distinct_from(`wrs36`.`quarter__39`, X'605131') THEN `wrs36`.`sales__38` ELSE null END AS `$col1__57`)) AS `Q1__48`,    
+CASE WHEN `wrs36`.`quarter__39` IS X'605131' THEN `wrs36`.`sales__38` ELSE null END AS `$col1__57`)) AS `Q1__48`,    
 zetasqlite_sum((SELECT    
-CASE WHEN zetasqlite_is_not_distinct_from(`wrs36`.`quarter__39`, X'605132') THEN `wrs36`.`sales__38` ELSE null END AS `$col1__61`)) AS `Q2__49`,    
+CASE WHEN `wrs36`.`quarter__39` IS X'605132' THEN `wrs36`.`sales__38` ELSE null END AS `$col1__61`)) AS `Q2__49`,    
 zetasqlite_sum((SELECT    
-CASE WHEN zetasqlite_is_not_distinct_from(`wrs36`.`quarter__39`, X'605133') THEN `wrs36`.`sales__38` ELSE null END AS `$col1__65`)) AS `Q3__50`,    
+CASE WHEN `wrs36`.`quarter__39` IS X'605133' THEN `wrs36`.`sales__38` ELSE null END AS `$col1__65`)) AS `Q3__50`,    
 zetasqlite_sum((SELECT    
-CASE WHEN zetasqlite_is_not_distinct_from(`wrs36`.`quarter__39`, X'605134') THEN `wrs36`.`sales__38` ELSE null END AS `$col1__69`)) AS `Q4__51`  
+CASE WHEN `wrs36`.`quarter__39` IS X'605134' THEN `wrs36`.`sales__38` ELSE null END AS `$col1__69`)) AS `Q4__51`  
 FROM `produce` AS `wrs36`  
 GROUP BY zetasqlite_group_by(`wrs36`.`product__37`), zetasqlite_group_by(`wrs36`.`year__40`)
 ) AS `aggregate_scan_34`;
@@ -21664,7 +23658,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_like(X'6061626364', X'60612564')) AS `$col1__1`
+NOT (zetasqlite_like(X'6061626364', X'60612564')) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/syntax/query/predicates	between operator
@@ -21673,7 +23667,7 @@ SELECT
 `$col2__3` AS `$col2`
 FROM (
 SELECT  
-zetasqlite_between(X'408000000000004b2d', X'408000000000004b24', X'408000000000004b42') AS `$col1__2`,    
+X'408000000000004b2d' BETWEEN X'408000000000004b24' AND X'408000000000004b42' AS `$col1__2`,    
 zetasqlite_between((SELECT    
 null AS `$col1__1`), 0, 2) AS `$col2__3`
 ) AS `project_scan_3`;
@@ -21684,10 +23678,29 @@ SELECT
 `$col2__3` AS `$col2`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_between(X'408000000000004853', X'408000000000004b24', X'408000000000004b42')) AS `$col1__2`,    
+NOT (X'408000000000004853' BETWEEN X'408000000000004b24' AND X'408000000000004b42') AS `$col1__2`,    
 zetasqlite_between((SELECT    
 null AS `$col1__1`), 0, 2) AS `$col2__3`
 ) AS `project_scan_3`;
+
+### zigquery/syntax/query/predicates	between operator with a null bound
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`,  
+`$col3__3` AS `$col3`,  
+`$col4__4` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_between(5, 10, null) AS `$col1__1`,    
+zetasqlite_between(5, 1, null) AS `$col2__2`,    
+zetasqlite_between(5, null, 1) AS `$col3__3`,    
+zetasqlite_between(5, null, 10) AS `$col4__4`
+) AS `project_scan_3`;
+
+### zigquery/syntax/query/predicates	between operator with a null bound, over columns
+SELECT
+5 BETWEEN 10 AND null AS `$col1`,  
+5 BETWEEN 1 AND null AS `$col2`;
 
 ### zigquery/syntax/query/predicates	in operator
 SELECT
@@ -21696,9 +23709,34 @@ SELECT
 `$col3__3` AS `$col3`
 FROM (
 SELECT  
-zetasqlite_in(3, 1, 2, 3, 4) AS `$col1__1`,    
+3 IN (1,2,3,4) AS `$col1__1`,    
 zetasqlite_in(null, 1) AS `$col2__2`,    
 zetasqlite_in(null, null) AS `$col3__3`
+) AS `project_scan_3`;
+
+### zigquery/syntax/query/predicates	in operator with a null in the list
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_in(1, 1, null) AS `$col1__1`,    
+zetasqlite_in(2, 1, null) AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/syntax/query/predicates	in operator with a null in the list, over columns
+SELECT
+1 IN (1,null) AS `$col1`,  
+2 IN (1,null) AS `$col2`;
+
+### zigquery/syntax/query/predicates	in operator with a null in a longer list
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_in(5, 1, 5, 10, null) AS `$col1__1`,    
+zetasqlite_in(6, 1, 5, 10, null) AS `$col2__2`
 ) AS `project_scan_3`;
 
 ### zigquery/syntax/query/predicates	in operator with function
@@ -21718,26 +23756,18 @@ SELECT
 `$col3__3` AS `$col3`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_in(5, 1, 2, 3, 4)) AS `$col1__1`,    
-zetasqlite_not(zetasqlite_in(null, 1)) AS `$col2__2`,    
-zetasqlite_not(zetasqlite_in(null, null)) AS `$col3__3`
+NOT (5 IN (1,2,3,4)) AS `$col1__1`,    
+NOT (zetasqlite_in(null, 1)) AS `$col2__2`,    
+NOT (zetasqlite_in(null, null)) AS `$col3__3`
 ) AS `project_scan_3`;
 
 ### zigquery/syntax/query/predicates	is null operator
 SELECT
-`$col1__1` AS `$col1`
-FROM (
-SELECT  
-zetasqlite_is_null(null) AS `$col1__1`
-) AS `project_scan_3`;
+null IS NULL AS `$col1`;
 
 ### zigquery/syntax/query/predicates	is not null operator
 SELECT
-`$col1__1` AS `$col1`
-FROM (
-SELECT  
-zetasqlite_not(zetasqlite_is_null(1)) AS `$col1__1`
-) AS `project_scan_3`;
+NOT (1 IS NULL) AS `$col1`;
 
 ### zigquery/syntax/query/predicates	is true operator
 SELECT
@@ -21752,7 +23782,7 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_true(false)) AS `$col1__1`
+NOT (zetasqlite_is_true(false)) AS `$col1__1`
 ) AS `project_scan_3`;
 
 ### zigquery/syntax/query/predicates	is false operator
@@ -21768,7 +23798,41 @@ SELECT
 `$col1__1` AS `$col1`
 FROM (
 SELECT  
-zetasqlite_not(zetasqlite_is_false(true)) AS `$col1__1`
+NOT (zetasqlite_is_false(true)) AS `$col1__1`
+) AS `project_scan_3`;
+
+### zigquery/syntax/query/predicates	is true and is false over a null are false, not null
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+zetasqlite_is_true(null) AS `$col1__1`,    
+zetasqlite_is_false(null) AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/syntax/query/predicates	is not true and is not false over a null are true, not null
+SELECT
+`$col1__1` AS `$col1`,  
+`$col2__2` AS `$col2`
+FROM (
+SELECT  
+NOT (zetasqlite_is_true(null)) AS `$col1__1`,    
+NOT (zetasqlite_is_false(null)) AS `$col2__2`
+) AS `project_scan_3`;
+
+### zigquery/syntax/query/predicates	is true over a null column, where nothing folds
+SELECT
+`$col1__2` AS `$col1`,  
+`$col2__3` AS `$col2`,  
+`$col3__4` AS `$col3`,  
+`$col4__5` AS `$col4`
+FROM (
+SELECT  
+zetasqlite_is_true(null) AS `$col1__2`,    
+zetasqlite_is_false(null) AS `$col2__3`,    
+NOT (zetasqlite_is_true(null)) AS `$col3__4`,    
+NOT (zetasqlite_is_false(null)) AS `$col4__5`
 ) AS `project_scan_3`;
 
 ### zigquery/syntax/query/predicates	exists
@@ -21795,11 +23859,7 @@ WHERE `$array_7`.`value` = 4) AS `$col1__2`
 
 ### zigquery/syntax/query/predicates	is distinct from with 1 and 2
 SELECT
-`$col1__1` AS `$col1`
-FROM (
-SELECT  
-zetasqlite_is_distinct_from(1, 2) AS `$col1__1`
-) AS `project_scan_3`;
+1 IS NOT 2 AS `$col1`;
 
 ### zigquery/syntax/query/predicates	is distinct from with 1 and null
 SELECT
@@ -21811,11 +23871,7 @@ zetasqlite_is_distinct_from(1, null) AS `$col1__1`
 
 ### zigquery/syntax/query/predicates	is not distinct from with 1 and 1
 SELECT
-`$col1__1` AS `$col1`
-FROM (
-SELECT  
-zetasqlite_is_not_distinct_from(1, 1) AS `$col1__1`
-) AS `project_scan_3`;
+1 IS 1 AS `$col1`;
 
 ### zigquery/syntax/query/predicates	is not distinct from with null and null
 SELECT
@@ -21835,19 +23891,11 @@ zetasqlite_is_distinct_from(null, null) AS `$col1__1`
 
 ### zigquery/syntax/query/predicates	is distinct from with 1 and 1
 SELECT
-`$col1__1` AS `$col1`
-FROM (
-SELECT  
-zetasqlite_is_distinct_from(1, 1) AS `$col1__1`
-) AS `project_scan_3`;
+1 IS NOT 1 AS `$col1`;
 
 ### zigquery/syntax/query/predicates	is not distinct from with 1 and 2
 SELECT
-`$col1__1` AS `$col1`
-FROM (
-SELECT  
-zetasqlite_is_not_distinct_from(1, 2) AS `$col1__1`
-) AS `project_scan_3`;
+1 IS 2 AS `$col1`;
 
 ### zigquery/syntax/query/predicates	is not distinct from with 1 and null
 SELECT
@@ -22050,14 +24098,14 @@ X'0e01040177' AS `modes__6`  )
   
 SELECT  
 `id__7`,    
-zetasqlite_not(zetasqlite_is_null((SELECT    
+NOT ((SELECT    
 `$array_18`.`value` AS `mode__10`    
 FROM zetasqlite_unnest(`modes__9`) AS `$array_18`    
-WHERE `$array_18`.`value` = X'6077'))) AS `write_mode__12`,    
-zetasqlite_not(zetasqlite_is_null((SELECT    
+WHERE `$array_18`.`value` = X'6077') IS NULL) AS `write_mode__12`,    
+NOT ((SELECT    
 `$array_21`.`value` AS `mode__11`    
 FROM zetasqlite_unnest(`modes__9`) AS `$array_21`    
-WHERE `$array_21`.`value` = X'6072'))) AS `read_mode__13`  
+WHERE `$array_21`.`value` = X'6072') IS NULL) AS `read_mode__13`  
 FROM (
 SELECT    
 `$array_14`.`value` AS `id__7`    
@@ -22284,7 +24332,7 @@ SELECT
 zetasqlite_get_struct_field(`$array_6`.`value`, 0) AS `name__3`,      
 zetasqlite_get_struct_field(`$array_6`.`value`, 1) AS `age__4`    
 FROM zetasqlite_unnest(X'0e030f02046e616d650405416c69636503616765011e000000000000000f02046e616d650403426f62036167650119000000000000000f02046e616d650407436861726c696503616765012300000000000000') AS `$array_6`    
-WHERE zetasqlite_greater_or_equal(zetasqlite_get_struct_field(`$array_6`.`value`, 1), 30)
+WHERE zetasqlite_get_struct_field(`$array_6`.`value`, 1) >= 30
 ) AS `project_scan_4`  
 ORDER BY `pos__2` ASC
 ) AS `order_by_scan_3`;
@@ -22335,7 +24383,7 @@ zetasqlite_get_struct_field(`$array_5`.`value`, 0) AS `x__2`,
 zetasqlite_get_struct_field(`$array_5`.`value`, 1) AS `y__3`,    
 zetasqlite_add(zetasqlite_get_struct_field(`$array_5`.`value`, 0), zetasqlite_get_struct_field(`$array_5`.`value`, 1)) AS `sum__4`  
 FROM zetasqlite_unnest(X'0e030f02017801010000000000000001790102000000000000000f02017801030000000000000001790104000000000000000f0201780105000000000000000179010600000000000000') AS `$array_5`  
-WHERE zetasqlite_greater(zetasqlite_get_struct_field(`$array_5`.`value`, 0), 1)
+WHERE zetasqlite_get_struct_field(`$array_5`.`value`, 0) > 1
 ) AS `project_scan_3`;
 
 ### zigquery/syntax/query/unnest	unnest struct with multiple tables
@@ -22366,7 +24414,7 @@ SELECT
 `tags` AS `tags__2`      
 FROM `users`
 ) AS `table_scan_7` CROSS JOIN zetasqlite_unnest(`tags__2`) AS `$array_6`    
-WHERE zetasqlite_equal(zetasqlite_get_struct_field(`$array_6`.`value`, 0), X'606c6576656c')
+WHERE zetasqlite_get_struct_field(`$array_6`.`value`, 0) = X'606c6576656c'
 ) AS `project_scan_4`  
 ORDER BY `user_id__1` ASC
 ) AS `order_by_scan_3`;
@@ -22483,7 +24531,7 @@ SELECT
 FROM `employees` AS `wrs18`
 ) AS `with_ref_scan_18`
 ) AS `join_scan_15` CROSS JOIN zetasqlite_unnest(`emp_list__5`) AS `$array_14`      
-WHERE zetasqlite_equal(zetasqlite_get_struct_field(`join_scan_15`.`d__4`, 0), zetasqlite_get_struct_field(`$array_14`.`value`, 1))
+WHERE zetasqlite_get_struct_field(`join_scan_15`.`d__4`, 0) = zetasqlite_get_struct_field(`$array_14`.`value`, 1)
 ) AS `project_scan_12`
 ) AS `project_scan_11`  
 ORDER BY `$orderbycol1__10` ASC, `$orderbycol2__11` ASC
@@ -22526,7 +24574,7 @@ SELECT
 `wrs16`.`Q4__15` AS `Q4__20`    
 FROM `Produce` AS `wrs16`
 ) AS `with_ref_scan_16` CROSS JOIN zetasqlite_unnest(zetasqlite_make_array(zetasqlite_make_struct(X'6073616c6573', `Q1__17`, X'6071756172746572', X'605131'), zetasqlite_make_struct(X'6073616c6573', `Q2__18`, X'6071756172746572', X'605132'), zetasqlite_make_struct(X'6073616c6573', `Q3__19`, X'6071756172746572', X'605133'), zetasqlite_make_struct(X'6073616c6573', `Q4__20`, X'6071756172746572', X'605134'))) AS `$array_15`  
-WHERE zetasqlite_not(zetasqlite_is_null(zetasqlite_get_struct_field(`$array_15`.`value`, 0)))
+WHERE NOT (zetasqlite_get_struct_field(`$array_15`.`value`, 0) IS NULL)
 ) AS `project_scan_13`;
 
 ### zigquery/syntax/query/window_clause	window total
@@ -23106,7 +25154,7 @@ SELECT
 `wrs9`.`ID__1` AS `event_id`,  
 `wrs9`.`event_date__3` AS `occurrence_date`
 FROM `events_cte` AS `wrs9`
-WHERE zetasqlite_equal(zetasqlite_extract(`wrs9`.`event_date__3`, X'6059454152'), 2025);
+WHERE zetasqlite_extract(`wrs9`.`event_date__3`, X'6059454152') = 2025;
 DROP TABLE IF EXISTS `events`;
 
 ### zigquery/syntax/script/begin_end	begin-end

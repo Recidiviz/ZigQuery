@@ -45,5 +45,164 @@
                 .{"2008"},
             },
         },
+
+        // The week-and-weekday elements below were all returning the ISO week
+        // number, because %U %W %V %u %w %g shared one call to isoWeek(). They
+        // agree on most dates, so every case here sits on a boundary where the
+        // documented answers differ from each other.
+        //
+        // 2023-01-01 is a Sunday, and belongs to ISO week 52 of 2022.
+        .{
+            .desc = "format_date %U counts weeks from the year's first Sunday",
+            .sql = "SELECT FORMAT_DATE(\"%U\", DATE \"2023-01-01\"), FORMAT_DATE(\"%U\", DATE \"2024-12-30\")",
+            // 2023-01-01 *is* the first Sunday, so it opens week 01. In 2024 the
+            // first Sunday is Jan 7, so Jan 1-6 are week 00 and Dec 30 is 52.
+            .rows = .{
+                .{ "01", "52" },
+            },
+        },
+        .{
+            .desc = "format_date %W counts weeks from the year's first Monday",
+            .sql = "SELECT FORMAT_DATE(\"%W\", DATE \"2023-01-01\"), FORMAT_DATE(\"%W\", DATE \"2024-12-30\")",
+            // 2023-01-01 falls before that year's first Monday, so week 00.
+            // 2024-01-01 was itself a Monday, which puts Dec 30 in week 53.
+            .rows = .{
+                .{ "00", "53" },
+            },
+        },
+        .{
+            .desc = "format_date %V is the ISO week, which disagrees with %U and %W at New Year",
+            .sql = "SELECT FORMAT_DATE(\"%V\", DATE \"2023-01-01\"), FORMAT_DATE(\"%V\", DATE \"2024-12-30\")",
+            // Both dates belong to an ISO week of the *neighbouring* year.
+            .rows = .{
+                .{ "52", "01" },
+            },
+        },
+        .{
+            .desc = "format_date %G and %g are the ISO year, not the calendar year",
+            .sql =
+            \\SELECT
+            \\  FORMAT_DATE("%G", DATE "2023-01-01"), FORMAT_DATE("%g", DATE "2023-01-01"),
+            \\  FORMAT_DATE("%G", DATE "2024-12-30"), FORMAT_DATE("%g", DATE "2024-12-30")
+            ,
+            .rows = .{
+                .{ "2022", "22", "2025", "25" },
+            },
+        },
+        .{
+            .desc = "format_date %u is the weekday Monday=1..7, not a week number",
+            .sql = "SELECT FORMAT_DATE(\"%u\", DATE \"2023-01-01\"), FORMAT_DATE(\"%u\", DATE \"2024-12-30\")",
+            .rows = .{
+                .{ "7", "1" },
+            },
+        },
+        .{
+            .desc = "format_date %w is the weekday Sunday=0..6",
+            .sql = "SELECT FORMAT_DATE(\"%w\", DATE \"2023-01-01\"), FORMAT_DATE(\"%w\", DATE \"2024-12-30\")",
+            .rows = .{
+                .{ "0", "1" },
+            },
+        },
+
+        .{
+            .desc = "format_date %e pads a single-digit day with a space, %d with a zero",
+            .sql = "SELECT FORMAT_DATE(\"[%e]\", DATE \"2024-03-05\"), FORMAT_DATE(\"[%d]\", DATE \"2024-03-05\")",
+            .rows = .{
+                .{ "[ 5]", "[05]" },
+            },
+        },
+        .{
+            .desc = "format_date %j is the day of the year, zero-padded to three digits",
+            .sql = "SELECT FORMAT_DATE(\"%j\", DATE \"2024-01-05\"), FORMAT_DATE(\"%j\", DATE \"2024-12-31\")",
+            // 2024 is a leap year, so it has 366 days.
+            .rows = .{
+                .{ "005", "366" },
+            },
+        },
+        .{
+            .desc = "format_date %Q is the quarter, taken from the month",
+            // Derived from yearDay() against fixed thresholds, 2024-03-30 landed
+            // in Q2: a leap day shifts every boundary after February.
+            .sql =
+            \\SELECT
+            \\  FORMAT_DATE("%Q", DATE "2024-03-30"), FORMAT_DATE("%Q", DATE "2024-03-31"),
+            \\  FORMAT_DATE("%Q", DATE "2024-04-01"), FORMAT_DATE("%Q", DATE "2024-07-01"),
+            \\  FORMAT_DATE("%Q", DATE "2024-12-31")
+            ,
+            .rows = .{
+                .{ "1", "1", "2", "3", "4" },
+            },
+        },
+        .{
+            .desc = "format_date with the name elements %A %a %B %C",
+            .sql = "SELECT FORMAT_DATE(\"%A|%a|%B|%C\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"Sunday|Sun|January|20"},
+            },
+        },
+        .{
+            .desc = "format_date with %F and the literal elements %n %t %%",
+            .sql = "SELECT FORMAT_DATE(\"%F\", DATE \"2023-01-01\"), FORMAT_DATE(\"a%nb%tc%%d\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{ "2023-01-01", "a\nb\tc%d" },
+            },
+        },
+        .{
+            .desc = "format_date %E4Y zero-pads, and signs a year before 1 CE",
+            // DATE_FROM_UNIX_DATE is the only way to reach a negative year:
+            // BigQuery's DATE range starts at 0001-01-01 and it range-checks
+            // its literals, while this engine stores dates as a plain day count.
+            .sql = "SELECT FORMAT_DATE(\"%E4Y\", DATE \"0987-06-05\"), FORMAT_DATE(\"%E4Y\", DATE_FROM_UNIX_DATE(-1000000))",
+            .rows = .{
+                .{ "0987", "-0768" },
+            },
+        },
+        // Formatting never raises: an element it cannot render, whether unknown or
+        // meaningless for the argument's type, is copied through as written. Measured against
+        // BigQuery (recidiviz-bigquery-sandbox, 2026-08-07); not stated in
+        // (format-elements.md#format_elements_date_time).
+        .{
+            .desc = "format_date copies an unknown element through verbatim",
+            .sql = "SELECT FORMAT_DATE(\"[%!][%q][%OY]\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"[%!][%q][%OY]"},
+            },
+        },
+        .{
+            .desc = "format_date copies through an element no DATE can answer",
+            // Clock and zone elements, none of which a DATE has a field for.
+            .sql = "SELECT FORMAT_DATE(\"[%H][%I][%l][%s][%X][%z][%Ez][%r][%E3S]\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"[%H][%I][%l][%s][%X][%z][%Ez][%r][%E3S]"},
+            },
+        },
+        .{
+            .desc = "format_date drops the E from an unrecognised %E combination",
+            // %Ex is not a combination, so the E falls away and plain %x runs. A run that
+            // stays unrecognised is copied through whole.
+            .sql = "SELECT FORMAT_DATE(\"[%Ex][%E4][a%]\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"[01/01/23][%E4][a%]"},
+            },
+        },
+        .{
+            .desc = "format_date renders the %O alternate-numeric forms as their plain counterparts",
+            // Measured against BigQuery; absent from
+            // (format-elements.md#format_elements_date_time). %OY is not one of them and
+            // comes back verbatim, above.
+            .sql = "SELECT FORMAT_DATE(\"[%Od][%Om][%Oy][%Ou][%OV]\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{"[01][01][23][7][52]"},
+            },
+        },
+        .{
+            .desc = "format_date %J is the ISO day of the year, not the ISO year",
+            // 2023-01-01 is the Sunday closing ISO week 52 of 2022, so its ISO day-of-year
+            // is 52*7 = 364 where its plain day-of-year is 001.
+            .sql = "SELECT FORMAT_DATE(\"%J\", DATE \"2023-01-01\"), FORMAT_DATE(\"%j\", DATE \"2023-01-01\"), FORMAT_DATE(\"%G\", DATE \"2023-01-01\")",
+            .rows = .{
+                .{ "364", "001", "2022" },
+            },
+        },
     },
 }

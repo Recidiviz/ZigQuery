@@ -13,7 +13,8 @@ const null_v = Value.null;
 
 pub fn currentDatetime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    return tu.datetimeValue(.{ .civ = try fd.nowCiv(args) });
+    const civ = try fd.nowLocal(args) orelse return null_v;
+    return tu.datetimeValue(.{ .civ = civ });
 }
 
 /// DATETIME_BUCKET(datetime, width[, origin]). The origin defaults to
@@ -79,6 +80,8 @@ pub fn datetime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
             }
             return tu.datetimeValue(bt);
         },
+        // Identity form. (datetime_functions.md#datetime)
+        .datetime => return inner,
         else => return bind.fail("DATETIME: first argument must be DATE or TIMESTAMP type", .{}, error.UnsupportedOperation),
     }
 }
@@ -136,10 +139,11 @@ pub fn datetimeTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value 
     const c = bt.parts();
     if (std.mem.eql(u8, part, "MICROSECOND")) return tu.datetimeValue(bt);
     if (std.mem.eql(u8, part, "MILLISECOND")) {
-        return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0) };
+        const ms = tu.truncMillis(c.micro);
+        return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, ms) };
     }
     if (std.mem.eql(u8, part, "SECOND")) {
-        return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) };
+        return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0) };
     }
     if (std.mem.eql(u8, part, "MINUTE")) {
         return .{ .datetime = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) };
@@ -171,4 +175,31 @@ pub fn parseDatetime(alloc: std.mem.Allocator, args: []const Value) Error!Value 
 fn propagate(e: Error) Error {
     if (tp.message) |m| return bind.failMsg(m, e);
     return e;
+}
+
+// ---- tests ----
+//
+// Only what SQL cannot reach; everything else is asserted against the GoogleSQL
+// reference in testdata/specs/zigquery/functions/datetime.
+
+const testing = std.testing;
+
+test "DATETIME rejects an argument type the analyzer would have to admit" {
+    // DATETIME(DATETIME) reaches the same branch and has a spec case; a BOOL
+    // first argument has no signature at all, so this guard is defensive.
+    try testing.expectError(
+        error.UnsupportedOperation,
+        datetime(testing.allocator, &.{Value{ .bool = true }}),
+    );
+}
+
+test "propagate prefers the parser's message and falls back to the bare error" {
+    tp.message = null;
+    try testing.expectEqual(Error.OutOfMemory, propagate(error.OutOfMemory));
+
+    tp.message = "error parsing [x] with format [%c]: could not parse ansic format";
+    try testing.expectEqual(Error.InvalidDate, propagate(error.InvalidDate));
+    try testing.expectEqualStrings(tp.message.?, bind.message.?);
+    tp.message = null;
+    bind.clearDiagnostics();
 }

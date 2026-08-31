@@ -118,9 +118,17 @@ pub fn isCheapToDuplicate(expr: *const sb.SQLExpression) bool {
                 (b.right == null or isCheapToDuplicate(b.right.?))
         else
             false,
+        // A list costs what its elements cost: an `IN (1,2,3)` right side, and
+        // the parenthesised operands `grouped` builds in transformer/function.zig.
+        .list => if (expr.list_expression) |l| blk: {
+            for (l.expressions) |e| {
+                if (!isCheapToDuplicate(e)) break :blk false;
+            }
+            break :blk true;
+        } else false,
         // Function calls (every zetasqlite_* UDF), subqueries, EXISTS, CASE
         // and casts all get projected.
-        .function, .subquery, .exists, .case, .cast, .list => false,
+        .function, .subquery, .exists, .case, .cast => false,
     };
 }
 

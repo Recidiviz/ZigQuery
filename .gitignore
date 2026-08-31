@@ -15,3 +15,7 @@
 
 # tools/spec_import.py imports tools/zon.py as a sibling module.
 __pycache__/
+
+# uv's environment for the tools in tools/; pyproject.toml and uv.lock are the
+# tracked half of it.
+/.venv/

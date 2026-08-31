@@ -18,6 +18,7 @@ const zetasqlite = @import("zetasqlite");
 const spec = zetasqlite.spec;
 const pb = zetasqlite.pb;
 const errors = @import("../../error.zig");
+const bqpb = @import("../../proto/bigquery.zig");
 
 /// Legacy BigQuery type name for a leaf kind. STRUCT/ARRAY are handled by the
 /// caller, which unwraps them into `fields` / `mode`.
@@ -53,6 +54,31 @@ pub fn writeField(
     name: []const u8,
     t: *const spec.Type,
 ) std.mem.Allocator.Error!void {
+    return writeFieldMode(arena, out, .{ .name = name, .type = t });
+}
+
+/// A field, with the mode a caller that knows it can supply.
+///
+/// A GoogleSQL type carries no nullability, so a schema derived from a query's
+/// output columns cannot say REQUIRED and never should. A schema derived from
+/// the catalog can: `ColumnSpec.is_not_null` is what `CREATE TABLE ... NOT
+/// NULL` left behind, and a DDL-created table's REQUIRED columns need it
+/// carried through to both the REST and the Storage APIs.
+pub const Field = struct {
+    name: []const u8,
+    type: *const spec.Type,
+    /// True only for a column the catalog declared NOT NULL. REPEATED wins over
+    /// it — an ARRAY is its own mode — which is why it is consulted after.
+    required: bool = false,
+};
+
+pub fn writeFieldMode(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    field: Field,
+) std.mem.Allocator.Error!void {
+    const name = field.name;
+    const t = field.type;
     // ARRAY<T> is not a type of its own on the wire: the element type is
     // hoisted and the field is marked REPEATED.
     const repeated = t.isArray();
@@ -75,6 +101,10 @@ pub fn writeField(
         if (need_comma) try out.append(arena, ',');
         try out.appendSlice(arena, "\"mode\":\"REPEATED\"");
         need_comma = true;
+    } else if (field.required) {
+        if (need_comma) try out.append(arena, ',');
+        try out.appendSlice(arena, "\"mode\":\"REQUIRED\"");
+        need_comma = true;
     }
 
     if (need_comma) try out.append(arena, ',');
@@ -85,6 +115,54 @@ pub fn writeField(
     try errors.writeJsonString(arena, out, legacyTypeName(elem.typeKind()));
 
     try out.append(arena, '}');
+}
+
+/// The same field as a generated TableFieldSchema.
+///
+/// `mode` is absent rather than "NULLABLE": a GoogleSQL type carries no
+/// nullability, and REPEATED is what an ARRAY becomes once its element type is
+/// hoisted.
+pub fn pbField(
+    arena: std.mem.Allocator,
+    field: Field,
+) std.mem.Allocator.Error!*bqpb.TableFieldSchema {
+    const t = field.type;
+    const repeated = t.isArray();
+    const elem: *const spec.Type = if (repeated) (t.element_type orelse t) else t;
+
+    const out = try arena.create(bqpb.TableFieldSchema);
+    out.* = .{
+        .name = field.name,
+        .type = legacyTypeName(elem.typeKind()),
+        .mode = if (repeated) "REPEATED" else if (field.required) "REQUIRED" else null,
+    };
+    if (elem.isStruct()) out.fields = try pbFields(arena, elem);
+    return out;
+}
+
+fn pbFields(
+    arena: std.mem.Allocator,
+    elem: *const spec.Type,
+) std.mem.Allocator.Error![]*bqpb.TableFieldSchema {
+    const subs = try arena.alloc(*bqpb.TableFieldSchema, elem.field_types.len);
+    for (elem.field_types, 0..) |f, i| {
+        subs[i] = try pbField(arena, .{ .name = f.name, .type = f.type orelse elem });
+    }
+    return subs;
+}
+
+/// A query's output columns as a TableSchema.
+pub fn pbSchema(
+    arena: std.mem.Allocator,
+    cols: []const zetasqlite.driver.OutputColumn,
+) std.mem.Allocator.Error!*bqpb.TableSchema {
+    const fields = try arena.alloc(*bqpb.TableFieldSchema, cols.len);
+    for (cols, 0..) |col, i| {
+        fields[i] = try pbField(arena, .{ .name = col.name, .type = col.type });
+    }
+    const out = try arena.create(bqpb.TableSchema);
+    out.* = .{ .fields = fields };
+    return out;
 }
 
 /// Emits the `schema` object: {"fields":[...]}.
@@ -456,7 +534,14 @@ pub fn writeSchemaFromSpec(
     try out.appendSlice(arena, "{\"fields\":[");
     for (table_spec.columns, 0..) |col, i| {
         if (i > 0) try out.append(arena, ',');
-        try writeField(arena, out, col.name, col.type);
+        // The catalog is the only place NOT NULL survives -- a query's output
+        // columns cannot say it -- so this is where REQUIRED comes from for a
+        // table nobody created through tables.insert.
+        try writeFieldMode(arena, out, .{
+            .name = col.name,
+            .type = col.type,
+            .required = col.is_not_null,
+        });
     }
     try out.appendSlice(arena, "]}");
 }

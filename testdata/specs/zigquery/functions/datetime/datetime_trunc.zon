@@ -49,5 +49,26 @@
                 .{"2014-12-29T00:00:00"},
             },
         },
+        .{
+            .desc = "datetime_trunc keeps the unit it is asked for",
+            .sql =
+            \\SELECT
+            \\  DATETIME_TRUNC(DATETIME "2024-03-15 10:20:30.123456", MICROSECOND),
+            \\  DATETIME_TRUNC(DATETIME "2024-03-15 10:20:30.123456", MILLISECOND),
+            \\  DATETIME_TRUNC(DATETIME "2024-03-15 10:20:30.123456", SECOND),
+            \\  DATETIME_TRUNC(DATETIME "2024-03-15 10:20:30.123456", MINUTE)
+            ,
+            .rows = .{
+                .{ "2024-03-15T10:20:30.123456", "2024-03-15T10:20:30.123", "2024-03-15T10:20:30", "2024-03-15T10:20:00" },
+            },
+        },
+        .{
+            .desc = "datetime_trunc rejects a part it cannot express",
+            // NANOSECOND passes the analyzer because FEATURE_TIMESTAMP_NANOS is on, but
+            // this engine stores microseconds.
+            .sql = "SELECT DATETIME_TRUNC(DATETIME '2024-03-15 10:20:30.123456', NANOSECOND)",
+            .expect_error = "unexpected part value NANOSECOND",
+            .rows = .{},
+        },
     },
 }

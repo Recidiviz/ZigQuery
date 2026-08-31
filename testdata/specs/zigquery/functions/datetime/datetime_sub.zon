@@ -17,5 +17,13 @@
                 .{"2023-02-28T00:00:00"},
             },
         },
+        .{
+            .desc = "datetime_sub rejects a part it cannot express",
+            // NANOSECOND passes the analyzer because FEATURE_TIMESTAMP_NANOS is on, but
+            // this engine stores microseconds.
+            .sql = "SELECT DATETIME_SUB(DATETIME '2008-12-25 15:30:00', INTERVAL 1 NANOSECOND)",
+            .expect_error = "unexpected part value NANOSECOND",
+            .rows = .{},
+        },
     },
 }

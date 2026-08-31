@@ -11,6 +11,29 @@
             },
         },
         .{
+            .desc = "date_add year clamps February 29th to the 28th",
+            // A year shift keeps the day of month unless the target month is shorter, the
+            // same clamp the MONTH arm applies. Measured
+            // (recidiviz-bigquery-sandbox, 2026-08-07).
+            .sql =
+            \\SELECT
+            \\  DATE_ADD(DATE '2024-02-29', INTERVAL 1 YEAR),
+            \\  DATE_ADD(DATE '2024-02-29', INTERVAL 4 YEAR),
+            \\  DATE_ADD(DATE '2024-03-14', INTERVAL 3 YEAR)
+            ,
+            // 2028 is a leap year, so the four-year shift needs no clamp.
+            .rows = .{
+                .{ "2025-02-28", "2028-02-29", "2027-03-14" },
+            },
+        },
+        .{
+            .desc = "date_add week is seven days",
+            .sql = "SELECT DATE_ADD(DATE '2024-03-14', INTERVAL 2 WEEK)",
+            .rows = .{
+                .{"2024-03-28"},
+            },
+        },
+        .{
             .desc = "date_add quarter",
             .sql = "SELECT DATE_ADD('2023-01-01', INTERVAL 1 QUARTER), DATE_ADD('2023-11-30', INTERVAL 1 QUARTER)",
             .rows = .{

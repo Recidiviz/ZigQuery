@@ -24,7 +24,7 @@
         .{
             .desc = "null propagates through PARSE_IP",
             .sql = "SELECT NET.PARSE_IP(CAST(NULL AS STRING)) AS v",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "net_parse_ip is not implemented",
         },
     },
 }

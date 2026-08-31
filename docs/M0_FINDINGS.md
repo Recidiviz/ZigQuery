@@ -216,3 +216,64 @@ it.
   `internal/catalog.zig` already does.
 - Mutually recursive JSON writers need explicit error sets
   (`std.mem.Allocator.Error!void`), or inference deadlocks.
+
+# Static-linking the googlesql shim
+
+Both release products shipped as a `bin/` + `lib/` pair, the shim dylib
+dynamically loaded via rpath. Folding the shim into each executable so
+`zig build` produces a single self-contained binary was tried two ways.
+
+**Embed the dylib bytes and `dlopen` an extracted copy at process start**
+worked end to end — a spike embedded a real 56MB dylib via `@embedFile`,
+extracted it, and called a real ICU code path through it correctly, from a
+directory unrelated to the build tree. Rejected anyway: writing a dylib to
+a runtime-writable path and `dlopen`ing it from there is the exact pattern
+endpoint security tooling on managed devices flags as suspicious, and the
+extracted copy's code-signing provenance is a separate concern on managed
+macOS fleets.
+
+**True static linking** is what shipped. `-r` (the relocatable link a
+static merge needs) cannot combine with `-dead_strip` — `ld` refuses with
+"`-r and -dead_strip cannot be used together`" — and Zig's own
+`link_gc_sections` does not recover the loss either: a binary built with it
+on and one built with it off were byte-identical. Static linking therefore
+ships the shim's full, undead-stripped closure — `exe`/`server_exe` each
+carry their own copy rather than sharing one dylib, so `dist/` grew from
+one shared ~53MB dylib to roughly ~77MB (CLI) and ~90MB (server) each.
+
+## Mechanism
+
+`shim/BUILD.bazel`: `cc_library` (`shim_lib`) → `cc_static_library`
+(`shim_archive`, merges the transitive closure into one archive) → a
+genrule per platform running `ld -r -Wl,-force_load,shim_archive
+-Wl,-exported_symbols_list=<GoogleSQL_* glob>` (macOS) / `ld -r
+-Wl,--whole-archive shim_archive -Wl,--no-whole-archive` then `objcopy
+--wildcard --keep-global-symbol='GoogleSQL_*'` (Linux) — demoting every
+symbol but the 13 `GoogleSQL_*` entry points to local binding, the same
+isolation the dylib's export list already gave it, recreated at static-link
+time instead of dynamic-load time. `rules_cc` needed no version bump:
+`cc_static_library` was already resolved to 0.2.15 in this repo's module
+graph, just not declared as a direct `bazel_dep` until now.
+
+Two sharp edges found building this, both reproducible rather than
+theoretical:
+
+- `cc_static_library` merges only source-compiled deps. ICU is a
+  `rules_foreign_cc` `configure_make` build, contributes no object files,
+  and `bazel build //shim:shim_archive --output_groups=linkdeps` names it
+  as the one dependency left out of the merge. Re-added via a `filegroup`
+  per `out_static_libs` entry, selected by the `OutputGroupInfo` name
+  `configure_make` registers each static lib under — `@icu//:icu`'s own
+  `DefaultInfo` bundles the libs together with a propagated headers
+  directory, which a linker cannot take as an input.
+- `ld -r` with only an archive on the command line and nothing to
+  reference it pulls in zero members: archives resolve on demand, and a
+  bare archive has no root symbol asking for anything. `-Wl,-force_load`
+  (macOS) / `--whole-archive`/`--no-whole-archive` (GNU ld) is required,
+  not optional, for a relocatable object built this way.
+- `-Wl,-x` (local-symbol-table stripping) is safe on the dylib's own final
+  `-shared` link but corrupts thread-local-variable relocations when
+  applied to a `-r` object destined for a further link: a binary built
+  against a `-x`'d version of the static object crashed at dyld startup
+  with "malformed thread-local, offset ... is larger than total size".
+  Left off the static object for this reason, not for size.

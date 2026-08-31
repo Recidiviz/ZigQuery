@@ -66,5 +66,42 @@
                 .{"+00:00"},
             },
         },
+
+        .{
+            .desc = "format_timestamp %z is the offset as +HHMM, %Ez as +HH:MM",
+            // %z used to print the offset in raw seconds (32400 for Tokyo).
+            // The two differ only by the colon, which is why they were confused.
+            .sql =
+            \\SELECT
+            \\  FORMAT_TIMESTAMP("%z|%Ez", TIMESTAMP "2024-03-15 00:00:00+00"),
+            \\  FORMAT_TIMESTAMP("%z|%Ez", TIMESTAMP "2024-03-15 00:00:00+00", "Asia/Tokyo"),
+            \\  FORMAT_TIMESTAMP("%z|%Ez", TIMESTAMP "2024-03-15 00:00:00+00", "America/Los_Angeles")
+            ,
+            .rows = .{
+                .{ "+0000|+00:00", "+0900|+09:00", "-0700|-07:00" },
+            },
+        },
+        .{
+            .desc = "format_timestamp %s is the count of seconds since the epoch",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%s\", TIMESTAMP \"2024-03-15 00:00:00+00\")",
+            .rows = .{
+                .{"1710460800"},
+            },
+        },
+        .{
+            .desc = "format_timestamp renders the zone argument's local wall clock",
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%Y-%m-%d %H:%M:%S\", TIMESTAMP \"2024-03-15 00:00:00+00\", \"Asia/Tokyo\")",
+            .rows = .{
+                .{"2024-03-15 09:00:00"},
+            },
+        },
+        .{
+            .desc = "format_timestamp answers every element, being the widest type",
+            // A TIMESTAMP satisfies every element's type, so nothing here is copied through.
+            .sql = "SELECT FORMAT_TIMESTAMP(\"[%A][%H][%z][%c][%J][%r][%s][%Ez]\", TIMESTAMP \"2023-01-01 13:05:09+00\")",
+            .rows = .{
+                .{"[Sunday][13][+0000][Sun Jan  1 13:05:09 2023][364][01:05:09 PM][1672578309][+00:00]"},
+            },
+        },
     },
 }

@@ -17,9 +17,12 @@ fn unexpectedPart(part: []const u8) Error {
 }
 
 // go-zetasqlite WeekPartToOffset.
-fn weekPartOffset(part: []const u8) ?i64 {
+/// The weekday a week part starts its week on, Sun=0 .. Sat=6; null if `part` is not a week
+/// part. ISOWEEK is one: an ISO week is a Monday-started week.
+pub fn weekPartOffset(part: []const u8) ?i64 {
     const map = [_]struct { name: []const u8, off: i64 }{
         .{ .name = "WEEK", .off = 0 },
+        .{ .name = "ISOWEEK", .off = 1 },
         .{ .name = "WEEK_MONDAY", .off = 1 },
         .{ .name = "WEEK_TUESDAY", .off = 2 },
         .{ .name = "WEEK_WEDNESDAY", .off = 3 },
@@ -29,6 +32,13 @@ fn weekPartOffset(part: []const u8) ?i64 {
     };
     for (map) |m| if (std.mem.eql(u8, m.name, part)) return m.off;
     return null;
+}
+
+/// First day of ISO year `iso_year`: the Monday on or before January 4th, the earliest date
+/// always in ISO week 1. (date_functions.md#last_day)
+pub fn isoYearStart(iso_year: i64) BrokenTime {
+    const jan4 = BrokenTime{ .civ = tu.compose(iso_year, 1, 4, 0, 0, 0, 0) };
+    return .{ .civ = jan4.addDate(0, 0, -@mod(jan4.weekday() + 6, 7)).days() * tu.day_micros };
 }
 
 /// Go addMonth: shift by m months, clamping the day of month to the target
@@ -115,9 +125,8 @@ pub fn dateDiff(a: BrokenTime, b: BrokenTime, part: []const u8) Error!i64 {
     const iso_a = a.isoWeek();
     const iso_b = b.isoWeek();
 
-    if (std.mem.startsWith(u8, part, "WEEK")) {
-        const boundary = weekPartOffset(part) orelse
-            return bind.fail("unsupported week date part: {s}", .{part}, error.UnsupportedOperation);
+    // Week parts count boundary crossings; ISOWEEK is one despite its name.
+    if (weekPartOffset(part)) |boundary| {
         var is_negative = false;
         var start = b;
         var end = a;
@@ -144,8 +153,6 @@ pub fn dateDiff(a: BrokenTime, b: BrokenTime, part: []const u8) Error!i64 {
         if (a.civ > b.civ) return diffDay(a, b);
         return -diffDay(b, a);
     }
-    if (std.mem.eql(u8, part, "ISOWEEK"))
-        return (a.parts().year - b.parts().year) * 48 + iso_a.week - iso_b.week;
     if (std.mem.eql(u8, part, "MONTH")) {
         const ca = a.parts();
         const cb = b.parts();
@@ -174,16 +181,11 @@ pub fn dateTrunc(bt: BrokenTime, part: []const u8) Error!BrokenTime {
     const c = bt.parts();
     const iso = bt.isoWeek();
 
-    if (std.mem.startsWith(u8, part, "WEEK")) {
-        const start_of_week = weekPartOffset(part) orelse
-            return bind.fail("unknown week part: {s}", .{part}, error.UnsupportedOperation);
-        var t = bt;
-        while (t.weekday() != start_of_week) t = t.addDate(0, 0, -1);
-        return midnight(t);
+    // Back up to the weekday the part's week starts on.
+    if (weekPartOffset(part)) |start_of_week| {
+        return midnight(bt.addDate(0, 0, -@mod(bt.weekday() - start_of_week + 7, 7)));
     }
     if (std.mem.eql(u8, part, "DAY")) return midnight(bt);
-    if (std.mem.eql(u8, part, "ISOWEEK"))
-        return .{ .civ = tu.compose(iso.year, 0, 7 * iso.week, 0, 0, 0, 0) };
     if (std.mem.eql(u8, part, "MONTH"))
         return .{ .civ = tu.compose(c.year, c.month, 1, 0, 0, 0, 0) };
     if (std.mem.eql(u8, part, "QUARTER")) {
@@ -192,10 +194,7 @@ pub fn dateTrunc(bt: BrokenTime, part: []const u8) Error!BrokenTime {
     }
     if (std.mem.eql(u8, part, "YEAR"))
         return .{ .civ = tu.compose(c.year, 1, 1, 0, 0, 0, 0) };
-    if (std.mem.eql(u8, part, "ISOYEAR")) {
-        const first_day = tu.BrokenTime{ .civ = tu.compose(iso.year, 1, 1, 0, 0, 0, 0) };
-        return first_day.addDate(0, 0, 1 - first_day.weekday());
-    }
+    if (std.mem.eql(u8, part, "ISOYEAR")) return isoYearStart(iso.year);
     return unexpectedPart(part);
 }
 
@@ -211,9 +210,10 @@ pub fn extractPart(bt: BrokenTime, part: []const u8) Error!Value {
     if (std.mem.eql(u8, part, "YEAR")) return .{ .int = c.year };
     if (std.mem.eql(u8, part, "MONTH")) return .{ .int = c.month };
     if (std.mem.eql(u8, part, "ISOWEEK")) return .{ .int = bt.isoWeek().week };
-    if (std.mem.eql(u8, part, "WEEK")) {
-        const shifted = bt.addDate(0, 0, -bt.weekday());
-        return .{ .int = shifted.isoWeek().week };
+    // Weeks counted from the year's first `start`, with the days before it week 00.
+    // Tested after ISOWEEK, which the same table carries. (date_functions.md#extract)
+    if (weekPartOffset(part)) |start| {
+        return .{ .int = bt.weekOfYear(@enumFromInt(start)) };
     }
     if (std.mem.eql(u8, part, "DAY")) return .{ .int = c.day };
     if (std.mem.eql(u8, part, "DAYOFYEAR")) return .{ .int = bt.yearDay() };
@@ -394,90 +394,8 @@ fn dayWidth(n: i32) value_mod.Interval {
     return .{ .days = n };
 }
 
-/// `bucket` over DATEs, as y/m/d.
-fn dateBucketAt(
-    y: i64,
-    m: i64,
-    d: i64,
-    width: value_mod.Interval,
-    origin: BrokenTime,
-) !Ymd {
-    return ymd(try bucket(.date, at(y, m, d), width, origin));
-}
-
-test "bucketing floors toward -infinity, so it holds before the origin" {
-    // The whole reason this is @divFloor and not @divTrunc. Truncation rounds
-    // toward the origin, which lands a bucket late on everything before it:
-    // 1949-12-29 would come back 1949-12-30. Values from BigQuery.
-    const origin = defaultBucketOrigin();
-    const cases = [_][6]i64{
-        // in            expected
-        .{ 1949, 12, 29, 1949, 12, 28 },
-        .{ 1949, 12, 31, 1949, 12, 30 },
-        .{ 1950, 1, 1, 1950, 1, 1 },
-        .{ 1950, 1, 3, 1950, 1, 3 },
-    };
-    for (cases) |c| {
-        const got = try dateBucketAt(c[0], c[1], c[2], dayWidth(2), origin);
-        try testing.expectEqual(c[3], got.y);
-        try testing.expectEqual(c[4], got.m);
-        try testing.expectEqual(c[5], got.d);
-    }
-}
-
-test "a month width lands on the origin's day of month, clamped short" {
-    // The origin is the 31st, so every bucket starts on its month's last day
-    // when the month is shorter — the same clamp DATE_ADD uses, which is why
-    // addMonth does this rather than a second implementation.
-    const origin = at(2000, 1, 31);
-    const month = value_mod.Interval{ .months = 1 };
-    const cases = [_][6]i64{
-        .{ 2024, 3, 14, 2024, 2, 29 }, // February, leap
-        .{ 2024, 2, 29, 2024, 2, 29 }, // exactly on a bucket start
-        .{ 1900, 3, 14, 1900, 2, 28 }, // 1900 is not a leap year
-    };
-    for (cases) |c| {
-        const got = try dateBucketAt(c[0], c[1], c[2], month, origin);
-        try testing.expectEqual(c[3], got.y);
-        try testing.expectEqual(c[4], got.m);
-        try testing.expectEqual(c[5], got.d);
-    }
-
-    // With a mid-month origin the bucket turns over on that day, not on the
-    // 1st — so the 14th still belongs to the bucket that opened last month.
-    const mid = at(2000, 1, 15);
-    const before = try dateBucketAt(2024, 3, 14, month, mid);
-    try testing.expectEqual(@as(i64, 2), before.m);
-    try testing.expectEqual(@as(i64, 15), before.d);
-    const after = try dateBucketAt(2024, 3, 16, month, mid);
-    try testing.expectEqual(@as(i64, 3), after.m);
-    try testing.expectEqual(@as(i64, 15), after.d);
-}
-
-test "a multi-month width counts from the origin, not from January" {
-    // 1950-01 to 2024-03 is 890 months, and 890 is divisible by 5.
-    const got = try dateBucketAt(2024, 3, 14, .{ .months = 5 }, defaultBucketOrigin());
-    try testing.expectEqual(@as(i64, 2024), got.y);
-    try testing.expectEqual(@as(i64, 3), got.m);
-    try testing.expectEqual(@as(i64, 1), got.d);
-}
-
-test "sub-day widths keep the origin's time of day" {
-    // Origin 06:07 with 90-minute buckets: 07:35 belongs to the one that
-    // opened at 06:07, not to an aligned 07:30.
-    const origin = BrokenTime{ .civ = tu.compose(2000, 1, 15, 6, 7, 0, 0) };
-    const got = try bucket(
-        .timestamp,
-        .{ .civ = tu.compose(2024, 3, 14, 7, 35, 0, 0) },
-        .{ .minutes = 90 },
-        origin,
-    );
-    const c = got.parts();
-    try testing.expectEqual(@as(i64, 6), c.hour);
-    try testing.expectEqual(@as(i64, 7), c.minute);
-    try testing.expectEqual(@as(i64, 14), c.day);
-}
-
+// The wording is what this asserts, and it is the one thing a `.zon` case cannot: the
+// runner compares an `expect_error` string only for a failure raised past the first row.
 test "each type refuses the widths BigQuery refuses, in its own words" {
     const v = at(2024, 3, 14);
     const o = defaultBucketOrigin();

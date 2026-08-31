@@ -10,5 +10,28 @@
                 .{"15:00:00"},
             },
         },
+        .{
+            .desc = "time_trunc keeps the unit it is asked for",
+            // MILLISECOND used to zero the whole fraction and SECOND used to
+            // zero the seconds, making each a synonym for the next unit up.
+            .sql =
+            \\SELECT
+            \\  TIME_TRUNC(TIME "10:20:30.123456", MICROSECOND),
+            \\  TIME_TRUNC(TIME "10:20:30.123456", MILLISECOND),
+            \\  TIME_TRUNC(TIME "10:20:30.123456", SECOND),
+            \\  TIME_TRUNC(TIME "10:20:30.123456", MINUTE)
+            ,
+            .rows = .{
+                .{ "10:20:30.123456", "10:20:30.123", "10:20:30", "10:20:00" },
+            },
+        },
+        .{
+            .desc = "time_trunc rejects a part it cannot express",
+            // NANOSECOND passes the analyzer because FEATURE_TIMESTAMP_NANOS is
+            // on, but this engine stores microseconds.
+            .sql = "SELECT TIME_TRUNC(TIME \"15:30:45\", NANOSECOND)",
+            .expect_error = "TIME_TRUNC: unexpected part value NANOSECOND",
+            .rows = .{},
+        },
     },
 }

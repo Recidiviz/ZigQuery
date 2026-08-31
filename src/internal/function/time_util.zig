@@ -145,6 +145,39 @@ pub const BrokenTime = struct {
         const week = @divFloor(thursday - jan1, 7) + 1;
         return .{ .year = iso_year, .week = week };
     }
+
+    /// The `%U` / `%W` week number: 00-53, counting from the first `first_day`
+    /// of the calendar year. Days before that first occurrence are week 00.
+    ///
+    /// Deliberately not `isoWeek().week`, which is a different quantity — ISO
+    /// weeks belong to the ISO year, so 2023-01-01 (a Sunday) is ISO week 52 of
+    /// *2022* while `%U` calls it week 01 of 2023 and `%W` calls it week 00.
+    /// Conflating the two is what this replaced.
+    pub fn weekOfYear(self: BrokenTime, first_day: Weekday) i64 {
+        const c = decompose(self.civ);
+        const jan1 = value.daysFromCivil(c.year, 1, 1);
+        // Days from Jan 1 forward to the year's first `first_day`.
+        const jan1_wd = @mod(jan1 + 4, 7); // Sun=0 .. Sat=6
+        const lead = @mod(@intFromEnum(first_day) - jan1_wd + 7, 7);
+        const day_of_year = self.days() - jan1; // 0-based
+        if (day_of_year < lead) return 0;
+        return @divFloor(day_of_year - lead, 7) + 1;
+    }
+
+    /// The `%Q` quarter, 1-4. From the month, not from `yearDay()`: fixed
+    /// day-of-year thresholds put 2024-03-30 in Q2, because a leap year shifts
+    /// every boundary after February.
+    pub fn quarter(self: BrokenTime) i64 {
+        return @divTrunc(decompose(self.civ).month - 1, 3) + 1;
+    }
+
+    /// The `%u` (Mon=1..7) and `%w` (Sun=0..6) weekday numbers. `weekday()`
+    /// above is Go's Sunday=0 form, which `%w` wants directly.
+    pub fn isoWeekday(self: BrokenTime) i64 {
+        const wd = self.weekday(); // Sun=0 .. Sat=6
+        return if (wd == 0) 7 else wd;
+    }
+
     pub fn addDate(self: BrokenTime, y: i64, mo: i64, d: i64) BrokenTime {
         const c = decompose(self.civ);
         return .{ .civ = compose(
@@ -161,6 +194,26 @@ pub const BrokenTime = struct {
         return .{ .civ = self.civ + micros };
     }
 };
+
+/// Which day a week starts on, for `BrokenTime.weekOfYear`. Values match the
+/// Sunday=0 numbering `BrokenTime.weekday` returns, and `date_ops.weekPartOffset`'s table.
+pub const Weekday = enum(i64) {
+    sunday = 0,
+    monday = 1,
+    tuesday = 2,
+    wednesday = 3,
+    thursday = 4,
+    friday = 5,
+    saturday = 6,
+};
+
+/// The microsecond field truncated to whole milliseconds, for the MILLISECOND
+/// arm of TIME_TRUNC / DATETIME_TRUNC / TIMESTAMP_TRUNC. Named because all
+/// three had zeroed the field outright, which made MILLISECOND a synonym for
+/// SECOND in every one of them.
+pub fn truncMillis(micro: i64) i64 {
+    return @divTrunc(micro, 1000) * 1000;
+}
 
 /// Projects a time-shaped Value onto civil micros for the Go algorithms. DATE
 /// lands at midnight; DATETIME/TIMESTAMP use their stored micros (UTC); TIME is
@@ -261,4 +314,46 @@ test "zone offsets" {
     // A half-hour, no-DST offset.
     try std.testing.expectEqual(@as(i64, 5 * 3600 + 1800), try zoneOffsetSeconds("Asia/Kolkata", dec));
     try std.testing.expectError(error.FailedConversion, zoneOffsetSeconds("Not/AZone", 0));
+}
+
+test "weekOfYear, quarter and isoWeekday are each their own quantity" {
+    // 2023-01-01 is a Sunday belonging to ISO week 52 of 2022 — the one date
+    // where all four of these disagree, which is why %U %W %V %u %w sharing
+    // isoWeek() went unnoticed. Values from
+    // third_party/googlesql/docs/format-elements.md.
+    const sun = BrokenTime{ .civ = compose(2023, 1, 1, 0, 0, 0, 0) };
+    try std.testing.expectEqual(@as(i64, 1), sun.weekOfYear(.sunday));
+    try std.testing.expectEqual(@as(i64, 0), sun.weekOfYear(.monday));
+    try std.testing.expectEqual(@as(i64, 52), sun.isoWeek().week);
+    try std.testing.expectEqual(@as(i64, 2022), sun.isoWeek().year);
+    try std.testing.expectEqual(@as(i64, 7), sun.isoWeekday());
+    try std.testing.expectEqual(@as(i64, 0), sun.weekday());
+
+    // 2024-12-30 is a Monday in ISO week 1 of 2025, and 2024 opened on a
+    // Monday — so the Monday count reaches 53 while the Sunday count is 52.
+    const mon = BrokenTime{ .civ = compose(2024, 12, 30, 0, 0, 0, 0) };
+    try std.testing.expectEqual(@as(i64, 52), mon.weekOfYear(.sunday));
+    try std.testing.expectEqual(@as(i64, 53), mon.weekOfYear(.monday));
+    try std.testing.expectEqual(@as(i64, 1), mon.isoWeek().week);
+    try std.testing.expectEqual(@as(i64, 1), mon.isoWeekday());
+
+    // The quarter comes from the month. Taken from the day of the year against
+    // fixed thresholds, a leap day pushed 2024-03-30 into Q2.
+    const month_quarter = [_][2]i64{
+        .{ 1, 1 }, .{ 3, 1 }, .{ 4, 2 },  .{ 6, 2 },
+        .{ 7, 3 }, .{ 9, 3 }, .{ 10, 4 }, .{ 12, 4 },
+    };
+    for (month_quarter) |c| {
+        const bt = BrokenTime{ .civ = compose(2024, c[0], 30, 0, 0, 0, 0) };
+        try std.testing.expectEqual(c[1], bt.quarter());
+    }
+}
+
+test "truncMillis keeps whole milliseconds" {
+    // The three _TRUNC handlers all zeroed the field outright, which made
+    // MILLISECOND a synonym for SECOND in every one of them.
+    try std.testing.expectEqual(@as(i64, 123000), truncMillis(123456));
+    try std.testing.expectEqual(@as(i64, 123000), truncMillis(123999));
+    try std.testing.expectEqual(@as(i64, 0), truncMillis(999));
+    try std.testing.expectEqual(@as(i64, 0), truncMillis(0));
 }

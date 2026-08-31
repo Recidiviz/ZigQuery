@@ -18,32 +18,32 @@ pub fn currentTimestamp(alloc: std.mem.Allocator, args: []const Value) Error!Val
     return tu.timestampValue(.{ .civ = try fd.nowCiv(args) });
 }
 
+/// STRING(JSON): JSON strings only; LAX_STRING is the renderer. (json_functions.md#string_for_json)
+fn stringOfJson(alloc: std.mem.Allocator, doc: []const u8) Error!Value {
+    const parsed = std.json.parseFromSliceLeaky(
+        std.json.Value,
+        alloc,
+        doc,
+        .{ .parse_numbers = false },
+    ) catch return bind.fail("STRING: invalid json", .{}, error.FailedConversion);
+    return switch (parsed) {
+        .string => |s| Value{ .string = try alloc.dupe(u8, s) },
+        else => bind.fail(
+            "STRING: the provided JSON input is not a string",
+            .{},
+            error.FailedConversion,
+        ),
+    };
+}
+
 /// STRING(timestamp[,zone]): local wall clock rendered with a literal "+00".
 pub fn string(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len != 1 and args.len != 2)
         return bind.fail("STRING: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
-    // Go bindString: a JSON argument yields fmt.Sprint(json.Interface()) — the
-    // bare scalar text for a JSON string/number/bool.
-    {
-        const inner0 = if (args[0] == .safe) args[0].safe.* else args[0];
-        if (inner0 == .json) {
-            const parsed = std.json.parseFromSliceLeaky(
-                std.json.Value,
-                alloc,
-                inner0.json,
-                .{ .parse_numbers = false },
-            ) catch return bind.fail("STRING: invalid json", .{}, error.FailedConversion);
-            const s: []const u8 = switch (parsed) {
-                .string => |x| x,
-                .number_string => |x| x,
-                .bool => |b| if (b) "true" else "false",
-                .null => "null",
-                else => inner0.json,
-            };
-            return Value{ .string = try alloc.dupe(u8, s) };
-        }
-    }
+    const inner0 = if (args[0] == .safe) args[0].safe.* else args[0];
+    if (inner0 == .json) return stringOfJson(alloc, inner0.json);
+
     const bt = try tu.broken(args[0]);
     var off: i64 = 0;
     if (args.len == 2) off = try tu.zoneOffsetSeconds(try fd.partStr(args[1]), bt.civ);
@@ -81,6 +81,9 @@ pub fn timestamp(alloc: std.mem.Allocator, args: []const Value) Error!Value {
             const off = try tu.zoneOffsetSeconds(zone, bt.civ);
             return Value{ .timestamp = bt.civ - off * tu.second_micros };
         },
+        // Identity form; an instant has no wall clock for a zone to reinterpret.
+        // (timestamp_functions.md#timestamp)
+        .timestamp => return inner,
         else => return bind.fail("TIMESTAMP: invalid first argument type", .{}, error.UnsupportedOperation),
     }
 }
@@ -166,9 +169,10 @@ pub fn timestampTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value
     if (std.mem.eql(u8, part, "MICROSECOND")) {
         truncated_local = local.civ;
     } else if (std.mem.eql(u8, part, "MILLISECOND")) {
-        truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0);
+        const ms = tu.truncMillis(c.micro);
+        truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, ms);
     } else if (std.mem.eql(u8, part, "SECOND")) {
-        truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0);
+        truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0);
     } else if (std.mem.eql(u8, part, "MINUTE")) {
         truncated_local = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0);
     } else if (std.mem.eql(u8, part, "HOUR")) {
@@ -288,4 +292,63 @@ pub fn generateTimestampArray(alloc: std.mem.Allocator, args: []const Value) Err
 fn propagate(e: Error) Error {
     if (tp.message) |m| return bind.failMsg(m, e);
     return e;
+}
+
+// ---- tests ----
+//
+// Only what SQL cannot reach; everything else is asserted against the GoogleSQL
+// reference in testdata/specs/zigquery/functions/timestamp.
+
+const testing = std.testing;
+
+test "TIMESTAMP rejects an argument type the analyzer would have to admit" {
+    try testing.expectError(
+        error.UnsupportedOperation,
+        timestamp(testing.allocator, &.{Value{ .bool = true }}),
+    );
+}
+
+test "STRING refuses a JSON payload that does not parse" {
+    // Unreachable through SQL: a JSON literal is validated by the analyzer, and
+    // every other `.json` cell was produced by this engine's own writer or by
+    // fn_json's parser under the same options. The branch guards against those
+    // two ever disagreeing.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectError(error.FailedConversion, string(
+        arena.allocator(),
+        &.{Value{ .json = "{not json" }},
+    ));
+}
+
+test "the arity guards the analyzer makes unreachable still hold" {
+    // STRING's widest signature is (TIMESTAMP, STRING); FORMAT_TIMESTAMP's is
+    // (STRING, TIMESTAMP, STRING); GENERATE_TIMESTAMP_ARRAY takes exactly four,
+    // all required. Each is also declared with a min_args the trampoline
+    // enforces, so under-supply never arrives either.
+    const alloc = testing.allocator;
+    const ts = Value{ .timestamp = 0 };
+    try testing.expectError(
+        error.UnsupportedOperation,
+        string(alloc, &.{ ts, Value{ .string = "UTC" }, Value{ .string = "extra" } }),
+    );
+    try testing.expectError(
+        error.UnsupportedOperation,
+        formatTimestamp(alloc, &.{Value{ .string = "%Y" }}),
+    );
+    try testing.expectError(
+        error.UnsupportedOperation,
+        generateTimestampArray(alloc, &.{ ts, ts }),
+    );
+}
+
+test "propagate prefers the parser's message and falls back to the bare error" {
+    tp.message = null;
+    try testing.expectEqual(Error.OutOfMemory, propagate(error.OutOfMemory));
+
+    tp.message = "error parsing [x] with format [%s]: unexpected unixtime length";
+    try testing.expectEqual(Error.InvalidDate, propagate(error.InvalidDate));
+    try testing.expectEqualStrings(tp.message.?, bind.message.?);
+    tp.message = null;
+    bind.clearDiagnostics();
 }

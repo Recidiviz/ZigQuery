@@ -150,5 +150,15 @@
                 .{null},
             },
         },
+        // AND binds tighter than OR, so an OR lowered into a native operator
+        // carries parentheses as an AND's operand: bare, `a OR b AND c` reads
+        // back as `a OR (b AND c)` and answers true.
+        .{
+            .desc = "or nested inside and keeps its grouping",
+            .sql = "SELECT (a OR b) AND c, a OR (b AND c) FROM (SELECT true AS a, false AS b, false AS c)",
+            .rows = .{
+                .{ false, true },
+            },
+        },
     },
 }

@@ -52,5 +52,28 @@
                 .{"2022-08-01 13:47:51.123456+00"},
             },
         },
+        .{
+            .desc = "timestamp applies its zone argument to a naive input carrying a fraction",
+            // The zone is applied only when the text has no zone of its own;
+            // the check has to look past a fractional-seconds tail to tell.
+            .sql =
+            \\SELECT FORMAT_TIMESTAMP(
+            \\  "%Y-%m-%d %H:%M:%E*S",
+            \\  TIMESTAMP("2024-01-01 12:00:00.123456", "Asia/Tokyo"))
+            ,
+            .rows = .{
+                .{"2024-01-01 03:00:00.123456"},
+            },
+        },
+        .{
+            .desc = "timestamp of a TIMESTAMP is the identity",
+            // Only the one-argument form exists for a TIMESTAMP: the analyzer
+            // rejects TIMESTAMP(TIMESTAMP, zone), since an instant carries no
+            // wall clock for a zone to reinterpret.
+            .sql = "SELECT FORMAT_TIMESTAMP(\"%Y-%m-%d %H:%M:%S\", TIMESTAMP(TIMESTAMP \"2008-12-25 15:30:00+00\"))",
+            .rows = .{
+                .{"2008-12-25 15:30:00"},
+            },
+        },
     },
 }

@@ -21,17 +21,17 @@
         .{
             .desc = "take first part",
             .sql = "SELECT SPLIT_SUBSTR('a,b,c,d', ',', 1)",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "split_substr is not implemented",
         },
         .{
             .desc = "take second part",
             .sql = "SELECT SPLIT_SUBSTR('a,b,c,d', ',', 2)",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "split_substr is not implemented",
         },
         .{
             .desc = "take last part with negative index",
             .sql = "SELECT SPLIT_SUBSTR('a,b,c,d', ',', -1)",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "split_substr is not implemented",
         },
     },
 }

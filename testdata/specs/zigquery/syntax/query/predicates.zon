@@ -59,11 +59,54 @@
                 .{ true, null },
             },
         },
+        // BETWEEN is `x >= lo AND x <= hi` under three-valued logic, so a FALSE
+        // from one bound wins over a NULL from the other: 5 is in no range
+        // starting at 10, whatever the upper bound holds.
+        // operators.md#comparison_operators
+        .{
+            .desc = "between operator with a null bound",
+            .sql = "SELECT 5 BETWEEN 10 AND NULL, 5 BETWEEN 1 AND NULL, 5 BETWEEN NULL AND 1, 5 BETWEEN NULL AND 10",
+            .rows = .{
+                .{ false, null, false, null },
+            },
+        },
+        .{
+            .desc = "between operator with a null bound, over columns",
+            .sql = "SELECT x BETWEEN lo AND hi, x BETWEEN 1 AND hi FROM (SELECT 5 AS x, 10 AS lo, CAST(NULL AS INT64) AS hi)",
+            .rows = .{
+                .{ false, null },
+            },
+        },
         .{
             .desc = "in operator",
             .sql = "SELECT 3 IN (1, 2, 3, 4), null IN (1), null IN (null)",
             .rows = .{
                 .{ true, null, null },
+            },
+        },
+        // A NULL list element is an unknown value: it blocks a FALSE but never
+        // a TRUE (operators.md#in_operators). Each case runs twice because the
+        // two evaluation paths must agree — a NULL literal operand keeps the
+        // UDF, columns lower to SQLite's IN.
+        .{
+            .desc = "in operator with a null in the list",
+            .sql = "SELECT 1 IN (1, NULL), 2 IN (1, NULL)",
+            .rows = .{
+                .{ true, null },
+            },
+        },
+        .{
+            .desc = "in operator with a null in the list, over columns",
+            .sql = "SELECT hit IN (a, b), miss IN (a, b) FROM (SELECT 1 AS hit, 2 AS miss, 1 AS a, CAST(NULL AS INT64) AS b)",
+            .rows = .{
+                .{ true, null },
+            },
+        },
+        .{
+            .desc = "in operator with a null in a longer list",
+            .sql = "SELECT 5 IN (1, 5, 10, NULL), 6 IN (1, 5, 10, NULL)",
+            .rows = .{
+                .{ true, null },
             },
         },
         .{
@@ -120,6 +163,30 @@
             .sql = "SELECT true IS NOT FALSE",
             .rows = .{
                 .{true},
+            },
+        },
+        // IS TRUE and IS FALSE are total: TRUE or FALSE for every input, NULL
+        // included (operators.md#is_operators). A NULL operand is the only one
+        // where `x IS TRUE` differs from plain `x`.
+        .{
+            .desc = "is true and is false over a null are false, not null",
+            .sql = "SELECT CAST(NULL AS BOOL) IS TRUE, CAST(NULL AS BOOL) IS FALSE",
+            .rows = .{
+                .{ false, false },
+            },
+        },
+        .{
+            .desc = "is not true and is not false over a null are true, not null",
+            .sql = "SELECT CAST(NULL AS BOOL) IS NOT TRUE, CAST(NULL AS BOOL) IS NOT FALSE",
+            .rows = .{
+                .{ true, true },
+            },
+        },
+        .{
+            .desc = "is true over a null column, where nothing folds",
+            .sql = "SELECT b IS TRUE, b IS FALSE, b IS NOT TRUE, b IS NOT FALSE FROM (SELECT CAST(NULL AS BOOL) AS b)",
+            .rows = .{
+                .{ false, false, true, true },
             },
         },
         .{

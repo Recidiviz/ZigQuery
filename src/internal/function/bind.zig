@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");
+const time_parser = @import("time_parser.zig");
 
 pub const value_mod = @import("../value.zig");
 pub const Value = value_mod.Value;
@@ -93,6 +94,9 @@ pub threadlocal var message: ?[]const u8 = null;
 pub fn clearDiagnostics() void {
     message = null;
     value_mod.diagnostic = null;
+    // Allocated in the per-call arena, which register.zig resets just before this; a
+    // surviving slice would dangle.
+    time_parser.message = null;
 }
 
 /// Formats a Go-style error message and returns `err`.
@@ -382,6 +386,8 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "unix_date", .min_args = 1, .handler = fdate.unixDate },
     .{ .name = "extract", .min_args = 2, .handler = fdate.extract },
     .{ .name = "extract_date", .min_args = 1, .handler = fdate.extractDate },
+    .{ .name = "extract_time", .min_args = 1, .handler = fdate.extractTime },
+    .{ .name = "extract_datetime", .min_args = 1, .handler = fdate.extractDatetime },
     .{ .name = "generate_date_array", .min_args = 2, .handler = fdate.generateDateArray },
 
     // datetime family (Go function_datetime.go)

@@ -28,17 +28,17 @@
         .{
             .desc = "simple match",
             .sql = "SELECT REGEXP_MATCH('hello world', 'hello')",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "regexp_match is not implemented",
         },
         .{
             .desc = "no match",
             .sql = "SELECT REGEXP_MATCH('hello world', '^bye')",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "regexp_match is not implemented",
         },
         .{
             .desc = "null propagation",
             .sql = "SELECT REGEXP_MATCH(CAST(NULL AS STRING), 'x')",
-            .expect_error = "UnsupportedFunction",
+            .expect_error = "regexp_match is not implemented",
         },
     },
 }

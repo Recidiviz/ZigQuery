@@ -662,6 +662,20 @@ pub const Catalog = struct {
     /// engine catalog with the first registration; here the change log carries
     /// the replacement through as a remove followed by an add, so it becomes
     /// visible immediately — a deliberate, strictly-more-correct deviation).
+    /// Registers a spec the analyzer should resolve but nothing should persist.
+    ///
+    /// `addNewTableSpec` writes a `zetasqlite_catalog` row, which is right for a
+    /// table SQLite is holding and wrong for one whose rows live somewhere else
+    /// for the length of a process: a persisted spec would come back on reopen
+    /// naming a table with nothing behind it. The INFORMATION_SCHEMA views take
+    /// this same memory-only path, for the same reason.
+    ///
+    /// The caller owns `table_spec` and everything it points at, and must keep
+    /// them alive until `deleteTableSpec` removes it.
+    pub fn addSyntheticTableSpec(c: *Catalog, table_spec: *spec.TableSpec) Error!void {
+        return c.addTableSpecToMemory(table_spec);
+    }
+
     fn addTableSpecToMemory(c: *Catalog, table_spec: *spec.TableSpec) Error!void {
         const arena = c.arena_state.allocator();
         const table_name = try table_spec.tableName(arena);
@@ -697,6 +711,13 @@ pub const Catalog = struct {
         // A dataset needs at least <dataset>.<table>.
         if (name_path.len < 2) return;
         // Recursion guard: the synthetic specs below re-enter this function.
+        //
+        // The anonymous-results dataset is excluded for a different reason. Its
+        // tables are a query job's results, one per job, and giving each of them
+        // a dataset's worth of views would be four more specs per job in a
+        // catalog that `publishInfoSchemaSnapshot` walks on every statement --
+        // the growth docs/MATERIALIZE_COST.md §3 measures. The dataset itself
+        // still gets one set, from whichever job registers first.
         for (name_path) |seg| {
             if (std.mem.eql(u8, seg, info_schema_vtab.info_schema_segment)) return;
         }

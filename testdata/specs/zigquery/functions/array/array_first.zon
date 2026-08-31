@@ -13,7 +13,7 @@
         .{
             .desc = "array_first function empty",
             .sql = "SELECT ARRAY_FIRST(ARRAY<STRING>[])",
-            .expect_error = "ARRAY_FIRST: cannot get the first element of an empty array",
+            .expect_error = "ARRAY_FIRST cannot get the first element of an empty array",
             .rows = .{},
         },
     },

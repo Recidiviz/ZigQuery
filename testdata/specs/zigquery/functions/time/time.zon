@@ -17,5 +17,14 @@
                 .{"15:30:00"},
             },
         },
+        .{
+            .desc = "time of a TIME is the identity",
+            // FEATURE_DATE_TIME_CONSTRUCTORS gives the one-argument form a signature.
+            // (time_functions.md#time)
+            .sql = "SELECT TIME(TIME \"15:30:00\")",
+            .rows = .{
+                .{"15:30:00"},
+            },
+        },
     },
 }

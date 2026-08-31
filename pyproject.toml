@@ -1,0 +1,37 @@
+# Dependencies for the development tools under tools/. Nothing here is built or
+# published — `package = false` keeps uv from trying to install the repo itself,
+# which has no Python package in it.
+#
+#   uv run tools/vsbq.py testdata/specs/zigquery/functions/window/*.zon
+#   uv run tools/spec_import.py --src <checkout>
+[project]
+name = "zetasqlite-tools"
+version = "0.0.0"
+description = "Development tooling for zetasqlite-zig."
+requires-python = ">=3.11"
+dependencies = [
+    # tools/vsbq.py: compares the spec corpus against real BigQuery. The client
+    # rather than the `bq` CLI because the CLI pays ~1s of Python startup per
+    # query, which dominates a run of a few hundred small queries.
+    "google-cloud-bigquery>=3.25",
+    # tools/storage_probe.py: drives the Storage Read API against the emulator
+    # with the client library real callers use, which is a different stack from
+    # the gRPC core that harness/grpc_smoke.zig exercises — the two disagree
+    # about things like trailers-only responses.
+    "google-cloud-bigquery-storage>=2.25",
+    # tools/avro_golden.py: the reference Avro encoder the emulator's own
+    # encoder is checked against. Round-tripping our encoder through our own
+    # decoder would prove nothing -- a wrong union branch index or decimal byte
+    # order decodes to a wrong value rather than an error.
+    "fastavro>=1.9",
+    # tools/storage_probe.py --format=ARROW: the reference Arrow implementation,
+    # for reading back what BigQuery sends and what this emulator produces. The
+    # same role fastavro plays for Avro -- decoding our own bytes with our own
+    # encoder would prove nothing.
+    "pyarrow>=14",
+    # tools/spec_import.py: reads goccy/googlesqlite's YAML corpus.
+    "pyyaml>=6",
+]
+
+[tool.uv]
+package = false

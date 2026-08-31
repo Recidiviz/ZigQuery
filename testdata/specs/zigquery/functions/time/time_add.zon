@@ -10,5 +10,18 @@
                 .{"15:40:00"},
             },
         },
+        .{
+            .desc = "time_add by HOUR",
+            .sql = "SELECT TIME_ADD(TIME \"15:30:00\", INTERVAL 2 HOUR)",
+            .rows = .{
+                .{"17:30:00"},
+            },
+        },
+        .{
+            .desc = "time_add rejects a part it cannot express",
+            .sql = "SELECT TIME_ADD(TIME \"15:30:00\", INTERVAL 1 NANOSECOND)",
+            .expect_error = "TIME_ADD: unexpected part value NANOSECOND",
+            .rows = .{},
+        },
     },
 }

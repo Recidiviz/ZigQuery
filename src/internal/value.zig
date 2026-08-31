@@ -45,9 +45,16 @@ fn fail(comptime msg: []const u8, err: ValueError) ValueError {
 
 /// fail() for messages carrying runtime values; falls back to the format
 /// string itself if the rendering would overflow the buffer.
-fn failFmt(comptime fmt: []const u8, args: anytype, err: ValueError) ValueError {
-    diagnostic = std.fmt.bufPrint(&diag_buf, fmt, args) catch fmt;
+pub fn failFmt(comptime fmt: []const u8, args: anytype, err: ValueError) ValueError {
+    setDiagnostic(fmt, args);
     return err;
+}
+
+/// Records a diagnostic without choosing the error, for callers whose error set is not
+/// `ValueError` — the coordinator and the transformer raise their own but surface through
+/// this same channel (`driver.setLastError` prefers it over the bare error name).
+pub fn setDiagnostic(comptime fmt: []const u8, args: anytype) void {
+    diagnostic = std.fmt.bufPrint(&diag_buf, fmt, args) catch fmt;
 }
 
 pub const ArrayValue = struct {
@@ -928,8 +935,10 @@ pub const Value = union(enum) {
                 if (s.len == 0) return 0;
                 // Go: base 0 (auto-detect) iff the string contains "0x"/"0X".
                 const base: u8 = if (containsHexMarker(s)) 0 else 10;
+                // BigQuery names the offending input rather than the conversion:
+                // CAST('apple' AS INT64) is "Bad int64 value: apple".
                 return std.fmt.parseInt(i64, s, base) catch
-                    fail("failed to convert string to int64", error.FailedConversion);
+                    failFmt("Bad int64 value: {s}", .{s}, error.FailedConversion);
             },
             .bytes => |b| {
                 if (b.len == 0) return 0;
@@ -966,8 +975,9 @@ pub const Value = union(enum) {
             .bool => |b| return if (b) 1 else 0,
             .string => |s| {
                 if (s.len == 0) return 0;
+                // BigQuery says "double", not the FLOAT64 spelling of the target type.
                 return std.fmt.parseFloat(f64, s) catch
-                    fail("failed to convert string to float64", error.FailedConversion);
+                    failFmt("Bad double value: {s}", .{s}, error.FailedConversion);
             },
             .bytes => |b| {
                 if (b.len == 0) return 0;

@@ -13,7 +13,7 @@
         .{
             .desc = "array_last function empty",
             .sql = "SELECT ARRAY_LAST(ARRAY<STRING>[])",
-            .expect_error = "ARRAY_LAST: cannot get the first element of an empty array",
+            .expect_error = "ARRAY_LAST cannot get the last element of an empty array",
             .rows = .{},
         },
     },

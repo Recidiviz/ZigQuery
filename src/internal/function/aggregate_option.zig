@@ -26,6 +26,7 @@
 const std = @import("std");
 const bind = @import("bind.zig");
 const codec = @import("../codec_binary.zig");
+const sortable = @import("../codec_sortable.zig");
 
 pub const Value = bind.Value;
 pub const Error = bind.Error;
@@ -37,7 +38,7 @@ pub const Error = bind.Error;
 const magic = "\x00\xffzqAGGOPT\xff\x00";
 
 /// Go's AggregatorFuncOptionType, as a byte.
-const Kind = enum(u8) {
+pub const Kind = enum(u8) {
     distinct = 1,
     ignore_nulls = 2,
     limit = 3,
@@ -255,6 +256,52 @@ pub const option_func_table = [_]bind.FuncInfo{
     .{ .name = "having_max", .handler = bindHavingMax },
     .{ .name = "having_min", .handler = bindHavingMin },
 };
+
+/// The option kind a stored argument carries, or null when it is an ordinary value. Reads the
+/// encoded bytes, so nothing has to be decoded to tell the two apart.
+///
+/// A marker is a BYTES value opening with `magic`, which the sortable codec stores as its tag
+/// followed by the payload. The payload checks mirror `applyOption`: a body it would reject is
+/// not a marker here either, and stays an argument.
+pub fn rawMarkerKind(blob: []const u8) ?Kind {
+    if (blob.len < 1 + magic.len + 1) return null;
+    if (blob[0] != sortable.tag_bytes) return null;
+    if (!std.mem.startsWith(u8, blob[1..], magic)) return null;
+    const body = blob[1 + magic.len ..];
+    const kind = std.enums.fromInt(Kind, body[0]) orelse return null;
+    switch (kind) {
+        .limit => if (body.len - 1 != 8) return null,
+        .order_by => if (body.len - 1 < 1) return null,
+        else => {},
+    }
+    return kind;
+}
+
+// ----------------------------------------------------------------------
+// DISTINCT keying
+// ----------------------------------------------------------------------
+
+/// A byte string equal for exactly the values DISTINCT puts in one group.
+///
+/// The self-delimiting codec is canonical and carries a kind tag, so byte equality is value
+/// equality across every kind, NULL (`bin_tag_null`) and nested ARRAY/STRUCT included — which
+/// is the element-wise rule data-types.md#group_with_arrays and #group_with_structs describe.
+///
+/// Signed zero is the one value the codec cannot answer for: -0.0 and 0.0 are one group
+/// (data-types.md#grouping-with-floating-point-types) and two f64 bit patterns. It is
+/// normalised here. A float nested inside an ARRAY or STRUCT keeps its own bits, since reaching
+/// it means rebuilding the value tree.
+///
+/// NaN needs no arm: SQLite stores it as NULL, so it never arrives as a float.
+pub fn groupingKey(alloc: std.mem.Allocator, v: Value) Error![]const u8 {
+    const normalised = switch (v) {
+        .float => |f| Value{ .float = if (f == 0) 0 else f },
+        else => v,
+    };
+    var buf: std.ArrayList(u8) = .empty;
+    try codec.appendBinaryValue(&buf, alloc, normalised);
+    return buf.toOwnedSlice(alloc);
+}
 
 // ----------------------------------------------------------------------
 // Tests

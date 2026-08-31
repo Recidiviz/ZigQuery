@@ -18,11 +18,13 @@
 
 const std = @import("std");
 const zetasqlite = @import("zetasqlite");
+const job_rows_vtab = zetasqlite.function.job_rows_vtab;
 const driver = zetasqlite.driver;
 
 const http_server = @import("http/server.zig");
 const router = @import("router.zig");
 const errors = @import("error.zig");
+const json_pb = @import("json_pb.zig");
 const storage_mod = @import("storage.zig");
 const query_handler = @import("handler/query.zig");
 const discovery = @import("discovery.zig");
@@ -35,6 +37,7 @@ const contentdata = @import("internal/contentdata/repository.zig");
 const phase = zetasqlite.phase;
 const schema_mod = @import("internal/types/schema.zig");
 const stats_mod = @import("stats.zig");
+const debug_stats = @import("debug_stats.zig");
 const source_mod = @import("source.zig");
 
 /// Microsecond wall clock via libc, since std.time's timestamp helpers are
@@ -66,6 +69,14 @@ pub const Server = struct {
     /// The one engine connection. Single-threaded per Db, and deliberately
     /// not pooled — see the header.
     db: *driver.Db,
+    /// Serializes every reader of `db`, across transports.
+    /// REST transport takes it through `handler()`, and the gRPC services take it directly.
+    /// Two locks would serialize each transport against itself and neither against the other.
+    ///
+    /// Held only for the duration of one dispatch.
+    engine_mutex: std.Io.Mutex = .init,
+    /// The Io `engine_mutex` is taken with. Read only under contention.
+    io: std.Io,
     jobs: query_handler.JobStore,
     /// Per-route timing, indexed by Route.Id.
     route_stats: std.enums.EnumArray(router.Route.Id, stats_mod.RouteStats) =
@@ -95,6 +106,7 @@ pub const Server = struct {
             // moved wall-clock reads behind std.Io, so read libc directly —
             // the same thing internal/catalog.zig does.
             .rng = std.Random.DefaultPrng.init(nowSeed()),
+            .io = io,
             .endpoint = undefined,
             .started_ms = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
         };
@@ -116,6 +128,14 @@ pub const Server = struct {
         if (storage_mod.hasEnvOverride()) {
             for (applied) |p| std.log.info("connection pragma: {s}", .{p});
         }
+        // Where the job-results virtual tables read their rows. Set once, and
+        // cleared in deinit before the store goes away.
+        s.db.udf_state.job_rows = .{
+            .ctx = &s.jobs,
+            .lookup = query_handler.JobStore.lookupRows,
+        };
+        try s.dropStaleJobTables(arena);
+
         s.repo = try metadata.Repository.init(s.db);
         try s.repo.addProjectIfNotExists(s.project);
 
@@ -166,14 +186,30 @@ pub const Server = struct {
     }
 
     pub fn deinit(s: *Server) void {
-        s.jobs.deinit();
+        // Order matters. Closing the connection runs `xDisconnect` for every
+        // job-results virtual table, and those reach the job store through
+        // `udf_state.job_rows` -- so the store may not be freed first, and the
+        // pointer to it is dropped before it is.
+        s.db.udf_state.job_rows = .{};
         s.db.close();
+        s.jobs.deinit();
         s.arena_state.deinit();
         s.gpa.destroy(s);
     }
 
     pub fn handler(s: *Server) http_server.Handler {
-        return .{ .ctx = s, .func = dispatch };
+        return .{ .ctx = s, .func = dispatch, .mutex = &s.engine_mutex, .io = s.io };
+    }
+
+    /// Runs `f` with the engine lock held.
+    ///
+    /// The gRPC path's equivalent of what `http/server.zig:serveRequest` does
+    /// around `handler.func`. Callers outside a transport should use this
+    /// rather than touching `engine_mutex`, so the unlock cannot be forgotten.
+    pub fn withEngine(s: *Server, ctx: anytype, comptime f: anytype) @TypeOf(f(ctx, s)) {
+        s.engine_mutex.lockUncancelable(s.io);
+        defer s.engine_mutex.unlock(s.io);
+        return f(ctx, s);
     }
 
     fn dispatch(ctx: *anyopaque, req: *const http_server.Request) anyerror!http_server.Response {
@@ -277,15 +313,7 @@ pub const Server = struct {
     ) !http_server.Response {
         const arena = req.arena;
 
-        const parsed = std.json.parseFromSliceLeaky(
-            std.json.Value,
-            arena,
-            req.body,
-            .{},
-        ) catch {
-            return badRequest(arena, "failed to decode request body");
-        };
-        const q = query_handler.parseQueryRequest(arena, parsed) catch |err| switch (err) {
+        const q = query_handler.parseRequest(arena, req.body, req.query) catch |err| switch (err) {
             error.OutOfMemory => return err,
             error.InvalidParameter,
             error.InvalidBase64Value,
@@ -294,8 +322,7 @@ pub const Server = struct {
         };
 
         const job_id = try query_handler.randomId(arena, &s.rng);
-        // handler.go:2420-2424: the body's formatOptions OR the query string's.
-        const int64_ts = q.use_int64_timestamp or useInt64TimestampParam(req);
+        const int64_ts = q.use_int64_timestamp;
         const res = try query_handler.runQueryFormatted(
             arena,
             s.db,
@@ -321,167 +348,162 @@ pub const Server = struct {
     /// the Docker image.
     fn handleDebugStats(s: *Server, req: *const http_server.Request) !http_server.Response {
         const arena = req.arena;
-        var out: std.ArrayList(u8) = .empty;
-        try out.appendSlice(arena, "{\"uptimeSeconds\":");
-        try out.print(arena, "{d}", .{
-            @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000) - @divFloor(s.started_ms, 1000),
-        });
-        const reqs = http_server.stat_requests.load(.monotonic);
-        const wait_ms = @as(f64, @floatFromInt(http_server.stat_wait_ns.load(.monotonic))) / 1e6;
         const handle_ns = http_server.stat_handle_ns.load(.monotonic);
         const handle_ms = @as(f64, @floatFromInt(handle_ns)) / 1e6;
-        try out.print(arena, ",\"contention\":{{\"requests\":{d},\"totalWaitMs\":{d:.1}," ++
-            "\"totalHandleMs\":{d:.1},\"meanWaitMs\":{d:.3}," ++
-            "\"meanHandleMs\":{d:.3},\"waitFraction\":{d:.3}," ++
-            "\"maxWaiters\":{d},\"waitersNow\":{d}}}", .{
-            reqs,
-            wait_ms,
-            handle_ms,
-            if (reqs == 0) 0 else wait_ms / @as(f64, @floatFromInt(reqs)),
-            if (reqs == 0) 0 else handle_ms / @as(f64, @floatFromInt(reqs)),
-            if (wait_ms + handle_ms == 0) 0 else wait_ms / (wait_ms + handle_ms),
-            http_server.stat_waiters_max.load(.monotonic),
-            http_server.stat_waiters_now.load(.monotonic),
-        });
-        // Where engine time goes. `analysisFraction` is the number that
-        // decides whether running analysis concurrently is worth anything:
-        // wall time under N parallel analyzers is bounded by (1-f) + f/N, and
-        // SQLite on an in-memory database cannot overlap at all (see
-        // storage.zig). Measured against total handle time, so the remainder
-        // is HTTP, JSON and glue.
-        const ms = struct {
-            fn of(ns: u64) f64 {
-                return @as(f64, @floatFromInt(ns)) / 1e6;
-            }
-        }.of;
-        const analyze_ms = ms(phase.totalNs(.analyze));
-        const transform_ms = ms(phase.totalNs(.transform));
-        const sqlite_ms = ms(phase.sqliteTotalNs());
-        try out.print(arena, ",\"phases\":{{\"analyzeMs\":{d:.1},\"analyzeCount\":{d}," ++
-            "\"transformMs\":{d:.1},\"transformCount\":{d}," ++
-            "\"sqliteMs\":{d:.1}," ++
-            "\"sqlite\":{{" ++
-            "\"prepareMs\":{d:.1},\"prepareCount\":{d}," ++
-            "\"stepMs\":{d:.1},\"stepCount\":{d}," ++
-            "\"execMs\":{d:.1},\"execCount\":{d}," ++
-            "\"engineMs\":{d:.1},\"catalogMs\":{d:.1},\"metadataMs\":{d:.1}," ++
-            "\"catalogPrepareMs\":{d:.1},\"catalogPrepareCount\":{d}," ++
-            "\"catalogStepMs\":{d:.1}}}," ++
-            "\"preparedSqlBytes\":{d},\"codecMs\":{d:.1},\"codecCount\":{d},", .{
-            analyze_ms,
-            phase.count(.analyze),
-            transform_ms,
-            phase.count(.transform),
-            sqlite_ms,
-            ms(phase.totalNs(.sqlite_prepare)),
-            phase.count(.sqlite_prepare),
-            ms(phase.totalNs(.sqlite_step)),
-            phase.count(.sqlite_step),
-            ms(phase.totalNs(.sqlite_exec)),
-            phase.count(.sqlite_exec),
-            ms(phase.sqliteTotalNsFrom(.engine)),
-            ms(phase.sqliteTotalNsFrom(.catalog)),
-            ms(phase.sqliteTotalNsFrom(.metadata)),
-            ms(phase.totalNsFrom(.sqlite_prepare, .catalog)),
-            phase.countFrom(.sqlite_prepare, .catalog),
-            ms(phase.totalNsFrom(.sqlite_step, .catalog)),
-            phase.preparedBytes(),
-            ms(phase.codecTotalNs()),
-            phase.codecCount(),
-        });
-        // Split from the print above only because Zig caps a format call at 32
-        // arguments. `codec.*` partitions `codecMs`.
-        try out.print(arena, "\"codec\":{{\"timersEnabled\":{},\"encodeMs\":{d:.1},\"encodeCount\":{d}," ++
-            "\"decodeMs\":{d:.1},\"decodeCount\":{d}," ++
-            "\"literalMs\":{d:.1},\"literalCount\":{d}}}," ++
-            "\"analysisFraction\":{d:.3},\"sqliteFraction\":{d:.3}}}", .{
-            // Zeros below mean "not instrumented" when this is false, not
-            // "no codec work happened". See -Dcodec-timers.
-            phase.codec_timers_enabled,
-            ms(phase.totalNs(.codec_encode)),
-            phase.count(.codec_encode),
-            ms(phase.totalNs(.codec_decode)),
-            phase.count(.codec_decode),
-            ms(phase.totalNs(.codec_literal)),
-            phase.count(.codec_literal),
-            if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
-            if (handle_ms == 0) 0 else sqlite_ms / handle_ms,
-        });
-        // SQLite's own allocator accounting.
-        //
-        // `lookaside.hitRate` is the number that matters. Lookaside is a
-        // per-connection pool of small fixed-size slots serving the many
-        // short-lived allocations sqlite3_prepare_v2 makes for parse-tree and
-        // VDBE structures — the phase measured at 22% of handle time. A rate
-        // near 1.0 means allocation is already off the critical path; a rate
-        // near 0 with `missFull` high means the pool is exhausted.
-        //
-        // Exhausted is not the same as costly: on the view graph the rate was
-        // driven from 0.0000 to 0.9676 with no effect on prepare time outside
-        // the noise floor (Options.lookaside records the table). These are
-        // reported so that stays a measurement rather than a belief, in either
-        // direction.
-        const alloc = s.db.allocStats();
-        try out.print(arena, ",\"sqliteAlloc\":{{" ++
-            "\"memoryUsedBytes\":{d},\"memoryUsedPeakBytes\":{d}," ++
-            "\"mallocsOutstanding\":{d},\"mallocsOutstandingPeak\":{d}," ++
-            "\"largestAllocBytes\":{d}," ++
-            "\"schemaBytes\":{d},\"stmtBytes\":{d},\"pagerCacheBytes\":{d}," ++
-            "\"lookaside\":{{\"hit\":{d},\"missSize\":{d},\"missFull\":{d}," ++
-            "\"hitRate\":{d:.4},\"slotsInUse\":{d},\"slotsPeak\":{d}}}}}", .{
-            alloc.memory_used.current,
-            alloc.memory_used.highwater,
-            alloc.malloc_count.current,
-            alloc.malloc_count.highwater,
-            alloc.malloc_size_max,
-            alloc.schema_used,
-            alloc.stmt_used,
-            alloc.cache_used,
-            alloc.lookaside_hit,
-            alloc.lookaside_miss_size,
-            alloc.lookaside_miss_full,
-            alloc.hitRate() orelse 0.0,
-            alloc.lookaside_used.current,
-            alloc.lookaside_used.highwater,
-        });
-        try out.appendSlice(arena, ",\"routes\":[");
 
-        var first = true;
+        const snap = debug_stats.Snapshot{
+            .uptimeSeconds = @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000) -
+                @divFloor(s.started_ms, 1000),
+            .contention = contentionSnapshot(handle_ms),
+            .phases = phaseSnapshot(handle_ms),
+            .sqliteAlloc = allocSnapshot(s.db.allocStats()),
+            .routes = try routeSnapshot(s, arena),
+            .slowQueries = try slowQuerySnapshot(s, arena),
+        };
+        return .{ .body = try std.json.Stringify.valueAlloc(arena, snap, .{}) };
+    }
+
+    fn contentionSnapshot(handle_ms: f64) debug_stats.Contention {
+        const reqs = http_server.stat_requests.load(.monotonic);
+        const per = @as(f64, @floatFromInt(if (reqs == 0) 1 else reqs));
+        const wait_ms = @as(f64, @floatFromInt(http_server.stat_wait_ns.load(.monotonic))) / 1e6;
+        const busy = wait_ms + handle_ms;
+        return .{
+            .requests = reqs,
+            .totalWaitMs = .{ .v = wait_ms },
+            .totalHandleMs = .{ .v = handle_ms },
+            .meanWaitMs = .{ .v = if (reqs == 0) 0 else wait_ms / per },
+            .meanHandleMs = .{ .v = if (reqs == 0) 0 else handle_ms / per },
+            .waitFraction = .{ .v = if (busy == 0) 0 else wait_ms / busy },
+            .maxWaiters = http_server.stat_waiters_max.load(.monotonic),
+            .waitersNow = http_server.stat_waiters_now.load(.monotonic),
+        };
+    }
+
+    /// `analysisFraction` is what decides whether running analysis concurrently
+    /// is worth anything: wall time under N parallel analyzers is bounded by
+    /// (1-f) + f/N, and SQLite on an in-memory database cannot overlap at all
+    /// (see storage.zig). Measured against total handle time, so the remainder
+    /// is HTTP, JSON and glue.
+    fn phaseSnapshot(handle_ms: f64) debug_stats.Phases {
+        const ms1 = debug_stats.Ms1;
+        const analyze_ms = @as(f64, @floatFromInt(phase.totalNs(.analyze))) / 1e6;
+        const transform_ms = @as(f64, @floatFromInt(phase.totalNs(.transform))) / 1e6;
+        const sqlite_ms = @as(f64, @floatFromInt(phase.sqliteTotalNs())) / 1e6;
+        return .{
+            .analyzeMs = .{ .v = analyze_ms },
+            .analyzeCount = phase.count(.analyze),
+            .transformMs = .{ .v = transform_ms },
+            .transformCount = phase.count(.transform),
+            .sqliteMs = .{ .v = sqlite_ms },
+            .sqlite = .{
+                .prepareMs = debug_stats.msFromNs(phase.totalNs(.sqlite_prepare), ms1),
+                .prepareCount = phase.count(.sqlite_prepare),
+                .stepMs = debug_stats.msFromNs(phase.totalNs(.sqlite_step), ms1),
+                .stepCount = phase.count(.sqlite_step),
+                .execMs = debug_stats.msFromNs(phase.totalNs(.sqlite_exec), ms1),
+                .execCount = phase.count(.sqlite_exec),
+                .engineMs = debug_stats.msFromNs(phase.sqliteTotalNsFrom(.engine), ms1),
+                .catalogMs = debug_stats.msFromNs(phase.sqliteTotalNsFrom(.catalog), ms1),
+                .metadataMs = debug_stats.msFromNs(phase.sqliteTotalNsFrom(.metadata), ms1),
+                .catalogPrepareMs = debug_stats.msFromNs(
+                    phase.totalNsFrom(.sqlite_prepare, .catalog),
+                    ms1,
+                ),
+                .catalogPrepareCount = phase.countFrom(.sqlite_prepare, .catalog),
+                .catalogStepMs = debug_stats.msFromNs(
+                    phase.totalNsFrom(.sqlite_step, .catalog),
+                    ms1,
+                ),
+            },
+            .preparedSqlBytes = phase.preparedBytes(),
+            .codecMs = debug_stats.msFromNs(phase.codecTotalNs(), ms1),
+            .codecCount = phase.codecCount(),
+            .codec = .{
+                .timersEnabled = phase.codec_timers_enabled,
+                .encodeMs = debug_stats.msFromNs(phase.totalNs(.codec_encode), ms1),
+                .encodeCount = phase.count(.codec_encode),
+                .decodeMs = debug_stats.msFromNs(phase.totalNs(.codec_decode), ms1),
+                .decodeCount = phase.count(.codec_decode),
+                .literalMs = debug_stats.msFromNs(phase.totalNs(.codec_literal), ms1),
+                .literalCount = phase.count(.codec_literal),
+            },
+            .analysisFraction = .{
+                .v = if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
+            },
+            .sqliteFraction = .{ .v = if (handle_ms == 0) 0 else sqlite_ms / handle_ms },
+        };
+    }
+
+    /// SQLite's own allocator accounting. `lookaside.hitRate` is the number that
+    /// matters: lookaside is a per-connection pool of small fixed-size slots
+    /// serving the many short-lived allocations sqlite3_prepare_v2 makes.
+    ///
+    /// Exhausted is not the same as costly. On the view graph the rate was
+    /// driven from 0.0000 to 0.9676 with no effect on prepare time outside the
+    /// noise floor (Options.lookaside records the table). These are reported so
+    /// that stays a measurement rather than a belief, in either direction.
+    fn allocSnapshot(alloc: driver.AllocStats) debug_stats.SqliteAlloc {
+        return .{
+            .memoryUsedBytes = alloc.memory_used.current,
+            .memoryUsedPeakBytes = alloc.memory_used.highwater,
+            .mallocsOutstanding = alloc.malloc_count.current,
+            .mallocsOutstandingPeak = alloc.malloc_count.highwater,
+            .largestAllocBytes = alloc.malloc_size_max,
+            .schemaBytes = alloc.schema_used,
+            .stmtBytes = alloc.stmt_used,
+            .pagerCacheBytes = alloc.cache_used,
+            .lookaside = lookasideSnapshot(alloc),
+        };
+    }
+
+    fn lookasideSnapshot(alloc: driver.AllocStats) debug_stats.Lookaside {
+        return .{
+            .hit = alloc.lookaside_hit,
+            .missSize = alloc.lookaside_miss_size,
+            .missFull = alloc.lookaside_miss_full,
+            .hitRate = .{ .v = alloc.hitRate() orelse 0.0 },
+            .slotsInUse = alloc.lookaside_used.current,
+            .slotsPeak = alloc.lookaside_used.highwater,
+        };
+    }
+
+    fn routeSnapshot(s: *Server, arena: std.mem.Allocator) ![]const debug_stats.Route {
+        var routes: std.ArrayList(debug_stats.Route) = .empty;
         var it = s.route_stats.iterator();
         while (it.next()) |entry| {
-            const st = entry.value;
-            if (st.count == 0) continue;
-            if (!first) try out.append(arena, ',');
-            first = false;
-            try out.appendSlice(arena, "{\"route\":\"");
-            try out.appendSlice(arena, @tagName(entry.key));
-            try out.appendSlice(arena, "\",");
-            try out.print(arena, "\"count\":{d},\"meanMs\":{d:.3},\"minMs\":{d:.3}," ++
-                "\"p50Ms\":{d:.3},\"p90Ms\":{d:.3},\"p99Ms\":{d:.3},\"maxMs\":{d:.3}," ++
-                "\"totalMs\":{d:.1}", .{
-                st.count,
-                st.meanUs() / 1000.0,
-                @as(f64, @floatFromInt(st.min_us)) / 1000.0,
-                @as(f64, @floatFromInt(st.percentileUs(0.50))) / 1000.0,
-                @as(f64, @floatFromInt(st.percentileUs(0.90))) / 1000.0,
-                @as(f64, @floatFromInt(st.percentileUs(0.99))) / 1000.0,
-                @as(f64, @floatFromInt(st.max_us)) / 1000.0,
-                @as(f64, @floatFromInt(st.total_us)) / 1000.0,
-            });
-            try out.append(arena, '}');
+            if (entry.value.count == 0) continue;
+            try routes.append(arena, routeEntry(@tagName(entry.key), entry.value));
         }
-        try out.appendSlice(arena, "],\"slowQueries\":[");
+        return routes.items;
+    }
+
+    fn routeEntry(name: []const u8, st: *const stats_mod.RouteStats) debug_stats.Route {
+        const ms1 = debug_stats.Ms1;
+        const ms3 = debug_stats.Ms3;
+        return .{
+            .route = name,
+            .count = st.count,
+            .meanMs = .{ .v = st.meanUs() / 1000.0 },
+            .minMs = debug_stats.msFromUs(st.min_us, ms3),
+            .p50Ms = debug_stats.msFromUs(st.percentileUs(0.50), ms3),
+            .p90Ms = debug_stats.msFromUs(st.percentileUs(0.90), ms3),
+            .p99Ms = debug_stats.msFromUs(st.percentileUs(0.99), ms3),
+            .maxMs = debug_stats.msFromUs(st.max_us, ms3),
+            .totalMs = debug_stats.msFromUs(st.total_us, ms1),
+        };
+    }
+
+    fn slowQuerySnapshot(s: *Server, arena: std.mem.Allocator) ![]const debug_stats.SlowQuery {
+        var slow: std.ArrayList(debug_stats.SlowQuery) = .empty;
         var slow_buf: [16]*const @TypeOf(s.slow_queries).Entry = undefined;
-        for (s.slow_queries.sorted(&slow_buf), 0..) |e, i| {
-            if (i > 0) try out.append(arena, ',');
-            try out.print(arena, "{{\"ms\":{d:.3},\"sql\":", .{
-                @as(f64, @floatFromInt(e.us)) / 1000.0,
+        for (s.slow_queries.sorted(&slow_buf)) |e| {
+            try slow.append(arena, .{
+                .ms = debug_stats.msFromUs(e.us, debug_stats.Ms3),
+                .sql = e.sql(),
             });
-            try errors.writeJsonString(arena, &out, e.sql());
-            try out.append(arena, '}');
         }
-        try out.appendSlice(arena, "]}");
-        return .{ .body = out.items };
+        return slow.items;
     }
 
     // ---- datasets ----
@@ -749,7 +771,12 @@ pub const Server = struct {
     /// Builds a table resource for something the engine knows about but the
     /// metadata store does not, deriving its schema from the engine. Returns
     /// null when the engine does not have it either.
-    fn tableResourceFromEngine(
+    ///
+    /// Public because the Storage Read API needs the same fallback: a table
+    /// created by `CREATE TABLE` rather than `tables.insert` is in the engine's
+    /// catalog and not in the metadata store, and a session over one must fall
+    /// back the way `tables.get` does.
+    pub fn tableResourceFromEngine(
         s: *Server,
         arena: std.mem.Allocator,
         project_id: []const u8,
@@ -978,13 +1005,13 @@ pub const Server = struct {
     ) !http_server.Response {
         const arena = req.arena;
 
-        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch {
+        const job = jobs_handler.parseInsert(arena, req.body) catch {
             return badRequest(arena, "failed to decode request body");
         };
-        const sql = jobs_handler.queryFromJobConfig(parsed) orelse {
+        const sql = jobs_handler.queryFromJobConfig(job) orelse {
             return badRequest(arena, "configuration.query.query is required");
         };
-        const params = jobs_handler.parametersFromJobConfig(arena, parsed) catch |err| switch (err) {
+        const params = jobs_handler.parametersFromJobConfig(arena, job) catch |err| switch (err) {
             error.OutOfMemory => return err,
             error.InvalidParameter,
             error.InvalidBase64Value,
@@ -1001,12 +1028,12 @@ pub const Server = struct {
         // being forced on. Both renderings still land in the stored ResultSet,
         // because the flag that decides between them rides on the later
         // getQueryResults call, long after this request's arena is gone.
-        const int64_ts = useInt64TimestampParam(req);
+        const int64_ts = query_handler.int64TimestampFromQuery(arena, req.query);
 
         // A query job may carry a destination table: this is how view
         // materialization writes results. Run the DDL form instead of the
         // bare SELECT, then record the resulting table's metadata.
-        const res = if (jobs_handler.destinationFromJobConfig(parsed)) |dst| blk: {
+        const res = if (jobs_handler.destinationFromJobConfig(job)) |dst| blk: {
             s.materializeInto(arena, dst, sql, params) catch |err| switch (err) {
                 error.MaterializeFailed => return .{
                     .status = .bad_request,
@@ -1066,7 +1093,96 @@ pub const Server = struct {
         });
 
         try s.jobs.put(project_id, job_id, res.set.?, resource.items);
+        // The destination table the resource above advertises. Registered now,
+        // eagerly, because it costs nothing to: the rows are already in the
+        // store and the table is a view onto them rather than a copy
+        // (docs/MATERIALIZE_COST.md §4d).
+        const stored = s.jobs.get(job_id) orelse return error.JobMissing;
+        s.registerJobDestination(arena, project_id, stored) catch |err| {
+            // Not fatal to the job, which has already run and been stored: the
+            // client's result is unaffected and only a read of the destination
+            // would notice.
+            std.log.warn("job {s}: destination table unavailable: {t}", .{ job_id, err });
+        };
         return .{ .body = resource.items };
+    }
+
+    /// Clears job-results tables a previous process left behind.
+    ///
+    /// They are virtual tables in `main`, so a file-backed database keeps them
+    /// in `sqlite_master` across a restart — and their rows lived in the job
+    /// store of the process that made them, which is gone. Every one found here
+    /// is stale by definition. An in-memory database never has any.
+    fn dropStaleJobTables(s: *Server, arena: std.mem.Allocator) !void {
+        // Collected before dropping: the drops invalidate the scan.
+        const names = try s.staleJobTableNames(arena);
+        for (names) |name| {
+            const sql = try std.fmt.allocPrintSentinel(arena, "DROP TABLE `{s}`", .{name}, 0);
+            s.db.rawExec(sql, &.{}) catch |err| {
+                std.log.warn("stale job table {s} could not be dropped: {t}", .{ name, err });
+            };
+        }
+        if (names.len != 0) {
+            std.log.info("dropped {d} stale job result table(s)", .{names.len});
+        }
+    }
+
+    fn staleJobTableNames(s: *Server, arena: std.mem.Allocator) ![]const []const u8 {
+        var names: std.ArrayList([]const u8) = .empty;
+        var rows = try s.db.rawQuery(job_rows_vtab.find_stale_sql, &.{});
+        defer rows.deinit();
+        while (try rows.next()) |row| try names.append(arena, try arena.dupe(u8, row[0].text));
+        return names.toOwnedSlice(arena);
+    }
+
+    /// Makes a finished job's result readable as `<project>._anon.<job_id>`.
+    ///
+    /// Two halves, and neither copies a row. A synthetic `TableSpec` so the
+    /// GoogleSQL analyzer resolves the name — memory-only, because the rows
+    /// live in the job store for the length of a process and a persisted spec
+    /// would come back on reopen naming a table with nothing behind it. And a
+    /// virtual table of the same canonical name so SQLite resolves it, which is
+    /// what lets an ordinary table reference reach it with no transformer rule.
+    ///
+    /// A result with no columns is skipped: DDL and DML jobs have none, and a
+    /// zero-column table is not a thing SQLite will declare. Go skips on
+    /// `TotalRows > 0`, which also drops a SELECT that legitimately returned
+    /// nothing — this keeps that one, as an empty table, which is what BigQuery
+    /// has.
+    fn registerJobDestination(
+        s: *Server,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        job: query_handler.Job,
+    ) !void {
+        if (job.set.names.len == 0) return;
+        // The catalog holds the spec by pointer and the job store outlives it,
+        // so both live in the job's own arena rather than this request's.
+        const job_id = job.job_id;
+        const job_arena = job.arena.allocator();
+
+        const columns = try job_arena.alloc(*zetasqlite.spec.ColumnSpec, job.set.names.len);
+        for (columns, job.set.names, job.set.types) |*dst, name, t| {
+            const col = try job_arena.create(zetasqlite.spec.ColumnSpec);
+            col.* = .{ .name = name, .type = t };
+            dst.* = col;
+        }
+        const name_path = try job_arena.alloc([]const u8, 3);
+        name_path[0] = try job_arena.dupe(u8, project_id);
+        name_path[1] = job_rows_vtab.anon_segment;
+        name_path[2] = job.job_id;
+        const table_spec = try job_arena.create(zetasqlite.spec.TableSpec);
+        table_spec.* = .{ .name_path = name_path, .columns = columns };
+
+        {
+            var g = s.db.lockCatalog();
+            defer g.unlock();
+            try g.catalog.addSyntheticTableSpec(table_spec);
+        }
+
+        const sqlite_name = try table_spec.tableName(arena);
+        const create = try job_rows_vtab.createSql(arena, sqlite_name, job_id, job.set.names);
+        try s.db.rawExec(create, &.{});
     }
 
     /// Writes a query's results into its destination table.
@@ -1186,24 +1302,12 @@ pub const Server = struct {
     ) !http_server.Response {
         const arena = req.arena;
         const job = s.jobs.get(job_id) orelse return notFoundJob(arena, job_id);
-        // handler.go:1497-1498 takes both from the query string only, and Go
-        // honours formatOptions here. We always render int64 microseconds
-        // instead, whether or not the flag came through.
+        // handler.go:1497-1498 takes both from the query string only.
         //
-        // Go can respect an absent flag because its maxResults=0 probe returns
-        // no rows at all, so nothing unreadable reaches the client: it re-reads
-        // through the Storage Read API over gRPC. We do not serve that API, so
-        // the rows on that probe ARE what the client parses, and every branch
-        // of _is_almost_completely_cached (table.py:1908-1935) that would make
-        // it ask again also routes it to Storage. Since
-        // CellDataParser.timestamp_to_py applies a bare int(value), a
-        // "sec.microRemainder" cell is unreadable to any client at top level —
-        // there is no format here that is both faithful and usable.
-        //
-        // Scoped deliberately to this endpoint. jobs.query is under no such
-        // constraint and still honours the flag, which is what keeps
-        // testdata/golden.json (captured from /queries) byte-exact. Revert to
-        // useInt64TimestampParam(req) if the Storage Read API ever lands.
+        // `maxResults=0` — the Python client's completeness probe — returns no
+        // rows, matching Go: the client is sent to the Storage Read API for the
+        // actual data instead. Rows a later page does carry are rendered under
+        // the `formatOptions` the request asked for.
         var out: std.ArrayList(u8) = .empty;
         try query_handler.writeResultSet(
             arena,
@@ -1211,26 +1315,12 @@ pub const Server = struct {
             project_id,
             job_id,
             job.set,
-            maxResultsParam(req),
-            true,
+            query_handler.parseResultsPage(arena, req.query),
+            query_handler.int64TimestampFromQuery(arena, req.query),
         );
         return .{ .body = out.items };
     }
 };
-
-/// `formatOptions.useInt64Timestamp` from the query string
-/// (handler.go isFormatOptionsUseInt64Timestamp).
-/// `maxResults` from the query string, defaulting to Go's -1 ("every row").
-/// A value Go's ParseInt rejects also falls back to the default.
-fn maxResultsParam(req: *const http_server.Request) i64 {
-    const v = req.queryParam("maxResults") orelse return query_handler.max_results_default;
-    return std.fmt.parseInt(i64, v, 10) catch query_handler.max_results_default;
-}
-
-fn useInt64TimestampParam(req: *const http_server.Request) bool {
-    const v = req.queryParam("formatOptions.useInt64Timestamp") orelse return false;
-    return query_handler.parseGoBool(v);
-}
 
 fn tableIdOf(v: std.json.Value) ?[]const u8 {
     if (v != .object) return null;
@@ -1334,9 +1424,19 @@ fn jobIdOf(arena: std.mem.Allocator, body: []const u8) ![]const u8 {
 
 /// The single cell of a one-row, one-column response.
 fn onlyCell(arena: std.mem.Allocator, body: []const u8) ![]const u8 {
+    const cells = try cellsOf(arena, body);
+    return cells[0];
+}
+
+/// The first cell of every row, for a single-column result.
+fn cellsOf(arena: std.mem.Allocator, body: []const u8) ![]const []const u8 {
     const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
-    return v.object.get("rows").?.array.items[0].object.get("f").?
-        .array.items[0].object.get("v").?.string;
+    const rows = v.object.get("rows").?.array.items;
+    const out = try arena.alloc([]const u8, rows.len);
+    for (rows, out) |row, *dst| {
+        dst.* = row.object.get("f").?.array.items[0].object.get("v").?.string;
+    }
+    return out;
 }
 
 test "jobs.query returns the Go emulator's response bytes" {
@@ -1594,28 +1694,27 @@ test "getQueryResults 404s for an unpersisted jobs.query id" {
     );
 }
 
-// Regression: the request sequence google-cloud-bigquery actually performs
-// for QueryJob.result() has to hand back a TIMESTAMP the client can parse.
+// The request sequence google-cloud-bigquery actually performs for
+// QueryJob.result(): jobs.insert, then a getQueryResults probe with
+// `maxResults=0` and NO formatOptions -- client.py:2086 only adds
+// `formatOptions.useInt64Timestamp` when page_size > 0.
 //
-// The client posts jobs.insert, then probes getQueryResults with
-// `maxResults=0` and NO formatOptions — client.py:2086 only adds
-// `formatOptions.useInt64Timestamp` when page_size > 0. It nevertheless
-// parses whatever rows that response carries: with the `rows` key present and
-// no pageToken it considers the page complete (table.py:1924-1928) and never
-// asks again. CellDataParser.timestamp_to_py then applies a bare int(value),
-// so a "sec.rem" cell raises
+// The probe must carry no rows. The client parses whatever rows the response
+// carries -- with the `rows` key present and no pageToken it considers the
+// page complete (table.py:1924-1928) and never asks again -- and
+// `CellDataParser.timestamp_to_py` applies a bare `int(value)`, so a "sec.rem"
+// cell raises
 //
 //   ValueError: invalid literal for int() with base 10: '1767268800.0'
 //
 // which is what recidiviz's llm_extraction_results_persister_test
 // ::test_at_least_once_re_persist_appends_duplicate_rows hits on
-// result_datetime_utc — the timestamp used here is that test's own value.
+// result_datetime_utc -- the timestamp used here is that test's own value.
 //
-// Go escapes this by returning no rows at all for maxResults=0, sending the
-// client to the Storage Read API over gRPC. We do not serve that API, so the
-// rows we return on this probe are the ones the client reads, and they have
-// to be int64 microseconds.
-test "getQueryResults maxResults=0 renders TIMESTAMP the client can parse" {
+// Go answers this by returning no rows at all for maxResults=0, sending the
+// client to the Storage Read API over gRPC instead. This server answers the
+// same way.
+test "the maxResults=0 probe carries no rows, and says where the rest starts" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1630,21 +1729,253 @@ test "getQueryResults maxResults=0 renders TIMESTAMP the client can parse" {
     );
     try testing.expectEqual(std.http.Status.ok, insert.status);
     const job_id = try jobIdOf(arena, insert.body);
-
     const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
-    const res = try requestQuery(s, arena, .GET, path, "maxResults=0&prettyPrint=false", "");
-    try testing.expectEqual(std.http.Status.ok, res.status);
 
-    const cell = try onlyCell(arena, res.body);
-    // int(value) is what the client does, and it rejects "1767268800.0".
-    _ = std.fmt.parseInt(i64, cell, 10) catch {
-        std.debug.print(
-            "TIMESTAMP cell {s} is not int64 micros; the BigQuery client cannot parse it\n",
-            .{cell},
+    const probe = try requestQuery(s, arena, .GET, path, "maxResults=0&prettyPrint=false", "");
+    try testing.expectEqual(std.http.Status.ok, probe.status);
+    // No rows to misparse, which is the whole point -- and a token, because a
+    // short page with none is how truncation loses rows silently.
+    try testing.expect(std.mem.indexOf(u8, probe.body, "\"rows\":[]") != null);
+    try testing.expect(std.mem.indexOf(u8, probe.body, "\"pageToken\":\"0\"") != null);
+    // totalRows still reports the whole result, matching Go.
+    try testing.expect(std.mem.indexOf(u8, probe.body, "\"totalRows\":\"1\"") != null);
+}
+
+test "getQueryResults honours formatOptions again, both ways" {
+    // `formatOptions.useInt64Timestamp` governs the rendering on every page:
+    // with the `maxResults=0` probe carrying no rows, there is no unreadable
+    // cell left to protect a client from, so the flag means what it says.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"SELECT TIMESTAMP '2026-01-01 12:00:00+00' AS result_datetime_utc",
+        \\"useLegacySql":false}}}
+    );
+    const job_id = try jobIdOf(arena, insert.body);
+    const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+
+    // Asked for: int64 microseconds, which `int(value)` parses.
+    const as_int = try requestQuery(
+        s,
+        arena,
+        .GET,
+        path,
+        "formatOptions.useInt64Timestamp=true&prettyPrint=false",
+        "",
+    );
+    try testing.expectEqualStrings("1767268800000000", try onlyCell(arena, as_int.body));
+
+    // Not asked for: the float-seconds form, which is what BigQuery sends by
+    // default and what jobs.query has always sent.
+    const as_float = try requestQuery(s, arena, .GET, path, "prettyPrint=false", "");
+    try testing.expectEqualStrings("1767268800.0", try onlyCell(arena, as_float.body));
+}
+
+test "maxResults pages through a result, and the token resumes it" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"SELECT n FROM UNNEST([1,2,3,4,5]) AS n ORDER BY n","useLegacySql":false}}}
+    );
+    const job_id = try jobIdOf(arena, insert.body);
+    const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+
+    // Two at a time, following the token until it stops coming.
+    var token: []const u8 = "0";
+    var seen: std.ArrayList(u8) = .empty;
+    var pages: usize = 0;
+    // Bounded so a token that never stops coming fails the assertion below
+    // rather than hanging the suite.
+    while (pages < 10) {
+        const q = try std.fmt.allocPrint(
+            arena,
+            "maxResults=2&pageToken={s}&prettyPrint=false",
+            .{token},
         );
-        return error.TestExpectedEqual;
-    };
-    try testing.expectEqualStrings("1767268800000000", cell);
+        const res = try requestQuery(s, arena, .GET, path, q, "");
+        try testing.expectEqual(std.http.Status.ok, res.status);
+        pages += 1;
+        for (try cellsOf(arena, res.body)) |cell| {
+            if (seen.items.len != 0) try seen.append(arena, ',');
+            try seen.appendSlice(arena, cell);
+        }
+        token = pageTokenOf(res.body) orelse break;
+    }
+    // Every row, once, in order -- which is what a token that is wrong by one
+    // in either direction would break.
+    try testing.expectEqualStrings("1,2,3,4,5", seen.items);
+    // 2 + 2 + 1: the last page is short and carries no token, which is how the
+    // client knows to stop.
+    try testing.expectEqual(@as(usize, 3), pages);
+
+    // A token past the end is an empty page, not an error: it is the same
+    // answer as reading one row past a finished iterator.
+    const past = try requestQuery(s, arena, .GET, path, "pageToken=99&prettyPrint=false", "");
+    try testing.expectEqual(std.http.Status.ok, past.status);
+    try testing.expect(std.mem.indexOf(u8, past.body, "\"rows\":[]") != null);
+    try testing.expectEqual(@as(?[]const u8, null), pageTokenOf(past.body));
+}
+
+/// The `pageToken` of a getQueryResults body, or null when it carries none.
+fn pageTokenOf(body: []const u8) ?[]const u8 {
+    const key = "\"pageToken\":\"";
+    const i = std.mem.indexOf(u8, body, key) orelse return null;
+    const rest = body[i + key.len ..];
+    const j = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
+    return rest[0..j];
+}
+
+test "a query job's destination table is readable the moment the job returns" {
+    // The gap docs/bigquery_divergence_findings.md records: the job resource
+    // has always advertised a destination table and nothing created it, so a
+    // client that followed the pointer got a 404.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"SELECT n, CAST(n AS STRING) AS t FROM UNNEST([1,2,3]) AS n ORDER BY n",
+        \\"useLegacySql":false}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, insert.status);
+    const job_id = try jobIdOf(arena, insert.body);
+
+    // The resource names it, and tables.get now answers on it.
+    try testing.expect(std.mem.indexOf(u8, insert.body, "\"datasetId\":\"_anon\"") != null);
+    const path = try std.fmt.allocPrint(arena, "/projects/test/datasets/_anon/tables/{s}", .{job_id});
+    const got = try request(s, arena, .GET, path, "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"name\":\"n\"") != null);
+
+    // And it holds the job's rows -- read back through the engine, which is
+    // the path CreateReadSession and ReadRows take.
+    const sql = try std.fmt.allocPrint(arena, "SELECT n, t FROM `_anon`.`{s}`", .{job_id});
+    var rows = try s.db.query(sql, &.{}, .{});
+    defer rows.deinit();
+    var seen: usize = 0;
+    while (try rows.next()) |row| : (seen += 1) {
+        try testing.expectEqual(@as(i64, @intCast(seen + 1)), row[0].int);
+    }
+    try testing.expectEqual(@as(usize, 3), seen);
+}
+
+test "the destination table and getQueryResults agree, because they share one copy" {
+    // The invariant the storage-form ResultSet buys: the rows a reader gets
+    // from the destination table and the rows getQueryResults renders come from
+    // the same values, so they cannot drift.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"SELECT TIMESTAMP '2026-01-01 12:00:00+00' AS ts, CAST(NULL AS STRING) AS s",
+        \\"useLegacySql":false}}}
+    );
+    const job_id = try jobIdOf(arena, insert.body);
+
+    const results = try request(
+        s,
+        arena,
+        .GET,
+        try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id}),
+        "",
+    );
+    try testing.expectEqualStrings("1767268800.0", try onlyCell(arena, results.body));
+
+    const sql = try std.fmt.allocPrint(arena, "SELECT ts, s FROM `_anon`.`{s}`", .{job_id});
+    var rows = try s.db.query(sql, &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqualStrings("1767268800.0", row[0].timestamp);
+    try testing.expectEqual(driver.Cell.null, row[1]);
+}
+
+test "a DDL job registers no destination table" {
+    // A statement with no result columns has nothing to declare, and a
+    // zero-column table is not something SQLite will accept.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE ddl_t (a INT64)",
+        \\"useLegacySql":false}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, insert.status);
+    const job_id = try jobIdOf(arena, insert.body);
+
+    const path = try std.fmt.allocPrint(arena, "/projects/test/datasets/_anon/tables/{s}", .{job_id});
+    const got = try request(s, arena, .GET, path, "");
+    try testing.expectEqual(std.http.Status.not_found, got.status);
+}
+
+test "a zero-row SELECT still gets an empty destination table" {
+    // Go skips materializing when the result has no rows, which loses this
+    // case; BigQuery has an empty anonymous table for it and so does this.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"SELECT n FROM UNNEST(GENERATE_ARRAY(1, 0)) AS n","useLegacySql":false}}}
+    );
+    const job_id = try jobIdOf(arena, insert.body);
+
+    const sql = try std.fmt.allocPrint(arena, "SELECT n FROM `_anon`.`{s}`", .{job_id});
+    var rows = try s.db.query(sql, &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
+}
+
+test "two jobs' destination tables do not collide in the shared dataset" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const a = try jobIdOf(arena, (try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 1 AS v","useLegacySql":false}}}
+    )).body);
+    const b = try jobIdOf(arena, (try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 2 AS v","useLegacySql":false}}}
+    )).body);
+    try testing.expect(!std.mem.eql(u8, a, b));
+
+    for ([_][]const u8{ a, b }, [_]i64{ 1, 2 }) |id, want| {
+        const sql = try std.fmt.allocPrint(arena, "SELECT v FROM `_anon`.`{s}`", .{id});
+        var rows = try s.db.query(sql, &.{}, .{});
+        defer rows.deinit();
+        try testing.expectEqual(want, (try rows.next()).?[0].int);
+    }
 }
 
 test "an unknown path is a 500, matching Go's defaultHandler" {
@@ -2058,4 +2389,82 @@ test "insertAll rejects a malformed body with 400" {
     );
     try testing.expectEqual(std.http.Status.bad_request, res.status);
     try testing.expect(std.mem.indexOf(u8, res.body, "\"reason\":\"invalid\"") != null);
+}
+
+test "useInt64Timestamp reaches TIMESTAMPs nested in a STRUCT or ARRAY" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    // google-cloud-bigquery asks for this format on every read and parses a
+    // TIMESTAMP cell with int(). A cell still carrying the float-seconds form
+    // is a ValueError on the client, not a wrong value, so the three shapes
+    // below have to agree.
+    const cases = [_]struct { sql: []const u8, want: []const u8 }{
+        .{
+            .sql = "SELECT TIMESTAMP '2026-01-10 00:00:00+00' AS ts",
+            .want =
+            \\[{"f":[{"v":"1768003200000000"}]}]
+            ,
+        },
+        .{
+            .sql = "SELECT STRUCT(TIMESTAMP '2026-01-10 00:00:00+00' AS ts) AS s",
+            .want =
+            \\[{"f":[{"v":{"f":[{"v":"1768003200000000"}]}}]}]
+            ,
+        },
+        .{
+            .sql = "SELECT [STRUCT(TIMESTAMP '2026-01-10 00:00:00+00' AS ts)] AS arr",
+            .want =
+            \\[{"f":[{"v":[{"v":{"f":[{"v":"1768003200000000"}]}}]}]}]
+            ,
+        },
+    };
+
+    for (cases) |case| {
+        const body = try std.fmt.allocPrint(
+            arena,
+            "{{\"configuration\":{{\"query\":{{\"query\":{f}}}}}}}",
+            .{std.json.fmt(case.sql, .{})},
+        );
+        const job = try requestQuery(s, arena, .POST, "/projects/test/jobs", "", body);
+        const job_id = try jobIdOf(arena, job.body);
+        const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+        const got = try requestQuery(
+            s,
+            arena,
+            .GET,
+            path,
+            "formatOptions.useInt64Timestamp=true",
+            "",
+        );
+        const rows = try std.json.parseFromSliceLeaky(std.json.Value, arena, got.body, .{});
+        const actual = try std.json.Stringify.valueAlloc(arena, rows.object.get("rows").?, .{});
+        try json_pb.expectJsonEqual(case.want, actual);
+    }
+}
+
+test "without useInt64Timestamp every TIMESTAMP keeps the float-seconds form" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const body =
+        \\{"configuration":{"query":{"query":"SELECT STRUCT(TIMESTAMP '2026-01-10 00:00:00+00' AS ts) AS s"}}}
+    ;
+    const job = try requestQuery(s, arena, .POST, "/projects/test/jobs", "", body);
+    const job_id = try jobIdOf(arena, job.body);
+    const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+    const got = try requestQuery(s, arena, .GET, path, "", "");
+    const rows = try std.json.parseFromSliceLeaky(std.json.Value, arena, got.body, .{});
+    const actual = try std.json.Stringify.valueAlloc(arena, rows.object.get("rows").?, .{});
+    try json_pb.expectJsonEqual(
+        \\[{"f":[{"v":{"f":[{"v":"1768003200.0"}]}}]}]
+    , actual);
 }

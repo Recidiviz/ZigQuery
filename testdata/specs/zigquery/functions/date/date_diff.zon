@@ -60,5 +60,36 @@
                 .{1302},
             },
         },
+        .{
+            .desc = "date_diff counts boundaries of the weekday the part names",
+            // 2024-03-09 is a Saturday and 2024-03-14 the Thursday after it, so the span
+            // crosses every start day except Saturday's. 2024-03-13 to 2024-03-14 crosses
+            // only Thursday's. Measured (recidiviz-bigquery-sandbox, 2026-08-07).
+            .sql =
+            \\SELECT
+            \\  DATE_DIFF(DATE '2024-03-14', DATE '2024-03-09', WEEK(SATURDAY)),
+            \\  DATE_DIFF(DATE '2024-03-14', DATE '2024-03-09', WEEK(THURSDAY)),
+            \\  DATE_DIFF(DATE '2024-03-09', DATE '2024-03-14', WEEK(SATURDAY)),
+            \\  DATE_DIFF(DATE '2024-03-14', DATE '2024-03-13', WEEK(THURSDAY)),
+            \\  DATE_DIFF(DATE '2024-03-14', DATE '2024-03-13', WEEK(FRIDAY))
+            ,
+            .rows = .{
+                .{ 0, 1, 0, 1, 0 },
+            },
+        },
+        .{
+            .desc = "date_diff in ISOWEEK counts Monday boundaries across a year end",
+            // The year boundary discriminates: ISO weeks belong to the ISO year.
+            // (date_functions.md#date_diff)
+            .sql =
+            \\SELECT
+            \\  DATE_DIFF(DATE '2018-01-01', DATE '2017-12-25', ISOWEEK),
+            \\  DATE_DIFF(DATE '2017-12-18', DATE '2017-12-17', ISOWEEK),
+            \\  DATE_DIFF(DATE '2017-12-25', DATE '2018-01-01', ISOWEEK)
+            ,
+            .rows = .{
+                .{ 1, 1, -1 },
+            },
+        },
     },
 }

@@ -5,8 +5,9 @@ An experiment log for the work that produced storage format 3, in the style of
 longest shelf life — **what was tried and reverted, with the number that killed
 it**. Four optimizations in here look obviously good on paper and are not.
 
-Semantics are the other document's job: `NUMERIC_FIDELITY.md` records where the
-engine diverges from BigQuery. This one is only about cost.
+Semantics are the other documents' job: `NUMERIC_FIDELITY.md` for the two
+decimal types, `bigquery_divergence_findings.md` for everything else measured
+against the real service. This one is only about cost.
 
 Reproduce any figure with:
 
@@ -351,3 +352,225 @@ decoding does, for every kind"`. `value` and `skipValue` each decide how wide a
 payload is; if they disagree the walk desynchronises silently and surfaces as
 CorruptData somewhere unrelated. This change moved four widths at once, and both
 now read them from one table (`BinReader.fixedWidth`).
+
+## 8. Predicates: the fast path catches up with the codec
+
+The largest remaining consumer of the codec was not the codec's fault. Every
+`WHERE` predicate over a DATE, TIMESTAMP, BYTES or NUMERIC column still went
+through a `zetasqlite_*` UDF that decoded both operands and encoded a BOOL, once
+per row — because `isPrimitiveSQLiteType` (`transformer/function.zig`) had never
+been widened past the kinds Go could lower, and Go could only lower the ones
+SQLite stored natively. Storage format 3 had made nine kinds memcomparable two
+sections ago; the predicate list was still the base64 era's.
+
+Three things were wrong at once, and the smallest was the type list:
+
+- **The type list.** DATE, TIME, DATETIME, TIMESTAMP, BYTES, NUMERIC,
+  BIGNUMERIC and RANGE now lower. The licence is `test "memcmp over encodings
+  matches compareForCollation"` in `codec_sortable.zig`: `compareForCollation`
+  is defined via `Value.eq`/`gt`, which *are* what `zetasqlite_equal` and
+  `zetasqlite_less` call, so SQLite's byte comparison is the UDF's own answer.
+- **Operand shape, which blocked more than type did.** A `.function` operand
+  counted as primitive only if it was itself an operator — so
+  `get_struct_field(s, 0) = 1`, `array_length(a) = 0` and `EXTRACT(YEAR FROM d)
+  = 2025` all stayed UDFs despite returning INT64. Function calls now carry
+  their resolved result kind (`FunctionCallData.result_kind`, one i32 off the
+  ResolvedExpr base) and qualify on it.
+- **`IN` never lowered past one list element.** `canOptimizeFunction` funnelled
+  it into the comparison operators' `!= 2` arity check, so `x IN (a, b, c)` was
+  rejected — while `optimizeFunctionToSQL` had always rendered N arguments
+  correctly. A pure bug, inherited whole.
+
+Four operators were also added to the table: `IS NULL` (97 call sites in
+`sql_snapshot.txt`, the largest single group, and type-independent — it lowers
+over ARRAY and STRUCT too), `BETWEEN`, and `IS [NOT] DISTINCT FROM` onto
+SQLite's NULL-safe `IS` / `IS NOT`. `LIKE` is deliberately absent: SQLite's is
+ASCII-case-insensitive and coerces BLOBs to text.
+
+**Measured**, 200 k rows of `(INT64, DATE, TIMESTAMP, STRING)`, `-Drelease=true`,
+timers off. The load statement is timed separately and is byte-identical work in
+both builds, so the difference is the query and nothing else:
+
+| | before | after | |
+|---|---|---|---|
+| load 200 k rows | 0.13s | 0.13s | unchanged, as it must be |
+| `d BETWEEN … AND …` | 13.5 ms/query | **4.0 ms** | −70% |
+| that `AND ts < …` `AND s IN (…4)` | 44.0 ms/query | **6.0 ms** | −86% |
+
+Per-query figures are `(20 queries + load − load) / 20`; three interleaved runs
+agreed to 0.01s. The composite predicate is the better number *and* the less
+representative one — it lowers five UDF calls per row (three comparisons and two
+`AND`s), so it is close to the best case. The single `BETWEEN` is the honest
+floor at ~3.4×.
+
+Corpus-wide, the 273 lowerable calls in `sql_snapshot.txt` became 32, and every
+survivor is blocked for a real reason: a STRUCT operand, a correlated subquery
+operand, or a NULL literal (deliberately excluded — see
+`isPrimitiveSQLiteType`).
+
+### 8.1 Two things this uncovered
+
+**A latent precedence bug.** `BinaryExpression.writeSql` renders `left OP right`
+with no parentheses, which is fine while every nesting binds tighter than its
+parent — `a = b AND c = d` — and silently wrong when it does not: `(a OR b) AND
+c` rendered as `a OR b AND c`, which SQLite reads as `a OR (b AND c)`. The
+corpus never exercised it, and widening the fast path would have made it
+reachable. Operands that are themselves binary are now wrapped (`grouped`), and
+`test "or nested inside and keeps its grouping"` fails without it.
+
+**`isCheapToDuplicate` treated every list as expensive**, so each parenthesised
+operand put a subquery level back around expressions that had just been
+simplified — two cases in the corpus gained a level before this was fixed. A
+list costs exactly what its elements cost. With that corrected the change
+*removes* 18 levels net and adds none.
+
+### 8.2 Two UDFs were wrong, and lowering exposed it
+
+Both `fn_compare.in` and `fn_compare.between` opened with a blanket
+`existsNull(args) -> NULL`, which is not three-valued logic:
+
+| | UDF, before | BigQuery / SQLite |
+|---|---|---|
+| `1 IN (1, NULL)` | NULL | **TRUE** |
+| `5 BETWEEN 10 AND NULL` | NULL | **FALSE** |
+
+A NULL in an `IN` list blocks a FALSE but never a TRUE; a FALSE from one side of
+a `BETWEEN` wins over a NULL from the other. Both are fixed, so the lowered and
+UDF paths give one answer — which matters more now that which path runs depends
+on whether the operands happen to be literals.
+
+`zetasqlite_is_true` / `_is_false` had the same shape of bug and were fixed with
+them, though for a different reason — neither lowers, so no two paths were
+disagreeing; they were simply wrong. `IS TRUE` and `IS FALSE` are *total*
+predicates that answer TRUE or FALSE and never NULL, which is the entire reason
+the syntax exists: it tests a possibly-NULL boolean without NULL propagation,
+and `x IS TRUE` would be indistinguishable from plain `x` otherwise. All four
+forms returned NULL for a NULL operand, because `IS NOT TRUE` is
+`$not($is_true(x))` and `not` propagates what it is given:
+
+| | before | BigQuery |
+|---|---|---|
+| `NULL IS TRUE` / `NULL IS FALSE` | NULL | **FALSE** |
+| `NULL IS NOT TRUE` / `NULL IS NOT FALSE` | NULL | **TRUE** |
+
+The four spec cases that existed all used non-NULL operands, so they never
+exercised the only input where the predicate differs from `x` itself. That is
+the general lesson of this section: each of these three bugs sat behind a test
+that passed because it tested the uninteresting half of the domain.
+
+## 9. Window functions: a per-row result was a per-partition allocation
+
+`xValue` produces a result per row, and `done()` allocated it from the Group's
+arena — which is released at `xFinal`, one partition later. Every row's working
+set was therefore retained for the length of the partition. §6 fixed this shape
+for the encode half and lists `window.xValue` in its table; the allocations
+*inside* `done()` were not covered by that.
+
+`WindowFuncAggregatedStatus.relevantValues` compounded it. It is a pure function
+of the buffered values and the parsed options, and it rebuilt its result — the
+filtered slice, and for DISTINCT a hash set plus a key per value — on every one
+of those per-row calls.
+
+Measured with `SELECT SUM(c) FROM (SELECT COUNT([DISTINCT] x) OVER () AS c FROM
+UNNEST(GENERATE_ARRAY(1, n)) AS x)`, `-Drelease=true`, two binaries built from
+the same tree with and without the change:
+
+| n | DISTINCT | plain | peak RSS, DISTINCT | peak RSS, plain |
+|---|---|---|---|---|
+| 1000 | 0.10s -> **0.01s** | 0.01s -> 0.01s | | |
+| 2000 | 0.36s -> **0.01s** | 0.04s -> **0.01s** | 670 -> **25 MB** | 147 -> **25 MB** |
+| 4000 | 1.49s -> **0.01s** | 0.15s -> **0.01s** | 2804 -> **26 MB** | 515 -> **26 MB** |
+| 8000 | 7.51s -> **0.02s** | 0.57s -> **0.01s** | 5527-7046 -> **29 MB** | 1983 -> **28 MB** |
+
+**Quote the plain column.** It reproduces to the byte — 1983 MB on four
+consecutive runs — because its allocation pattern is one slice per row into a
+bump allocator. The DISTINCT figure moves ±13% between runs, since a hash
+table's growth and rehash depend on allocation order and the machine is paging
+at 5-7 GB. The floor under both is ~22 MB, which is what `SELECT 1` costs.
+
+Two gigabytes for an 8000-row window with no DISTINCT in it is the number that
+frames the rest: this was never a DISTINCT problem. DISTINCT multiplied a
+constant that was already the wrong shape.
+
+The plain column is not merely reproducible, it is arithmetic. A `Value` is 32
+bytes (`Interval`'s seven i32s set the union's payload, per the note on
+`Range`), so a frame of n values is 32n bytes per `xValue` call and n calls
+retain 32n². At n = 8000 that is 2.048 GB against 1983 MB measured: the
+retention is not a component of the number, it is the whole number.
+
+Two changes, both in that shape:
+
+- **A second arena scoped to one `xValue`.** `done()` allocates from it and it
+  is reset per row. Sound because `produceImpl` hands the result to `setResult`,
+  which encodes it into the connection scratch before returning — nothing
+  `done()` allocates outlives the call. The buffered values keep the partition
+  arena, since `xStep` writes them and later rows read them.
+- **`relevantValues` holds its result** until `step`, `inverse` or `setOption`
+  moves what it was computed from. A frame that does not move between rows —
+  which for DISTINCT is every frame, since the analyzer rejects a window
+  `ORDER BY` or framing clause beside it — computes once per partition instead
+  of once per row.
+
+Both are linear now, and the sizes that motivated the work are no longer
+interesting: n = 500 000 runs in 0.57s and 372 MB, where n = 8000 previously
+took 7.67s and 5.2 GB.
+
+The invariant to protect is that the cached set is shared across the rows of a
+standing frame. `WINDOW_PERCENTILE_DISC` orders the frame to pick its answer and
+now sorts a copy. `test "a frame reaching forward is recomputed per row"`
+(`zigquery/functions/window/distinct`) pins the invalidation: a frame with a
+FOLLOWING bound is stepped between one row's value and the next, and its last
+row is the only one whose frame shrinks — which is what a stale set gets wrong.
+
+### 9.1 A group key is the stored value
+
+The dedup key was `Value.toString`, the formatted text. Deriving a key by
+decoding a value and re-rendering it is work the storage format already did: the
+encoding is canonical, one value to one byte string per kind, which is the same
+property `UNION DISTINCT` leans on to dedup without decoding
+(`transformer/scan_setop.zig`). So the aggregate key is now taken straight off
+`argv` — no decode, no re-encode — with a leading discriminator for the storage
+class and `-0.0` folded to `0.0`, which is the one thing bytes cannot answer for
+(`data-types.md#grouping-with-floating-point-types`).
+
+Taking the key from the arguments rather than from decoded values also moves the
+DISTINCT test in front of `decodeArgs`, so **a duplicate row is never decoded at
+all** — no blob dupe, no parse. Measured on 500 k rows whose 100 distinct values
+are ~120-byte strings:
+
+| | time | peak RSS |
+|---|---|---|
+| no DISTINCT (the floor: every row still decodes) | 0.27s | 201 MB |
+| `COUNT(DISTINCT ...)` before | 0.36s | 290 MB |
+| `COUNT(DISTINCT ...)` after | **0.28s** | **116 MB** |
+
+DISTINCT now costs about what not having it costs, and less memory than the
+floor, because the rows it rejects skip the decode the floor still pays. The
+map also borrows the key while probing and copies it only when the value is new,
+so a duplicate allocates nothing.
+
+Three answers were corrected on the way.
+
+A NULL in a window frame under DISTINCT raised `toString on null value` rather
+than grouping, so `MIN` and `SUM` with `DISTINCT ... OVER ()` failed outright on
+any frame containing one. NULL is now an ordinary key, which also retires the
+aggregate path's separate seen-NULL bit.
+
+`COUNT(DISTINCT x)` over `[0.0, -0.0]` answered 2 while `GROUP BY x` and
+`SELECT DISTINCT x` over the same values answered 1, those two going through
+SQLite's numeric comparison. All four spellings agree now, and one spec case
+asserts them together.
+
+And `zetasqlite_group_by` had the same shape of bug with teeth: it decoded every
+group key per row and re-rendered it, joining ARRAY and STRUCT elements with
+`"||"`. That is not injective, so `['a||b']` and `['a', 'b']` landed in one
+group — one row of `COUNT(*) = 2` where BigQuery gives two rows of 1
+(`data-types.md#group_with_arrays`). It now returns its argument untouched and
+lets SQLite group the stored bytes, which is both correct and free: SQLite
+supplies NULL-groups-with-NULL and `0.0`-groups-with-`-0.0` on its own, because
+it compares numerically rather than bitwise.
+
+The remaining bound: SQLite raises "DISTINCT is not supported for window
+functions" (`sqlite3WindowAttach`), so that dedup cannot be handed to it the way
+`UNION DISTINCT`'s is. The window path still keys on the decoded value, which
+after the cache runs once per standing frame rather than once per row.

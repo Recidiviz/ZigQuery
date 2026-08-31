@@ -1,0 +1,78 @@
+.{
+    .spec = "zigquery/functions/date/date_bucket",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "date_bucket floors toward -infinity, so it holds before the origin",
+            // Truncation would round toward the origin and land a bucket late on every
+            // date before it. Measured (recidiviz-bigquery-sandbox, 2026-08-07).
+            .sql =
+            \\SELECT d, DATE_BUCKET(d, INTERVAL 2 DAY)
+            \\FROM UNNEST([DATE '1949-12-29', DATE '1949-12-31', DATE '1950-01-01', DATE '1950-01-03']) AS d
+            \\ORDER BY d
+            ,
+            .rows = .{
+                .{ "1949-12-29", "1949-12-28" },
+                .{ "1949-12-31", "1949-12-30" },
+                .{ "1950-01-01", "1950-01-01" },
+                .{ "1950-01-03", "1950-01-03" },
+            },
+        },
+        .{
+            .desc = "date_bucket with a month width lands on the origin's day of month, clamped short",
+            // The origin is the 31st, so a bucket opens on its month's last day whenever
+            // the month is shorter. 1900 is not a leap year.
+            .sql =
+            \\SELECT
+            \\  DATE_BUCKET(DATE '2024-03-14', INTERVAL 1 MONTH, DATE '2000-01-31'),
+            \\  DATE_BUCKET(DATE '2024-02-29', INTERVAL 1 MONTH, DATE '2000-01-31'),
+            \\  DATE_BUCKET(DATE '1900-03-14', INTERVAL 1 MONTH, DATE '2000-01-31')
+            ,
+            .rows = .{
+                .{ "2024-02-29", "2024-02-29", "1900-02-28" },
+            },
+        },
+        .{
+            .desc = "date_bucket with a mid-month origin turns the bucket over on that day",
+            // The 14th still belongs to the bucket that opened the month before, and the
+            // 16th to the one that opened on the 15th.
+            .sql =
+            \\SELECT
+            \\  DATE_BUCKET(DATE '2024-03-14', INTERVAL 1 MONTH, DATE '2000-01-15'),
+            \\  DATE_BUCKET(DATE '2024-03-16', INTERVAL 1 MONTH, DATE '2000-01-15')
+            ,
+            .rows = .{
+                .{ "2024-02-15", "2024-03-15" },
+            },
+        },
+        .{
+            .desc = "date_bucket with a multi-month width counts from the origin, not from January",
+            // 1950-01 to 2024-03 is 890 months, which 5 divides.
+            .sql = "SELECT DATE_BUCKET(DATE '2024-03-14', INTERVAL 5 MONTH)",
+            .rows = .{
+                .{"2024-03-01"},
+            },
+        },
+        .{
+            .desc = "date_bucket rejects a width with a part a DATE has no meaning for",
+            // The part outranks the count, so this reads as the sub-day part rather than
+            // as a second non-zero part.
+            .sql = "SELECT DATE_BUCKET(DATE '2024-03-14', INTERVAL 1 HOUR)",
+            .expect_error = "Only MONTH and DAY parts are allowed in bucket width INTERVAL; error in DATE_BUCKET expression",
+            .rows = .{},
+        },
+        .{
+            .desc = "date_bucket rejects a width of zero",
+            .sql = "SELECT DATE_BUCKET(DATE '2024-03-14', INTERVAL 0 DAY)",
+            .expect_error = "Exactly one non-zero INTERVAL part in bucket width is required; error in DATE_BUCKET expression",
+            .rows = .{},
+        },
+        .{
+            .desc = "date_bucket rejects a negative width",
+            .sql = "SELECT DATE_BUCKET(DATE '2024-03-14', INTERVAL -2 DAY)",
+            .expect_error = "Negative bucket width INTERVAL is not allowed; error in DATE_BUCKET expression",
+            .rows = .{},
+        },
+    },
+}

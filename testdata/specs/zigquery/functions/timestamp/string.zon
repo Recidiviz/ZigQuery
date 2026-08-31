@@ -10,5 +10,27 @@
                 .{"2008-12-25 15:30:00+00"},
             },
         },
+        .{
+            .desc = "string extracts a JSON string",
+            .sql = "SELECT STRING(JSON '\"purple\"')",
+            .rows = .{
+                .{"purple"},
+            },
+        },
+        .{
+            .desc = "string rejects JSON that is not a string",
+            // STRING is the strict extractor; LAX_STRING is the renderer.
+            // (json_functions.md#string_for_json)
+            .sql = "SELECT STRING(JSON 'true')",
+            .expect_error = "STRING: the provided JSON input is not a string",
+            .rows = .{},
+        },
+        .{
+            .desc = "safe.string turns that rejection into NULL",
+            .sql = "SELECT SAFE.STRING(JSON 'true'), SAFE.STRING(JSON '2005'), SAFE.STRING(JSON 'null')",
+            .rows = .{
+                .{ null, null, null },
+            },
+        },
     },
 }

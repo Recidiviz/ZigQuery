@@ -139,5 +139,105 @@
             .expect_error = "error parsing [Thursday Dec 25 2008] with format [%A %b %e]: found unparsed text [ 2008]",
             .rows = .{},
         },
+
+        .{
+            .desc = "parse date with %B, the full month name",
+            .sql = "SELECT PARSE_DATE(\"%B %d %Y\", \"December 25 2008\")",
+            .rows = .{
+                .{"2008-12-25"},
+            },
+        },
+        .{
+            .desc = "parse date with %A, the full weekday name",
+            // The weekday is consumed and checked for spelling, but contributes
+            // nothing: the date comes from the other elements.
+            .sql = "SELECT PARSE_DATE(\"%A %B %d %Y\", \"Sunday January 01 2023\")",
+            .rows = .{
+                .{"2023-01-01"},
+            },
+        },
+        .{
+            .desc = "parse date with %C%y, century then two-digit year",
+            .sql = "SELECT PARSE_DATE(\"%C%y\", \"2024\")",
+            .rows = .{
+                .{"2024-01-01"},
+            },
+        },
+        .{
+            .desc = "parse date with %j, the day of the year",
+            // 2008 is a leap year: 31 + 29 + 31 = 91 days through March, so
+            // day 100 is April 9.
+            .sql = "SELECT PARSE_DATE(\"%Y %j\", \"2008 100\"), PARSE_DATE(\"%Y %j\", \"2007 100\")",
+            .rows = .{
+                .{ "2008-04-09", "2007-04-10" },
+            },
+        },
+        .{
+            .desc = "parse date with %% matching a literal percent",
+            .sql = "SELECT PARSE_DATE(\"%%%Y\", \"%2024\")",
+            .rows = .{
+                .{"2024-01-01"},
+            },
+        },
+        .{
+            .desc = "parse date with %E4Y",
+            .sql = "SELECT PARSE_DATE(\"%E4Y-%m-%d\", \"2024-03-15\")",
+            .rows = .{
+                .{"2024-03-15"},
+            },
+        },
+        .{
+            .desc = "parse date rejects a clock element, which no DATE can carry",
+            // Unlike the format side, the parse side gates elements by target
+            // type — see docs/SPEC_UNSUPPORTED.md.
+            .sql = "SELECT PARSE_DATE(\"%H\", \"10\")",
+            // Bare, with no "error parsing [...] with format [...]" prefix: the availability
+            // gate precedes the wrapper that adds one.
+            .expect_error = "unavailable format by date type",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date rejects %Ez, which only a TIMESTAMP can carry",
+            .sql = "SELECT PARSE_DATE(\"%Ez\", \"+09:00\")",
+            .expect_error = "unavailable format by date type",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date rejects a misspelled full month name",
+            .sql = "SELECT PARSE_DATE(\"%B\", \"Smarch\")",
+            .expect_error = "error parsing [Smarch] with format [%B]: unexpected month",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date rejects a misspelled short month name",
+            .sql = "SELECT PARSE_DATE(\"%b\", \"Xyz\")",
+            .expect_error = "error parsing [Xyz] with format [%b]: unexpected short month",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date rejects a misspelled weekday name",
+            .sql = "SELECT PARSE_DATE(\"%A\", \"Funday\")",
+            .expect_error = "error parsing [Funday] with format [%A]: unexpected day of week",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date rejects a malformed century",
+            .sql = "SELECT PARSE_DATE(\"%C\", \"2x\")",
+            .expect_error = "error parsing [2x] with format [%C]: unexpected century number",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date rejects an unknown %E combination",
+            .sql = "SELECT PARSE_DATE(\"%Ex\", \"x\")",
+            .expect_error = "unexpected format type %x",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse date rejects an element with no parser",
+            // %Q is a valid *format* element with no parse counterpart.
+            .sql = "SELECT PARSE_DATE(\"%Q\", \"1\")",
+            .expect_error = "error parsing [1] with format [%Q]: unexpected format type %Q",
+            .rows = .{},
+        },
     },
 }

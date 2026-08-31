@@ -40,6 +40,14 @@
             .url = "https://codeberg.org/RhyosLabs/ephor/archive/v0.14.2.tar.gz",
             .hash = "ephor-0.14.2-p-Eoi3CRFQAKLECH5wnEI78GscKz2AUYXXf0qlr-sOfX",
         },
+        .grpc = .{
+            .url = "git+https://github.com/allyourcodebase/grpc?ref=1.82.1#7fb4fc84440ef7a2a2f1ac3b019f39e19f0993c5",
+            .hash = "grpc-1.82.1-1lXNFR9vAQA9vOlS7SEEEPHsv1l6yd425T87ppVNeIwk",
+        },
+        .nanoarrow = .{
+            .url = "https://github.com/apache/arrow-nanoarrow/releases/download/apache-arrow-nanoarrow-0.9.0/apache-arrow-nanoarrow-0.9.0.tar.gz",
+            .hash = "N-V-__8AAFJGjQDdZ-YxRe6QxscL234tcAjhWstwErQVToB4",
+        },
     },
     .paths = .{
         "build.zig",

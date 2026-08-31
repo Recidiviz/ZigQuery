@@ -48,5 +48,26 @@
             .expect_error = "error parsing [07:30:00] with format [%I:%M]: found unparsed text [:00]",
             .rows = .{},
         },
+
+        .{
+            .desc = "parse time reads %p to place the 12-hour clock",
+            .sql = "SELECT PARSE_TIME(\"%I:%M %p\", \"09:20 am\"), PARSE_TIME(\"%I:%M %p\", \"09:20 pm\")",
+            .rows = .{
+                .{ "09:20:00", "21:20:00" },
+            },
+        },
+        .{
+            .desc = "parse time rejects a meridiem that is neither am nor pm",
+            .sql = "SELECT PARSE_TIME(\"%I%p\", \"09xx\")",
+            .expect_error = "error parsing [09xx] with format [%I%p]: cannot parse am/pm format: [xx] is not am/pm",
+            .rows = .{},
+        },
+        .{
+            .desc = "parse time rejects a date element, which no TIME can carry",
+            .sql = "SELECT PARSE_TIME(\"%Y\", \"2024\")",
+            // Bare, as in the parse_date twin: the gate precedes the wrapper.
+            .expect_error = "unavailable format by time type",
+            .rows = .{},
+        },
     },
 }

@@ -7,11 +7,14 @@
 # //third_party/googlesql, wired in as a Bazel module (see MODULE.bazel), so
 # every dependency below is an @googlesql// label.
 #
-# There are two targets rather than one with `select()`ed linkopts because a
-# cc_binary's output file is named after the target, and the two platforms
-# need different extensions (.dylib vs .so). Everything except the link line
-# is shared; `target_compatible_with` keeps a wildcard build from trying to
-# link the wrong one.
+# There are two cc_binary targets rather than one with `select()`ed linkopts
+# because a cc_binary's output file is named after the target, and the two
+# platforms need different extensions (.dylib vs .so). Everything except the
+# link line is shared; `target_compatible_with` keeps a wildcard build from
+# trying to link the wrong one. The statically-linkable relocatable objects
+# further down are a second pair for the same reason.
+
+load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -37,9 +40,20 @@ SHIM_DEPS = [
     "@icu//:headers",
 ]
 
-# The exported surface, kept in one place so the two link lines cannot drift.
-# Mach-O wants each name individually and prefixed with `_`; ELF reads the
-# same set out of shim.lds as a `GoogleSQL_*` glob.
+# The exported surface, kept in one place so the dylib/so link lines and the
+# static objects' exported-symbols list cannot drift. Mach-O wants each name
+# individually and prefixed with `_`; ELF reads the same set out of
+# shim.lds/shim_exports_macos.list's `GoogleSQL_*` glob.
+#
+# This list being closed is load-bearing for more than size. The server links
+# gRPC core (see the grpc dependency in build.zig), which vendors its own
+# abseil 20250512 and re2 2022-04-01, while this shim links abseil 20260107 and
+# re2 2025-08-12 (MODULE.bazel). Two versions of both libraries therefore exist
+# in one process, and what keeps them apart is exactly that nothing but these
+# C entry points is exported: the shim's copies are private, whether hidden
+# from a shared object's dynamic symbol table (the two cc_binary targets
+# below) or demoted to local binding in a relocatable object a consumer
+# statically links (the two genrules further down).
 SHIM_EXPORTS = [
     "GoogleSQL_AnalyzeNextStatement",
     "GoogleSQL_AnalyzeNextStatementParams",
@@ -103,4 +117,113 @@ cc_binary(
     linkshared = True,
     target_compatible_with = ["@platforms//os:linux"],
     deps = SHIM_DEPS,
+)
+
+# ---- statically-linkable counterparts, for exe/server_exe (see build.zig) ----
+#
+# A relocatable object with every symbol but SHIM_EXPORTS's 13 entry points
+# demoted to local binding, so a consumer that statically links it cannot
+# collide with its own, differently-versioned copies of abseil/RE2/protobuf
+# the way plain visibility hiding on a final link would not prevent (see
+# SHIM_EXPORTS's comment). `-r` (produce a relocatable object, not an
+# executable or shared library) cannot combine with `-dead_strip`, so these
+# objects are the shim's full, undead-stripped closure — a consumer that
+# wants the code size of the dylib/so above has no way to get it through this
+# path; docs/M0_FINDINGS.md records why static linking is accepted anyway.
+
+# Ordinary (non-shared) wrapper around the shim's own translation unit, for
+# cc_static_library below to pull in alongside its transitive SHIM_DEPS
+# closure.
+cc_library(
+    name = "shim_lib",
+    srcs = SHIM_SRCS,
+    deps = SHIM_DEPS,
+)
+
+# Merges shim_lib and its full transitive closure (googlesql, abseil,
+# protobuf, RE2, ICU) into one archive. cc_static_library's default
+# symbol_check feature fails the build on any duplicate symbol definition
+# within that closure — a useful gate independent of what a *consumer* of
+# the objects below later links alongside them.
+cc_static_library(
+    name = "shim_archive",
+    deps = [":shim_lib"],
+)
+
+# ICU is vendored as a rules_foreign_cc configure_make build (see MODULE.bazel's
+# comment on the `icu` http_archive_deps repo), so cc_static_library correctly
+# leaves it out of shim_archive's merge — `bazel build //shim:shim_archive
+# --output_groups=linkdeps` names it as the one dependency that contributes no
+# object files, and `@icu//:icu`'s own DefaultInfo bundles its four static
+# libs together with a propagated headers directory, which a linker cannot
+# take as an input. One filegroup per lib, picked out of `@icu//:icu` by the
+# output group name rules_foreign_cc's `out_static_libs` registers them
+# under, gives exactly the four archives and nothing else.
+[
+    filegroup(
+        name = "icu_" + lib,
+        srcs = ["@icu//:icu"],
+        output_group = lib,
+    )
+    for lib in ["libicudata.a", "libicui18n.a", "libicuio.a", "libicuuc.a"]
+]
+
+# One label so a genrule's srcs/$(locations) below need not repeat all four.
+# Positioned after the force-loaded shim archive there so ordinary
+# (non-force) archive resolution can satisfy the ICU references that
+# force-loading shim_archive introduces.
+filegroup(
+    name = "icu_static_libs",
+    srcs = [
+        ":icu_libicudata.a",
+        ":icu_libicui18n.a",
+        ":icu_libicuio.a",
+        ":icu_libicuuc.a",
+    ],
+)
+
+genrule(
+    name = "libgooglesql_shim_static_macos",
+    srcs = [
+        ":shim_archive",
+        ":icu_static_libs",
+        "shim_exports_macos.list",
+    ],
+    outs = ["libgooglesql_shim_static_macos.o"],
+    # ld -r pulls archive members on demand, same as any other link; a bare
+    # archive with nothing else on the command line to reference it
+    # contributes nothing. -force_load includes every member of shim_archive
+    # unconditionally (this genrule's whole point is a self-contained object
+    # with no lazy holes), the same role SHIM_SRCS's analyzer_shim.o plays
+    # for the cc_binary targets above by being the thing everything else gets
+    # pulled in for.
+    #
+    # -Wl,-x (local-symbol stripping, ~11% smaller per the spike in
+    # docs/M0_FINDINGS.md) is deliberately NOT here: applied to a `-r`
+    # object rather than a final `-shared` link, it corrupts thread-local-
+    # variable relocations — `zetasqlite-zig` linked against a `-x`'d
+    # version of this object crashed at dyld startup with "malformed
+    # thread-local, offset ... is larger than total size". Safe only after
+    # every symbol reference is already resolved, which for this object
+    # happens at the *consumer's* final link, not here.
+    cmd = "$(CC) -r -o $(OUTS) " +
+          "-Wl,-force_load,$(location :shim_archive) " +
+          "$(locations :icu_static_libs) " +
+          "-Wl,-exported_symbols_list,$(location shim_exports_macos.list)",
+    target_compatible_with = ["@platforms//os:macos"],
+    toolchains = ["@bazel_tools//tools/cpp:current_cc_toolchain"],
+)
+
+# ELF equivalent: ld -r has no symbol-list flag of its own, so the partial
+# link happens first and objcopy --keep-global-symbol does the demotion
+# (--wildcard so the GoogleSQL_* glob is honored, matching shim.lds's).
+genrule(
+    name = "libgooglesql_shim_static_linux",
+    srcs = [":shim_archive", ":icu_static_libs"],
+    outs = ["libgooglesql_shim_static_linux.o"],
+    cmd = "$(CC) -r -o $(OUTS) -Wl,--whole-archive $(location :shim_archive) " +
+          "-Wl,--no-whole-archive $(locations :icu_static_libs) && " +
+          "$(OBJCOPY) --wildcard --keep-global-symbol='GoogleSQL_*' $(OUTS) $(OUTS)",
+    target_compatible_with = ["@platforms//os:linux"],
+    toolchains = ["@bazel_tools//tools/cpp:current_cc_toolchain"],
 )

@@ -151,7 +151,13 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
         /// (zero-initialized by sqlite3_aggregate_context on first use, and
         /// re-zeroed by SQLite after each xFinal).
         const Group = struct {
+            /// Lives as long as the partition: the stepped values, and the aggregator's
+            /// relevant-set cache over them.
             arena: std.heap.ArenaAllocator,
+            /// Lives for one `xValue`. `done()` produces a value per row, and `setResult`
+            /// encodes it into the connection's scratch buffer before returning, so nothing it
+            /// allocates outlives the call.
+            row_arena: std.heap.ArenaAllocator,
             agg: WindowFuncAggregatedStatus = .{},
             impl: Impl = .{},
             once: bool = false,
@@ -165,7 +171,11 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
             const slot: *?*Group = @ptrCast(@alignCast(raw));
             if (slot.* == null) {
                 const group = state.gpa.create(Group) catch return null;
-                group.* = .{ .arena = std.heap.ArenaAllocator.init(state.gpa) };
+                group.* = .{
+                    .arena = std.heap.ArenaAllocator.init(state.gpa),
+                    .row_arena = std.heap.ArenaAllocator.init(state.gpa),
+                };
+                group.agg.cache_alloc = group.arena.allocator();
                 slot.* = group;
             }
             return slot.*;
@@ -202,7 +212,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 },
                 .single => {
                     const parsed = try agg_opt.parseAggregateOptions(alloc, args);
-                    group.agg.opt = parsed.opt.*;
+                    group.agg.setOption(parsed.opt.*);
                     if (!group.once) {
                         group.once = true;
                         if (has_parse_args) try group.impl.parseArguments(alloc, parsed.values);
@@ -219,7 +229,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 // Go newTupleItemWindowAggregator: pack [x, y] (skip if either NULL).
                 .tuple => {
                     const parsed = try agg_opt.parseAggregateOptions(alloc, args);
-                    group.agg.opt = parsed.opt.*;
+                    group.agg.setOption(parsed.opt.*);
                     if (parsed.values.len < 2) {
                         return bind.fail("must provide both x and y values", .{}, error.UnsupportedOperation);
                     }
@@ -293,6 +303,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
                 defer {
                     g.arena.deinit();
+                    g.row_arena.deinit();
                     state.gpa.destroy(g);
                     if (slot) |s| s.* = null;
                 }
@@ -306,14 +317,16 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
                 var arena = std.heap.ArenaAllocator.init(state.gpa);
                 defer arena.deinit();
-                var fresh = Group{ .arena = undefined };
+                var fresh = Group{ .arena = undefined, .row_arena = undefined };
+                fresh.agg.cache_alloc = arena.allocator();
                 produceImpl(ctx, state, arena.allocator(), &fresh);
             }
         }
 
         fn produce(ctx: ?*c.sqlite3_context, group: *Group) void {
             const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
-            produceImpl(ctx, state, group.arena.allocator(), group);
+            _ = group.row_arena.reset(.retain_capacity);
+            produceImpl(ctx, state, group.row_arena.allocator(), group);
         }
 
         fn produceImpl(

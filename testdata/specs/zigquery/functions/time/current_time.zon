@@ -10,5 +10,21 @@
                 .{"22:04:05"},
             },
         },
+        .{
+            .desc = "current_time reads its zone argument",
+            // The shift lands before the value wraps into a time-of-day, so Tokyo reads
+            // the following day's 07:04:05.
+            .sql = "SELECT CURRENT_TIME(), CURRENT_TIME(\"Asia/Tokyo\"), CURRENT_TIME(\"America/Los_Angeles\")",
+            .rows = .{
+                .{ "22:04:05", "07:04:05", "14:04:05" },
+            },
+        },
+        .{
+            .desc = "current_time propagates a NULL zone",
+            .sql = "SELECT CURRENT_TIME(CAST(NULL AS STRING))",
+            .rows = .{
+                .{null},
+            },
+        },
     },
 }

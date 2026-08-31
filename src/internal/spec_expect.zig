@@ -68,6 +68,12 @@ pub const Options = struct {
     /// want demands an `.int` cell, a string want demands text, an array want
     /// demands an array. Turns off every cross-kind fallback below.
     typed: bool = false,
+
+    /// The expectation was exported with its type rather than scraped from a
+    /// doc table, so assert the cell's kind and not just its value: an integer
+    /// want demands an `.int` cell, a string want demands text, an array want
+    /// demands an array. Turns off every cross-kind fallback below.
+    typed: bool = false,
     corpus: Corpus = .bigquery_docs,
 };
 

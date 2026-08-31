@@ -229,5 +229,24 @@
                 .{ .{.{ .name = "item3", .price = 30 }}, 150 },
             },
         },
+        // A group key is the value, not a rendering of it. Two element sequences that a
+        // delimiter-joined rendering would merge -- ['a||b'] and ['a', 'b'] -- are separate
+        // groups, one per distinct sequence (data-types.md#group_with_arrays).
+        .{
+            .desc = "arrays group by element sequence, not by joined text",
+            .sql = "SELECT ARRAY_LENGTH(arr) AS n, COUNT(*) AS c FROM UNNEST([STRUCT(['a||b'] AS arr), STRUCT(['a','b'] AS arr)]) GROUP BY arr ORDER BY n",
+            .rows = .{
+                .{ 1, 1 },
+                .{ 2, 1 },
+            },
+        },
+        .{
+            .desc = "structs group by field values, not by joined text",
+            .sql = "SELECT s.k AS k, COUNT(*) AS c FROM UNNEST([STRUCT(STRUCT('a||b' AS k, '' AS j) AS s), STRUCT(STRUCT('a' AS k, 'b' AS j) AS s)]) GROUP BY s ORDER BY k",
+            .rows = .{
+                .{ "a", 1 },
+                .{ "a||b", 1 },
+            },
+        },
     },
 }

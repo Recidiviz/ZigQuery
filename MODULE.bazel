@@ -15,6 +15,12 @@ local_path_override(
     path = "third_party/googlesql",
 )
 
+# cc_static_library (//shim:shim_archive) is a rules_cc rule; loading it from
+# shim/BUILD.bazel needs a direct bazel_dep, not just the transitive one
+# every module graph already has. No version bump: 0.2.15 was already the
+# resolved version before this bazel_dep made it explicit.
+bazel_dep(name = "rules_cc", version = "0.2.15")
+
 # The shim includes absl, protobuf, RE2 and ICU headers directly, so their
 # repo names have to resolve from THIS module — googlesql's own repo mapping
 # does not reach us. Versions and repo_names mirror googlesql's MODULE.bazel

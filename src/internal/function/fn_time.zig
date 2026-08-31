@@ -12,7 +12,9 @@ const null_v = Value.null;
 
 pub fn currentTime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     _ = alloc;
-    return tu.timeValue(.{ .civ = try fd.nowCiv(args) });
+    // Shift before timeValue's `mod day`, or the wrap uses the UTC instant.
+    const civ = try fd.nowLocal(args) orelse return null_v;
+    return tu.timeValue(.{ .civ = civ });
 }
 
 pub fn time(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -37,6 +39,8 @@ pub fn time(alloc: std.mem.Allocator, args: []const Value) Error!Value {
             return tu.timeValue(bt);
         },
         .datetime => return tu.timeValue(try tu.broken(inner)),
+        // Identity form, admitted by FEATURE_DATE_TIME_CONSTRUCTORS. (time_functions.md#time)
+        .time => return inner,
         else => return bind.fail("TIME: invalid first argument type", .{}, error.UnsupportedOperation),
     }
 }
@@ -92,11 +96,15 @@ pub fn timeTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     const c = bt.parts();
     if (std.mem.eql(u8, part, "MICROSECOND")) return tu.timeValue(bt);
     if (std.mem.eql(u8, part, "MILLISECOND")) {
-        const civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0);
-        return tu.timeValue(.{ .civ = civ });
+        const ms = tu.truncMillis(c.micro);
+        return tu.timeValue(.{
+            .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, ms),
+        });
     }
     if (std.mem.eql(u8, part, "SECOND")) {
-        return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) });
+        return tu.timeValue(.{
+            .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, c.second, 0),
+        });
     }
     if (std.mem.eql(u8, part, "MINUTE")) {
         return tu.timeValue(.{ .civ = tu.compose(c.year, c.month, c.day, c.hour, c.minute, 0, 0) });
@@ -128,4 +136,33 @@ pub fn parseTime(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 fn propagate(e: Error) Error {
     if (tp.message) |m| return bind.failMsg(m, e);
     return e;
+}
+
+// ---- tests ----
+//
+// Only what SQL cannot reach; everything else is asserted against the GoogleSQL
+// reference in testdata/specs/zigquery/functions/time.
+
+const testing = std.testing;
+
+test "TIME rejects an argument type the analyzer would have to admit" {
+    // FEATURE_DATE_TIME_CONSTRUCTORS gives TIME(TIME) a signature, so the
+    // analyzer passes it through and this branch answers. The spec case covers
+    // that. What no query can produce is a first argument of some *other*
+    // kind — the analyzer has no signature for it — so the guard is defensive.
+    try testing.expectError(
+        error.UnsupportedOperation,
+        time(testing.allocator, &.{Value{ .bool = true }}),
+    );
+}
+
+test "propagate prefers the parser's message and falls back to the bare error" {
+    tp.message = null;
+    try testing.expectEqual(Error.OutOfMemory, propagate(error.OutOfMemory));
+
+    tp.message = "error parsing [x] with format [%R]: could not parse hour:minute format";
+    try testing.expectEqual(Error.InvalidDate, propagate(error.InvalidDate));
+    try testing.expectEqualStrings(tp.message.?, bind.message.?);
+    tp.message = null;
+    bind.clearDiagnostics();
 }

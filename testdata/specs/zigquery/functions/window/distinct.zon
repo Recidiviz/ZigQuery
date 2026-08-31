@@ -1,0 +1,55 @@
+.{
+    .spec = "zigquery/functions/window/distinct",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        // DISTINCT forbids both a window ORDER BY and a framing clause
+        // (window-function-calls.md), so a DISTINCT window function always sees the whole
+        // partition and every row of the result is the same value.
+        //
+        // A NULL in the frame is one group of its own, and the aggregate functions then skip
+        // it: {1, 2} for MIN and SUM, and COUNT counts the two non-NULL groups.
+        .{
+            .desc = "distinct over a frame containing null",
+            .sql = "SELECT MIN(DISTINCT x) OVER () AS m, SUM(DISTINCT x) OVER () AS s, COUNT(DISTINCT x) OVER () AS c FROM UNNEST([1, NULL, 2, 1]) AS x",
+            .rows = .{
+                .{ 1, 3, 2 },
+                .{ 1, 3, 2 },
+                .{ 1, 3, 2 },
+                .{ 1, 3, 2 },
+            },
+        },
+        // All zero values are one group (data-types.md#grouping-with-floating-point-types). The
+        // three spellings of grouping have to agree, so they are asserted together: the window
+        // DISTINCT, the aggregate DISTINCT, GROUP BY and SELECT DISTINCT.
+        .{
+            .desc = "signed zero is one group for every spelling of distinct",
+            .sql = "SELECT COUNT(DISTINCT x) OVER () AS w, (SELECT COUNT(DISTINCT y) FROM UNNEST([0.0, -0.0]) AS y) AS a, (SELECT COUNT(*) FROM (SELECT y FROM UNNEST([0.0, -0.0]) AS y GROUP BY y)) AS g, (SELECT COUNT(*) FROM (SELECT DISTINCT y FROM UNNEST([0.0, -0.0]) AS y)) AS d FROM UNNEST([0.0, -0.0]) AS x",
+            .rows = .{
+                .{ 1, 1, 1, 1 },
+                .{ 1, 1, 1, 1 },
+            },
+        },
+        // A frame reaching FOLLOWING moves under the row loop: SQLite steps rows ahead of the
+        // current one between one row's value and the next, so each row sees a different set.
+        // The last row is the telling one -- it is the only row whose frame shrinks.
+        .{
+            .desc = "a frame reaching forward is recomputed per row",
+            .sql = "SELECT x, ARRAY_AGG(x) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS a FROM UNNEST([1, 2, 3]) AS x",
+            .rows = .{
+                .{ 1, .{ 1, 2 } },
+                .{ 2, .{ 1, 2, 3 } },
+                .{ 3, .{ 2, 3 } },
+            },
+        },
+        .{
+            .desc = "percentile_disc over a frame with duplicates",
+            .sql = "SELECT PERCENTILE_DISC(x, 0.5) OVER () AS p FROM UNNEST([3, 1, 1]) AS x",
+            .rows = .{
+                .{1},
+                .{1},
+                .{1},
+            },
+        },
+    },
+}

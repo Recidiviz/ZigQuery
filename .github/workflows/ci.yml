@@ -123,9 +123,10 @@ jobs:
           { echo '## Spec'; echo; echo '```'; head -20 spec.log; echo '```'; } \
             >> "$GITHUB_STEP_SUMMARY"
 
-  # Not benchmarks: both harnesses carry a positive control (GENERATE_UUID
-  # uniqueness; per-connection catalogs that MUST fail) and exit nonzero when
-  # the control does not behave, so a broken build cannot quietly pass them.
+  # Not benchmarks: every harness here carries a positive control (GENERATE_UUID
+  # uniqueness; per-connection catalogs that MUST fail; a gRPC status that must
+  # come from our handler rather than the transport) and exits nonzero when the
+  # control does not behave, so a broken build cannot quietly pass them.
   concurrency-harness:
     name: concurrency harnesses
     needs: shim
@@ -142,10 +143,16 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
       - run: zig build analyzer-threads -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
       - run: zig build shared-catalog-threads -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
+      # Same contract: the Storage Read transport answers UNIMPLEMENTED, and
+      # three controls (an unknown service must reach our handler too, a second
+      # call on one channel must be answered, and the listener must be gone
+      # after stop()) mean a build that merely links cannot pass. It binds port
+      # 0, so it cannot collide with anything else on the runner.
+      - run: zig build grpc-smoke -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
 
-  # src/proto/resolved_ast.zig is generated from the committed
-  # proto/googlesql.fdset and is easy to forget when the submodule moves.
-  # gen-proto is a host tool that does not link the engine, so no shim.
+  # Both generated codecs come from committed .fdsets and are easy to forget
+  # when one of them moves. gen-proto is a host tool that does not link the
+  # engine, so no shim.
   gen-proto-drift:
     name: gen-proto drift
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
@@ -158,10 +165,12 @@ jobs:
       - run: zig build gen-proto
       - name: check for drift
         run: |
-          if ! git diff --exit-code -- src/proto/resolved_ast.zig; then
-            echo "::error::src/proto/resolved_ast.zig is stale — run 'zig build gen-proto'"
-            exit 1
-          fi
+          for f in src/proto/resolved_ast.zig src/server/proto/storage.zig; do
+            if ! git diff --exit-code -- "$f"; then
+              echo "::error::$f is stale — run 'zig build gen-proto'"
+              exit 1
+            fi
+          done
 
   # Cross-arch breakage is cheap to catch here and expensive to discover at
   # tag time. Push-only: it needs its own arm64 shim, which is a second cold
@@ -180,4 +189,7 @@ jobs:
       - uses: ./.github/actions/zig
         with:
           version: ${{ env.ZIG_VERSION }}
-      - run: zig build dist -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
+      - run: >-
+          zig build dist -Drelease=true
+          -Dshim-dylib=${{ steps.shim.outputs.path }}
+          -Dshim-static-obj=${{ steps.shim.outputs.static-path }}
