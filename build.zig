@@ -285,9 +285,9 @@ pub fn build(b: *std.Build) void {
 
     const maybe_bazel_static: ?*std.Build.Step.Run = if (build_shim_static) blk: {
         const bazel = b.addSystemCommand(&.{
-            "bazel",      "build",
-            "-c",         "opt",
-            "--jobs=4",   "--local_resources=cpu=4",
+            "bazel",                                    "build",
+            "-c",                                       "opt",
+            "--jobs=4",                                 "--local_resources=cpu=4",
             b.fmt("//shim:{s}", .{shim_static_target}),
         });
         bazel.setCwd(.{ .cwd_relative = repo_root });
@@ -648,7 +648,13 @@ pub fn build(b: *std.Build) void {
     b.step("grpc-smoke", "Round-trip a gRPC call against the transport skeleton")
         .dependOn(&run_grpcsmoke.step);
 
-    // Browsable UI over the spec corpus
+    // Browsable UI over the spec corpus. The HTTP transport imports only std, so spec-ui links
+    // neither gRPC nor nanoarrow.
+    const http_server_mod = b.createModule(.{
+        .root_source_file = b.path("src/server/http/server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const spec_ui_exe = b.addExecutable(.{
         .name = "spec-ui",
         .root_module = b.createModule(.{
@@ -656,7 +662,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "bqserver", .module = server_mod },
+                .{ .name = "http_server", .module = http_server_mod },
                 .{ .name = "zetasqlite", .module = mod },
             },
         }),

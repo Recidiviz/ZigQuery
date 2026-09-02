@@ -1,25 +1,14 @@
-//! Browsable UI for the spec corpus: runs the (optionally filtered) corpus
-//! once with full detail capture, then serves it as a filterable table with
-//! a per-case drill-down — input SQL, analyzed AST, transformed SQL, and
-//! expected vs. received values. See `src/internal/spec_run.zig`'s module
-//! doc comment for why the actual run/classify logic lives there and not
-//! here, and `src/driver.zig`'s `QueryOptions.capture` for why capturing
-//! that detail costs nothing beyond what a normal query already computes.
-//!
-//! A read-only viewer over a run that already finished — there is no live
-//! `Db`/query execution behind any endpoint, so no request-serialization
-//! concern applies beyond the transport's own housekeeping.
+//! Browsable UI for the .zon spec corpus: runs the (optionally filtered) corpus with all details
+//! captured, then serves it as a filterable table with a per-case drill-down.
 //!
 //! Usage: zig build spec-ui -- [--filter SUBSTR] [--dialect googlesql|bigquery] [--port N]
 
 const std = @import("std");
 const builtin = @import("builtin");
 const zetasqlite = @import("zetasqlite");
-const bqserver = @import("bqserver");
+const http_server = @import("http_server");
 
 const spec_run = zetasqlite.spec_run;
-const http_server = bqserver.http_server;
-const errors = bqserver.errors;
 
 const default_port: u16 = 8091;
 const spec_ui_html = @embedFile("spec_ui.html");
@@ -31,6 +20,7 @@ const Options = struct {
 };
 
 const State = struct {
+    mutex: std.Io.Mutex = .init,
     records: []const spec_run.Record,
 };
 
@@ -78,7 +68,7 @@ pub fn main(init: std.process.Init) !void {
     var server = try http_server.Server.listen(gpa, io, .{
         .address = "127.0.0.1",
         .port = opts.port,
-    }, .{ .ctx = &state, .func = dispatch });
+    }, .{ .ctx = &state, .func = dispatch, .mutex = &state.mutex, .io = io });
     defer server.deinit();
 
     try out.print(
@@ -145,64 +135,64 @@ fn dispatch(ctx: *anyopaque, req: *const http_server.Request) anyerror!http_serv
     return .{ .status = .not_found, .body = "{\"error\":\"not found\"}" };
 }
 
+/// One row of `/api/results`. Field names are the JSON keys `spec_ui.html` reads.
+const Summary = struct {
+    index: usize,
+    spec: []const u8,
+    desc: []const u8,
+    outcome: spec_run.Bucket,
+    detail: []const u8,
+    unsupported_in_bigquery: ?[]const u8,
+    stale: bool,
+};
+
+/// `/api/case/N`: the `Summary` row plus everything captured for the drill-down.
+const Case = struct {
+    index: usize,
+    spec: []const u8,
+    desc: []const u8,
+    outcome: spec_run.Bucket,
+    detail: []const u8,
+    unsupported_in_bigquery: ?[]const u8,
+    stale: bool,
+    input_sql: []const u8,
+    setup_sql: []const []const u8,
+    ast_text: []const u8,
+    transformed_sql: []const u8,
+    expected_text: []const u8,
+    received_text: []const u8,
+};
+
 fn renderResultsJson(arena: std.mem.Allocator, records: []const spec_run.Record) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    try out.append(arena, '[');
-    for (records, 0..) |r, i| {
-        if (i > 0) try out.append(arena, ',');
-        try out.print(arena, "{{\"index\":{d},\"spec\":", .{i});
-        try errors.writeJsonString(arena, &out, r.spec);
-        try out.appendSlice(arena, ",\"desc\":");
-        try errors.writeJsonString(arena, &out, r.desc);
-        try out.appendSlice(arena, ",\"outcome\":");
-        try errors.writeJsonString(arena, &out, @tagName(spec_run.bucket(r)));
-        try out.appendSlice(arena, ",\"detail\":");
-        try errors.writeJsonString(arena, &out, r.detail);
-        try out.appendSlice(arena, ",\"unsupported_in_bigquery\":");
-        if (r.unsupported_in_bigquery) |reason| {
-            try errors.writeJsonString(arena, &out, reason);
-        } else {
-            try out.appendSlice(arena, "null");
-        }
-        try out.print(arena, ",\"stale\":{s}", .{if (r.unsupported_stale) "true" else "false"});
-        try out.append(arena, '}');
+    const rows = try arena.alloc(Summary, records.len);
+    for (records, rows, 0..) |r, *row, i| {
+        row.* = .{
+            .index = i,
+            .spec = r.spec,
+            .desc = r.desc,
+            .outcome = spec_run.bucket(r),
+            .detail = r.detail,
+            .unsupported_in_bigquery = r.unsupported_in_bigquery,
+            .stale = r.unsupported_stale,
+        };
     }
-    try out.append(arena, ']');
-    return out.toOwnedSlice(arena);
+    return std.json.Stringify.valueAlloc(arena, rows, .{});
 }
 
 fn renderCaseJson(arena: std.mem.Allocator, index: usize, r: spec_run.Record) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    try out.print(arena, "{{\"index\":{d},\"spec\":", .{index});
-    try errors.writeJsonString(arena, &out, r.spec);
-    try out.appendSlice(arena, ",\"desc\":");
-    try errors.writeJsonString(arena, &out, r.desc);
-    try out.appendSlice(arena, ",\"outcome\":");
-    try errors.writeJsonString(arena, &out, @tagName(spec_run.bucket(r)));
-    try out.appendSlice(arena, ",\"detail\":");
-    try errors.writeJsonString(arena, &out, r.detail);
-    try out.appendSlice(arena, ",\"unsupported_in_bigquery\":");
-    if (r.unsupported_in_bigquery) |reason| {
-        try errors.writeJsonString(arena, &out, reason);
-    } else {
-        try out.appendSlice(arena, "null");
-    }
-    try out.print(arena, ",\"stale\":{s}", .{if (r.unsupported_stale) "true" else "false"});
-    try out.appendSlice(arena, ",\"input_sql\":");
-    try errors.writeJsonString(arena, &out, r.full.input_sql);
-    try out.appendSlice(arena, ",\"setup_sql\":[");
-    for (r.full.setup_sql, 0..) |s, i| {
-        if (i > 0) try out.append(arena, ',');
-        try errors.writeJsonString(arena, &out, s);
-    }
-    try out.appendSlice(arena, "],\"ast_text\":");
-    try errors.writeJsonString(arena, &out, r.full.ast_text);
-    try out.appendSlice(arena, ",\"transformed_sql\":");
-    try errors.writeJsonString(arena, &out, r.full.transformed_sql);
-    try out.appendSlice(arena, ",\"expected_text\":");
-    try errors.writeJsonString(arena, &out, r.full.expected_text);
-    try out.appendSlice(arena, ",\"received_text\":");
-    try errors.writeJsonString(arena, &out, r.full.received_text);
-    try out.append(arena, '}');
-    return out.toOwnedSlice(arena);
+    return std.json.Stringify.valueAlloc(arena, Case{
+        .index = index,
+        .spec = r.spec,
+        .desc = r.desc,
+        .outcome = spec_run.bucket(r),
+        .detail = r.detail,
+        .unsupported_in_bigquery = r.unsupported_in_bigquery,
+        .stale = r.unsupported_stale,
+        .input_sql = r.full.input_sql,
+        .setup_sql = r.full.setup_sql,
+        .ast_text = r.full.ast_text,
+        .transformed_sql = r.full.transformed_sql,
+        .expected_text = r.full.expected_text,
+        .received_text = r.full.received_text,
+    }, .{});
 }
