@@ -303,7 +303,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "zetasqlite-zig",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
+            .root_source_file = b.path("entrypoints/cli.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "zetasqlite", .module = static_mod }},
@@ -326,7 +326,7 @@ pub fn build(b: *std.Build) void {
     const spec_exe = b.addExecutable(.{
         .name = "spec-runner",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/spec_runner.zig"),
+            .root_source_file = b.path("entrypoints/spec/spec_runner.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "zetasqlite", .module = mod }},
@@ -455,7 +455,7 @@ pub fn build(b: *std.Build) void {
     const threads_exe = b.addExecutable(.{
         .name = "analyzer-threads",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/analyzer_threads.zig"),
+            .root_source_file = b.path("entrypoints/bench/analyzer_threads.zig"),
             .target = target,
             .optimize = optimize,
             .sanitize_thread = tsan,
@@ -474,7 +474,7 @@ pub fn build(b: *std.Build) void {
     const sc_threads_exe = b.addExecutable(.{
         .name = "shared-catalog-threads",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/shared_catalog_threads.zig"),
+            .root_source_file = b.path("entrypoints/bench/shared_catalog_threads.zig"),
             .target = target,
             .optimize = optimize,
             .sanitize_thread = tsan,
@@ -491,7 +491,7 @@ pub fn build(b: *std.Build) void {
     const codec_exe = b.addExecutable(.{
         .name = "codec-bench",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/codec_bench.zig"),
+            .root_source_file = b.path("entrypoints/bench/codec_bench.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "zetasqlite", .module = mod }},
@@ -508,7 +508,7 @@ pub fn build(b: *std.Build) void {
     const tzbench_exe = b.addExecutable(.{
         .name = "tz-bench",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/tz_bench.zig"),
+            .root_source_file = b.path("entrypoints/bench/tz_bench.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "zetasqlite", .module = mod }},
@@ -525,7 +525,7 @@ pub fn build(b: *std.Build) void {
     const bench_exe = b.addExecutable(.{
         .name = "bench-engine",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/bench_engine.zig"),
+            .root_source_file = b.path("entrypoints/bench/bench_engine.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "zetasqlite", .module = mod }},
@@ -542,7 +542,7 @@ pub fn build(b: *std.Build) void {
     const gsqlbench_exe = b.addExecutable(.{
         .name = "gsql-bench",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/gsql_bench.zig"),
+            .root_source_file = b.path("entrypoints/bench/gsql_bench.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "zetasqlite", .module = mod }},
@@ -559,7 +559,7 @@ pub fn build(b: *std.Build) void {
     const loadbench_exe = b.addExecutable(.{
         .name = "load-bench",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/load_bench.zig"),
+            .root_source_file = b.path("entrypoints/bench/load_bench.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "zetasqlite", .module = mod }},
@@ -583,7 +583,7 @@ pub fn build(b: *std.Build) void {
     const server_exe = b.addExecutable(.{
         .name = "bigquery-emulator",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/server/main.zig"),
+            .root_source_file = b.path("entrypoints/server.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -608,7 +608,7 @@ pub fn build(b: *std.Build) void {
     const insertbench_exe = b.addExecutable(.{
         .name = "insert-bench",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/insert_bench.zig"),
+            .root_source_file = b.path("entrypoints/bench/insert_bench.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -633,7 +633,7 @@ pub fn build(b: *std.Build) void {
     const grpcsmoke_exe = b.addExecutable(.{
         .name = "grpc-smoke",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/grpc_smoke.zig"),
+            .root_source_file = b.path("entrypoints/bench/grpc_smoke.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -658,7 +658,7 @@ pub fn build(b: *std.Build) void {
     const spec_ui_exe = b.addExecutable(.{
         .name = "spec-ui",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/spec_ui.zig"),
+            .root_source_file = b.path("entrypoints/spec/spec_ui.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -752,7 +752,7 @@ pub fn build(b: *std.Build) void {
     const cov_spec_exe = b.addExecutable(.{
         .name = "spec-runner-cov",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("harness/spec_runner.zig"),
+            .root_source_file = b.path("entrypoints/spec/spec_runner.zig"),
             .target = target,
             .optimize = .Debug,
             .imports = &.{.{ .name = "zetasqlite", .module = cov_mod }},

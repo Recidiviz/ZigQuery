@@ -6,7 +6,7 @@
 
   // Entry points for import graph analysis (orphan detection)
   // Add your main files and build.zig here
-  "entries": ["src/main.zig", "build.zig"],
+  "entries": ["entrypoints/cli.zig", "entrypoints/server.zig", "build.zig"],
 
   // Directories to exclude from analysis
   "exclude": ["test", "vendor", "third_party"],

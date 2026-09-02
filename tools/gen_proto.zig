@@ -1389,7 +1389,7 @@ fn lessThan(_: void, a: []const u8, b: []const u8) bool {
 }
 
 /// `--name=value` -> value; anything else -> null. Same shape as the emulator's
-/// own flag parsing in src/server/main.zig.
+/// own flag parsing in entrypoints/server.zig.
 fn flagValue(arg: []const u8, name: []const u8) ?[]const u8 {
     if (!std.mem.startsWith(u8, arg, name)) return null;
     const rest = arg[name.len..];

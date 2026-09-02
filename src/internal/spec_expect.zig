@@ -360,7 +360,7 @@ fn base64Match(gpa: std.mem.Allocator, want: []const u8, got: []const u8) Error!
 /// A cell as the reference docs print it: arrays `[a, b]`, structs `{1 a}`.
 /// Caller owns the result.
 ///
-/// Deliberately not `src/main.zig`'s `printCell`: that one is private to the
+/// Deliberately not `entrypoints/cli.zig`'s `printCell`: that one is private to the
 /// CLI, renders bytes as hex, and has no NULL spelling inside a container.
 pub fn renderCell(gpa: std.mem.Allocator, cell: driver.Cell) Error![]u8 {
     var buf: std.ArrayList(u8) = .empty;

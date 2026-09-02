@@ -43,7 +43,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Process-lifetime: server.serve() never returns, and every captured
     // Record must outlive the request that eventually reads it. No
-    // `arena_state.deinit()` — matches src/server/main.zig's own `app`/
+    // `arena_state.deinit()` — matches entrypoints/server.zig's own `app`/
     // `server` lifetime, which also only ever ends via process exit.
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     const arena = arena_state.allocator();
