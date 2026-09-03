@@ -90,6 +90,18 @@ def cases(path):
     return out
 
 
+FRACTION = re.compile(r"(\d{2}:\d{2}:\d{2})\.(\d+)")
+
+
+def trim_fraction(s):
+    """Fractional seconds without trailing zeros. BigQuery's string form and the
+    CLI both drop them; Python's isoformat pads to six digits."""
+    def sub(m):
+        digits = m.group(2).rstrip("0")
+        return m.group(1) + ("." + digits if digits else "")
+    return FRACTION.sub(sub, s)
+
+
 def canon(v):
     """One canonical string for a cell, from either side.
 
@@ -112,9 +124,9 @@ def canon(v):
         # Aware is a TIMESTAMP, naive a DATETIME; only the first is an instant.
         if v.tzinfo is not None:
             return canon(v.timestamp())
-        return v.isoformat()
+        return trim_fraction(v.isoformat())
     if isinstance(v, (datetime.date, datetime.time)):
-        return v.isoformat()
+        return trim_fraction(v.isoformat())
     if isinstance(v, decimal.Decimal):
         v = str(v)
     s = str(v).strip()
@@ -125,7 +137,7 @@ def canon(v):
     try:
         f = float(s)
     except ValueError:
-        return s
+        return trim_fraction(s)
     # int(inf) raises, so this precedes the magnitude test rather than joining
     # it. Both sides spell these the same way, modulo case and "infinity".
     if not math.isfinite(f):
