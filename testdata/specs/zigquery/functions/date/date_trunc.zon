@@ -82,5 +82,135 @@
                 .{ "2021-01-04", "2022-01-03", "2014-12-29", "2024-01-01" },
             },
         },
+        .{
+            .desc = "date_trunc on a DATETIME answers a DATETIME",
+            // date_functions.md#date_trunc: a DATETIME or TIMESTAMP argument answers in its own type.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', DAY),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', DAY) = DATETIME '2024-02-28'
+            ,
+            .rows = .{
+                .{ "2024-02-28T00:00:00", true },
+            },
+        },
+        .{
+            .desc = "date_trunc on a DATETIME at every calendar granularity",
+            // 2024-02-28 is a Wednesday; the ISO year 2024 starts on Monday 2024-01-01.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', WEEK),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', WEEK(MONDAY)),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', ISOWEEK),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', MONTH),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', QUARTER),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', YEAR),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', ISOYEAR)
+            ,
+            .rows = .{
+                .{ "2024-02-25T00:00:00", "2024-02-26T00:00:00", "2024-02-26T00:00:00", "2024-02-01T00:00:00", "2024-01-01T00:00:00", "2024-01-01T00:00:00", "2024-01-01T00:00:00" },
+            },
+        },
+        .{
+            .desc = "date_trunc on a DATETIME at every clock granularity",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', HOUR),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', MINUTE),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', SECOND),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', MILLISECOND),
+            \\  DATE_TRUNC(DATETIME '2024-02-28 10:20:30.123456', MICROSECOND)
+            ,
+            .rows = .{
+                .{ "2024-02-28T10:00:00", "2024-02-28T10:20:00", "2024-02-28T10:20:30", "2024-02-28T10:20:30.123", "2024-02-28T10:20:30.123456" },
+            },
+        },
+        .{
+            .desc = "date_trunc on a TIMESTAMP answers a TIMESTAMP, in UTC by default",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_TRUNC(TIMESTAMP '2008-12-25 15:30:00+00', DAY),
+            \\  DATE_TRUNC(TIMESTAMP '2008-12-25 15:30:00+00', HOUR) = TIMESTAMP '2008-12-25 15:00:00+00'
+            ,
+            .rows = .{
+                .{ "1230163200.0", true },
+            },
+        },
+        .{
+            .desc = "date_trunc on a TIMESTAMP at every calendar granularity",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', WEEK)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', WEEK(MONDAY))),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', ISOWEEK)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', MONTH)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', QUARTER)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', YEAR)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', ISOYEAR))
+            ,
+            .rows = .{
+                .{ "2024-02-25 00:00:00.000000", "2024-02-26 00:00:00.000000", "2024-02-26 00:00:00.000000", "2024-02-01 00:00:00.000000", "2024-01-01 00:00:00.000000", "2024-01-01 00:00:00.000000", "2024-01-01 00:00:00.000000" },
+            },
+        },
+        .{
+            .desc = "date_trunc on a TIMESTAMP at every clock granularity",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', DAY)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', HOUR)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', MINUTE)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', SECOND)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', MILLISECOND)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_TRUNC(TIMESTAMP '2024-02-28 10:20:30.123456+00', MICROSECOND))
+            ,
+            .rows = .{
+                .{ "2024-02-28 00:00:00.000000", "2024-02-28 10:00:00.000000", "2024-02-28 10:20:00.000000", "2024-02-28 10:20:30.000000", "2024-02-28 10:20:30.123000", "2024-02-28 10:20:30.123456" },
+            },
+        },
+        .{
+            .desc = "date_trunc on a TIMESTAMP in a named zone",
+            // Truncation happens on the zone's wall clock; the answer is the instant that wall-clock
+            // boundary names, so a UTC rendering carries the zone's offset.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', DATE_TRUNC(TIMESTAMP '2024-02-28 03:20:30+00', DAY, 'America/New_York')),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S%Ez', DATE_TRUNC(TIMESTAMP '2024-02-28 03:20:30+00', DAY, 'America/New_York'), 'America/New_York'),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', DATE_TRUNC(TIMESTAMP '2024-03-01 03:20:30+00', MONTH, 'America/New_York'))
+            ,
+            .rows = .{
+                .{ "2024-02-27 05:00:00", "2024-02-27 00:00:00-05:00", "2024-02-01 05:00:00" },
+            },
+        },
+        .{
+            .desc = "date_trunc on a TIMESTAMP across a DST change",
+            // 2024-03-11 03:00 UTC is 23:00 EDT on March 10th, the day New York moved its clocks;
+            // that day's midnight was still EST, so the instant is five hours behind UTC, not four.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql = "SELECT FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', DATE_TRUNC(TIMESTAMP '2024-03-11 03:00:00+00', DAY, 'America/New_York'))",
+            .rows = .{
+                .{"2024-03-10 05:00:00"},
+            },
+        },
+        .{
+            .desc = "date_trunc on a DATE rejects a clock granularity",
+            .sql = "SELECT DATE_TRUNC(DATE '2024-02-28', HOUR)",
+            .expect_error = "DATE_TRUNC does not support the HOUR date part",
+            .rows = .{},
+        },
+        .{
+            .desc = "date_trunc of a NULL DATETIME or TIMESTAMP is NULL",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql = "SELECT DATE_TRUNC(CAST(NULL AS DATETIME), DAY), DATE_TRUNC(CAST(NULL AS TIMESTAMP), DAY, 'America/New_York')",
+            .rows = .{
+                .{ null, null },
+            },
+        },
     },
 }

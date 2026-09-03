@@ -31,5 +31,117 @@
                 .{ "2023-11-15", "2022-11-15" },
             },
         },
+        .{
+            .desc = "date_sub on a DATETIME answers a DATETIME",
+            // date_functions.md#date_sub takes DATETIME and TIMESTAMP arguments too, and answers
+            // in the argument's own type.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_SUB(DATETIME '1998-10-06 00:00:00', INTERVAL 1 DAY),
+            \\  DATE_SUB(DATETIME '1998-10-06 00:00:00', INTERVAL 1 DAY) = DATETIME '1998-10-05 00:00:00'
+            ,
+            .rows = .{
+                .{ "1998-10-05T00:00:00", true },
+            },
+        },
+        .{
+            .desc = "date_sub on a DATETIME by every calendar part",
+            // A month before March 31st is the last day of February.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_SUB(DATETIME '2024-03-31 10:20:30', INTERVAL 1 DAY),
+            \\  DATE_SUB(DATETIME '2024-03-31 10:20:30', INTERVAL 1 WEEK),
+            \\  DATE_SUB(DATETIME '2024-03-31 10:20:30', INTERVAL 1 MONTH),
+            \\  DATE_SUB(DATETIME '2024-03-31 10:20:30', INTERVAL 1 QUARTER),
+            \\  DATE_SUB(DATETIME '2024-03-31 10:20:30', INTERVAL 1 YEAR)
+            ,
+            .rows = .{
+                .{ "2024-03-30T10:20:30", "2024-03-24T10:20:30", "2024-02-29T10:20:30", "2023-12-31T10:20:30", "2023-03-31T10:20:30" },
+            },
+        },
+        .{
+            .desc = "date_sub on a DATETIME by every clock part",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_SUB(DATETIME '2024-03-01 00:30:15.250500', INTERVAL 1 HOUR),
+            \\  DATE_SUB(DATETIME '2024-03-01 00:30:15.250500', INTERVAL 45 MINUTE),
+            \\  DATE_SUB(DATETIME '2024-03-01 00:30:15.250500', INTERVAL 20 SECOND),
+            \\  DATE_SUB(DATETIME '2024-03-01 00:30:15.250500', INTERVAL 300 MILLISECOND),
+            \\  DATE_SUB(DATETIME '2024-03-01 00:30:15.250500', INTERVAL 500 MICROSECOND)
+            ,
+            .rows = .{
+                .{ "2024-02-29T23:30:15.2505", "2024-02-29T23:45:15.2505", "2024-03-01T00:29:55.2505", "2024-03-01T00:30:14.9505", "2024-03-01T00:30:15.25" },
+            },
+        },
+        .{
+            .desc = "date_sub on a TIMESTAMP answers a TIMESTAMP",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_SUB(TIMESTAMP '2008-12-25 15:30:00+00', INTERVAL 10 MINUTE),
+            \\  DATE_SUB(TIMESTAMP '2008-12-25 15:30:00+00', INTERVAL 1 DAY) = TIMESTAMP '2008-12-24 15:30:00+00'
+            ,
+            .rows = .{
+                .{ "1230218400.0", true },
+            },
+        },
+        .{
+            .desc = "date_sub on a TIMESTAMP by every fixed-length part",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_SUB(TIMESTAMP '2024-03-01 00:30:15.250500+00', INTERVAL 1 DAY)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_SUB(TIMESTAMP '2024-03-01 00:30:15.250500+00', INTERVAL 1 HOUR)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_SUB(TIMESTAMP '2024-03-01 00:30:15.250500+00', INTERVAL 45 MINUTE)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_SUB(TIMESTAMP '2024-03-01 00:30:15.250500+00', INTERVAL 20 SECOND)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_SUB(TIMESTAMP '2024-03-01 00:30:15.250500+00', INTERVAL 300 MILLISECOND)),
+            \\  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%E6S', DATE_SUB(TIMESTAMP '2024-03-01 00:30:15.250500+00', INTERVAL 500 MICROSECOND))
+            ,
+            .rows = .{
+                .{ "2024-02-29 00:30:15.250500", "2024-02-29 23:30:15.250500", "2024-02-29 23:45:15.250500", "2024-03-01 00:29:55.250500", "2024-03-01 00:30:14.950500", "2024-03-01 00:30:15.250000" },
+            },
+        },
+        .{
+            .desc = "date_sub on a TIMESTAMP rejects a calendar part",
+            .sql = "SELECT DATE_SUB(TIMESTAMP '2024-02-28 10:20:30+00', INTERVAL 1 YEAR)",
+            .expect_error = "DATE_SUB does not support the YEAR date part when the argument is TIMESTAMP type",
+            .rows = .{},
+        },
+        .{
+            .desc = "date_sub of a NULL DATETIME or TIMESTAMP is NULL",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql = "SELECT DATE_SUB(CAST(NULL AS DATETIME), INTERVAL 1 DAY), DATE_SUB(CAST(NULL AS TIMESTAMP), INTERVAL 1 DAY)",
+            .rows = .{
+                .{ null, null },
+            },
+        },
+        .{
+            .desc = "date_sub bounds a DATETIME range in a join",
+            // The predicate an ingest view puts on DATETIME columns: the range holds only while the
+            // subtraction stays a DATETIME.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\WITH periods AS (
+            \\  SELECT DATETIME '1998-06-08' AS start_date, DATETIME '1998-10-06' AS end_date
+            \\  UNION ALL SELECT DATETIME '1998-07-15', DATETIME '1998-08-17'
+            \\),
+            \\bounds AS (
+            \\  SELECT DATETIME '1998-08-17' AS d
+            \\  UNION ALL SELECT DATETIME '1998-09-20'
+            \\  UNION ALL SELECT DATETIME '1998-10-06'
+            \\)
+            \\SELECT b.d, p.start_date
+            \\FROM bounds b
+            \\JOIN periods p ON b.d BETWEEN p.start_date AND DATE_SUB(p.end_date, INTERVAL 1 DAY)
+            \\ORDER BY 1, 2
+            ,
+            .rows = .{
+                .{ "1998-08-17T00:00:00", "1998-06-08T00:00:00" },
+                .{ "1998-09-20T00:00:00", "1998-06-08T00:00:00" },
+            },
+        },
     },
 }

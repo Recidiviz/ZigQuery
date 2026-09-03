@@ -88,7 +88,10 @@ pub fn timestamp(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     }
 }
 
+/// Fixed-length parts of an instant. DAY is 24 hours here (timestamp_functions.md#timestamp_diff),
+/// whereas DATETIME's is a calendar day.
 fn unitMicros(part: []const u8) ?i64 {
+    if (std.mem.eql(u8, part, "DAY")) return tu.day_micros;
     if (std.mem.eql(u8, part, "MICROSECOND")) return 1;
     if (std.mem.eql(u8, part, "MILLISECOND")) return 1000;
     if (std.mem.eql(u8, part, "SECOND")) return tu.second_micros;

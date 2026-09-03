@@ -6,6 +6,8 @@ const bind = @import("bind.zig");
 const tu = @import("time_util.zig");
 const ops = @import("date_ops.zig");
 const tp = @import("time_parser.zig");
+const fdatetime = @import("fn_datetime.zig");
+const ftimestamp = @import("fn_timestamp.zig");
 const value_mod = @import("../value.zig");
 
 const Value = bind.Value;
@@ -14,6 +16,20 @@ const null_v = Value.null;
 
 fn brokenOf(v: Value) Error!tu.BrokenTime {
     return tu.broken(v);
+}
+
+const Handler = *const fn (std.mem.Allocator, []const Value) Error!Value;
+
+/// DATE_ADD, DATE_SUB, DATE_DIFF and DATE_TRUNC accept DATETIME and TIMESTAMP arguments and
+/// answer in the argument's own type, as the DATETIME_ and TIMESTAMP_ spellings do
+/// (date_functions.md#date_trunc).
+fn byArgType(args: []const Value, on_datetime: Handler, on_timestamp: Handler) ?Handler {
+    if (args.len == 0) return null;
+    return switch (args[0]) {
+        .datetime => on_datetime,
+        .timestamp => on_timestamp,
+        else => null,
+    };
 }
 
 /// "Now" as civil micros (UTC). transformer/function.zig appends the injected nanos literal,
@@ -75,7 +91,8 @@ pub fn date(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 pub fn dateAdd(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
+    if (byArgType(args, fdatetime.datetimeAdd, ftimestamp.timestampAdd)) |h|
+        return h(alloc, args);
     if (args.len != 3) return bind.fail("DATE_ADD: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
     const bt = try brokenOf(args[0]);
@@ -85,7 +102,8 @@ pub fn dateAdd(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 pub fn dateSub(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
+    if (byArgType(args, fdatetime.datetimeSub, ftimestamp.timestampSub)) |h|
+        return h(alloc, args);
     if (args.len != 3) return bind.fail("DATE_SUB: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
     const bt = try brokenOf(args[0]);
@@ -95,7 +113,8 @@ pub fn dateSub(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 pub fn dateDiff(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
+    if (byArgType(args, fdatetime.datetimeDiff, ftimestamp.timestampDiff)) |h|
+        return h(alloc, args);
     if (args.len != 3) return bind.fail("DATE_DIFF: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
     const a = try brokenOf(args[0]);
@@ -105,8 +124,11 @@ pub fn dateDiff(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 pub fn dateTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
-    if (args.len != 2) return bind.fail("DATE_TRUNC: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
+    if (byArgType(args, fdatetime.datetimeTrunc, ftimestamp.timestampTrunc)) |h|
+        return h(alloc, args);
+    // A third argument is the TIMESTAMP overload's zone; a NULL first argument carries no kind.
+    if (args.len != 2 and args.len != 3)
+        return bind.fail("DATE_TRUNC: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (bind.existsNull(args)) return null_v;
     const bt = try brokenOf(args[0]);
     const part = try partStr(args[1]);

@@ -91,5 +91,72 @@
                 .{ 1, 1, -1 },
             },
         },
+        .{
+            .desc = "date_diff on DATETIMEs counts boundaries crossed",
+            // date_functions.md#date_diff over DATETIME arguments: two seconds either side of
+            // midnight are one day apart.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_DIFF(DATETIME '2024-02-29 00:00:01', DATETIME '2024-02-28 23:59:59', DAY),
+            \\  DATE_DIFF(DATETIME '2024-02-28 23:59:59', DATETIME '2024-02-29 00:00:01', DAY)
+            ,
+            .rows = .{
+                .{ 1, -1 },
+            },
+        },
+        .{
+            .desc = "date_diff on DATETIMEs at every granularity",
+            // 2024-02-28 and 2024-03-01 share a Sunday-started week and an ISO week.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', YEAR),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', QUARTER),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', MONTH),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', WEEK),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', ISOWEEK),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', DAY),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', HOUR),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', MINUTE),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', SECOND),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', MILLISECOND),
+            \\  DATE_DIFF(DATETIME '2024-03-01 10:20:30.123456', DATETIME '2024-02-28 08:10:20.100000', MICROSECOND)
+            ,
+            .rows = .{
+                .{ 0, 0, 1, 0, 0, 2, 50, 3010, 180610, 180610023, 180610023456 },
+            },
+        },
+        .{
+            .desc = "date_diff on TIMESTAMPs counts whole units, like TIMESTAMP_DIFF",
+            // The DATETIME pair two seconds apart across midnight answers 1; the same instants as
+            // TIMESTAMPs are not a whole day apart.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  DATE_DIFF(TIMESTAMP '2024-02-29 00:00:01+00', TIMESTAMP '2024-02-28 23:59:59+00', DAY),
+            \\  DATE_DIFF(TIMESTAMP '2024-03-01 10:20:30.123456+00', TIMESTAMP '2024-02-28 08:10:20.100000+00', DAY),
+            \\  DATE_DIFF(TIMESTAMP '2024-03-01 10:20:30.123456+00', TIMESTAMP '2024-02-28 08:10:20.100000+00', HOUR),
+            \\  DATE_DIFF(TIMESTAMP '2024-03-01 10:20:30.123456+00', TIMESTAMP '2024-02-28 08:10:20.100000+00', SECOND),
+            \\  DATE_DIFF(TIMESTAMP '2024-03-01 10:20:30.123456+00', TIMESTAMP '2024-02-28 08:10:20.100000+00', MICROSECOND)
+            ,
+            .rows = .{
+                .{ 0, 2, 50, 180610, 180610023456 },
+            },
+        },
+        .{
+            .desc = "date_diff on TIMESTAMPs rejects a calendar part",
+            .sql = "SELECT DATE_DIFF(TIMESTAMP '2024-03-01 10:20:30+00', TIMESTAMP '2024-02-28 08:10:20+00', MONTH)",
+            .expect_error = "DATE_DIFF does not support the MONTH date part when the argument is TIMESTAMP type",
+            .rows = .{},
+        },
+        .{
+            .desc = "date_diff of a NULL DATETIME or TIMESTAMP is NULL",
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql = "SELECT DATE_DIFF(CAST(NULL AS DATETIME), DATETIME '2024-02-28', DAY), DATE_DIFF(TIMESTAMP '2024-02-28 00:00:00+00', CAST(NULL AS TIMESTAMP), DAY)",
+            .rows = .{
+                .{ null, null },
+            },
+        },
     },
 }

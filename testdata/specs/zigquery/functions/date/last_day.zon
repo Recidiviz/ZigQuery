@@ -95,5 +95,25 @@
                 .{ "2024-12-29", "2023-12-31", "2025-12-28" },
             },
         },
+        .{
+            .desc = "last_day on a DATETIME answers a DATE",
+            // datetime_functions.md#last_day: the DATETIME overload's answer is a DATE.
+            // Measured (recidiviz-bigquery-sandbox, 2026-09-03).
+            .sql =
+            \\SELECT
+            \\  LAST_DAY(DATETIME '2024-02-10 10:20:30'),
+            \\  LAST_DAY(DATETIME '2024-02-10 10:20:30', YEAR),
+            \\  LAST_DAY(DATETIME '2024-02-10 10:20:30') = DATE '2024-02-29'
+            ,
+            .rows = .{
+                .{ "2024-02-29", "2024-12-31", true },
+            },
+        },
+        .{
+            .desc = "last_day rejects a TIMESTAMP",
+            .sql = "SELECT LAST_DAY(TIMESTAMP '2024-02-10 10:20:30+00')",
+            .expect_error = "No matching signature for function LAST_DAY",
+            .rows = .{},
+        },
     },
 }
