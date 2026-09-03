@@ -217,13 +217,54 @@ genrule(
 # ELF equivalent: ld -r has no symbol-list flag of its own, so the partial
 # link happens first and objcopy --keep-global-symbol does the demotion
 # (--wildcard so the GoogleSQL_* glob is honored, matching shim.lds's).
+#
+# Three things the Mach-O recipe above gets for free that this one has to spell out.
+# All three passed unnoticed on macOS and every one of them failed the first Linux link in CI:
+#
+# - libstdc++.a is merged in. Everything here is compiled against libstdc++ (Linux clang's default),
+#   but the consumer links with Zig, whose `-lc++` is LLVM's libc++ — a different ABI that satisfies
+#   none of the ~80 `std::` symbols the closure otherwise leaves undefined.
+#
+#   Putting the archive on this line is what -static-libstdc++ does for the .so above, and the
+#   objcopy step then demotes it to local with everything else: a private copy of the runtime,
+#   the same arrangement the .so ships.
+#
+#   The unwinder is deliberately NOT merged — libstdc++'s _Unwind_* references
+#   stay undefined and bind to the libunwind Zig links alongside libc++,
+#   which speaks the same Itanium ABI; verified by running libstdc++'s own
+#   throw/catch through it.
+#
+# - The ICU archives are a --start-group. GNU ld scans an archive once, at its command-line position,
+#   and the reference to the data blob (icudt76_dat, in libicudata) comes from libicuuc, which is
+#   listed after it. ld64 rescans archives; ld.bfd does not.
+#
+# - --force-group-allocation dissolves COMDAT groups. `ld -r` preserves them by default, and the
+#   consumer's linker (lld) then dedups groups across ALL its inputs by signature name,
+#   ignoring that objcopy has since made this object's copies local.
+#
+#   First casualty: the personality-pointer cell DW.ref.__gxx_personality_v0, which every C++ object
+#   defines. One side of the final link loses its copy, its references resolve to 0, and that side's
+#   exceptions become uncatchable — observed as a libc++-side throw terminating the process while
+#   the shim's own exceptions caught fine.
+#   RE2's inline functions (same names in this shim's RE2 and the server's gRPC-vendored one) would
+#   go the same way, silently. With the groups gone the object is plain sections with local symbols,
+#   which is what SHIM_EXPORTS' isolation story assumed all along.
+#
+# libstdc++.a's ~100 STB_GNU_UNIQUE symbols survive the demotion — objcopy cannot localize that
+# binding — but they are `std::`-namespaced libstdc++ names that cause no libc++ side collisions.
 genrule(
     name = "libgooglesql_shim_static_linux",
     srcs = [":shim_archive", ":icu_static_libs"],
     outs = ["libgooglesql_shim_static_linux.o"],
-    cmd = "$(CC) -r -o $(OUTS) -Wl,--whole-archive $(location :shim_archive) " +
-          "-Wl,--no-whole-archive $(locations :icu_static_libs) && " +
-          "$(OBJCOPY) --wildcard --keep-global-symbol='GoogleSQL_*' $(OUTS) $(OUTS)",
+    cmd = " && ".join([
+        "stdcxx=$$($(CC) -print-file-name=libstdc++.a)",
+        "{ test -f \"$$stdcxx\" || { echo \"libstdc++.a not found via -print-file-name; is the libstdc++ dev package installed?\" >&2; exit 1; }; }",
+        "$(CC) -r -o $(OUTS) -Wl,--force-group-allocation " +
+        "-Wl,--whole-archive $(location :shim_archive) -Wl,--no-whole-archive " +
+        "-Wl,--start-group $(locations :icu_static_libs) -Wl,--end-group " +
+        "\"$$stdcxx\"",
+        "$(OBJCOPY) --wildcard --keep-global-symbol='GoogleSQL_*' $(OUTS) $(OUTS)",
+    ]),
     target_compatible_with = ["@platforms//os:linux"],
     toolchains = ["@bazel_tools//tools/cpp:current_cc_toolchain"],
 )

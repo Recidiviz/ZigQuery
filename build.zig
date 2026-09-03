@@ -880,6 +880,12 @@ fn engineModule(
         // on macOS, CoreFoundation — nothing else, despite `otool -L` on the
         // dylib also listing Foundation/libobjc (dyld's automatic umbrella-
         // framework re-export at load time, not a real link requirement).
+        //
+        // What `-lc++` satisfies differs by platform:
+        // - On macOS the object compiles against libc++, so it is the runtime itself.
+        // - On Linux the object compiles against libstdc++ and carries its own private copy
+        // (see the Linux genrule in shim/BUILD.bazel); what it needs from here is the libunwind Zig
+        // links with libc++, through the _Unwind_* ABI the two runtimes share.
         mod.link_libcpp = true;
         if (deps.target.result.os.tag == .macos) {
             mod.linkFramework("CoreFoundation", .{});
