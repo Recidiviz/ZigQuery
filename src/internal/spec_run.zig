@@ -229,7 +229,7 @@ fn runSpecFile(
     results: *std.ArrayList(Record),
 ) !void {
     // Comparison rules diverge by corpus
-    const corpus: spec_expect.Corpus = if (std.mem.startsWith(u8, entry.path, "googlesql/zigquery/"))
+    const corpus: spec_expect.Corpus = if (std.mem.startsWith(u8, entry.path, "zigquery/"))
         .zigquery
     else if (std.mem.startsWith(u8, entry.path, "googlesql/compliance/"))
         .compliance
