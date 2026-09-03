@@ -287,6 +287,11 @@ test "rows that cannot be shaped leave the table present but empty" {
     var db = try driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
 
+    // The warning this load logs is the expected outcome here.
+    const saved_log_level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = saved_log_level;
+
     // "not a number" cannot cast to INT64, so the batch rolls back — but
     // JSONSource is lenient and the table still exists.
     const stats = try loadInto(arena, db,
