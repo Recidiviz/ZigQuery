@@ -16,10 +16,6 @@
 //! `data` is optional; each entry maps column name to value, exactly as
 //! tabledata.insertAll's `json` member does.
 //!
-//! Go's JSONSource does no validation at all — unlike YAMLSource, which is
-//! strict — so a malformed entry is skipped rather than fatal. That leniency
-//! is reproduced: a table that fails to create must not stop the server from
-//! booting, or a single bad source table would take down every test.
 
 const std = @import("std");
 const zigquery = @import("zigquery");
