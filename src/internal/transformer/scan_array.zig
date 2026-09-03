@@ -1,12 +1,12 @@
 //! Faithful port of go-zetasqlite internal/transformer_scan_array.go.
 //!
-//! UNNEST via the zetasqlite_unnest table-valued function over the encoded
+//! UNNEST via the zigquery_unnest table-valued function over the encoded
 //! array: its `value` column is the array element and `key` the zero-based
 //! offset. Correlated arrays join the transformed input scan against it (LEFT
 //! when is_outer, INNER with an ON condition, CROSS when there is no join
 //! expression).
 //!
-//! This used to be json_each over zetasqlite_decode_array, which serialised
+//! This used to be json_each over zigquery_decode_array, which serialised
 //! every element into a JSON array text for SQLite to re-parse. See
 //! function/unnest_vtab.zig for why that had to go.
 
@@ -39,12 +39,12 @@ pub fn transform(
     // Transform the array expression to UNNEST.
     const array_expr = try coord.transformExpression(array_data.array_expr, ctx);
 
-    // zetasqlite_unnest walks the encoded array in place. It exposes the same
+    // zigquery_unnest walks the encoded array in place. It exposes the same
     // `key`/`value` columns json_each did, so everything below is unchanged.
     const table_fn_args = try alloc.alloc(*sqlbuilder.SQLExpression, 1);
     table_fn_args[0] = array_expr;
     const table_function = try alloc.create(sqlbuilder.TableFunction);
-    table_function.* = .{ .name = "zetasqlite_unnest", .arguments = table_fn_args };
+    table_function.* = .{ .name = "zigquery_unnest", .arguments = table_fn_args };
     const unnest_from_item = try alloc.create(sqlbuilder.FromItem);
     unnest_from_item.* = .{
         .type = .table_function,
@@ -61,7 +61,7 @@ pub fn transform(
     element_info.* = .{
         .id = element_column.id,
         .name = "value",
-        // This column name comes from the zetasqlite_unnest table-valued
+        // This column name comes from the zigquery_unnest table-valued
         // function (our unnest_from_item).
         .expression = try sqlbuilder.newColumnExpression(alloc, "value", unnest_from_item.alias),
     };
@@ -73,7 +73,7 @@ pub fn transform(
         offset_info.* = .{
             .id = offset_column.id,
             .name = "key",
-            // This column name comes from the zetasqlite_unnest table-valued
+            // This column name comes from the zigquery_unnest table-valued
             // function (our unnest_from_item).
             .expression = try sqlbuilder.newColumnExpression(alloc, "key", unnest_from_item.alias),
         };

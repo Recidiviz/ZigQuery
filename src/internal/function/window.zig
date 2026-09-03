@@ -4,7 +4,7 @@
 //! function_register.go / setupWindowFuncMap).
 //!
 //! Every window function from fn_window.zig is registered as
-//! zetasqlite_window_<name> using SQLite's real window callbacks
+//! zigquery_window_<name> using SQLite's real window callbacks
 //! (createWindowFunction: xStep/xInverse/xValue/xFinal). SQLite owns the
 //! PARTITION BY / ORDER BY / frame machinery; each function only sees the
 //! current frame's buffered values through a WindowFuncAggregatedStatus.
@@ -37,7 +37,7 @@ const State = register.State;
 const WindowFuncAggregatedStatus = fns.WindowFuncAggregatedStatus;
 
 /// Go windowFuncs table (function_register.go). Every entry is registered as
-/// zetasqlite_window_<name>.
+/// zigquery_window_<name>.
 const WinEntry = struct {
     name: [:0]const u8,
     Impl: type,
@@ -93,7 +93,7 @@ pub fn registerWindowFunctions(db: *sqlite.Db, state: *State) !void {
     inline for (window_table) |entry| {
         const W = WindowAggregator(entry.name, entry.Impl);
         try db.createWindowFunction(
-            "zetasqlite_window_" ++ entry.name,
+            "zigquery_window_" ++ entry.name,
             -1,
             state,
             W.xStep,
@@ -132,7 +132,7 @@ const setResult = register.setResult;
 fn errorText(comptime name: []const u8, err: anyerror, buf: []u8) []const u8 {
     if (bind.message) |m| return m;
     if (value_mod.diagnostic) |m| return m;
-    return std.fmt.bufPrint(buf, "zetasqlite_window_" ++ name ++ ": {s}", .{@errorName(err)}) catch name;
+    return std.fmt.bufPrint(buf, "zigquery_window_" ++ name ++ ": {s}", .{@errorName(err)}) catch name;
 }
 
 // ----------------------------------------------------------------------
@@ -187,7 +187,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
             argv: [*c]?*c.sqlite3_value,
         ) callconv(.c) void {
             const group = getGroup(ctx) orelse {
-                sqlite.resultError(ctx, "zetasqlite_window_" ++ name ++ ": out of memory");
+                sqlite.resultError(ctx, "zigquery_window_" ++ name ++ ": out of memory");
                 return;
             };
             if (group.failed) return;
@@ -221,7 +221,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                         try group.impl.step(alloc, parsed.values, &group.agg);
                     } else {
                         if (parsed.values.len < 1) {
-                            return bind.fail("zetasqlite_window_" ++ name ++ ": invalid argument num", .{}, error.UnsupportedOperation);
+                            return bind.fail("zigquery_window_" ++ name ++ ": invalid argument num", .{}, error.UnsupportedOperation);
                         }
                         try group.agg.step(alloc, parsed.values[0]);
                     }
@@ -277,7 +277,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
         /// Per-row value: done() over the current frame, no teardown.
         fn xValue(ctx: ?*c.sqlite3_context) callconv(.c) void {
             const group = getGroup(ctx) orelse {
-                sqlite.resultError(ctx, "zetasqlite_window_" ++ name ++ ": out of memory");
+                sqlite.resultError(ctx, "zigquery_window_" ++ name ++ ": out of memory");
                 return;
             };
             if (group.failed) {
@@ -342,7 +342,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 return;
             };
             setResult(ctx, state, ret) catch {
-                sqlite.resultError(ctx, "zetasqlite_window_" ++ name ++ ": failed to encode value");
+                sqlite.resultError(ctx, "zigquery_window_" ++ name ++ ": failed to encode value");
             };
         }
     };
@@ -350,7 +350,7 @@ fn WindowAggregator(comptime name: [:0]const u8, comptime Impl: type) type {
 
 // ----------------------------------------------------------------------
 // Tests: hand-written SQL exactly as the transformer emits it (the
-// zetasqlite_window_<name> calls plus the fixed frames from
+// zigquery_window_<name> calls plus the fixed frames from
 // windowFuncFixedRanges / the user's frame). Values travel through the
 // encoded representation just like the real pipeline.
 // ----------------------------------------------------------------------
@@ -464,9 +464,9 @@ test "row_number / rank / dense_rank with ties" {
     try env.exec("CREATE TABLE t(v)");
     try env.exec("INSERT INTO t VALUES (10),(10),(20),(30),(40)");
 
-    try env.expectInts(&.{ 1, 2, 3, 4, 5 }, "SELECT zetasqlite_window_row_number() OVER (ORDER BY v " ++ F_ROW_NUMBER ++ ") FROM t");
-    try env.expectInts(&.{ 1, 1, 3, 4, 5 }, "SELECT zetasqlite_window_rank() OVER (ORDER BY v " ++ F_RANK ++ ") FROM t");
-    try env.expectInts(&.{ 1, 1, 2, 3, 4 }, "SELECT zetasqlite_window_dense_rank() OVER (ORDER BY v " ++ F_DENSE_RANK ++ ") FROM t");
+    try env.expectInts(&.{ 1, 2, 3, 4, 5 }, "SELECT zigquery_window_row_number() OVER (ORDER BY v " ++ F_ROW_NUMBER ++ ") FROM t");
+    try env.expectInts(&.{ 1, 1, 3, 4, 5 }, "SELECT zigquery_window_rank() OVER (ORDER BY v " ++ F_RANK ++ ") FROM t");
+    try env.expectInts(&.{ 1, 1, 2, 3, 4 }, "SELECT zigquery_window_dense_rank() OVER (ORDER BY v " ++ F_DENSE_RANK ++ ") FROM t");
 }
 
 test "row_number / rank / dense_rank reset per PARTITION" {
@@ -475,9 +475,9 @@ test "row_number / rank / dense_rank reset per PARTITION" {
     try env.exec("CREATE TABLE t(p, v)");
     try env.exec("INSERT INTO t VALUES (1,10),(1,10),(1,20),(2,5),(2,6)");
 
-    try env.expectInts(&.{ 1, 2, 3, 1, 2 }, "SELECT zetasqlite_window_row_number() OVER (PARTITION BY p ORDER BY v " ++ F_ROW_NUMBER ++ ") FROM t");
-    try env.expectInts(&.{ 1, 1, 3, 1, 2 }, "SELECT zetasqlite_window_rank() OVER (PARTITION BY p ORDER BY v " ++ F_RANK ++ ") FROM t");
-    try env.expectInts(&.{ 1, 1, 2, 1, 2 }, "SELECT zetasqlite_window_dense_rank() OVER (PARTITION BY p ORDER BY v " ++ F_DENSE_RANK ++ ") FROM t");
+    try env.expectInts(&.{ 1, 2, 3, 1, 2 }, "SELECT zigquery_window_row_number() OVER (PARTITION BY p ORDER BY v " ++ F_ROW_NUMBER ++ ") FROM t");
+    try env.expectInts(&.{ 1, 1, 3, 1, 2 }, "SELECT zigquery_window_rank() OVER (PARTITION BY p ORDER BY v " ++ F_RANK ++ ") FROM t");
+    try env.expectInts(&.{ 1, 1, 2, 1, 2 }, "SELECT zigquery_window_dense_rank() OVER (PARTITION BY p ORDER BY v " ++ F_DENSE_RANK ++ ") FROM t");
 }
 
 test "sum / count / avg over UNBOUNDED PRECEDING and sliding frames" {
@@ -487,13 +487,13 @@ test "sum / count / avg over UNBOUNDED PRECEDING and sliding frames" {
     try env.exec("INSERT INTO t VALUES (1),(2),(3),(4)");
 
     // Running total.
-    try env.expectInts(&.{ 1, 3, 6, 10 }, "SELECT zetasqlite_window_sum(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 1, 3, 6, 10 }, "SELECT zigquery_window_sum(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
     // Running count.
-    try env.expectInts(&.{ 1, 2, 3, 4 }, "SELECT zetasqlite_window_count(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 1, 2, 3, 4 }, "SELECT zigquery_window_count(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
     // Sliding sum over [1 PRECEDING, CURRENT ROW]: exercises xInverse.
-    try env.expectInts(&.{ 1, 3, 5, 7 }, "SELECT zetasqlite_window_sum(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 1, 3, 5, 7 }, "SELECT zigquery_window_sum(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t");
     // Sliding avg over the same frame.
-    try env.expectFloats(&.{ 1.0, 1.5, 2.5, 3.5 }, "SELECT zetasqlite_window_avg(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectFloats(&.{ 1.0, 1.5, 2.5, 3.5 }, "SELECT zigquery_window_avg(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t");
 }
 
 test "max / min over sliding frame" {
@@ -502,8 +502,8 @@ test "max / min over sliding frame" {
     try env.exec("CREATE TABLE t(v)");
     try env.exec("INSERT INTO t VALUES (3),(1),(4),(1),(5)");
 
-    try env.expectInts(&.{ 3, 3, 4, 4, 5 }, "SELECT zetasqlite_window_max(v) OVER (ORDER BY (SELECT 0) ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
-    try env.expectInts(&.{ 3, 1, 1, 1, 1 }, "SELECT zetasqlite_window_min(v) OVER (ORDER BY (SELECT 0) ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 3, 3, 4, 4, 5 }, "SELECT zigquery_window_max(v) OVER (ORDER BY (SELECT 0) ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 3, 1, 1, 1, 1 }, "SELECT zigquery_window_min(v) OVER (ORDER BY (SELECT 0) ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
 }
 
 test "lag / lead with defaults" {
@@ -514,7 +514,7 @@ test "lag / lead with defaults" {
 
     // LAG(v): previous row, NULL default at the first row.
     {
-        const got = try env.column("SELECT zetasqlite_window_lag(v) OVER (ORDER BY v " ++ F_LAG ++ ") FROM t");
+        const got = try env.column("SELECT zigquery_window_lag(v) OVER (ORDER BY v " ++ F_LAG ++ ") FROM t");
         try testing.expectEqual(@as(usize, 3), got.len);
         try testing.expect(got[0] == .null);
         try testing.expectEqual(@as(i64, 10), got[1].int);
@@ -522,12 +522,12 @@ test "lag / lead with defaults" {
     }
     // LAG(v, 1, -1): explicit default.
     try env.expectInts(&.{ -1, 10, 20 }, try env.fmt(
-        "SELECT zetasqlite_window_lag(v, {s}, {s}) OVER (ORDER BY v " ++ F_LAG ++ ") FROM t",
+        "SELECT zigquery_window_lag(v, {s}, {s}) OVER (ORDER BY v " ++ F_LAG ++ ") FROM t",
         .{ try env.encInt(1), try env.encInt(-1) },
     ));
     // LEAD(v): next row, NULL default at the last row.
     {
-        const got = try env.column("SELECT zetasqlite_window_lead(v) OVER (ORDER BY v " ++ F_LEAD ++ ") FROM t");
+        const got = try env.column("SELECT zigquery_window_lead(v) OVER (ORDER BY v " ++ F_LEAD ++ ") FROM t");
         try testing.expectEqual(@as(usize, 3), got.len);
         try testing.expectEqual(@as(i64, 20), got[0].int);
         try testing.expectEqual(@as(i64, 30), got[1].int);
@@ -542,12 +542,12 @@ test "first_value / last_value / nth_value" {
     try env.exec("INSERT INTO t VALUES (10),(20),(30)");
 
     // FIRST_VALUE over the running frame stays 10.
-    try env.expectInts(&.{ 10, 10, 10 }, "SELECT zetasqlite_window_first_value(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 10, 10, 10 }, "SELECT zigquery_window_first_value(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
     // LAST_VALUE over the running frame tracks the current row.
-    try env.expectInts(&.{ 10, 20, 30 }, "SELECT zetasqlite_window_last_value(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 10, 20, 30 }, "SELECT zigquery_window_last_value(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
     // NTH_VALUE(v, 2) over the whole partition frame -> 20 everywhere.
     try env.expectInts(&.{ 20, 20, 20 }, try env.fmt(
-        "SELECT zetasqlite_window_nth_value(v, {s}) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t",
+        "SELECT zigquery_window_nth_value(v, {s}) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t",
         .{try env.encInt(2)},
     ));
 }
@@ -560,13 +560,13 @@ test "ntile / percent_rank / cume_dist" {
 
     // NTILE(2): two buckets over 4 rows -> 1,1,2,2.
     try env.expectInts(&.{ 1, 1, 2, 2 }, try env.fmt(
-        "SELECT zetasqlite_window_ntile({s}) OVER (ORDER BY v " ++ F_NTILE ++ ") FROM t",
+        "SELECT zigquery_window_ntile({s}) OVER (ORDER BY v " ++ F_NTILE ++ ") FROM t",
         .{try env.encInt(2)},
     ));
     // PERCENT_RANK over distinct values: (rank-1)/(n-1).
-    try env.expectFloats(&.{ 0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0 }, "SELECT zetasqlite_window_percent_rank() OVER (ORDER BY v " ++ F_PERCENT_RANK ++ ") FROM t");
+    try env.expectFloats(&.{ 0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0 }, "SELECT zigquery_window_percent_rank() OVER (ORDER BY v " ++ F_PERCENT_RANK ++ ") FROM t");
     // CUME_DIST over distinct values: k/n.
-    try env.expectFloats(&.{ 0.25, 0.5, 0.75, 1.0 }, "SELECT zetasqlite_window_cume_dist() OVER (ORDER BY v " ++ F_CUME_DIST ++ ") FROM t");
+    try env.expectFloats(&.{ 0.25, 0.5, 0.75, 1.0 }, "SELECT zigquery_window_cume_dist() OVER (ORDER BY v " ++ F_CUME_DIST ++ ") FROM t");
 }
 
 test "partition boundary resets buffered aggregates" {
@@ -576,9 +576,9 @@ test "partition boundary resets buffered aggregates" {
     try env.exec("INSERT INTO t VALUES (1,1),(1,2),(2,10),(2,20),(2,30)");
 
     // Running sum restarts at each partition.
-    try env.expectInts(&.{ 1, 3, 10, 30, 60 }, "SELECT zetasqlite_window_sum(v) OVER (PARTITION BY p ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 1, 3, 10, 30, 60 }, "SELECT zigquery_window_sum(v) OVER (PARTITION BY p ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
     // Running count restarts too.
-    try env.expectInts(&.{ 1, 2, 1, 2, 3 }, "SELECT zetasqlite_window_count(v) OVER (PARTITION BY p ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
+    try env.expectInts(&.{ 1, 2, 1, 2, 3 }, "SELECT zigquery_window_count(v) OVER (PARTITION BY p ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t");
 }
 
 test "statistical window functions (stddev / var / corr)" {
@@ -588,17 +588,17 @@ test "statistical window functions (stddev / var / corr)" {
     try env.exec("INSERT INTO t VALUES (10),(14),(18)");
 
     // STDDEV_POP over the whole partition -> sqrt(32/3) = 3.2659863...
-    try env.expectFloats(&.{ 3.265986323710904, 3.265986323710904, 3.265986323710904 }, "SELECT zetasqlite_window_stddev_pop(v) OVER () FROM t");
+    try env.expectFloats(&.{ 3.265986323710904, 3.265986323710904, 3.265986323710904 }, "SELECT zigquery_window_stddev_pop(v) OVER () FROM t");
     // STDDEV_SAMP (== STDDEV) -> sqrt(32/2) = 4.
-    try env.expectFloats(&.{ 4, 4, 4 }, "SELECT zetasqlite_window_stddev(v) OVER () FROM t");
+    try env.expectFloats(&.{ 4, 4, 4 }, "SELECT zigquery_window_stddev(v) OVER () FROM t");
     // VAR_POP -> 32/3, VAR_SAMP -> 16.
-    try env.expectFloats(&.{ 10.666666666666666, 10.666666666666666, 10.666666666666666 }, "SELECT zetasqlite_window_var_pop(v) OVER () FROM t");
-    try env.expectFloats(&.{ 16, 16, 16 }, "SELECT zetasqlite_window_var_samp(v) OVER () FROM t");
+    try env.expectFloats(&.{ 10.666666666666666, 10.666666666666666, 10.666666666666666 }, "SELECT zigquery_window_var_pop(v) OVER () FROM t");
+    try env.expectFloats(&.{ 16, 16, 16 }, "SELECT zigquery_window_var_samp(v) OVER () FROM t");
 
     // A single value yields NULL (Go: len(values) < 2).
     try env.exec("CREATE TABLE one(v)");
     try env.exec("INSERT INTO one VALUES (5)");
-    const got = try env.column("SELECT zetasqlite_window_stddev(v) OVER () FROM one");
+    const got = try env.column("SELECT zigquery_window_stddev(v) OVER () FROM one");
     try testing.expectEqual(@as(usize, 1), got.len);
     try testing.expect(got[0] == .null);
 }
@@ -613,6 +613,6 @@ test "corr window over packed [x, y] pairs" {
     // symmetric so the result is Pearson's r ~= 0.6546536707079772.
     try env.expectFloats(
         &.{ 0.6546536707079772, 0.6546536707079772, 0.6546536707079772 },
-        "SELECT zetasqlite_window_corr(y, x) OVER () FROM t",
+        "SELECT zigquery_window_corr(y, x) OVER () FROM t",
     );
 }

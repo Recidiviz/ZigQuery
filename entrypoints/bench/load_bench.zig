@@ -6,8 +6,8 @@
 //! tables already present — which is exactly the shape the view graph hits,
 //! since materializing a view deletes and recreates its table.
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 
 pub fn main(init: std.process.Init) !void {
     var buf: [4096]u8 = undefined;

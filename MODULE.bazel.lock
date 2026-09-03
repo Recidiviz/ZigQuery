@@ -640,7 +640,7 @@
     "@@googlesql~//bazel:http_archive_deps.bzl%googlesql_http_archive_deps": {
       "general": {
         "bzlTransitiveDigest": "q8hkj/RBCac2KdTbbFETKc1WIRU/mVzl8wyaMOoHEYQ=",
-        "usagesDigest": "k8lG6C6mzeWj7XYw4BoAjYiYjzZAAAiGNVjJi68ImAU=",
+        "usagesDigest": "x3GLVXKqSdEi/6WS+RFPirfOTUc+EGH7JXKnUCjVj6A=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},

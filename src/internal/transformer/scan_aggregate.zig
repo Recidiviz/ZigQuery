@@ -2,9 +2,9 @@
 //!
 //! Converts an AggregateScan into a SELECT with GROUP BY:
 //! - the input scan becomes the FROM item
-//! - aggregate computed columns transform into zetasqlite_<agg>(...) calls
+//! - aggregate computed columns transform into zigquery_<agg>(...) calls
 //!   (their trailing option markers were attached by the extractor)
-//! - each GROUP BY expression is wrapped in zetasqlite_group_by(...) inside
+//! - each GROUP BY expression is wrapped in zigquery_group_by(...) inside
 //!   the GROUP BY clause, while the SELECT list references the *unwrapped*
 //!   expression (SQLite permits bare columns functionally dependent on the
 //!   grouped expression)
@@ -57,7 +57,7 @@ pub fn transform(
 
     // Process GROUP BY expressions. groupByMap keeps the *unwrapped*
     // expression (used in the SELECT list); the GROUP BY clause gets the
-    // zetasqlite_group_by(...) wrapper for ZetaSQL grouping semantics.
+    // zigquery_group_by(...) wrapper for ZetaSQL grouping semantics.
     var group_by_map = std.AutoHashMap(i64, *SQLExpression).init(alloc);
     var group_by_exprs: std.ArrayList(*SQLExpression) = .empty;
     try group_by_exprs.ensureTotalCapacity(alloc, agg_data.group_by_list.len);
@@ -67,7 +67,7 @@ pub fn transform(
 
         const args = try alloc.alloc(*SQLExpression, 1);
         args[0] = sql_expr;
-        const wrapped = try sqlbuilder.newFunctionExpression(alloc, "zetasqlite_group_by", args);
+        const wrapped = try sqlbuilder.newFunctionExpression(alloc, "zigquery_group_by", args);
         try group_by_exprs.append(alloc, wrapped);
         try group_by_map.put(col.id, sql_expr);
     }
@@ -166,7 +166,7 @@ fn buildGroupingSetsQuery(
             args[0] = base;
             try group_by_set_columns.append(
                 alloc,
-                try sqlbuilder.newFunctionExpression(alloc, "zetasqlite_group_by", args),
+                try sqlbuilder.newFunctionExpression(alloc, "zigquery_group_by", args),
             );
             try set_column_ids.put(col.id, {});
         }

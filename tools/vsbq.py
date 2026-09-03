@@ -45,7 +45,7 @@ import threading
 
 from google.cloud import bigquery
 
-ENGINE = "./zig-out/bin/zetasqlite-zig"
+ENGINE = "./zig-out/bin/zigquery"
 
 # `.sql = "..."` on one line, or a `\\`-prefixed multiline block.
 DESC = re.compile(r'\s*\.desc = "((?:[^"\\]|\\.)*)"')

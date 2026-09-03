@@ -2,12 +2,12 @@
 //!
 //! SQLite has no native MERGE, so the statement is lowered to a sequence of
 //! plain statements executed in order by the driver's MergeStmtAction:
-//!   1. CREATE TABLE zetasqlite_merged_table AS SELECT DISTINCT * FROM
+//!   1. CREATE TABLE zigquery_merged_table AS SELECT DISTINCT * FROM
 //!      (source LEFT JOIN target UNION ALL target LEFT JOIN source) with
 //!      renamed columns (merged_source_*/merged_target_*),
 //!   2. one INSERT / UPDATE ... FROM / DELETE per WHEN clause, filtered via
 //!      EXISTS over the merged table,
-//!   3. DROP TABLE zetasqlite_merged_table.
+//!   3. DROP TABLE zigquery_merged_table.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -70,7 +70,7 @@ pub fn transform(
     var column_mapping = ColumnMapping{};
     const create_table_stmt = try createMergedTableStatement(
         coord,
-        "zetasqlite_merged_table",
+        "zigquery_merged_table",
         source_table,
         target_table,
         source_scan_data,
@@ -121,7 +121,7 @@ pub fn transform(
     }
 
     // 3. Drop temporary table.
-    try statements.append(alloc, "DROP TABLE zetasqlite_merged_table");
+    try statements.append(alloc, "DROP TABLE zigquery_merged_table");
 
     const compound = try sqlbuilder.newCompoundSQLFragment(
         alloc,
@@ -130,14 +130,14 @@ pub fn transform(
     return .{ .compound = compound };
 }
 
-/// Go validateMergeExpression: only `zetasqlite_equal(col, col)` supported.
+/// Go validateMergeExpression: only `zigquery_equal(col, col)` supported.
 fn validateMergeExpression(merge_expr: ExpressionData) Error!void {
     // Go: "merge expression must be a function call"
     if (merge_expr.type != .function) return error.UnsupportedNode;
     const function = merge_expr.function orelse return error.UnsupportedNode;
 
     // Go: "currently MERGE expression is supported equal expression only"
-    if (!std.mem.eql(u8, function.name, "zetasqlite_equal")) return error.UnsupportedNode;
+    if (!std.mem.eql(u8, function.name, "zigquery_equal")) return error.UnsupportedNode;
 
     // Go: "unexpected MERGE expression column num ..."
     if (function.arguments.len != 2) return error.UnsupportedNode;
@@ -315,7 +315,7 @@ fn transformWhenClause(
             // WHERE clause with existence check over the merged table.
             const subq = try sqlbuilder.newSelectStatement(alloc);
             const subq_from = try alloc.create(sqlbuilder.FromItem);
-            subq_from.* = .{ .type = .table, .table_name = "zetasqlite_merged_table" };
+            subq_from.* = .{ .type = .table, .table_name = "zigquery_merged_table" };
             subq.from_clause = subq_from;
             const subq_list = try alloc.alloc(*sqlbuilder.SelectListItem, 2);
             subq_list[0] = try create(alloc, sqlbuilder.SelectListItem{
@@ -360,7 +360,7 @@ fn transformWhenClause(
 
 /// Rewrites source- and target-scan column references into the merged table's
 /// column names, so an expression written against `T`/`S` can be evaluated on a
-/// row of `zetasqlite_merged_table`. Go does this inline for UPDATE's SET items
+/// row of `zigquery_merged_table`. Go does this inline for UPDATE's SET items
 /// only; the WHEN search condition needs the same treatment.
 fn remapToMergedColumns(
     coord: *coordinator.QueryCoordinator,
@@ -418,7 +418,7 @@ fn transformInsertAction(
     var predicates: std.ArrayList([]const u8) = .empty;
     try predicates.append(alloc, try std.fmt.allocPrint(
         alloc,
-        "NOT EXISTS (SELECT 1 FROM zetasqlite_merged_table WHERE `{s}` = {s} AND `{s}` IS NOT NULL)",
+        "NOT EXISTS (SELECT 1 FROM zigquery_merged_table WHERE `{s}` = {s} AND `{s}` IS NOT NULL)",
         .{ merged_source_column_name, source_key_sql, merged_target_column_name },
     ));
     // The search condition is evaluated in the source scan's own scope here, so
@@ -436,7 +436,7 @@ fn transformInsertAction(
     });
 }
 
-/// Go transformUpdateAction: UPDATE target SET ... FROM zetasqlite_merged_table WHERE filter.
+/// Go transformUpdateAction: UPDATE target SET ... FROM zigquery_merged_table WHERE filter.
 fn transformUpdateAction(
     coord: *coordinator.QueryCoordinator,
     when_clause: *const types_data.MergeWhenClauseData,
@@ -465,7 +465,7 @@ fn transformUpdateAction(
         }));
     }
 
-    return std.fmt.allocPrint(alloc, "UPDATE `{s}` SET {s} FROM zetasqlite_merged_table WHERE {s}", .{
+    return std.fmt.allocPrint(alloc, "UPDATE `{s}` SET {s} FROM zigquery_merged_table WHERE {s}", .{
         target_table_name,
         try joinStrings(alloc, set_items.items, ","),
         where_stmt,

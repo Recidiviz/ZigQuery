@@ -12,8 +12,8 @@
 //!   precision on the way in. std.json keeps integers exact, so this does not.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 
 pub const Error = error{
     /// Go: "invalid value type %T for ARRAY column".

@@ -2,7 +2,7 @@
 //!
 //! Subquery expressions by kind:
 //!   SCALAR -> (SELECT * FROM (...))
-//!   ARRAY  -> (SELECT zetasqlite_array(<first output column>) FROM (...))
+//!   ARRAY  -> (SELECT zigquery_array(<first output column>) FROM (...))
 //!   EXISTS -> EXISTS (SELECT * FROM (...))
 //!   IN     -> <expr> IN (SELECT * FROM (...))
 //! Unhandled kinds fall through to the scalar shape, exactly like the Go
@@ -55,7 +55,7 @@ pub fn transform(
             );
             const item = try alloc.create(sqlbuilder.SelectListItem);
             item.* = .{
-                .expression = try sqlbuilder.newFunctionExpression(alloc, "zetasqlite_array", args),
+                .expression = try sqlbuilder.newFunctionExpression(alloc, "zigquery_array", args),
             };
             const select_list = try alloc.alloc(*sqlbuilder.SelectListItem, 1);
             select_list[0] = item;
@@ -124,8 +124,8 @@ test "IN subquery over UNNEST misses" {
     try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
 }
 
-test "ARRAY subquery wraps the first output column in zetasqlite_array" {
-    // The zetasqlite_array aggregate UDF is registered by a later function
+test "ARRAY subquery wraps the first output column in zigquery_array" {
+    // The zigquery_array aggregate UDF is registered by a later function
     // task, so the ARRAY branch is checked as generated SQL only.
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -137,6 +137,6 @@ test "ARRAY subquery wraps the first output column in zetasqlite_array" {
     );
     try testing.expectEqual(@as(usize, 1), stmts.len);
     try testing.expect(
-        std.mem.indexOf(u8, stmts[0], "zetasqlite_array(`x__1`)") != null,
+        std.mem.indexOf(u8, stmts[0], "zigquery_array(`x__1`)") != null,
     );
 }

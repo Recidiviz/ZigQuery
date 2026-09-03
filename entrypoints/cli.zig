@@ -1,4 +1,4 @@
-//! CLI: zetasqlite-zig [--sql] [--file <path>] [--explain] ["SELECT ..."]
+//! CLI: zigquery [--sql] [--file <path>] [--explain] ["SELECT ..."]
 //!
 //! Executes GoogleSQL against an in-memory database and prints the result rows
 //! (tab-separated, header first).
@@ -13,15 +13,15 @@
 //!
 //!   uv run recidiviz/tools/emulator/dump_view_ancestry.py \
 //!       --view sessions.compartment_sessions --output /tmp/a.sql
-//!   zetasqlite-zig --file /tmp/a.sql --explain
+//!   zigquery --file /tmp/a.sql --explain
 //!
 //! The plan comes from EXPLAIN QUERY PLAN over the *translated* SQL, run on the
 //! raw SQLite handle — the GoogleSQL analyzer has no EXPLAIN of its own, and
 //! the plan is a property of what we emit, not of what the user wrote.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 
 pub fn main(init: std.process.Init) !void {
     var stdout_buf: [8192]u8 = undefined;
@@ -55,7 +55,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (sql == null and script_path == null) {
         try out.writeAll(
-            "usage: zetasqlite-zig [--sql] [--file <path>] [--stats] [--explain] [\"SELECT ...\"]\n",
+            "usage: zigquery [--sql] [--file <path>] [--stats] [--explain] [\"SELECT ...\"]\n",
         );
         try out.flush();
         std.process.exit(2);
@@ -69,7 +69,7 @@ pub fn main(init: std.process.Init) !void {
         const stmts = driver.translate(arena, sql.?, .{}) catch |err| {
             try out.print("error: {s}: {s}\n", .{
                 @errorName(err),
-                zetasqlite.analyzer_ffi.last_error,
+                zigquery.analyzer_ffi.last_error,
             });
             try out.flush();
             std.process.exit(1);
@@ -113,7 +113,7 @@ pub fn main(init: std.process.Init) !void {
         }
         try out.print("-- ran {d} statements from {s}\n", .{ n, path });
         // The script is setup, not the thing being measured.
-        if (show_stats) zetasqlite.phase.reset();
+        if (show_stats) zigquery.phase.reset();
     }
 
     // With no query of its own, --file means "run the script, then explain (or
@@ -124,11 +124,11 @@ pub fn main(init: std.process.Init) !void {
     // Wall clock for the query alone — the script above is setup. The phase
     // totals partition only the work that is instrumented, so the gap between
     // them and this is the answer to "what isn't being measured?"
-    const query_start = zetasqlite.phase.nowNs();
+    const query_start = zigquery.phase.nowNs();
 
     if (explain) {
         try explainQuery(arena, out, db, query);
-        if (show_stats) try printPhases(out, zetasqlite.phase.nowNs() -| query_start);
+        if (show_stats) try printPhases(out, zigquery.phase.nowNs() -| query_start);
         try out.flush();
         return;
     }
@@ -157,7 +157,7 @@ pub fn main(init: std.process.Init) !void {
         }
         try out.writeAll("\n");
     }
-    if (show_stats) try printPhases(out, zetasqlite.phase.nowNs() -| query_start);
+    if (show_stats) try printPhases(out, zigquery.phase.nowNs() -| query_start);
     try out.flush();
 }
 
@@ -167,7 +167,7 @@ pub fn main(init: std.process.Init) !void {
 /// `total_ns` is measured wall time for the query, row printing included; the
 /// phases below are subsets of it, not a partition of it.
 fn printPhases(out: *std.Io.Writer, total_ns: u64) !void {
-    const phase = zetasqlite.phase;
+    const phase = zigquery.phase;
     const ms = struct {
         fn of(ns: u64) f64 {
             return @as(f64, @floatFromInt(ns)) / 1e6;

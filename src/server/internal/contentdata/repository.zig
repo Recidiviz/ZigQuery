@@ -14,9 +14,9 @@
 //!   named in full here instead, which needs no connection-wide state.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
-const value = zetasqlite.value;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
+const value = zigquery.value;
 const rowvalue = @import("../types/rowvalue.zig");
 
 pub const Error = error{

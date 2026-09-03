@@ -441,9 +441,9 @@ fn skipValue(r: *BinReader) ValueError!void {
 /// the name to an index, and the generated SQL emits one call per referenced
 /// field per row — three on one line of `testdata/sql_snapshot.txt`:
 ///
-///     zetasqlite_lpad(zetasqlite_get_struct_field(`$array_4`.`value`, 0),
-///                     zetasqlite_get_struct_field(`$array_4`.`value`, 1),
-///                     zetasqlite_get_struct_field(`$array_4`.`value`, 2))
+///     zigquery_lpad(zigquery_get_struct_field(`$array_4`.`value`, 0),
+///                     zigquery_get_struct_field(`$array_4`.`value`, 1),
+///                     zigquery_get_struct_field(`$array_4`.`value`, 2))
 ///
 /// Decoding the whole composite for each of those cost fields x references per
 /// row. Walking to the entry with `skipValue` and decoding only it costs the

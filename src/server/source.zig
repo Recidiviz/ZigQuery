@@ -22,8 +22,8 @@
 //! booting, or a single bad source table would take down every test.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 const schema_mod = @import("internal/types/schema.zig");
 const metadata = @import("internal/metadata/repository.zig");
 const datasets_handler = @import("handler/datasets.zig");

@@ -5,7 +5,7 @@
 # pointer alone. Everything this repo needs from it is expressed here.
 
 module(
-    name = "zetasqlite_zig",
+    name = "zigquery_emulator",
     version = "0.0.0",
 )
 

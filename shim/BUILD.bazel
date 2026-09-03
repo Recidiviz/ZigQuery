@@ -201,7 +201,7 @@ genrule(
     # -Wl,-x (local-symbol stripping, ~11% smaller per the spike in
     # docs/M0_FINDINGS.md) is deliberately NOT here: applied to a `-r`
     # object rather than a final `-shared` link, it corrupts thread-local-
-    # variable relocations — `zetasqlite-zig` linked against a `-x`'d
+    # variable relocations — `zigquery` linked against a `-x`'d
     # version of this object crashed at dyld startup with "malformed
     # thread-local, offset ... is larger than total size". Safe only after
     # every symbol reference is already resolved, which for this object

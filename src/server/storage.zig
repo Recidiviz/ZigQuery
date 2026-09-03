@@ -30,7 +30,7 @@
 //!     HTTP/JSON/glue       0.87 s   5.8%
 //!
 //!   By caller, SQLite splits 56.6% the caller's own SQL, 0.9% the
-//!   `zetasqlite_catalog` upserts and 1.1% the metadata tables — so the cost
+//!   `zigquery_catalog` upserts and 1.1% the metadata tables — so the cost
 //!   is real query work, not the emulator's bookkeeping. Re-preparing the
 //!   fixed upsert SQL on every catalog write, which looks wasteful, measures
 //!   0.011 ms a call and 0.4% of handle: not worth caching.
@@ -50,8 +50,8 @@
 //!   C API does not have.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 
 /// Zig 0.16 dropped `std.posix.getenv` and this layer has no `std.Io` to reach
 /// an environment map through — the same reason phase.zig reads the clock from

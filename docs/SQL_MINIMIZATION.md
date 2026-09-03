@@ -2,7 +2,7 @@
 
 Baseline commit `1f95690` (746 PASS / 0 FAIL / 2 SKIP). All numbers below are
 reproducible with `zig build corpus -Drelease=true` and
-`./zig-out/bin/zetasqlite-zig --sql "<query>"`.
+`./zig-out/bin/zigquery --sql "<query>"`.
 
 The existing note at the top of `src/internal/sqlbuilder/sqlbuilder.zig` already
 establishes the shape of the problem: prepare cost is per *level*, not per byte,
@@ -247,7 +247,7 @@ Its output is fed back to the *analyzer*. Ours is fed to SQLite for *execution*.
 Three consequences that must be designed in from the start, not discovered later:
 
 **(a) Inlining duplicates work.** GoogleSQL inlines a pending expression at every
-use site without a thought. For us, `SELECT zetasqlite_regexp_extract(…) AS c__5`
+use site without a thought. For us, `SELECT zigquery_regexp_extract(…) AS c__5`
 referenced three times is one evaluation per row today and three after inlining —
 and our UDFs are not cheap. **Gate inlining on use count**: inline only when the
 column is referenced exactly once, or the expression is trivially cheap (column
@@ -268,7 +268,7 @@ safe; the flush is what makes the materialization real.
 above them inlines an aggregate into an outer aggregate.
 
 Also note `scan_aggregate.zig:59-68` deliberately keeps two forms of each GROUP BY
-expression — wrapped in `zetasqlite_group_by(...)` for the GROUP BY clause,
+expression — wrapped in `zigquery_group_by(...)` for the GROUP BY clause,
 unwrapped for the select list. Whatever fills the select slot must keep using the
 unwrapped form.
 
@@ -353,7 +353,7 @@ from one line.
 
 ```sh
 zig build corpus -Drelease=true          # PASS counts + prepared-SQL bytes
-./zig-out/bin/zetasqlite-zig --sql "…"   # emitted SQLite for one query
+./zig-out/bin/zigquery --sql "…"   # emitted SQLite for one query
 ```
 
 > `zig build corpus` has since been retired. Its 748 cases are

@@ -2,7 +2,7 @@
 //! Aggregator + newAggregator + setupAggregateFuncMap):
 //!
 //! - Every foundation aggregate from fn_aggregate.zig is registered as
-//!   zetasqlite_<name> (Go setupAggregateFuncMap; aggregates have no safe_
+//!   zigquery_<name> (Go setupAggregateFuncMap; aggregates have no safe_
 //!   variants and window variants are a later milestone).
 //! - The generic Aggregator step logic is shared: reject the rows DISTINCT has already
 //!   taken, reading the arguments as SQLite stored them, then decode args, strip the option
@@ -13,7 +13,7 @@
 //!   (decoded values must survive until xFinal). xFinal may run without any
 //!   prior xStep (empty group): the result is then done() on a fresh impl.
 //!
-//! Also registers the six option marker producers (zetasqlite_distinct /
+//! Also registers the six option marker producers (zigquery_distinct /
 //! _limit / _order_by / _ignore_nulls / _having_max / _having_min) that Go
 //! keeps in normalFuncs, including their safe_ twins.
 
@@ -87,7 +87,7 @@ pub fn registerAggregates(db: *sqlite.Db, state: *State) !void {
     inline for (agg_table) |entry| {
         const A = Aggregator(entry.name, entry.Impl);
         try db.createAggregateFunction(
-            "zetasqlite_" ++ entry.name,
+            "zigquery_" ++ entry.name,
             -1,
             state,
             A.xStep,
@@ -96,7 +96,7 @@ pub fn registerAggregates(db: *sqlite.Db, state: *State) !void {
     }
 
     // Option markers are plain scalar functions in Go's normalFuncs table,
-    // so they get both zetasqlite_ and zetasqlite_safe_ names.
+    // so they get both zigquery_ and zigquery_safe_ names.
     inline for (agg_opt.option_func_table) |info| {
         const Tramp = struct {
             fn scalar(
@@ -107,8 +107,8 @@ pub fn registerAggregates(db: *sqlite.Db, state: *State) !void {
                 invokeOption(info, ctx, argc, argv);
             }
         };
-        try db.createScalarFunction("zetasqlite_" ++ info.name, -1, state, Tramp.scalar, true);
-        try db.createScalarFunction("zetasqlite_safe_" ++ info.name, -1, state, Tramp.scalar, true);
+        try db.createScalarFunction("zigquery_" ++ info.name, -1, state, Tramp.scalar, true);
+        try db.createScalarFunction("zigquery_safe_" ++ info.name, -1, state, Tramp.scalar, true);
     }
 }
 
@@ -129,7 +129,7 @@ fn invokeOption(
     bind.clearDiagnostics();
 
     const args = decodeArgs(alloc, argv, @intCast(argc)) catch {
-        sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": failed to decode value");
+        sqlite.resultError(ctx, "zigquery_" ++ info.name ++ ": failed to decode value");
         return;
     };
     const ret = info.handler(alloc, args) catch |err| {
@@ -138,7 +138,7 @@ fn invokeOption(
         return;
     };
     setResult(ctx, state, ret) catch {
-        sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": failed to encode value");
+        sqlite.resultError(ctx, "zigquery_" ++ info.name ++ ": failed to encode value");
     };
 }
 
@@ -219,7 +219,7 @@ const setResult = register.setResult;
 fn errorText(comptime name: []const u8, err: anyerror, buf: []u8) []const u8 {
     if (bind.message) |m| return m;
     if (value_mod.diagnostic) |m| return m;
-    return std.fmt.bufPrint(buf, "zetasqlite_" ++ name ++ ": {s}", .{@errorName(err)}) catch name;
+    return std.fmt.bufPrint(buf, "zigquery_" ++ name ++ ": {s}", .{@errorName(err)}) catch name;
 }
 
 // ----------------------------------------------------------------------
@@ -248,13 +248,13 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
         ) callconv(.c) void {
             const state: *State = @ptrCast(@alignCast(sqlite.userData(ctx).?));
             const raw = sqlite.aggregateContext(ctx, @sizeOf(?*Group)) orelse {
-                sqlite.resultError(ctx, "zetasqlite_" ++ name ++ ": out of memory");
+                sqlite.resultError(ctx, "zigquery_" ++ name ++ ": out of memory");
                 return;
             };
             const slot: *?*Group = @ptrCast(@alignCast(raw));
             if (slot.* == null) {
                 const group = state.gpa.create(Group) catch {
-                    sqlite.resultError(ctx, "zetasqlite_" ++ name ++ ": out of memory");
+                    sqlite.resultError(ctx, "zigquery_" ++ name ++ ": out of memory");
                     return;
                 };
                 group.* = .{ .arena = std.heap.ArenaAllocator.init(state.gpa) };
@@ -383,7 +383,7 @@ fn Aggregator(comptime name: [:0]const u8, comptime Impl: type) type {
                 return;
             };
             setResult(ctx, state, ret) catch {
-                sqlite.resultError(ctx, "zetasqlite_" ++ name ++ ": failed to encode value");
+                sqlite.resultError(ctx, "zigquery_" ++ name ++ ": failed to encode value");
             };
         }
     };
@@ -508,16 +508,16 @@ test "sum/avg/count/countif over a table" {
     try env.exec("CREATE TABLE t(x)");
     try env.exec("INSERT INTO t VALUES (1),(2),(NULL),(3)");
 
-    try env.expectInt(6, "SELECT zetasqlite_sum(x) FROM t");
-    try env.expectFloat(2.0, "SELECT zetasqlite_avg(x) FROM t");
-    try env.expectInt(3, "SELECT zetasqlite_count(x) FROM t");
-    try env.expectInt(4, "SELECT zetasqlite_count_star() FROM t");
-    try env.expectInt(2, "SELECT zetasqlite_countif(zetasqlite_greater_or_equal(x, 2)) FROM t");
+    try env.expectInt(6, "SELECT zigquery_sum(x) FROM t");
+    try env.expectFloat(2.0, "SELECT zigquery_avg(x) FROM t");
+    try env.expectInt(3, "SELECT zigquery_count(x) FROM t");
+    try env.expectInt(4, "SELECT zigquery_count_star() FROM t");
+    try env.expectInt(2, "SELECT zigquery_countif(zigquery_greater_or_equal(x, 2)) FROM t");
 
     // Float inputs keep float results; int-only SUM stays INTEGER.
     try env.exec("CREATE TABLE tf(x)");
     try env.exec("INSERT INTO tf VALUES (1.5),(2.0)");
-    try env.expectFloat(3.5, "SELECT zetasqlite_sum(x) FROM tf");
+    try env.expectFloat(3.5, "SELECT zigquery_sum(x) FROM tf");
 }
 
 test "empty and all-NULL groups are NULL" {
@@ -526,39 +526,39 @@ test "empty and all-NULL groups are NULL" {
 
     try env.exec("CREATE TABLE empty_t(x)");
     // Empty input: xFinal runs without xStep.
-    try env.expectNullResult("SELECT zetasqlite_sum(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_avg(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_max(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_min(x) FROM empty_t");
-    try env.expectInt(0, "SELECT zetasqlite_count(x) FROM empty_t");
-    try env.expectInt(0, "SELECT zetasqlite_count_star() FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_string_agg(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_sum(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_avg(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_max(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_min(x) FROM empty_t");
+    try env.expectInt(0, "SELECT zigquery_count(x) FROM empty_t");
+    try env.expectInt(0, "SELECT zigquery_count_star() FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_string_agg(x) FROM empty_t");
     // These returned Go's in-band sentinels (true/false/-1/-1/1/[]) until the
     // "unset" marker moved out of band. BigQuery returns NULL for all of them;
     // see the header of fn_aggregate.zig.
-    try env.expectNullResult("SELECT zetasqlite_logical_and(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_logical_or(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_bit_and(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_bit_or(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_bit_xor(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_array_agg(x) FROM empty_t");
-    try env.expectNullResult("SELECT zetasqlite_array_concat_agg(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_logical_and(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_logical_or(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_bit_and(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_bit_or(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_bit_xor(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_array_agg(x) FROM empty_t");
+    try env.expectNullResult("SELECT zigquery_array_concat_agg(x) FROM empty_t");
 
     // All-NULL input behaves the same for the NULL-skipping aggregates.
     try env.exec("CREATE TABLE null_t(x)");
     try env.exec("INSERT INTO null_t VALUES (NULL),(NULL)");
-    try env.expectNullResult("SELECT zetasqlite_sum(x) FROM null_t");
-    try env.expectInt(0, "SELECT zetasqlite_count(x) FROM null_t");
-    try env.expectInt(2, "SELECT zetasqlite_count_star() FROM null_t");
-    try env.expectNullResult("SELECT zetasqlite_any_value(x) FROM null_t");
+    try env.expectNullResult("SELECT zigquery_sum(x) FROM null_t");
+    try env.expectInt(0, "SELECT zigquery_count(x) FROM null_t");
+    try env.expectInt(2, "SELECT zigquery_count_star() FROM null_t");
+    try env.expectNullResult("SELECT zigquery_any_value(x) FROM null_t");
     // All-NULL reaches done() by a different route than the empty group above
     // — step runs but returns early — so assert it separately. BigQuery gives
     // NULL for both.
-    try env.expectNullResult("SELECT zetasqlite_bit_and(x) FROM null_t");
-    try env.expectNullResult("SELECT zetasqlite_bit_or(x) FROM null_t");
-    try env.expectNullResult("SELECT zetasqlite_bit_xor(x) FROM null_t");
-    try env.expectNullResult("SELECT zetasqlite_logical_and(x) FROM null_t");
-    try env.expectNullResult("SELECT zetasqlite_logical_or(x) FROM null_t");
+    try env.expectNullResult("SELECT zigquery_bit_and(x) FROM null_t");
+    try env.expectNullResult("SELECT zigquery_bit_or(x) FROM null_t");
+    try env.expectNullResult("SELECT zigquery_bit_xor(x) FROM null_t");
+    try env.expectNullResult("SELECT zigquery_logical_and(x) FROM null_t");
+    try env.expectNullResult("SELECT zigquery_logical_or(x) FROM null_t");
 }
 
 test "max/min/any_value over ints, strings and dates" {
@@ -567,17 +567,17 @@ test "max/min/any_value over ints, strings and dates" {
 
     try env.exec("CREATE TABLE t(x)");
     try env.exec("INSERT INTO t VALUES (3),(NULL),(1),(2)");
-    try env.expectInt(3, "SELECT zetasqlite_max(x) FROM t");
-    try env.expectInt(1, "SELECT zetasqlite_min(x) FROM t");
-    try env.expectInt(3, "SELECT zetasqlite_any_value(x) FROM t");
+    try env.expectInt(3, "SELECT zigquery_max(x) FROM t");
+    try env.expectInt(1, "SELECT zigquery_min(x) FROM t");
+    try env.expectInt(3, "SELECT zigquery_any_value(x) FROM t");
 
     try env.exec("CREATE TABLE ts(s)");
     try env.exec(try env.alloc().dupeZ(u8, try env.fmt(
         "INSERT INTO ts VALUES ({s}),({s}),({s})",
         .{ try env.encStr("pear"), try env.encStr("apple"), try env.encStr("fig") },
     )));
-    try env.expectStringResult("pear", "SELECT zetasqlite_max(s) FROM ts");
-    try env.expectStringResult("apple", "SELECT zetasqlite_min(s) FROM ts");
+    try env.expectStringResult("pear", "SELECT zigquery_max(s) FROM ts");
+    try env.expectStringResult("apple", "SELECT zigquery_min(s) FROM ts");
 
     try env.exec("CREATE TABLE td(d)");
     const d1 = try env.enc(.{ .date = try value_mod.parseDateDays("2021-06-15") });
@@ -588,7 +588,7 @@ test "max/min/any_value over ints, strings and dates" {
     )));
     try value_mod.expectValueEqual(
         .{ .date = try value_mod.parseDateDays("2020-01-01") },
-        try env.queryValue("SELECT zetasqlite_min(d) FROM td"),
+        try env.queryValue("SELECT zigquery_min(d) FROM td"),
     );
 }
 
@@ -598,17 +598,17 @@ test "logical_and/logical_or and bit aggregates" {
 
     try env.exec("CREATE TABLE t(b)");
     try env.exec("INSERT INTO t VALUES (1),(1),(NULL)");
-    try value_mod.expectValueEqual(.{ .int = 1 }, try env.queryValue("SELECT zetasqlite_logical_and(b) FROM t"));
-    try value_mod.expectValueEqual(.{ .int = 1 }, try env.queryValue("SELECT zetasqlite_logical_or(b) FROM t"));
+    try value_mod.expectValueEqual(.{ .int = 1 }, try env.queryValue("SELECT zigquery_logical_and(b) FROM t"));
+    try value_mod.expectValueEqual(.{ .int = 1 }, try env.queryValue("SELECT zigquery_logical_or(b) FROM t"));
     try env.exec("INSERT INTO t VALUES (0)");
-    try value_mod.expectValueEqual(.{ .int = 0 }, try env.queryValue("SELECT zetasqlite_logical_and(b) FROM t"));
-    try value_mod.expectValueEqual(.{ .int = 1 }, try env.queryValue("SELECT zetasqlite_logical_or(b) FROM t"));
+    try value_mod.expectValueEqual(.{ .int = 0 }, try env.queryValue("SELECT zigquery_logical_and(b) FROM t"));
+    try value_mod.expectValueEqual(.{ .int = 1 }, try env.queryValue("SELECT zigquery_logical_or(b) FROM t"));
 
     try env.exec("CREATE TABLE bits(x)");
     try env.exec("INSERT INTO bits VALUES (12),(10),(NULL)");
-    try env.expectInt(8, "SELECT zetasqlite_bit_and(x) FROM bits");
-    try env.expectInt(14, "SELECT zetasqlite_bit_or(x) FROM bits");
-    try env.expectInt(6, "SELECT zetasqlite_bit_xor(x) FROM bits");
+    try env.expectInt(8, "SELECT zigquery_bit_and(x) FROM bits");
+    try env.expectInt(14, "SELECT zigquery_bit_or(x) FROM bits");
+    try env.expectInt(6, "SELECT zigquery_bit_xor(x) FROM bits");
 }
 
 test "distinct dedup including NULL handling" {
@@ -617,10 +617,10 @@ test "distinct dedup including NULL handling" {
 
     try env.exec("CREATE TABLE t(x)");
     try env.exec("INSERT INTO t VALUES (1),(1),(2),(2),(3),(NULL),(NULL)");
-    try env.expectInt(6, "SELECT zetasqlite_sum(x, zetasqlite_distinct()) FROM t");
-    try env.expectInt(3, "SELECT zetasqlite_count(x, zetasqlite_distinct()) FROM t");
+    try env.expectInt(6, "SELECT zigquery_sum(x, zigquery_distinct()) FROM t");
+    try env.expectInt(3, "SELECT zigquery_count(x, zigquery_distinct()) FROM t");
     // Plain (non-distinct) for contrast.
-    try env.expectInt(9, "SELECT zetasqlite_sum(x) FROM t");
+    try env.expectInt(9, "SELECT zigquery_sum(x) FROM t");
 
     // DISTINCT over strings dedups on decoded content.
     try env.exec("CREATE TABLE ts(s)");
@@ -628,7 +628,7 @@ test "distinct dedup including NULL handling" {
         "INSERT INTO ts VALUES ({s}),({s}),({s})",
         .{ try env.encStr("a"), try env.encStr("a"), try env.encStr("b") },
     )));
-    try env.expectInt(2, "SELECT zetasqlite_count(s, zetasqlite_distinct()) FROM ts");
+    try env.expectInt(2, "SELECT zigquery_count(s, zigquery_distinct()) FROM ts");
 }
 
 test "array_agg with order_by/limit/ignore_nulls markers" {
@@ -641,7 +641,7 @@ test "array_agg with order_by/limit/ignore_nulls markers" {
     // ORDER BY x ASC.
     {
         const v = try env.queryValue(
-            "SELECT zetasqlite_array_agg(x, zetasqlite_order_by(x, 1)) FROM t",
+            "SELECT zigquery_array_agg(x, zigquery_order_by(x, 1)) FROM t",
         );
         try testing.expectEqual(@as(usize, 3), v.array.values.len);
         try value_mod.expectValueEqual(.{ .int = 1 }, v.array.values[0]);
@@ -651,7 +651,7 @@ test "array_agg with order_by/limit/ignore_nulls markers" {
     // ORDER BY x DESC LIMIT 2.
     {
         const v = try env.queryValue(
-            "SELECT zetasqlite_array_agg(x, zetasqlite_order_by(x, 0), zetasqlite_limit(2)) FROM t",
+            "SELECT zigquery_array_agg(x, zigquery_order_by(x, 0), zigquery_limit(2)) FROM t",
         );
         try testing.expectEqual(@as(usize, 2), v.array.values.len);
         try value_mod.expectValueEqual(.{ .int = 3 }, v.array.values[0]);
@@ -662,11 +662,11 @@ test "array_agg with order_by/limit/ignore_nulls markers" {
     try env.exec("INSERT INTO t VALUES (NULL)");
     try env.expectErrorMsg(
         "ARRAY_AGG: input value must be not null",
-        "SELECT zetasqlite_array_agg(x) FROM t",
+        "SELECT zigquery_array_agg(x) FROM t",
     );
     {
         const v = try env.queryValue(
-            "SELECT zetasqlite_array_agg(x, zetasqlite_ignore_nulls()) FROM t",
+            "SELECT zigquery_array_agg(x, zigquery_ignore_nulls()) FROM t",
         );
         try testing.expectEqual(@as(usize, 3), v.array.values.len);
     }
@@ -688,7 +688,7 @@ test "array_concat_agg flattens element arrays" {
         .{ a1, a2 },
     )));
 
-    const v = try env.queryValue("SELECT zetasqlite_array_concat_agg(a) FROM t");
+    const v = try env.queryValue("SELECT zigquery_array_concat_agg(a) FROM t");
     try testing.expectEqual(@as(usize, 3), v.array.values.len);
     try value_mod.expectValueEqual(.{ .int = 1 }, v.array.values[0]);
     try value_mod.expectValueEqual(.{ .int = 3 }, v.array.values[2]);
@@ -704,13 +704,13 @@ test "string_agg default and custom delimiters, order and limit" {
         .{ try env.encStr("b"), try env.encStr("a"), try env.encStr("c") },
     )));
 
-    try env.expectStringResult("b,a,c", "SELECT zetasqlite_string_agg(s) FROM t");
+    try env.expectStringResult("b,a,c", "SELECT zigquery_string_agg(s) FROM t");
     try env.expectStringResult("b-a-c", try env.fmt(
-        "SELECT zetasqlite_string_agg(s, {s}) FROM t",
+        "SELECT zigquery_string_agg(s, {s}) FROM t",
         .{try env.encStr("-")},
     ));
-    try env.expectStringResult("a,b,c", "SELECT zetasqlite_string_agg(s, zetasqlite_order_by(s, 1)) FROM t");
-    try env.expectStringResult("c,b", "SELECT zetasqlite_string_agg(s, zetasqlite_order_by(s, 0), zetasqlite_limit(2)) FROM t");
+    try env.expectStringResult("a,b,c", "SELECT zigquery_string_agg(s, zigquery_order_by(s, 1)) FROM t");
+    try env.expectStringResult("c,b", "SELECT zigquery_string_agg(s, zigquery_order_by(s, 0), zigquery_limit(2)) FROM t");
 }
 
 test "any_value having max/min markers" {
@@ -725,11 +725,11 @@ test "any_value having max/min markers" {
 
     try env.expectStringResult(
         "high",
-        "SELECT zetasqlite_any_value(name, zetasqlite_having_max(score)) FROM t",
+        "SELECT zigquery_any_value(name, zigquery_having_max(score)) FROM t",
     );
     try env.expectStringResult(
         "low",
-        "SELECT zetasqlite_any_value(name, zetasqlite_having_min(score)) FROM t",
+        "SELECT zigquery_any_value(name, zigquery_having_min(score)) FROM t",
     );
 }
 
@@ -741,7 +741,7 @@ test "aggregates work per group with GROUP BY" {
     try env.exec("INSERT INTO t VALUES (1, 10),(1, 20),(2, 5),(2, NULL)");
 
     var stmt = try env.db.prepare(
-        "SELECT zetasqlite_group_by(g), zetasqlite_sum(x), zetasqlite_count(x) FROM t GROUP BY zetasqlite_group_by(g) ORDER BY 1",
+        "SELECT zigquery_group_by(g), zigquery_sum(x), zigquery_count(x) FROM t GROUP BY zigquery_group_by(g) ORDER BY 1",
     );
     defer stmt.finalize();
     try testing.expect(try stmt.step());
@@ -763,7 +763,7 @@ test "distinct combined with order_by and limit" {
     try env.exec("INSERT INTO t VALUES (2),(2),(1),(3),(1)");
 
     const v = try env.queryValue(
-        "SELECT zetasqlite_array_agg(x, zetasqlite_distinct(), zetasqlite_order_by(x, 1), zetasqlite_limit(2)) FROM t",
+        "SELECT zigquery_array_agg(x, zigquery_distinct(), zigquery_order_by(x, 1), zigquery_limit(2)) FROM t",
     );
     try testing.expectEqual(@as(usize, 2), v.array.values.len);
     try value_mod.expectValueEqual(.{ .int = 1 }, v.array.values[0]);

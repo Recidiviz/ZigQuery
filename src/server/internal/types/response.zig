@@ -19,12 +19,12 @@
 //! testdata/golden.json and the tests below.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 const govalue = @import("govalue.zig");
 const schema = @import("schema.zig");
-const spec = zetasqlite.spec;
-const value_mod = zetasqlite.value;
+const spec = zigquery.spec;
+const value_mod = zigquery.value;
 const bqpb = @import("../../proto/bigquery.zig");
 const tablerow = @import("tablerow.zig");
 const json_pb = @import("../../json_pb.zig");
@@ -100,7 +100,6 @@ fn cellByteLen(arena: std.mem.Allocator, cell: driver.Cell) std.mem.Allocator.Er
         },
     };
 }
-
 
 /// Go internal/types.Format: under `formatOptions.useInt64Timestamp`, a
 /// TIMESTAMP cell is re-rendered as int64 microseconds instead of the

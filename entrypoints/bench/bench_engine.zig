@@ -34,8 +34,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 
 const default_sizes = [_]usize{ 1, 50, 500 };
 

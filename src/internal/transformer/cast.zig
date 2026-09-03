@@ -2,8 +2,8 @@
 //!
 //! Recursively transforms the cast expression, JSON-encodes the source and
 //! target types (matching Go's json.Marshal of the internal Type spec, field
-//! order and null emission included), and emits a zetasqlite_cast function
-//! call: zetasqlite_cast(expr, fromTypeJSON, toTypeJSON, returnNullOnErr).
+//! order and null emission included), and emits a zigquery_cast function
+//! call: zigquery_cast(expr, fromTypeJSON, toTypeJSON, returnNullOnErr).
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -55,7 +55,7 @@ pub fn transform(
         if (cast.return_null_on_err) "true" else "false",
     );
 
-    return sqlbuilder.newFunctionExpression(alloc, "zetasqlite_cast", args);
+    return sqlbuilder.newFunctionExpression(alloc, "zigquery_cast", args);
 }
 
 /// Byte-identical mirror of Go's json.Marshal over the internal Type spec:
@@ -160,7 +160,7 @@ test "marshalType matches Go json.Marshal shapes" {
     try testing.expect(std.mem.indexOf(u8, arr_json, "\"elementType\":{\"name\":\"\",\"kind\":8,") != null);
 }
 
-test "cast transform emits zetasqlite_cast call" {
+test "cast transform emits zigquery_cast call" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -185,7 +185,7 @@ test "cast transform emits zetasqlite_cast call" {
     const expr = try transform(&coord, .{ .type = .cast, .cast = cast_data }, ctx);
     try testing.expectEqual(sqlbuilder.ExpressionType.function, expr.type);
     const call = expr.function_call.?;
-    try testing.expectEqualStrings("zetasqlite_cast", call.name);
+    try testing.expectEqualStrings("zigquery_cast", call.name);
     try testing.expectEqual(@as(usize, 4), call.arguments.len);
     try testing.expectEqualStrings("1", call.arguments[0].value);
     // Type args are JSON type documents, which are STRING values and so render

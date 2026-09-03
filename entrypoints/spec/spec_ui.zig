@@ -5,10 +5,10 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const zetasqlite = @import("zetasqlite");
+const zigquery = @import("zigquery");
 const http_server = @import("http_server");
 
-const spec_run = zetasqlite.spec_run;
+const spec_run = zigquery.spec_run;
 
 const default_port: u16 = 8091;
 const spec_ui_html = @embedFile("spec_ui.html");

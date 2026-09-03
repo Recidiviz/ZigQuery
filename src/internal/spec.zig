@@ -690,7 +690,7 @@ pub const FunctionSpec = struct {
 
     /// Go FunctionSpec.CallSQL for a SQL-body function: substitute each
     /// "@argname" with the transformed argument SQL, then wrap "( body )".
-    /// Bodyless specs are JS functions (Go inlines a zetasqlite_eval_javascript
+    /// Bodyless specs are JS functions (Go inlines a zigquery_eval_javascript
     /// call evaluated by goja, which this port excludes) or templated SQL
     /// functions (Go's analyzeTemplatedFunctionWithRuntimeArgument); both
     /// report Unimplemented rather than emitting an undefined call.

@@ -1,7 +1,7 @@
-//! `zetasqlite_unnest(<encoded array>)`: a table-valued function that iterates
+//! `zigquery_unnest(<encoded array>)`: a table-valued function that iterates
 //! an encoded ARRAY in place.
 //!
-//! It replaces `json_each(zetasqlite_decode_array(<expr>))`, which round-tripped
+//! It replaces `json_each(zigquery_decode_array(<expr>))`, which round-tripped
 //! every element through JSON: `decode_array` decoded the array, re-encoded each
 //! element, and pasted the results into a JSON array text that SQLite then
 //! re-parsed. That worked only because base64 happens to be JSON-safe — the
@@ -85,7 +85,7 @@ var module: c.sqlite3_module = blk: {
 };
 
 /// `gpa` must outlive the connection. Registered as an eponymous-only module
-/// (xCreate null, xConnect set), so it is usable as `FROM zetasqlite_unnest(x)`
+/// (xCreate null, xConnect set), so it is usable as `FROM zigquery_unnest(x)`
 /// with no CREATE VIRTUAL TABLE.
 pub fn register(db: *sqlite.Db, gpa: std.mem.Allocator) !void {
     const ctx = try gpa.create(ModuleCtx);
@@ -93,7 +93,7 @@ pub fn register(db: *sqlite.Db, gpa: std.mem.Allocator) !void {
     ctx.* = .{ .gpa = gpa };
     const rc = c.sqlite3_create_module_v2(
         db.handle,
-        "zetasqlite_unnest",
+        "zigquery_unnest",
         &module,
         ctx,
         destroyModuleCtx,

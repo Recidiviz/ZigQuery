@@ -5,9 +5,9 @@
 #   uv run tools/vsbq.py testdata/specs/zigquery/functions/window/*.zon
 #   uv run tools/spec_import.py --src <checkout>
 [project]
-name = "zetasqlite-tools"
+name = "zigquery-tools"
 version = "0.0.0"
-description = "Development tooling for zetasqlite-zig."
+description = "Development tooling for zigquery."
 requires-python = ">=3.11"
 dependencies = [
     # tools/vsbq.py: compares the spec corpus against real BigQuery. The client

@@ -11,9 +11,9 @@
 //! Schema goes to stdout; timings and progress go to stderr, so the two can be
 //! separated by redirection alone.
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
-const phase = zetasqlite.phase;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
+const phase = zigquery.phase;
 
 pub fn main(init: std.process.Init) !void {
     var out_buf: [1 << 16]u8 = undefined;

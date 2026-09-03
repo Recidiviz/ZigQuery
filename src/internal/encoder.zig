@@ -146,9 +146,9 @@ pub fn LiteralFromValue(alloc: std.mem.Allocator, v: Value) ValueError![]u8 {
             // SQLite has no NaN/Inf literal syntax and scrubs any non-finite
             // arithmetic/math-function result to NULL, but a numeric literal that overflows a
             // double parses straight to +-Inf (`1e400`); NaN has no literal equivalent,
-            // so it goes through zetasqlite_nan_literal() (fn_math.nanLiteral),
+            // so it goes through zigquery_nan_literal() (fn_math.nanLiteral),
             // which sets the result value directly.
-            if (std.math.isNan(f)) return alloc.dupe(u8, "zetasqlite_nan_literal()");
+            if (std.math.isNan(f)) return alloc.dupe(u8, "zigquery_nan_literal()");
             if (std.math.isInf(f)) return alloc.dupe(u8, if (f > 0) "1e400" else "-1e400");
             var buf: [32]u8 = undefined;
             const s = value_mod.formatFloatGo(&buf, f);

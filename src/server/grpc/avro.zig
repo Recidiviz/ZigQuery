@@ -73,10 +73,10 @@
 //! and every field after it decodes wrong.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const spec = zetasqlite.spec;
-const value_mod = zetasqlite.value;
-const pb = zetasqlite.pb;
+const zigquery = @import("zigquery");
+const spec = zigquery.spec;
+const value_mod = zigquery.value;
+const pb = zigquery.pb;
 const Value = value_mod.Value;
 
 pub const Error = error{
@@ -547,12 +547,12 @@ const Schema = struct {
 
 /// The schema text for every kind that is a fixed string — which is all of them
 /// except the two that recurse.
-fn leafSchema(kind: zetasqlite.pb.TypeKind) Error![]const u8 {
+fn leafSchema(kind: zigquery.pb.TypeKind) Error![]const u8 {
     return primitiveSchema(kind) orelse annotatedSchema(kind);
 }
 
 /// The kinds Avro has a type for outright, needing no annotation.
-fn primitiveSchema(kind: zetasqlite.pb.TypeKind) ?[]const u8 {
+fn primitiveSchema(kind: zigquery.pb.TypeKind) ?[]const u8 {
     return switch (kind) {
         .TYPE_BOOL => "\"boolean\"",
         .TYPE_INT32, .TYPE_INT64, .TYPE_UINT32, .TYPE_UINT64, .TYPE_ENUM => "\"long\"",
@@ -565,7 +565,7 @@ fn primitiveSchema(kind: zetasqlite.pb.TypeKind) ?[]const u8 {
 
 /// The kinds that need Avro told what they mean — a `logicalType` where Avro
 /// has a notion of its own, a BigQuery `sqlType` where it does not.
-fn annotatedSchema(kind: zetasqlite.pb.TypeKind) Error![]const u8 {
+fn annotatedSchema(kind: zigquery.pb.TypeKind) Error![]const u8 {
     return switch (kind) {
         .TYPE_DATE => "{\"type\":\"int\",\"logicalType\":\"date\"}",
         .TYPE_TIME => "{\"type\":\"long\",\"logicalType\":\"time-micros\"}",

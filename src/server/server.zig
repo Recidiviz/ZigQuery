@@ -17,9 +17,9 @@
 //!   type per route (server/handler_gen.go's 39 empty structs).
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const job_rows_vtab = zetasqlite.function.job_rows_vtab;
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const job_rows_vtab = zigquery.function.job_rows_vtab;
+const driver = zigquery.driver;
 
 const http_server = @import("http/server.zig");
 const router = @import("router.zig");
@@ -34,7 +34,7 @@ const tables_handler = @import("handler/tables.zig");
 const tabledata_handler = @import("handler/tabledata.zig");
 const metadata = @import("internal/metadata/repository.zig");
 const contentdata = @import("internal/contentdata/repository.zig");
-const phase = zetasqlite.phase;
+const phase = zigquery.phase;
 const schema_mod = @import("internal/types/schema.zig");
 const stats_mod = @import("stats.zig");
 const debug_stats = @import("debug_stats.zig");
@@ -874,7 +874,7 @@ pub const Server = struct {
     /// resource schema-less rather than failing the request.
     fn schemaJsonFromSpec(
         arena: std.mem.Allocator,
-        table_spec: *const zetasqlite.spec.TableSpec,
+        table_spec: *const zigquery.spec.TableSpec,
     ) !?std.json.Value {
         var sbuf: std.ArrayList(u8) = .empty;
         try schema_mod.writeSchemaFromSpec(arena, &sbuf, table_spec);
@@ -1161,9 +1161,9 @@ pub const Server = struct {
         const job_id = job.job_id;
         const job_arena = job.arena.allocator();
 
-        const columns = try job_arena.alloc(*zetasqlite.spec.ColumnSpec, job.set.names.len);
+        const columns = try job_arena.alloc(*zigquery.spec.ColumnSpec, job.set.names.len);
         for (columns, job.set.names, job.set.types) |*dst, name, t| {
-            const col = try job_arena.create(zetasqlite.spec.ColumnSpec);
+            const col = try job_arena.create(zigquery.spec.ColumnSpec);
             col.* = .{ .name = name, .type = t };
             dst.* = col;
         }
@@ -1171,7 +1171,7 @@ pub const Server = struct {
         name_path[0] = try job_arena.dupe(u8, project_id);
         name_path[1] = job_rows_vtab.anon_segment;
         name_path[2] = job.job_id;
-        const table_spec = try job_arena.create(zetasqlite.spec.TableSpec);
+        const table_spec = try job_arena.create(zigquery.spec.TableSpec);
         table_spec.* = .{ .name_path = name_path, .columns = columns };
 
         {

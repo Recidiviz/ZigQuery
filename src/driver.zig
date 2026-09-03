@@ -311,13 +311,13 @@ pub const Db = struct {
             };
         }
         try db.checkStorageFormat();
-        // zetasqlite_* UDFs and the unnest vtab (Go: RegisterFunctions in
+        // zigquery_* UDFs and the unnest vtab (Go: RegisterFunctions in
         // driver init; Go also registered a collation, which this no longer
         // needs — see codec_sortable.zig).
         db.udf_state = function.registerAll(&db.sqlite_db, gpa) catch
             return error.ExecFailed;
         errdefer db.udf_state.deinit();
-        // zetasqlite_catalog tables + the one-shot load of everything already
+        // zigquery_catalog tables + the one-shot load of everything already
         // persisted. A shared catalog is loaded by whichever connection
         // attaches first; later ones find it already done.
         if (opts.shared_catalog == null) db.own_catalog = try catalog_mod.Catalog.init(gpa);
@@ -410,7 +410,7 @@ pub const Db = struct {
 
     fn hasCatalogTable(db: *Db) bool {
         var stmt = db.sqlite_db.prepare(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zetasqlite_catalog'",
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zigquery_catalog'",
         ) catch return false;
         defer stmt.finalize();
         return stmt.step() catch false;
@@ -1607,7 +1607,7 @@ pub const Db = struct {
         // Go has no such window: it runs the query to completion first and
         // only then truncates and inserts.
         if (replacing and from_query) {
-            const scratch = try std.fmt.allocPrint(arena, "{s}__zetasqlite_replace", .{table_name});
+            const scratch = try std.fmt.allocPrint(arena, "{s}__zigquery_replace", .{table_name});
             const drop_scratch = try std.fmt.allocPrint(
                 arena,
                 "DROP TABLE IF EXISTS `{s}`",
@@ -1646,7 +1646,7 @@ pub const Db = struct {
             // supported, this branch needs the index — and it must be created
             // *after* the rename above, since SQLite's ALTER TABLE ... RENAME
             // leaves index names alone and it would otherwise stay called
-            // `<t>__zetasqlite_replace.pk`.
+            // `<t>__zigquery_replace.pk`.
             db.registerTableSpec(table_spec) catch |err|
                 return db.failCatalog(err);
             return consumed;
@@ -3822,8 +3822,8 @@ test "CREATE TEMP TABLE registers in memory but is not persisted" {
     defer rows.deinit();
     try testing.expectEqual(Cell{ .int = 9 }, (try rows.next()).?[0]);
 
-    // No zetasqlite_catalog row (Go AddNewTableSpec skips persist for temp).
-    var stmt = try db.sqlite_db.prepare("SELECT COUNT(*) FROM zetasqlite_catalog");
+    // No zigquery_catalog row (Go AddNewTableSpec skips persist for temp).
+    var stmt = try db.sqlite_db.prepare("SELECT COUNT(*) FROM zigquery_catalog");
     defer stmt.finalize();
     try testing.expect(try stmt.step());
     try testing.expectEqual(@as(i64, 0), stmt.columnInt64(0));
@@ -4542,11 +4542,11 @@ test "memdb VFS shares one database across connections" {
     // Pool prerequisite: `:memory:` is per-connection, and shared-cache mode
     // raises SQLITE_LOCKED, which busy_timeout does not retry. memdb gives a
     // genuinely shared in-memory DB with normal locking.
-    var a = try Db.open(testing.allocator, "file:/zetasqlite_memdb_test?vfs=memdb");
+    var a = try Db.open(testing.allocator, "file:/zigquery_memdb_test?vfs=memdb");
     defer a.close();
     try a.exec("CREATE TABLE shared_t (x INT64); INSERT INTO shared_t (x) VALUES (42)", &.{}, .{});
 
-    var b = try Db.open(testing.allocator, "file:/zetasqlite_memdb_test?vfs=memdb");
+    var b = try Db.open(testing.allocator, "file:/zigquery_memdb_test?vfs=memdb");
     defer b.close();
     var rows = try b.query("SELECT x FROM shared_t", &.{}, .{});
     defer rows.deinit();
@@ -4580,7 +4580,7 @@ test "GENERATE_UUID yields a distinct value per row" {
 }
 
 test "a new connection loads every persisted spec at open" {
-    const dsn = "file:/zetasqlite_load_test?vfs=memdb";
+    const dsn = "file:/zigquery_load_test?vfs=memdb";
 
     var first = try Db.open(testing.allocator, dsn);
     defer first.close();
@@ -4602,7 +4602,7 @@ test "connections with separate catalogs do not see each other's later DDL" {
     // sound and predictable, where the old timestamp cursor made the same
     // scenario silently and permanently lossy. Connections that must agree
     // share one catalog instead — see SharedCatalog.
-    const dsn = "file:/zetasqlite_independent_test?vfs=memdb";
+    const dsn = "file:/zigquery_independent_test?vfs=memdb";
 
     var writer = try Db.open(testing.allocator, dsn);
     defer writer.close();
@@ -4992,7 +4992,7 @@ test "an unpadded hour parses on both the bind path and the runtime cast" {
     try testing.expectEqualStrings("2020-11-30T07:34:44", (try bound.next()).?[0].datetime);
     try testing.expectEqualStrings("2024-01-05T00:00:00", (try bound.next()).?[0].datetime);
 
-    // Runtime cast: the zetasqlite_cast UDF. UNNEST keeps the analyzer from
+    // Runtime cast: the zigquery_cast UDF. UNNEST keeps the analyzer from
     // constant-folding the cast, which is what hid this from a literal test.
     var cast = try db.query(
         "SELECT CAST(x AS DATETIME) AS d " ++
@@ -5272,7 +5272,7 @@ test "CREATE TEMP FUNCTION is connection-local and script-scoped" {
             db.query("SELECT Add(1, 2)", &.{}, .{}),
         );
         var stmt = try db.sqlite_db.prepare(
-            "SELECT COUNT(*) FROM zetasqlite_catalog WHERE kind = 'function'",
+            "SELECT COUNT(*) FROM zigquery_catalog WHERE kind = 'function'",
         );
         defer stmt.finalize();
         try testing.expect(try stmt.step());
@@ -5296,7 +5296,7 @@ test "DROP FUNCTION removes the spec so later analysis fails" {
 
     // The persisted catalog row is gone too.
     var stmt = try db.sqlite_db.prepare(
-        "SELECT COUNT(*) FROM zetasqlite_catalog WHERE kind = 'function'",
+        "SELECT COUNT(*) FROM zigquery_catalog WHERE kind = 'function'",
     );
     defer stmt.finalize();
     try testing.expect(try stmt.step());

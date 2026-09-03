@@ -24,9 +24,9 @@
 //! Usage: zig build shared-catalog-threads -- [tables_per_thread] [threads]
 const std = @import("std");
 const builtin = @import("builtin");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
-const shared_catalog = zetasqlite.shared_catalog;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
+const shared_catalog = zigquery.shared_catalog;
 
 const Tier = struct {
     /// Reads of a table another connection created that did not resolve.

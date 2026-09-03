@@ -1,8 +1,6 @@
 const std = @import("std");
 
-/// nanoarrow's C sources: the common core, the IPC reader/writer, and the
-/// flatcc runtime the IPC layer is generated against. `flatcc_generated.h` is
-/// checked into the release, so no flatcc compiler is needed at build time.
+/// nanoarrow's C sources: the common core, the IPC reader/writer, and the flatcc runtime the IPC layer is generated against.
 const nanoarrow_sources = [_][]const u8{
     "src/nanoarrow/common/array.c",
     "src/nanoarrow/common/array_stream.c",
@@ -30,8 +28,7 @@ const nanoarrow_cflags = [_][]const u8{
 
 /// Compile-time options for the SQLite amalgamation.
 ///
-///   USE_URI            `sqlite.zig` opens through `sqlite3_open`, and the
-///                      driver's and server's in-memory DSN is
+///   USE_URI            `sqlite.zig` opens through `sqlite3_open`, and the driver's and server's in-memory DSN is
 ///                      `file:/<name>?vfs=memdb`. Off (the default), that URI
 ///                      is taken as a literal filename and every `:memory:`
 ///                      database becomes a file on disk.
@@ -51,7 +48,7 @@ const sqlite_cflags = [_][]const u8{
     "-DSQLITE_MAX_FUNCTION_ARG=1000",
 };
 
-// zetasqlite-zig: GoogleSQL -> SQLite translator, a faithful Zig port of
+// zigquery: GoogleSQL -> SQLite translator, a faithful Zig port of
 // Recidiviz/go-zetasqlite. The GoogleSQL analyzer is consumed as a Bazel-built
 // C-ABI dylib from the googlesql repo (see zig/BUILD there); SQLite is the
 // amalgamation, pinned by build.zig.zon and compiled by Zig itself, so the
@@ -186,11 +183,7 @@ pub fn build(b: *std.Build) void {
         .link_mode = .static,
         .pic = true,
     });
-    // nanoarrow, for the Storage Read API's ARROW format. Arrow IPC is
-    // flatbuffers-framed columnar data; hand-rolling it would mean writing a
-    // flatbuffers encoder before writing a single record batch, and a format
-    // bug here surfaces as an unreadable batch inside somebody's client
-    // library.
+    // nanoarrow, for the Storage Read API's ARROW format.
     //
     // Pinned to ReleaseFast for the same reason SQLite and gRPC are:
     // `serverModule` is instantiated twice, once at -ODebug for `coverage`, and
@@ -299,14 +292,14 @@ pub fn build(b: *std.Build) void {
     // `static_shim` doc comment.
     const static_mod = engineModule(b, deps, optimize, true);
 
-    // CLI: zetasqlite-zig "SELECT ..." (debug flags: --ast --data --sql)
+    // CLI: zigquery "SELECT ..." (debug flags: --ast --data --sql)
     const exe = b.addExecutable(.{
-        .name = "zetasqlite-zig",
+        .name = "zigquery",
         .root_module = b.createModule(.{
             .root_source_file = b.path("entrypoints/cli.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = static_mod }},
+            .imports = &.{.{ .name = "zigquery", .module = static_mod }},
         }),
     });
     if (maybe_bazel_static) |bz| exe.step.dependOn(&bz.step);
@@ -329,7 +322,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("entrypoints/spec/spec_runner.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+            .imports = &.{.{ .name = "zigquery", .module = mod }},
         }),
     });
     if (maybe_bazel) |bz| spec_exe.step.dependOn(&bz.step);
@@ -401,7 +394,7 @@ pub fn build(b: *std.Build) void {
     run_gen_storage_pb.addFileArg(b.path("proto/bigquery_storage.fdset"));
     run_gen_storage_pb.addArg(b.pathFromRoot("src/server/proto/storage.zig"));
     run_gen_storage_pb.addArg("--source=proto/bigquery_storage.fdset");
-    run_gen_storage_pb.addArg("--wire-import=@import(\"zetasqlite\").wire");
+    run_gen_storage_pb.addArg("--wire-import=@import(\"zigquery\").wire");
     run_gen_storage_pb.addArg(
         "--desc=Plain-struct codecs for the BigQuery Storage Read API protos.",
     );
@@ -459,7 +452,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .sanitize_thread = tsan,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+            .imports = &.{.{ .name = "zigquery", .module = mod }},
         }),
     });
     if (maybe_bazel) |bz| threads_exe.step.dependOn(&bz.step);
@@ -478,7 +471,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .sanitize_thread = tsan,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+            .imports = &.{.{ .name = "zigquery", .module = mod }},
         }),
     });
     if (maybe_bazel) |bz| sc_threads_exe.step.dependOn(&bz.step);
@@ -494,7 +487,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("entrypoints/bench/codec_bench.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+            .imports = &.{.{ .name = "zigquery", .module = mod }},
         }),
     });
     if (maybe_bazel) |bz| codec_exe.step.dependOn(&bz.step);
@@ -511,7 +504,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("entrypoints/bench/tz_bench.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+            .imports = &.{.{ .name = "zigquery", .module = mod }},
         }),
     });
     if (maybe_bazel) |bz| tzbench_exe.step.dependOn(&bz.step);
@@ -528,7 +521,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("entrypoints/bench/bench_engine.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+            .imports = &.{.{ .name = "zigquery", .module = mod }},
         }),
     });
     if (maybe_bazel) |bz| bench_exe.step.dependOn(&bz.step);
@@ -545,7 +538,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("entrypoints/bench/gsql_bench.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+            .imports = &.{.{ .name = "zigquery", .module = mod }},
         }),
     });
     if (maybe_bazel) |bz| gsqlbench_exe.step.dependOn(&bz.step);
@@ -562,7 +555,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("entrypoints/bench/load_bench.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "zetasqlite", .module = mod }},
+            .imports = &.{.{ .name = "zigquery", .module = mod }},
         }),
     });
     if (maybe_bazel) |bz| loadbench_exe.step.dependOn(&bz.step);
@@ -577,7 +570,7 @@ pub fn build(b: *std.Build) void {
     // Paired with static_mod the same way server_mod is paired with mod: a
     // server_exe importing one's engine and the other's server module would
     // give it two distinct-but-identical Db/Catalog types that fail to
-    // compile wherever a value crosses the bqserver/zetasqlite boundary.
+    // compile wherever a value crosses the bqserver/zigquery boundary.
     const static_server_mod = serverModule(b, server_deps, optimize, static_mod);
 
     const server_exe = b.addExecutable(.{
@@ -588,7 +581,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "bqserver", .module = static_server_mod },
-                .{ .name = "zetasqlite", .module = static_mod },
+                .{ .name = "zigquery", .module = static_mod },
             },
         }),
     });
@@ -613,7 +606,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "bqserver", .module = server_mod },
-                .{ .name = "zetasqlite", .module = mod },
+                .{ .name = "zigquery", .module = mod },
             },
         }),
     });
@@ -638,7 +631,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "bqserver", .module = server_mod },
-                .{ .name = "zetasqlite", .module = mod },
+                .{ .name = "zigquery", .module = mod },
             },
         }),
     });
@@ -663,7 +656,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "http_server", .module = http_server_mod },
-                .{ .name = "zetasqlite", .module = mod },
+                .{ .name = "zigquery", .module = mod },
             },
         }),
     });
@@ -755,7 +748,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("entrypoints/spec/spec_runner.zig"),
             .target = target,
             .optimize = .Debug,
-            .imports = &.{.{ .name = "zetasqlite", .module = cov_mod }},
+            .imports = &.{.{ .name = "zigquery", .module = cov_mod }},
         }),
     });
     if (maybe_bazel) |bz| cov_spec_exe.step.dependOn(&bz.step);
@@ -935,7 +928,7 @@ fn serverModule(
         // reach the link line on their own. Setting them here would be a
         // second, drifting copy of a fact the dependency already states.
         .imports = &.{
-            .{ .name = "zetasqlite", .module = engine },
+            .{ .name = "zigquery", .module = engine },
             .{ .name = "cgrpc", .module = deps.cgrpc },
         },
     });

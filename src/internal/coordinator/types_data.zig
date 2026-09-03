@@ -552,7 +552,7 @@ pub const Error = error{
     Unimplemented,
     /// Node kind the Go original also rejects ("unsupported ... type").
     UnsupportedNode,
-    /// Builtin function with no zetasqlite runtime mapping
+    /// Builtin function with no zigquery runtime mapping
     UnsupportedFunction,
     /// A proto field the Go accessors could always read is missing.
     InvalidAST,

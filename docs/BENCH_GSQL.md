@@ -1,4 +1,4 @@
-# Benchmark — zetasqlite-zig on the googlesqlite corpus
+# Benchmark — zigquery on the googlesqlite corpus
 
 The 22-query benchmark corpus from
 [goccy/googlesqlite](https://github.com/goccy/googlesqlite/tree/main/bench),

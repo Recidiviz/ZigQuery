@@ -53,7 +53,7 @@ that base64 was the problem:
   of it was the wrapper. Removing base64 alone would have bought single digits.
 - **Sorting an encoded STRING column cost 12× the same sort over native INT64**
   (502 ms vs 41 ms), at 9.83 allocations per row against ~0 everywhere else.
-  `zetasqlite_collate` constructed and destroyed an `ArenaAllocator` per
+  `zigquery_collate` constructed and destroyed an `ArenaAllocator` per
   comparison and decoded *both* operands, ~n log n times per sort.
 
 ## 2. What storage format 3 achieved
@@ -128,7 +128,7 @@ aggregate's `decodeArgs` decodes the same constant BLOB per row (+3 decodes per
 row, measured).
 
 `ORDER BY` and `HAVING MAX|MIN` are not in this set: they carry a per-row column
-(`zetasqlite_order_by(\`wrs15\`.\`y__6\`, true)`), so their markers genuinely vary
+(`zigquery_order_by(\`wrs15\`.\`y__6\`, true)`), so their markers genuinely vary
 and nothing about them is cacheable.
 
 It was rejected for two independent reasons.
@@ -307,7 +307,7 @@ NUMERIC 40 -> 17 — with one honest exception: a *small* NUMERIC grows, because
 both directions a memcpy and lets `skipValue` step over a value from the tag
 alone.
 
-**One-entry decode.** `zetasqlite_get_struct_field(x, n)` and the two array
+**One-entry decode.** `zigquery_get_struct_field(x, n)` and the two array
 indexers took a fully decoded composite, read one entry, and dropped the rest —
 every field of every struct, on every reference, on every row, with three
 references to one struct on a single line of `testdata/sql_snapshot.txt`. They
@@ -317,7 +317,7 @@ for. An argument that is not the composite it should be falls back to a full
 decode, so the error messages are the ones `toStruct`/`toArray` always gave.
 
 **Measured**, on 200 k rows of `STRUCT<INT64, DATE, STRING, NUMERIC, TIMESTAMP>`
-with two field reads per row (`zetasqlite-zig --file`, `-Drelease=true`):
+with two field reads per row (`zigquery --file`, `-Drelease=true`):
 
 | | before | after |
 |---|---|---|
@@ -357,7 +357,7 @@ now read them from one table (`BinReader.fixedWidth`).
 
 The largest remaining consumer of the codec was not the codec's fault. Every
 `WHERE` predicate over a DATE, TIMESTAMP, BYTES or NUMERIC column still went
-through a `zetasqlite_*` UDF that decoded both operands and encoded a BOOL, once
+through a `zigquery_*` UDF that decoded both operands and encoded a BOOL, once
 per row — because `isPrimitiveSQLiteType` (`transformer/function.zig`) had never
 been widened past the kinds Go could lower, and Go could only lower the ones
 SQLite stored natively. Storage format 3 had made nine kinds memcomparable two
@@ -368,8 +368,8 @@ Three things were wrong at once, and the smallest was the type list:
 - **The type list.** DATE, TIME, DATETIME, TIMESTAMP, BYTES, NUMERIC,
   BIGNUMERIC and RANGE now lower. The licence is `test "memcmp over encodings
   matches compareForCollation"` in `codec_sortable.zig`: `compareForCollation`
-  is defined via `Value.eq`/`gt`, which *are* what `zetasqlite_equal` and
-  `zetasqlite_less` call, so SQLite's byte comparison is the UDF's own answer.
+  is defined via `Value.eq`/`gt`, which *are* what `zigquery_equal` and
+  `zigquery_less` call, so SQLite's byte comparison is the UDF's own answer.
 - **Operand shape, which blocked more than type did.** A `.function` operand
   counted as primitive only if it was itself an operator — so
   `get_struct_field(s, 0) = 1`, `array_length(a) = 0` and `EXTRACT(YEAR FROM d)
@@ -439,7 +439,7 @@ a `BETWEEN` wins over a NULL from the other. Both are fixed, so the lowered and
 UDF paths give one answer — which matters more now that which path runs depends
 on whether the operands happen to be literals.
 
-`zetasqlite_is_true` / `_is_false` had the same shape of bug and were fixed with
+`zigquery_is_true` / `_is_false` had the same shape of bug and were fixed with
 them, though for a different reason — neither lowers, so no two paths were
 disagreeing; they were simply wrong. `IS TRUE` and `IS FALSE` are *total*
 predicates that answer TRUE or FALSE and never NULL, which is the entire reason
@@ -561,7 +561,7 @@ aggregate path's separate seen-NULL bit.
 SQLite's numeric comparison. All four spellings agree now, and one spec case
 asserts them together.
 
-And `zetasqlite_group_by` had the same shape of bug with teeth: it decoded every
+And `zigquery_group_by` had the same shape of bug with teeth: it decoded every
 group key per row and re-rendered it, joining ARRAY and STRUCT elements with
 `"||"`. That is not injective, so `['a||b']` and `['a', 'b']` landed in one
 group — one row of `COUNT(*) = 2` where BigQuery gives two rows of 1

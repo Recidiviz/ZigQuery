@@ -19,7 +19,7 @@ pub fn errorFn(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
 // ---------------------------------------------------------------------
 // CAST. The transformer emits
-//   zetasqlite_cast(expr, '<from Type JSON>', '<to Type JSON>', bool)
+//   zigquery_cast(expr, '<from Type JSON>', '<to Type JSON>', bool)
 // where the Type JSON is spec.Type ({"kind": <TypeKind int>, "elementType":
 // {...}, ...}). Go decodes both types and applies CastValue twice
 // (from-type first, then to-type); safe casts turn errors into NULL.

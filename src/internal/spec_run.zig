@@ -685,7 +685,7 @@ fn classify(err: anyerror, msg: []const u8) ?CaseResult {
     }
     // The name resolves but its UDF was never registered — the ACOS/SINH family
     // named in extractor.zig:106-110 with no handler in fn_math.zig.
-    if (std.mem.indexOf(u8, msg, "no such function: zetasqlite_") != null) {
+    if (std.mem.indexOf(u8, msg, "no such function: zigquery_") != null) {
         return .{ .outcome = .not_implemented, .detail = "registered name, no UDF" };
     }
     // "RANGE type is not supported", "Table-valued functions are not supported",
@@ -705,4 +705,3 @@ fn classify(err: anyerror, msg: []const u8) ?CaseResult {
     }
     return null;
 }
-

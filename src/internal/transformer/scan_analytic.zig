@@ -116,14 +116,14 @@ pub fn transform(
 //
 // Expected-text derivation (from the Go pipeline this ports):
 // - extractor: ROW_NUMBER() -> getZetasqliteFuncName(isWindowFunc=true) ->
-//   "zetasqlite_window_row_number" (windowFuncs table); its frame comes from
+//   "zigquery_window_row_number" (windowFuncs table); its frame comes from
 //   windowFuncFixedRanges: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
-//   SUM(x) OVER (...) -> "zetasqlite_window_sum"; the explicit frame is
+//   SUM(x) OVER (...) -> "zigquery_window_sum"; the explicit frame is
 //   extracted via getWindowBoundaryOptionFuncSQL ("ROWS", "1 PRECEDING",
 //   "CURRENT ROW"). The group's PARTITION BY / ORDER BY columns attach to
 //   the call's WindowSpec.
 // - transformer_function.go: ORDER BY renders "<expr> ASC|DESC"
-//   (createOrderByItems). Go also set Collation = "zetasqlite_collate" on the
+//   (createOrderByItems). Go also set Collation = "zigquery_collate" on the
 //   PARTITION BY and ORDER BY exprs; that is gone here, because the encodings
 //   are memcomparable and the collation no longer exists.
 // - sqlbuilder: FunctionCall renders "name(args) OVER (<spec>)"; the frame
@@ -156,10 +156,10 @@ test "golden SQL: ROW_NUMBER() OVER (ORDER BY x)" {
     try testing.expectEqual(@as(usize, 1), stmts.len);
     const sql = stmts[0];
 
-    // zetasqlite_window_row_number carries the fixed frame from Go's
+    // zigquery_window_row_number carries the fixed frame from Go's
     // windowFuncFixedRanges (ROWS UNBOUNDED PRECEDING..CURRENT ROW) and the
     // group ORDER BY.
-    try expectContains(sql, "zetasqlite_window_row_number() OVER (ORDER BY `x__");
+    try expectContains(sql, "zigquery_window_row_number() OVER (ORDER BY `x__");
     try expectContains(
         sql,
         "` ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
@@ -183,7 +183,7 @@ test "golden SQL: SUM(x) OVER (PARTITION BY y ORDER BY x ROWS BETWEEN 1 PRECEDIN
     try testing.expectEqual(@as(usize, 1), stmts.len);
     const sql = stmts[0];
 
-    try expectContains(sql, "zetasqlite_window_sum(");
+    try expectContains(sql, "zigquery_window_sum(");
     try expectContains(sql, "OVER (PARTITION BY `y__");
     try expectContains(sql, "` ORDER BY `x__");
     try expectContains(
@@ -196,20 +196,20 @@ test "golden SQL: DISTINCT and IGNORE NULLS become trailing pseudo-args" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    // COUNT(DISTINCT x) OVER () -> zetasqlite_window_count(x,
-    // zetasqlite_distinct()) with the default full frame.
+    // COUNT(DISTINCT x) OVER () -> zigquery_window_count(x,
+    // zigquery_distinct()) with the default full frame.
     {
         const stmts = try driver.translate(
             arena.allocator(),
             "SELECT COUNT(DISTINCT x) OVER () FROM UNNEST([1, 1, 2]) AS x",
             .{},
         );
-        try expectContains(stmts[0], "zetasqlite_window_count(`x__");
-        try expectContains(stmts[0], ", zetasqlite_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)");
+        try expectContains(stmts[0], "zigquery_window_count(`x__");
+        try expectContains(stmts[0], ", zigquery_distinct()) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)");
     }
 
     // FIRST_VALUE(x IGNORE NULLS) OVER (ORDER BY x) -> trailing
-    // zetasqlite_ignore_nulls() pseudo-arg (navigation functions require an
+    // zigquery_ignore_nulls() pseudo-arg (navigation functions require an
     // ORDER BY in the OVER clause).
     {
         const stmts = try driver.translate(
@@ -217,7 +217,7 @@ test "golden SQL: DISTINCT and IGNORE NULLS become trailing pseudo-args" {
             "SELECT FIRST_VALUE(x IGNORE NULLS) OVER (ORDER BY x) FROM UNNEST([NULL, 1, 2]) AS x",
             .{},
         );
-        try expectContains(stmts[0], "zetasqlite_window_first_value(`x__");
-        try expectContains(stmts[0], ", zetasqlite_ignore_nulls()) OVER (");
+        try expectContains(stmts[0], "zigquery_window_first_value(`x__");
+        try expectContains(stmts[0], ", zigquery_ignore_nulls()) OVER (");
     }
 }

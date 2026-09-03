@@ -51,9 +51,9 @@
 //!   the other three annotated kinds use.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const spec = zetasqlite.spec;
-const value_mod = zetasqlite.value;
+const zigquery = @import("zigquery");
+const spec = zigquery.spec;
+const value_mod = zigquery.value;
 const Value = value_mod.Value;
 
 /// The shim, not nanoarrow itself: `@cImport` cannot read nanoarrow's headers.

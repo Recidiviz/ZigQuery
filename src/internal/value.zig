@@ -188,7 +188,7 @@ pub const StructValue = struct {
 
     // There is deliberately no lookup-by-name here. Every field access
     // GoogleSQL resolves is already an index by the time it reaches the
-    // runtime (`zetasqlite_get_struct_field(expr, <n>)`), names on a STRUCT
+    // runtime (`zigquery_get_struct_field(expr, <n>)`), names on a STRUCT
     // need not be unique or even present, and the one thing a by-name helper
     // was used for — comparison and CAST — turned out to be positional.
 };
@@ -2418,7 +2418,7 @@ pub fn formatFloatGo(buf: []u8, f: f64) []const u8 {
 }
 
 // ----------------------------------------------------------------------
-// Value ordering. This backed the zetasqlite_collate collation until the
+// Value ordering. This backed the zigquery_collate collation until the
 // encodings became memcomparable and SQLite took the comparison over; it
 // remains the oracle the codec_sortable invariant tests assert against.
 // (Mirrors Go's function_register.go:

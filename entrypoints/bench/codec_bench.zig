@@ -12,9 +12,9 @@
 //! `alloc/row` counts allocations made through the allocator handed to the
 //! driver, which is where the codec's own churn lands.
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
-const phase = zetasqlite.phase;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
+const phase = zigquery.phase;
 
 fn ms(ns: u64) f64 {
     return @as(f64, @floatFromInt(ns)) / 1e6;
@@ -170,7 +170,7 @@ pub fn main(init: std.process.Init) !void {
     ns += 1;
 
     // The declared pain: sheer scalar-UDF call volume. Every function here is a
-    // zetasqlite_* UDF, so each one decodes its arguments and encodes a result,
+    // zigquery_* UDF, so each one decodes its arguments and encodes a result,
     // and the nesting multiplies that per row. Aggregated to one row so the
     // client boundary contributes nothing.
     stage = try begin(&counting);
@@ -203,7 +203,7 @@ pub fn main(init: std.process.Init) !void {
     stages[ns] = end(stage, "INT64 control (no codec)", rows, &counting);
     ns += 1;
 
-    // Sort over an encoded column. This used to enter zetasqlite_collate for
+    // Sort over an encoded column. This used to enter zigquery_collate for
     // every comparison; since the encoding became memcomparable SQLite compares
     // the bytes directly and no callback is involved.
     stage = try begin(&counting);
@@ -229,7 +229,7 @@ pub fn main(init: std.process.Init) !void {
     ns += 1;
 
     // A scan dominated by UNNEST itself: one large array, every element read.
-    // This is the path zetasqlite_unnest replaced, and the one a BLOB format
+    // This is the path zigquery_unnest replaced, and the one a BLOB format
     // would next take work out of.
     stage = try begin(&counting);
     {
@@ -243,7 +243,7 @@ pub fn main(init: std.process.Init) !void {
     stages[ns] = end(stage, "UNNEST scan", rows, &counting);
     ns += 1;
 
-    // Ordered aggregation. zetasqlite_order_by takes the per-row sort key, so
+    // Ordered aggregation. zigquery_order_by takes the per-row sort key, so
     // SQLite cannot hoist it: the option marker is built once per row, and the
     // aggregate parses it again on every step. The other modifiers take
     // constant arguments and are hoisted, so this is where marker cost lives.

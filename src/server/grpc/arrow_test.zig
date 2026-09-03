@@ -27,16 +27,16 @@
 
 const std = @import("std");
 const arrow = @import("arrow.zig");
-const zetasqlite = @import("zetasqlite");
-const spec = zetasqlite.spec;
-const value_mod = zetasqlite.value;
+const zigquery = @import("zigquery");
+const spec = zigquery.spec;
+const value_mod = zigquery.value;
 const Value = value_mod.Value;
 const c = arrow.c;
 
 const testing = std.testing;
 
 /// A `spec.Type` for a leaf kind.
-fn leaf(kind: zetasqlite.pb.TypeKind) spec.Type {
+fn leaf(kind: zigquery.pb.TypeKind) spec.Type {
     return .{ .kind = @intFromEnum(kind) };
 }
 
@@ -85,7 +85,7 @@ test "the primitive kinds map as BigQuery sends them" {
     const a = arena_state.allocator();
     var buf: [256]u8 = undefined;
 
-    const cases = [_]struct { kind: zetasqlite.pb.TypeKind, want: []const u8 }{
+    const cases = [_]struct { kind: zigquery.pb.TypeKind, want: []const u8 }{
         .{ .kind = .TYPE_BOOL, .want = "bool" },
         .{ .kind = .TYPE_INT64, .want = "int64" },
         // Every integer width collapses to int64: BigQuery has one integer type
@@ -133,7 +133,7 @@ test "the four annotated kinds carry the extension names BigQuery sends" {
     const a = arena_state.allocator();
     var buf: [256]u8 = undefined;
 
-    const cases = [_]struct { kind: zetasqlite.pb.TypeKind, want: []const u8 }{
+    const cases = [_]struct { kind: zigquery.pb.TypeKind, want: []const u8 }{
         .{ .kind = .TYPE_DATETIME, .want = "google:sqlType:datetime" },
         .{ .kind = .TYPE_JSON, .want = "google:sqlType:json" },
         .{ .kind = .TYPE_GEOGRAPHY, .want = "google:sqlType:geography" },
@@ -207,7 +207,7 @@ test "an ARRAY is a not-null list of a nullable item" {
 
     var elem = leaf(.TYPE_INT64);
     var arr: spec.Type = .{
-        .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_ARRAY),
+        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY),
         .element_type = &elem,
     };
 
@@ -231,7 +231,7 @@ test "a STRUCT keeps its field names and order" {
     var fb: spec.NameWithType = .{ .name = "b", .type = &tb };
     var fields = [_]*spec.NameWithType{ &fa, &fb };
     var st: spec.Type = .{
-        .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_STRUCT),
+        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRUCT),
         .field_types = &fields,
     };
 
@@ -255,7 +255,7 @@ test "a RANGE is a struct of two bounds under a plain google:sqlType key" {
 
     var elem = leaf(.TYPE_DATE);
     var rng: spec.Type = .{
-        .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_RANGE),
+        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_RANGE),
         .element_type = &elem,
     };
 
@@ -293,7 +293,7 @@ test "a type with no Arrow mapping is an error, not a plausible wrong schema" {
     // no such type, so guessing a struct for it would be inventing one.
     var elem = leaf(.TYPE_INT64);
     var rng: spec.Type = .{
-        .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_RANGE),
+        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_RANGE),
         .element_type = &elem,
     };
     try testing.expectError(
@@ -348,23 +348,23 @@ const FullRow = struct {
         f.fy = .{ .name = "y", .type = &f.str };
         f.xyfields = .{ &f.fx, &f.fy };
         f.rng = .{
-            .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_RANGE),
+            .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_RANGE),
             .element_type = &f.elem_date,
         };
         f.arr = .{
-            .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_ARRAY),
+            .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY),
             .element_type = &f.elem_int,
         };
         f.st = .{
-            .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_STRUCT),
+            .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRUCT),
             .field_types = &f.sfields,
         };
         f.xy = .{
-            .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_STRUCT),
+            .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRUCT),
             .field_types = &f.xyfields,
         };
         f.arr_st = .{
-            .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_ARRAY),
+            .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY),
             .element_type = &f.xy,
         };
         f.cols = .{
@@ -560,7 +560,7 @@ test "a null ARRAY is an empty list, not a null" {
 
     var elem = leaf(.TYPE_INT64);
     var arr: spec.Type = .{
-        .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_ARRAY),
+        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY),
         .element_type = &elem,
     };
     // Nullable at the column level, which is what makes this the interesting

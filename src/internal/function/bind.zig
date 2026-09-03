@@ -2,8 +2,8 @@
 //! FuncInfo table mapping GoogleSQL function names to bind handlers.
 //!
 //! Go's setupNormalFuncMap registers each entry twice:
-//!   zetasqlite_<name>       -> BindFunc (errors surface as SQL errors)
-//!   zetasqlite_safe_<name>  -> SafeFunc orelse BindFunc (errors -> NULL)
+//!   zigquery_<name>       -> BindFunc (errors surface as SQL errors)
+//!   zigquery_safe_<name>  -> SafeFunc orelse BindFunc (errors -> NULL)
 //! register.zig mirrors that; this file only owns the table + shared helpers.
 
 const std = @import("std");
@@ -471,7 +471,7 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "justify_interval", .min_args = 1, .handler = fintv.justifyIntervalFn },
 
     // range family (googlesql/reference_impl/functions/range.cc). Every one
-    // gets a zetasqlite_safe_ twin for free from register.zig, which is what
+    // gets a zigquery_safe_ twin for free from register.zig, which is what
     // SAFE.RANGE and SAFE.RANGE_INTERSECT resolve to.
     .{ .name = "range", .min_args = 2, .handler = frange.range },
     .{ .name = "range_start", .min_args = 1, .handler = frange.rangeStart },

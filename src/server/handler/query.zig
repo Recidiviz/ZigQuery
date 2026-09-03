@@ -9,11 +9,11 @@
 //!   std.json.Value has both properties natively.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
-const spec = zetasqlite.spec;
-const encoder = zetasqlite.encoder;
-const job_rows_vtab = zetasqlite.function.job_rows_vtab;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
+const spec = zigquery.spec;
+const encoder = zigquery.encoder;
+const job_rows_vtab = zigquery.function.job_rows_vtab;
 const errors = @import("../error.zig");
 const response = @import("../internal/types/response.zig");
 const tablerow = @import("../internal/types/tablerow.zig");
@@ -677,7 +677,7 @@ test "job store round-trips and replaces on duplicate id" {
     var store = JobStore{ .gpa = testing.allocator };
     defer store.deinit();
 
-    var int_t: spec.Type = .{ .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_INT64) };
+    var int_t: spec.Type = .{ .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_INT64) };
     var types = [_]*spec.Type{&int_t};
     var names = [_][]const u8{"n"};
 
@@ -707,7 +707,7 @@ test "the job-rows lookup hands the virtual table what the job holds" {
     var store = JobStore{ .gpa = testing.allocator };
     defer store.deinit();
 
-    var str_t: spec.Type = .{ .kind = @intFromEnum(zetasqlite.pb.TypeKind.TYPE_STRING) };
+    var str_t: spec.Type = .{ .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRING) };
     var types = [_]*spec.Type{&str_t};
     var names = [_][]const u8{"s"};
     try store.put("test", "job2", .{

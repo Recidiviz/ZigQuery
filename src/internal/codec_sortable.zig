@@ -5,7 +5,7 @@
 //! sequences on BLOBs — it always compares them byte by byte — so a BLOB column
 //! can only be ordered correctly if the bytes themselves are ordered correctly.
 //! Getting that right is what lets values leave base64 behind: the alternative
-//! is a BLOB column whose ORDER BY is silently wrong, since zetasqlite_collate
+//! is a BLOB column whose ORDER BY is silently wrong, since zigquery_collate
 //! is never consulted and nothing raises an error.
 //!
 //! Layout is `[tag][payload]`, and the payload simply runs to the end of the

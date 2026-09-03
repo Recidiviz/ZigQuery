@@ -13,9 +13,9 @@
 //!
 //! Usage: zig build tz-bench -- [rows]
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
-const phase = zetasqlite.phase;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
+const phase = zigquery.phase;
 
 fn ms(ns: u64) f64 {
     return @as(f64, @floatFromInt(ns)) / 1e6;

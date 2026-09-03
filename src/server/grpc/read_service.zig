@@ -12,10 +12,10 @@ const pb = @import("../proto/storage.zig");
 const bqserver = @import("../server.zig");
 const grpc_server = @import("server.zig");
 const method_path = @import("method.zig");
-const value_mod = @import("zetasqlite").value;
+const value_mod = @import("zigquery").value;
 const avro = @import("avro.zig");
 const arrow = @import("arrow.zig");
-const driver = @import("zetasqlite").driver;
+const driver = @import("zigquery").driver;
 
 const log = std.log.scoped(.grpc);
 
@@ -47,8 +47,8 @@ pub const Error = error{
     EncodeFailed,
 } || std.mem.Allocator.Error || wireError || avro.Error || arrow.Error;
 
-const wireError = @import("zetasqlite").wire.DecodeError ||
-    @import("zetasqlite").wire.EncodeError;
+const wireError = @import("zigquery").wire.DecodeError ||
+    @import("zigquery").wire.EncodeError;
 
 /// A table name split into its three parts.
 pub const TableRef = struct {
@@ -1373,7 +1373,7 @@ test "the query a session builds actually runs on the engine" {
     // is what S5 will encode from.
     const row = (try rows.nextTyped()).?;
     try testing.expectEqual(@as(i64, 2), row[0].int);
-    try testing.expectEqual(@as(?[]const @import("zetasqlite").value.Value, null), try rows.nextTyped());
+    try testing.expectEqual(@as(?[]const @import("zigquery").value.Value, null), try rows.nextTyped());
 }
 
 test "a whole-table query runs and yields every column typed" {

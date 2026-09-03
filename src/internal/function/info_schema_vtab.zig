@@ -9,7 +9,7 @@
 //! `catalog.zig` registers a synthetic `TableSpec` per (dataset, view) so the
 //! analyzer accepts the path, and `transformer/scan_table.zig` recognises the
 //! resulting canonical name (`<prefix>_INFORMATION_SCHEMA_<VIEW>`) and emits
-//! `FROM zetasqlite_info_schema_<view>('<dataset>')` instead of a table
+//! `FROM zigquery_info_schema_<view>('<dataset>')` instead of a table
 //! reference. The dataset rides in on the trailing hidden `schema` column, the
 //! same mechanism `unnest_vtab.zig` uses to receive its array argument.
 //!
@@ -91,7 +91,7 @@ pub const Filter = struct {
 pub const views = [_]View{
     .{
         .view = "SCHEMATA",
-        .module = "zetasqlite_info_schema_schemata",
+        .module = "zigquery_info_schema_schemata",
         .columns = &.{
             "catalog_name",  "schema_name",        "schema_owner",
             "creation_time", "last_modified_time", "location",
@@ -101,7 +101,7 @@ pub const views = [_]View{
     },
     .{
         .view = "TABLES",
-        .module = "zetasqlite_info_schema_tables",
+        .module = "zigquery_info_schema_tables",
         .columns = &.{
             "table_catalog", "table_schema", "table_name",
             "table_type",    "is_typed",     "is_insertable_into",
@@ -112,7 +112,7 @@ pub const views = [_]View{
     },
     .{
         .view = "COLUMNS",
-        .module = "zetasqlite_info_schema_columns",
+        .module = "zigquery_info_schema_columns",
         .columns = &.{
             "table_catalog",     "table_schema",           "table_name",
             "column_name",       "ordinal_position",       "is_nullable",
@@ -124,7 +124,7 @@ pub const views = [_]View{
     },
     .{
         .view = "TABLE_OPTIONS",
-        .module = "zetasqlite_info_schema_table_options",
+        .module = "zigquery_info_schema_table_options",
         .columns = &.{
             "table_catalog", "table_schema", "table_name",
             "option_name",   "option_type",  "option_value",

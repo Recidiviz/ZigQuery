@@ -140,8 +140,7 @@ jobs:
         id: pkg
         run: |
           set -euo pipefail
-          # Named for the product and the repo (Recidiviz/zigquery-emulator),
-          # not for the zon package name, which is still zetasqlite_zig.
+          # Named for the product and the repo (Recidiviz/zigquery-emulator).
           name="zigquery-emulator-${{ needs.version.outputs.version }}-${{ matrix.platform }}"
           cp README.md stage/
           [ -f LICENSE ] && cp LICENSE stage/ || true
@@ -165,7 +164,7 @@ jobs:
           [ ! -d lib ]
           echo "no lib/ shipped, as expected for a statically-linked build"
           echo "--- CLI ---"
-          ./bin/zetasqlite-zig "SELECT 1 AS n, 'ok' AS s"
+          ./bin/zigquery "SELECT 1 AS n, 'ok' AS s"
           echo "--- server ---"
           # --flag=value only; the parser rejects the space-separated form.
           ./bin/bigquery-emulator --project=smoke > server.log 2>&1 &

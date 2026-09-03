@@ -34,7 +34,7 @@ That is once per checkout: it is pinned to one optimize mode and shared, so `cov
 
 The internal architecture mirrors the Go original — extractor → coordinator →
 transformers → SQL object model, the tagged-binary value codec, the
-`zetasqlite_*` UDFs and the `zetasqlite_catalog` table.
+`zigquery_*` UDFs and the `zigquery_catalog` table.
 
 Two parts deliberately diverge:
 
@@ -85,7 +85,7 @@ zig build dist -Drelease=true              # release tree: zig-out/{bin,lib}
 zig build gsql-bench -Drelease=true  # goccy/googlesqlite's bench corpus -> docs/BENCH_GSQL.md
 ```
 
-`dist` is what a release ships: only `bigquery-emulator` and `zetasqlite-zig`,
+`dist` is what a release ships: only `bigquery-emulator` and `zigquery`,
 plus the shim in `lib/`. The binaries carry a second rpath
 (`@loader_path/../lib`, `$ORIGIN/../lib` on ELF) so the tree keeps working
 wherever it is unpacked — plain `install` writes eight harness and benchmark

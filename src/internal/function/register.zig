@@ -1,10 +1,10 @@
 //! Port of go-zetasqlite internal/function_register.go (foundation scope):
 //! registers every FuncInfo from bind.zig as the pair
-//!   zetasqlite_<name>      (errors -> SQL error, Go BindFunc path)
-//!   zetasqlite_safe_<name> (handler errors -> NULL, Go SafeFunc path;
+//!   zigquery_<name>      (errors -> SQL error, Go BindFunc path)
+//!   zigquery_safe_<name> (handler errors -> NULL, Go SafeFunc path;
 //!                           argument decode / result encode errors still
 //!                           raise, exactly like Go's safe wrapper)
-//! plus the specials zetasqlite_group_by and the zetasqlite_unnest table-valued
+//! plus the specials zigquery_group_by and the zigquery_unnest table-valued
 //! function.
 
 const std = @import("std");
@@ -79,21 +79,21 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
                 invoke(info, true, ctx, argc, argv);
             }
         };
-        try db.createScalarFunction("zetasqlite_" ++ info.name, -1, state, Tramp.normal, info.deterministic);
-        try db.createScalarFunction("zetasqlite_safe_" ++ info.name, -1, state, Tramp.safe, info.deterministic);
+        try db.createScalarFunction("zigquery_" ++ info.name, -1, state, Tramp.normal, info.deterministic);
+        try db.createScalarFunction("zigquery_safe_" ++ info.name, -1, state, Tramp.safe, info.deterministic);
     }
 
     try unnest_vtab.register(db, gpa);
     try info_schema_vtab.register(db, gpa, &state.info_schema);
     try job_rows_vtab.register(db, gpa, &state.job_rows);
-    try db.createScalarFunction("zetasqlite_group_by", -1, state, groupByTramp, true);
+    try db.createScalarFunction("zigquery_group_by", -1, state, groupByTramp, true);
 
     // Aggregate UDFs + option marker functions (Go: aggregateFuncs plus the
     // distinct/limit/order_by/ignore_nulls/having_* normalFuncs entries).
     try aggregate.registerAggregates(db, state);
 
     // Window UDFs (Go: windowFuncs / setupWindowFuncMap), registered as
-    // zetasqlite_window_<name> with SQLite's real window callbacks.
+    // zigquery_window_<name> with SQLite's real window callbacks.
     try window.registerWindowFunctions(db, state);
     return state;
 }
@@ -126,7 +126,7 @@ fn invoke(
 
     const n: usize = @intCast(argc);
     if (n < info.min_args) {
-        sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": invalid argument num");
+        sqlite.resultError(ctx, "zigquery_" ++ info.name ++ ": invalid argument num");
         return;
     }
 
@@ -138,7 +138,7 @@ fn invoke(
         argv,
         n,
     ) catch {
-        sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": failed to decode value");
+        sqlite.resultError(ctx, "zigquery_" ++ info.name ++ ": failed to decode value");
         return;
     };
 
@@ -154,7 +154,7 @@ fn invoke(
         return;
     };
     setResult(ctx, state, ret) catch {
-        sqlite.resultError(ctx, "zetasqlite_" ++ info.name ++ ": failed to encode value");
+        sqlite.resultError(ctx, "zigquery_" ++ info.name ++ ": failed to encode value");
     };
 }
 
@@ -209,14 +209,14 @@ pub fn setResult(ctx: ?*c.sqlite3_context, state: *State, v: Value) !void {
 }
 
 /// Error text priority: the handler's formatted message, then value.zig's
-/// static diagnostic, then a generic "zetasqlite_<name>: <ErrorName>".
+/// static diagnostic, then a generic "zigquery_<name>: <ErrorName>".
 fn errorText(comptime name: []const u8, err: anyerror, buf: []u8) []const u8 {
     if (bind.message) |m| return m;
     if (value_mod.diagnostic) |m| return m;
-    return std.fmt.bufPrint(buf, "zetasqlite_" ++ name ++ ": {s}", .{@errorName(err)}) catch name;
+    return std.fmt.bufPrint(buf, "zigquery_" ++ name ++ ": {s}", .{@errorName(err)}) catch name;
 }
 
-// ---------------------------------------------------------------------- zetasqlite_group_by:
+// ---------------------------------------------------------------------- zigquery_group_by:
 // returns its argument untouched, so SQLite groups on the stored form.
 //
 // That is sound because the storage encoding is canonical: one value has one byte string, per
@@ -237,7 +237,7 @@ fn groupByTramp(
     argv: [*c]?*c.sqlite3_value,
 ) callconv(.c) void {
     if (argc < 1) {
-        sqlite.resultError(ctx, "zetasqlite_group_by: invalid argument num");
+        sqlite.resultError(ctx, "zigquery_group_by: invalid argument num");
         return;
     }
     sqlite.resultValue(ctx, argv[0]);
@@ -400,86 +400,86 @@ test "arithmetic and bit functions" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    try env.expectInt(3, "SELECT zetasqlite_add(1, 2)");
-    try env.expectInt(-1, "SELECT zetasqlite_subtract(2, 3)");
-    try env.expectInt(42, "SELECT zetasqlite_multiply(6, 7)");
-    try env.expectInt(3, "SELECT zetasqlite_divide(7, 2)");
-    try env.expectFloat(3.5, "SELECT zetasqlite_divide(7.0, 2)");
-    try env.expectFloat(4.0, "SELECT zetasqlite_add(1.5, 2.5)");
-    try env.expectNullResult("SELECT zetasqlite_add(1, NULL)");
+    try env.expectInt(3, "SELECT zigquery_add(1, 2)");
+    try env.expectInt(-1, "SELECT zigquery_subtract(2, 3)");
+    try env.expectInt(42, "SELECT zigquery_multiply(6, 7)");
+    try env.expectInt(3, "SELECT zigquery_divide(7, 2)");
+    try env.expectFloat(3.5, "SELECT zigquery_divide(7.0, 2)");
+    try env.expectFloat(4.0, "SELECT zigquery_add(1.5, 2.5)");
+    try env.expectNullResult("SELECT zigquery_add(1, NULL)");
     // This Go fork wraps on int64 overflow (no overflow check in IntValue.Add).
-    try env.expectInt(std.math.minInt(i64), "SELECT zetasqlite_add(9223372036854775807, 1)");
-    try env.expectErrorMsg("zero divided error ( 1 / 0 )", "SELECT zetasqlite_divide(1, 0)");
+    try env.expectInt(std.math.minInt(i64), "SELECT zigquery_add(9223372036854775807, 1)");
+    try env.expectErrorMsg("zero divided error ( 1 / 0 )", "SELECT zigquery_divide(1, 0)");
 
     // SAFE variants: divide-by-zero -> NULL; others go through float64.
-    try env.expectNullResult("SELECT zetasqlite_safe_divide(1, 0)");
-    try env.expectFloat(0.5, "SELECT zetasqlite_safe_divide(1, 2)");
-    try env.expectFloat(3.0, "SELECT zetasqlite_safe_add(1, 2)");
-    try env.expectFloat(-1.0, "SELECT zetasqlite_safe_subtract(1, 2)");
-    try env.expectFloat(6.0, "SELECT zetasqlite_safe_multiply(2, 3)");
-    try env.expectFloat(-5.0, "SELECT zetasqlite_safe_negate(5)");
+    try env.expectNullResult("SELECT zigquery_safe_divide(1, 0)");
+    try env.expectFloat(0.5, "SELECT zigquery_safe_divide(1, 2)");
+    try env.expectFloat(3.0, "SELECT zigquery_safe_add(1, 2)");
+    try env.expectFloat(-1.0, "SELECT zigquery_safe_subtract(1, 2)");
+    try env.expectFloat(6.0, "SELECT zigquery_safe_multiply(2, 3)");
+    try env.expectFloat(-5.0, "SELECT zigquery_safe_negate(5)");
     // safe_negate also gets the automatic safe_ wrapper (Go registers
-    // zetasqlite_safe_safe_negate too).
-    try env.expectFloat(-5.0, "SELECT zetasqlite_safe_safe_negate(5)");
+    // zigquery_safe_safe_negate too).
+    try env.expectFloat(-5.0, "SELECT zigquery_safe_safe_negate(5)");
 
-    try env.expectInt(-1, "SELECT zetasqlite_bitwise_not(0)");
-    try env.expectInt(8, "SELECT zetasqlite_bitwise_left_shift(1, 3)");
-    try env.expectInt(-4, "SELECT zetasqlite_bitwise_right_shift(-8, 1)");
-    try env.expectInt(4, "SELECT zetasqlite_bitwise_and(6, 5)");
-    try env.expectInt(7, "SELECT zetasqlite_bitwise_or(6, 5)");
-    try env.expectInt(3, "SELECT zetasqlite_bitwise_xor(6, 5)");
-    try env.expectNullResult("SELECT zetasqlite_bitwise_and(NULL, 5)");
+    try env.expectInt(-1, "SELECT zigquery_bitwise_not(0)");
+    try env.expectInt(8, "SELECT zigquery_bitwise_left_shift(1, 3)");
+    try env.expectInt(-4, "SELECT zigquery_bitwise_right_shift(-8, 1)");
+    try env.expectInt(4, "SELECT zigquery_bitwise_and(6, 5)");
+    try env.expectInt(7, "SELECT zigquery_bitwise_or(6, 5)");
+    try env.expectInt(3, "SELECT zigquery_bitwise_xor(6, 5)");
+    try env.expectNullResult("SELECT zigquery_bitwise_and(NULL, 5)");
 
-    try env.expectFloat(2.5, "SELECT zetasqlite_abs(-2.5)");
-    try env.expectFloat(2.0, "SELECT zetasqlite_round(1.5)");
-    try env.expectFloat(-2.0, "SELECT zetasqlite_round(-1.5)");
-    try env.expectFloat(1.23, "SELECT zetasqlite_round(1.2345, 2)");
-    try env.expectNullResult("SELECT zetasqlite_round(NULL)");
+    try env.expectFloat(2.5, "SELECT zigquery_abs(-2.5)");
+    try env.expectFloat(2.0, "SELECT zigquery_round(1.5)");
+    try env.expectFloat(-2.0, "SELECT zigquery_round(-1.5)");
+    try env.expectFloat(1.23, "SELECT zigquery_round(1.2345, 2)");
+    try env.expectNullResult("SELECT zigquery_round(NULL)");
 }
 
 test "comparison and logical functions" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    try env.expectInt(1, "SELECT zetasqlite_equal(1, 1)");
-    try env.expectInt(0, "SELECT zetasqlite_equal(1, 2)");
-    try env.expectInt(1, "SELECT zetasqlite_not_equal(1, 2)");
-    try env.expectInt(1, "SELECT zetasqlite_greater(2, 1)");
-    try env.expectInt(1, "SELECT zetasqlite_greater_or_equal(2, 2)");
-    try env.expectInt(1, "SELECT zetasqlite_less(1, 2)");
-    try env.expectInt(1, "SELECT zetasqlite_less_or_equal(2, 2)");
-    try env.expectNullResult("SELECT zetasqlite_equal(NULL, 1)");
+    try env.expectInt(1, "SELECT zigquery_equal(1, 1)");
+    try env.expectInt(0, "SELECT zigquery_equal(1, 2)");
+    try env.expectInt(1, "SELECT zigquery_not_equal(1, 2)");
+    try env.expectInt(1, "SELECT zigquery_greater(2, 1)");
+    try env.expectInt(1, "SELECT zigquery_greater_or_equal(2, 2)");
+    try env.expectInt(1, "SELECT zigquery_less(1, 2)");
+    try env.expectInt(1, "SELECT zigquery_less_or_equal(2, 2)");
+    try env.expectNullResult("SELECT zigquery_equal(NULL, 1)");
 
-    try env.expectInt(0, "SELECT zetasqlite_is_distinct_from(NULL, NULL)");
-    try env.expectInt(1, "SELECT zetasqlite_is_distinct_from(1, NULL)");
-    try env.expectInt(0, "SELECT zetasqlite_is_distinct_from(1, 1)");
-    try env.expectInt(1, "SELECT zetasqlite_is_not_distinct_from(NULL, NULL)");
-    try env.expectInt(0, "SELECT zetasqlite_is_not_distinct_from(1, NULL)");
+    try env.expectInt(0, "SELECT zigquery_is_distinct_from(NULL, NULL)");
+    try env.expectInt(1, "SELECT zigquery_is_distinct_from(1, NULL)");
+    try env.expectInt(0, "SELECT zigquery_is_distinct_from(1, 1)");
+    try env.expectInt(1, "SELECT zigquery_is_not_distinct_from(NULL, NULL)");
+    try env.expectInt(0, "SELECT zigquery_is_not_distinct_from(1, NULL)");
 
-    try env.expectInt(1, "SELECT zetasqlite_between(2, 1, 3)");
-    try env.expectInt(0, "SELECT zetasqlite_between(4, 1, 3)");
-    try env.expectInt(1, "SELECT zetasqlite_in(2, 1, 2, 3)");
-    try env.expectInt(0, "SELECT zetasqlite_in(9, 1, 2, 3)");
+    try env.expectInt(1, "SELECT zigquery_between(2, 1, 3)");
+    try env.expectInt(0, "SELECT zigquery_between(4, 1, 3)");
+    try env.expectInt(1, "SELECT zigquery_in(2, 1, 2, 3)");
+    try env.expectInt(0, "SELECT zigquery_in(9, 1, 2, 3)");
 
-    try env.expectInt(1, "SELECT zetasqlite_is_null(NULL)");
-    try env.expectInt(0, "SELECT zetasqlite_is_null(1)");
-    try env.expectInt(1, "SELECT zetasqlite_is_true(1)");
-    try env.expectInt(1, "SELECT zetasqlite_is_false(0)");
+    try env.expectInt(1, "SELECT zigquery_is_null(NULL)");
+    try env.expectInt(0, "SELECT zigquery_is_null(1)");
+    try env.expectInt(1, "SELECT zigquery_is_true(1)");
+    try env.expectInt(1, "SELECT zigquery_is_false(0)");
     // Total predicates: FALSE for a NULL argument. The analyzer spells
     // `IS NOT TRUE` as $not($is_true(x)), covered by the two below.
-    try env.expectInt(0, "SELECT zetasqlite_is_true(NULL)");
-    try env.expectInt(0, "SELECT zetasqlite_is_false(NULL)");
-    try env.expectInt(1, "SELECT zetasqlite_not(zetasqlite_is_true(NULL))");
-    try env.expectInt(1, "SELECT zetasqlite_not(zetasqlite_is_false(NULL))");
-    try env.expectInt(1, "SELECT zetasqlite_not(0)");
-    try env.expectInt(0, "SELECT zetasqlite_not(1)");
+    try env.expectInt(0, "SELECT zigquery_is_true(NULL)");
+    try env.expectInt(0, "SELECT zigquery_is_false(NULL)");
+    try env.expectInt(1, "SELECT zigquery_not(zigquery_is_true(NULL))");
+    try env.expectInt(1, "SELECT zigquery_not(zigquery_is_false(NULL))");
+    try env.expectInt(1, "SELECT zigquery_not(0)");
+    try env.expectInt(0, "SELECT zigquery_not(1)");
 
-    try env.expectInt(1, "SELECT zetasqlite_and(1, 1, 1)");
-    try env.expectInt(0, "SELECT zetasqlite_and(1, 0, NULL)"); // false beats NULL
-    try env.expectNullResult("SELECT zetasqlite_and(1, NULL)");
-    try env.expectInt(1, "SELECT zetasqlite_or(0, NULL, 1)"); // true beats NULL
-    try env.expectNullResult("SELECT zetasqlite_or(0, NULL)");
-    try env.expectInt(0, "SELECT zetasqlite_or(0, 0)");
+    try env.expectInt(1, "SELECT zigquery_and(1, 1, 1)");
+    try env.expectInt(0, "SELECT zigquery_and(1, 0, NULL)"); // false beats NULL
+    try env.expectNullResult("SELECT zigquery_and(1, NULL)");
+    try env.expectInt(1, "SELECT zigquery_or(0, NULL, 1)"); // true beats NULL
+    try env.expectNullResult("SELECT zigquery_or(0, NULL)");
+    try env.expectInt(0, "SELECT zigquery_or(0, 0)");
 }
 
 test "LIKE matching (only % is a wildcard, _ is literal)" {
@@ -501,36 +501,36 @@ test "LIKE matching (only % is a wildcard, _ is literal)" {
         .{ .s = "ab", .p = "a%ab", .expect = 0 }, // suffix may not overlap prefix
     };
     for (cases) |cse| {
-        const sql = try env.fmt("SELECT zetasqlite_like({s}, {s})", .{
+        const sql = try env.fmt("SELECT zigquery_like({s}, {s})", .{
             try env.encStr(cse.s), try env.encStr(cse.p),
         });
         try env.expectInt(cse.expect, sql);
     }
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_like(NULL, {s})", .{try env.encStr("%")}));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_like(NULL, {s})", .{try env.encStr("%")}));
 }
 
 test "conditional functions" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    try env.expectInt(5, "SELECT zetasqlite_coalesce(NULL, 5, 7)");
-    try env.expectNullResult("SELECT zetasqlite_coalesce(NULL, NULL)");
-    try env.expectErrorMsg("COALESCE: invalid argument num 0", "SELECT zetasqlite_coalesce()");
+    try env.expectInt(5, "SELECT zigquery_coalesce(NULL, 5, 7)");
+    try env.expectNullResult("SELECT zigquery_coalesce(NULL, NULL)");
+    try env.expectErrorMsg("COALESCE: invalid argument num 0", "SELECT zigquery_coalesce()");
 
-    try env.expectInt(1, "SELECT zetasqlite_if(1, 1, 2)");
-    try env.expectInt(2, "SELECT zetasqlite_if(0, 1, 2)");
-    try env.expectInt(2, "SELECT zetasqlite_if(NULL, 1, 2)"); // NULL cond -> false branch
+    try env.expectInt(1, "SELECT zigquery_if(1, 1, 2)");
+    try env.expectInt(2, "SELECT zigquery_if(0, 1, 2)");
+    try env.expectInt(2, "SELECT zigquery_if(NULL, 1, 2)"); // NULL cond -> false branch
     try env.expectStringResult("yes", try env.fmt(
-        "SELECT zetasqlite_if(1, {s}, {s})",
+        "SELECT zigquery_if(1, {s}, {s})",
         .{ try env.encStr("yes"), try env.encStr("no") },
     ));
-    try env.expectErrorMsg("IF: invalid argument num 2", "SELECT zetasqlite_if(1, 2)");
+    try env.expectErrorMsg("IF: invalid argument num 2", "SELECT zigquery_if(1, 2)");
 
-    try env.expectInt(9, "SELECT zetasqlite_ifnull(NULL, 9)");
-    try env.expectInt(4, "SELECT zetasqlite_ifnull(4, 9)");
-    try env.expectNullResult("SELECT zetasqlite_nullif(3, 3)");
-    try env.expectInt(3, "SELECT zetasqlite_nullif(3, 4)");
-    try env.expectNullResult("SELECT zetasqlite_nullif(NULL, 4)");
+    try env.expectInt(9, "SELECT zigquery_ifnull(NULL, 9)");
+    try env.expectInt(4, "SELECT zigquery_ifnull(4, 9)");
+    try env.expectNullResult("SELECT zigquery_nullif(3, 3)");
+    try env.expectInt(3, "SELECT zigquery_nullif(3, 4)");
+    try env.expectNullResult("SELECT zigquery_nullif(NULL, 4)");
 }
 
 test "string functions" {
@@ -538,38 +538,38 @@ test "string functions" {
     defer env.deinit();
 
     try env.expectStringResult("abcd", try env.fmt(
-        "SELECT zetasqlite_concat({s}, {s})",
+        "SELECT zigquery_concat({s}, {s})",
         .{ try env.encStr("ab"), try env.encStr("cd") },
     ));
     try env.expectNullResult(try env.fmt(
-        "SELECT zetasqlite_concat({s}, NULL)",
+        "SELECT zigquery_concat({s}, NULL)",
         .{try env.encStr("ab")},
     ));
-    try env.expectErrorMsg("CONCAT: argument type must be STRING or BYTES", "SELECT zetasqlite_concat(1, 2)");
+    try env.expectErrorMsg("CONCAT: argument type must be STRING or BYTES", "SELECT zigquery_concat(1, 2)");
 
     // length counts runes for strings, bytes for BYTES.
-    try env.expectInt(5, try env.fmt("SELECT zetasqlite_length({s})", .{try env.encStr("héllo")}));
-    try env.expectInt(6, try env.fmt("SELECT zetasqlite_length({s})", .{try env.enc(Value{ .bytes = "héllo" })}));
-    try env.expectNullResult("SELECT zetasqlite_length(NULL)");
+    try env.expectInt(5, try env.fmt("SELECT zigquery_length({s})", .{try env.encStr("héllo")}));
+    try env.expectInt(6, try env.fmt("SELECT zigquery_length({s})", .{try env.enc(Value{ .bytes = "héllo" })}));
+    try env.expectNullResult("SELECT zigquery_length(NULL)");
 
-    try env.expectStringResult("hé", try env.fmt("SELECT zetasqlite_left({s}, 2)", .{try env.encStr("héllo")}));
-    try env.expectStringResult("llo", try env.fmt("SELECT zetasqlite_right({s}, 3)", .{try env.encStr("héllo")}));
-    try env.expectStringResult("abc", try env.fmt("SELECT zetasqlite_left({s}, 99)", .{try env.encStr("abc")}));
+    try env.expectStringResult("hé", try env.fmt("SELECT zigquery_left({s}, 2)", .{try env.encStr("héllo")}));
+    try env.expectStringResult("llo", try env.fmt("SELECT zigquery_right({s}, 3)", .{try env.encStr("héllo")}));
+    try env.expectStringResult("abc", try env.fmt("SELECT zigquery_left({s}, 99)", .{try env.encStr("abc")}));
     try env.expectErrorMsg(
         "LEFT: unexpected length value. length must be positive number",
-        try env.fmt("SELECT zetasqlite_left({s}, -1)", .{try env.encStr("abc")}),
+        try env.fmt("SELECT zigquery_left({s}, -1)", .{try env.encStr("abc")}),
     );
 
-    try env.expectStringResult("abc", try env.fmt("SELECT zetasqlite_lower({s})", .{try env.encStr("AbC")}));
-    try env.expectStringResult("ABC", try env.fmt("SELECT zetasqlite_upper({s})", .{try env.encStr("aBc")}));
+    try env.expectStringResult("abc", try env.fmt("SELECT zigquery_lower({s})", .{try env.encStr("AbC")}));
+    try env.expectStringResult("ABC", try env.fmt("SELECT zigquery_upper({s})", .{try env.encStr("aBc")}));
 
     // SUBSTR: 1-based, negative pos counts from the end.
-    try env.expectStringResult("bcd", try env.fmt("SELECT zetasqlite_substr({s}, 2)", .{try env.encStr("abcd")}));
-    try env.expectStringResult("bc", try env.fmt("SELECT zetasqlite_substr({s}, 2, 2)", .{try env.encStr("abcd")}));
-    try env.expectStringResult("cd", try env.fmt("SELECT zetasqlite_substr({s}, -2)", .{try env.encStr("abcd")}));
+    try env.expectStringResult("bcd", try env.fmt("SELECT zigquery_substr({s}, 2)", .{try env.encStr("abcd")}));
+    try env.expectStringResult("bc", try env.fmt("SELECT zigquery_substr({s}, 2, 2)", .{try env.encStr("abcd")}));
+    try env.expectStringResult("cd", try env.fmt("SELECT zigquery_substr({s}, -2)", .{try env.encStr("abcd")}));
     try env.expectErrorMsg(
         "SUBSTR: length must be positive number",
-        try env.fmt("SELECT zetasqlite_substr({s}, 1, -1)", .{try env.encStr("abcd")}),
+        try env.fmt("SELECT zigquery_substr({s}, 1, -1)", .{try env.encStr("abcd")}),
     );
 }
 
@@ -577,53 +577,53 @@ test "array and struct functions" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    try env.expectInt(3, "SELECT zetasqlite_array_length(zetasqlite_make_array(7, 8, 9))");
-    try env.expectInt(8, "SELECT zetasqlite_array_at_offset(zetasqlite_make_array(7, 8, 9), 1)");
-    try env.expectInt(7, "SELECT zetasqlite_array_at_ordinal(zetasqlite_make_array(7, 8, 9), 1)");
-    try env.expectErrorMsg("OFFSET(5) is out of range", "SELECT zetasqlite_array_at_offset(zetasqlite_make_array(7), 5)");
-    try env.expectErrorMsg("ORDINAL(0) is out of range", "SELECT zetasqlite_array_at_ordinal(zetasqlite_make_array(7), 0)");
-    try env.expectNullResult("SELECT zetasqlite_safe_array_at_offset(zetasqlite_make_array(7), 5)");
-    try env.expectNullResult("SELECT zetasqlite_safe_array_at_ordinal(zetasqlite_make_array(7), 0)");
+    try env.expectInt(3, "SELECT zigquery_array_length(zigquery_make_array(7, 8, 9))");
+    try env.expectInt(8, "SELECT zigquery_array_at_offset(zigquery_make_array(7, 8, 9), 1)");
+    try env.expectInt(7, "SELECT zigquery_array_at_ordinal(zigquery_make_array(7, 8, 9), 1)");
+    try env.expectErrorMsg("OFFSET(5) is out of range", "SELECT zigquery_array_at_offset(zigquery_make_array(7), 5)");
+    try env.expectErrorMsg("ORDINAL(0) is out of range", "SELECT zigquery_array_at_ordinal(zigquery_make_array(7), 0)");
+    try env.expectNullResult("SELECT zigquery_safe_array_at_offset(zigquery_make_array(7), 5)");
+    try env.expectNullResult("SELECT zigquery_safe_array_at_ordinal(zigquery_make_array(7), 0)");
 
-    try env.expectInt(4, "SELECT zetasqlite_array_length(zetasqlite_array_concat(zetasqlite_make_array(1, 2), zetasqlite_make_array(3, 4)))");
+    try env.expectInt(4, "SELECT zigquery_array_length(zigquery_array_concat(zigquery_make_array(1, 2), zigquery_make_array(3, 4)))");
     // ARRAY_LENGTH reads the count off the encoded array, so these check it
     // against the cases where a count and a decode could disagree: nothing to
     // decode, and an element that decodes to nothing.
-    try env.expectInt(0, "SELECT zetasqlite_array_length(zetasqlite_make_array())");
-    try env.expectInt(3, "SELECT zetasqlite_array_length(zetasqlite_make_array(1, NULL, 3))");
+    try env.expectInt(0, "SELECT zigquery_array_length(zigquery_make_array())");
+    try env.expectInt(3, "SELECT zigquery_array_length(zigquery_make_array(1, NULL, 3))");
     try env.expectInt(
         2,
         try env.fmt(
-            "SELECT zetasqlite_array_length(zetasqlite_make_array({s}, {s}))",
+            "SELECT zigquery_array_length(zigquery_make_array({s}, {s}))",
             .{ try env.encStr("a"), try env.encStr("bb") },
         ),
     );
     try env.expectErrorMsg(
         "failed to convert to array type",
-        "SELECT zetasqlite_array_length(1)",
+        "SELECT zigquery_array_length(1)",
     );
-    try env.expectNullResult("SELECT zetasqlite_array_concat(zetasqlite_make_array(1), NULL)");
+    try env.expectNullResult("SELECT zigquery_array_concat(zigquery_make_array(1), NULL)");
 
-    try env.expectInt(1, "SELECT zetasqlite_in_array(2, zetasqlite_make_array(1, 2, 3))");
-    try env.expectInt(0, "SELECT zetasqlite_in_array(9, zetasqlite_make_array(1, 2, 3))");
+    try env.expectInt(1, "SELECT zigquery_in_array(2, zigquery_make_array(1, 2, 3))");
+    try env.expectInt(0, "SELECT zigquery_in_array(9, zigquery_make_array(1, 2, 3))");
 
-    const mk_struct = try env.fmt("zetasqlite_make_struct({s}, 1, {s}, {s})", .{
+    const mk_struct = try env.fmt("zigquery_make_struct({s}, 1, {s}, {s})", .{
         try env.encStr("a"), try env.encStr("b"), try env.encStr("x"),
     });
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_get_struct_field({s}, 0)", .{mk_struct}));
-    try env.expectStringResult("x", try env.fmt("SELECT zetasqlite_get_struct_field({s}, 1)", .{mk_struct}));
+    try env.expectInt(1, try env.fmt("SELECT zigquery_get_struct_field({s}, 0)", .{mk_struct}));
+    try env.expectStringResult("x", try env.fmt("SELECT zigquery_get_struct_field({s}, 1)", .{mk_struct}));
     try env.expectErrorMsg(
         "struct field index 7 out of range (struct has 2 fields)",
-        try env.fmt("SELECT zetasqlite_get_struct_field({s}, 7)", .{mk_struct}),
+        try env.fmt("SELECT zigquery_get_struct_field({s}, 7)", .{mk_struct}),
     );
     // A nested composite field is walked over, not decoded, on the way to a
     // later one — the case where a wrong skip width would desynchronise the
     // walk rather than error.
     const nested = try env.fmt(
-        "zetasqlite_make_struct({s}, zetasqlite_make_array(1, 2), {s}, 9)",
+        "zigquery_make_struct({s}, zigquery_make_array(1, 2), {s}, 9)",
         .{ try env.encStr("a"), try env.encStr("b") },
     );
-    try env.expectInt(9, try env.fmt("SELECT zetasqlite_get_struct_field({s}, 1)", .{nested}));
+    try env.expectInt(9, try env.fmt("SELECT zigquery_get_struct_field({s}, 1)", .{nested}));
 
     // These three take their composite argument encoded (bind.FuncInfo
     // raw_args), so an argument that is not one has to fall back to a full
@@ -632,17 +632,17 @@ test "array and struct functions" {
     // toStruct says about the value it actually got, not a generic complaint.
     try env.expectErrorMsg(
         "failed to convert struct from string",
-        try env.fmt("SELECT zetasqlite_get_struct_field({s}, 0)", .{try env.encStr("nope")}),
+        try env.fmt("SELECT zigquery_get_struct_field({s}, 0)", .{try env.encStr("nope")}),
     );
     try env.expectErrorMsg(
         "failed to convert array from string",
-        try env.fmt("SELECT zetasqlite_array_at_offset({s}, 0)", .{try env.encStr("nope")}),
+        try env.fmt("SELECT zigquery_array_at_offset({s}, 0)", .{try env.encStr("nope")}),
     );
     // An INTEGER argument never arrives raw at all, so it takes the same path
     // it always did.
     try env.expectErrorMsg(
         "failed to convert to array type",
-        "SELECT zetasqlite_array_at_ordinal(1, 1)",
+        "SELECT zigquery_array_at_ordinal(1, 1)",
     );
 }
 
@@ -658,37 +658,37 @@ test "cast function (foundation kinds)" {
     const t_ts = try env.encStr("{\"kind\":19}");
 
     // int -> string / float / bool
-    try env.expectStringResult("1", try env.fmt("SELECT zetasqlite_cast(1, {s}, {s}, 0)", .{ t_int, t_string }));
-    const as_float = try env.queryValue(try env.fmt("SELECT zetasqlite_cast(3, {s}, {s}, 0)", .{ t_int, t_double }));
+    try env.expectStringResult("1", try env.fmt("SELECT zigquery_cast(1, {s}, {s}, 0)", .{ t_int, t_string }));
+    const as_float = try env.queryValue(try env.fmt("SELECT zigquery_cast(3, {s}, {s}, 0)", .{ t_int, t_double }));
     try value_mod.expectValueEqual(Value{ .float = 3.0 }, as_float);
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_cast(1, {s}, {s}, 0)", .{ t_int, t_bool }));
+    try env.expectInt(1, try env.fmt("SELECT zigquery_cast(1, {s}, {s}, 0)", .{ t_int, t_bool }));
 
     // string -> int; float -> int truncates
-    try env.expectInt(42, try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("42"), t_string, t_int }));
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_cast(1.5, {s}, {s}, 0)", .{ t_double, t_int }));
+    try env.expectInt(42, try env.fmt("SELECT zigquery_cast({s}, {s}, {s}, 0)", .{ try env.encStr("42"), t_string, t_int }));
+    try env.expectInt(1, try env.fmt("SELECT zigquery_cast(1.5, {s}, {s}, 0)", .{ t_double, t_int }));
 
     // date <-> string
     const days = try value_mod.parseDateDays("2021-01-02");
     const date_lit = try env.enc(Value{ .date = days });
-    try env.expectStringResult("2021-01-02", try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ date_lit, t_date, t_string }));
+    try env.expectStringResult("2021-01-02", try env.fmt("SELECT zigquery_cast({s}, {s}, {s}, 0)", .{ date_lit, t_date, t_string }));
     const as_date = try env.queryValue(try env.fmt(
-        "SELECT zetasqlite_cast({s}, {s}, {s}, 0)",
+        "SELECT zigquery_cast({s}, {s}, {s}, 0)",
         .{ try env.encStr("2021-01-02"), t_string, t_date },
     ));
     try value_mod.expectValueEqual(Value{ .date = days }, as_date);
 
     // NULL passes through; safe cast turns failures into NULL, unsafe raises.
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_cast(NULL, {s}, {s}, 0)", .{ t_string, t_int }));
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 1)", .{ try env.encStr("abc"), t_string, t_int }));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_cast(NULL, {s}, {s}, 0)", .{ t_string, t_int }));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_cast({s}, {s}, {s}, 1)", .{ try env.encStr("abc"), t_string, t_int }));
     try env.expectErrorMsg(
         "Bad int64 value: abc",
-        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("abc"), t_string, t_int }),
+        try env.fmt("SELECT zigquery_cast({s}, {s}, {s}, 0)", .{ try env.encStr("abc"), t_string, t_int }),
     );
     // string -> timestamp parses the date/datetime/timestamp form (a bare
     // date lands at midnight UTC).
     const ts_days = try value_mod.parseDateDays("2021-01-02");
     const as_ts = try env.queryValue(try env.fmt(
-        "SELECT zetasqlite_cast({s}, {s}, {s}, 0)",
+        "SELECT zigquery_cast({s}, {s}, {s}, 0)",
         .{ try env.encStr("2021-01-02"), t_string, t_ts },
     ));
     try value_mod.expectValueEqual(Value{ .timestamp = ts_days * 86400 * 1_000_000 }, as_ts);
@@ -698,13 +698,13 @@ test "cast function (foundation kinds)" {
     const t_numeric = try env.encStr("{\"kind\":23}");
     const t_bignumeric = try env.encStr("{\"kind\":24}");
     const as_numeric = try env.queryValue(
-        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("12.4E17"), t_string, t_numeric }),
+        try env.fmt("SELECT zigquery_cast({s}, {s}, {s}, 0)", .{ try env.encStr("12.4E17"), t_string, t_numeric }),
     );
     try testing.expect(as_numeric == .numeric);
     try testing.expect(!as_numeric.numeric.is_bignumeric);
     try testing.expectEqualStrings("1240000000000000000", try as_numeric.toString(env.alloc()));
     const as_bignumeric = try env.queryValue(
-        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ try env.encStr("12.4E37"), t_string, t_bignumeric }),
+        try env.fmt("SELECT zigquery_cast({s}, {s}, {s}, 0)", .{ try env.encStr("12.4E37"), t_string, t_bignumeric }),
     );
     try testing.expect(as_bignumeric == .numeric);
     try testing.expect(as_bignumeric.numeric.is_bignumeric);
@@ -713,15 +713,15 @@ test "cast function (foundation kinds)" {
     const numeric_lit = try env.enc(try value_mod.numericFromString(env.alloc(), "123.456", false));
     try env.expectStringResult(
         "123.456",
-        try env.fmt("SELECT zetasqlite_cast({s}, {s}, {s}, 0)", .{ numeric_lit, t_numeric, t_string }),
+        try env.fmt("SELECT zigquery_cast({s}, {s}, {s}, 0)", .{ numeric_lit, t_numeric, t_string }),
     );
 
     // array cast: elements go through elementType.
     const t_arr_str = try env.encStr("{\"kind\":16,\"elementType\":{\"kind\":8}}");
     const t_arr_int = try env.encStr("{\"kind\":16,\"elementType\":{\"kind\":2}}");
-    const arr_in = try env.fmt("zetasqlite_make_array({s}, {s})", .{ try env.encStr("1"), try env.encStr("2") });
+    const arr_in = try env.fmt("zigquery_make_array({s}, {s})", .{ try env.encStr("1"), try env.encStr("2") });
     try env.expectInt(2, try env.fmt(
-        "SELECT zetasqlite_array_at_offset(zetasqlite_cast({s}, {s}, {s}, 0), 1)",
+        "SELECT zigquery_array_at_offset(zigquery_cast({s}, {s}, {s}, 0), 1)",
         .{ arr_in, t_arr_str, t_arr_int },
     ));
 }
@@ -732,13 +732,13 @@ test "parse_numeric / parse_bignumeric" {
 
     // Corpus cases 618/619: plain, exponent, and precision-rounding forms.
     const cases = [_]struct { func: []const u8, in: []const u8, out: []const u8, big: bool }{
-        .{ .func = "zetasqlite_parse_numeric", .in = "123.45", .out = "123.45", .big = false },
-        .{ .func = "zetasqlite_parse_numeric", .in = "12.34E27", .out = "12340000000000000000000000000", .big = false },
-        .{ .func = "zetasqlite_parse_numeric", .in = "1.0123456789", .out = "1.012345679", .big = false },
-        .{ .func = "zetasqlite_parse_bignumeric", .in = "123.45", .out = "123.45", .big = true },
+        .{ .func = "zigquery_parse_numeric", .in = "123.45", .out = "123.45", .big = false },
+        .{ .func = "zigquery_parse_numeric", .in = "12.34E27", .out = "12340000000000000000000000000", .big = false },
+        .{ .func = "zigquery_parse_numeric", .in = "1.0123456789", .out = "1.012345679", .big = false },
+        .{ .func = "zigquery_parse_bignumeric", .in = "123.45", .out = "123.45", .big = true },
 
         .{
-            .func = "zetasqlite_parse_bignumeric",
+            .func = "zigquery_parse_bignumeric",
             .in = "1.123456789012345678901234567890123456789",
             .out = "1.12345678901234567890123456789012345679",
             .big = true,
@@ -754,7 +754,7 @@ test "parse_numeric / parse_bignumeric" {
     // Unparseable literals raise like Go's PARSE_NUMERIC.
     try env.expectErrorMsg(
         "unexpected numeric literal: abc",
-        try env.fmt("SELECT zetasqlite_parse_numeric({s})", .{try env.encStr("abc")}),
+        try env.fmt("SELECT zigquery_parse_numeric({s})", .{try env.encStr("abc")}),
     );
 
     // A well-formed literal past the type's range is a *range* error, and is
@@ -764,12 +764,12 @@ test "parse_numeric / parse_bignumeric" {
     // too; go-zetasqlite accepted it only because it has no bounds check.
     try env.expectErrorMsg(
         "BIGNUMERIC value out of range: 123.456E37",
-        try env.fmt("SELECT zetasqlite_parse_bignumeric({s})", .{try env.encStr("123.456E37")}),
+        try env.fmt("SELECT zigquery_parse_bignumeric({s})", .{try env.encStr("123.456E37")}),
     );
     // NUMERIC's own bound is 10^38 - 1 unscaled, i.e. just under 1e29.
     try env.expectErrorMsg(
         "NUMERIC value out of range: 1e29",
-        try env.fmt("SELECT zetasqlite_parse_numeric({s})", .{try env.encStr("1e29")}),
+        try env.fmt("SELECT zigquery_parse_numeric({s})", .{try env.encStr("1e29")}),
     );
 }
 
@@ -786,19 +786,19 @@ test "SUM / AVG / MIN / MAX over numeric values" {
     );
 
     // SUM keeps the NUMERIC kind (Go: sum.Add returns the NumericValue).
-    const sum = try env.queryValue(try env.fmt("{s} SELECT zetasqlite_sum(v) FROM t", .{table}));
+    const sum = try env.queryValue(try env.fmt("{s} SELECT zigquery_sum(v) FROM t", .{table}));
     try testing.expect(sum == .numeric);
     try testing.expectEqualStrings("3", try sum.toString(env.alloc()));
 
     // AVG converts through ToFloat64 (Go returns FloatValue).
-    const avg = try env.queryValue(try env.fmt("{s} SELECT zetasqlite_avg(v) FROM t", .{table}));
+    const avg = try env.queryValue(try env.fmt("{s} SELECT zigquery_avg(v) FROM t", .{table}));
     try testing.expect(avg == .float);
     try testing.expectApproxEqAbs(@as(f64, 1.0), avg.float, 1e-12);
 
     // MIN/MAX order via the rat comparison.
-    const max = try env.queryValue(try env.fmt("{s} SELECT zetasqlite_max(v) FROM t", .{table}));
+    const max = try env.queryValue(try env.fmt("{s} SELECT zigquery_max(v) FROM t", .{table}));
     try testing.expectEqualStrings("2.25", try max.toString(env.alloc()));
-    const min = try env.queryValue(try env.fmt("{s} SELECT zetasqlite_min(v) FROM t", .{table}));
+    const min = try env.queryValue(try env.fmt("{s} SELECT zigquery_min(v) FROM t", .{table}));
     try testing.expectEqualStrings("-0.75", try min.toString(env.alloc()));
 }
 
@@ -806,9 +806,9 @@ test "error() raises with its message; safe variant yields NULL" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    try env.expectErrorMsg("boom", try env.fmt("SELECT zetasqlite_error({s})", .{try env.encStr("boom")}));
-    try env.expectNullResult("SELECT zetasqlite_error(NULL)");
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_safe_error({s})", .{try env.encStr("boom")}));
+    try env.expectErrorMsg("boom", try env.fmt("SELECT zigquery_error({s})", .{try env.encStr("boom")}));
+    try env.expectNullResult("SELECT zigquery_error(NULL)");
+    try env.expectNullResult(try env.fmt("SELECT zigquery_safe_error({s})", .{try env.encStr("boom")}));
 }
 
 test "group_by returns its argument untouched, so distinct values stay distinct" {
@@ -818,14 +818,14 @@ test "group_by returns its argument untouched, so distinct values stay distinct"
     // Scalars keep their storage class, which is what lets SQLite group -0.0 with 0.0 and NULL
     // with NULL.
     {
-        var stmt = try env.db.prepare("SELECT zetasqlite_group_by(5)");
+        var stmt = try env.db.prepare("SELECT zigquery_group_by(5)");
         defer stmt.finalize();
         try testing.expect(try stmt.step());
         try testing.expectEqual(sqlite.Stmt.ColumnType.integer, stmt.columnType(0));
         try testing.expectEqual(@as(i64, 5), stmt.columnInt64(0));
     }
     {
-        var stmt = try env.db.prepare("SELECT zetasqlite_group_by(NULL)");
+        var stmt = try env.db.prepare("SELECT zigquery_group_by(NULL)");
         defer stmt.finalize();
         try testing.expect(try stmt.step());
         try testing.expectEqual(sqlite.Stmt.ColumnType.null, stmt.columnType(0));
@@ -834,7 +834,7 @@ test "group_by returns its argument untouched, so distinct values stay distinct"
     // A string is its stored blob, not its text.
     const x = try env.encStr("x");
     try env.expectInt(1, try env.fmt(
-        "SELECT zetasqlite_group_by({s}) = {s}",
+        "SELECT zigquery_group_by({s}) = {s}",
         .{ x, x },
     ));
 
@@ -844,8 +844,8 @@ test "group_by returns its argument untouched, so distinct values stay distinct"
     const a = try env.encStr("a");
     const b = try env.encStr("b");
     try env.expectInt(0, try env.fmt(
-        "SELECT zetasqlite_group_by(zetasqlite_make_array({s}))" ++
-            " = zetasqlite_group_by(zetasqlite_make_array({s}, {s}))",
+        "SELECT zigquery_group_by(zigquery_make_array({s}))" ++
+            " = zigquery_group_by(zigquery_make_array({s}, {s}))",
         .{ ab, a, b },
     ));
 }
@@ -906,36 +906,36 @@ test "EDIT_DISTANCE counts characters, and max_distance caps rather than rejects
     // it and the UDF always sees three arguments.
     const big = "9223372036854775807";
     try env.expectInt(3, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        "SELECT zigquery_edit_distance({s}, {s}, " ++ big ++ ")",
         .{ try env.encStr("kitten"), try env.encStr("sitting") },
     ));
     try env.expectInt(3, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        "SELECT zigquery_edit_distance({s}, {s}, " ++ big ++ ")",
         .{ try env.encStr(""), try env.encStr("abc") },
     ));
     try env.expectInt(0, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        "SELECT zigquery_edit_distance({s}, {s}, " ++ big ++ ")",
         .{ try env.encStr(""), try env.encStr("") },
     ));
     // Case-sensitive: no letter of "ABC" matches a letter of "abc".
     try env.expectInt(3, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        "SELECT zigquery_edit_distance({s}, {s}, " ++ big ++ ")",
         .{ try env.encStr("ABC"), try env.encStr("abc") },
     ));
     // Characters, not bytes. A byte-wise walk answers 2 here, because the
     // accented letter is two bytes in UTF-8 — the row a plausible
     // implementation gets wrong.
     try env.expectInt(1, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        "SELECT zigquery_edit_distance({s}, {s}, " ++ big ++ ")",
         .{ try env.encStr("\u{e9}"), try env.encStr("e") },
     ));
     try env.expectInt(1, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        "SELECT zigquery_edit_distance({s}, {s}, " ++ big ++ ")",
         .{ try env.encStr("\u{65e5}\u{672c}"), try env.encStr("\u{65e5}x") },
     ));
     // The BYTES signature walks bytes instead.
     try env.expectInt(1, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        "SELECT zigquery_edit_distance({s}, {s}, " ++ big ++ ")",
         .{
             try env.enc(Value{ .bytes = "abc" }),
             try env.enc(Value{ .bytes = "abd" }),
@@ -944,37 +944,37 @@ test "EDIT_DISTANCE counts characters, and max_distance caps rather than rejects
 
     // max_distance caps the answer; it does not turn it into NULL.
     try env.expectInt(2, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, 2)",
+        "SELECT zigquery_edit_distance({s}, {s}, 2)",
         .{ try env.encStr("kitten"), try env.encStr("sitting") },
     ));
     try env.expectInt(1, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, 1)",
+        "SELECT zigquery_edit_distance({s}, {s}, 1)",
         .{ try env.encStr("abc"), try env.encStr("xyz") },
     ));
     try env.expectInt(3, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, 5)",
+        "SELECT zigquery_edit_distance({s}, {s}, 5)",
         .{ try env.encStr("abc"), try env.encStr("xyz") },
     ));
     try env.expectInt(0, try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, 0)",
+        "SELECT zigquery_edit_distance({s}, {s}, 0)",
         .{ try env.encStr("abc"), try env.encStr("abc") },
     ));
 
     // Any NULL argument wins, including over a negative max_distance.
     try env.expectNullResult(try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, " ++ big ++ ")",
+        "SELECT zigquery_edit_distance({s}, {s}, " ++ big ++ ")",
         .{ try env.enc(Value.null), try env.encStr("a") },
     ));
     try env.expectNullResult(try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, {s})",
+        "SELECT zigquery_edit_distance({s}, {s}, {s})",
         .{ try env.encStr("a"), try env.encStr("b"), try env.enc(Value.null) },
     ));
     try env.expectNullResult(try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, -1)",
+        "SELECT zigquery_edit_distance({s}, {s}, -1)",
         .{ try env.enc(Value.null), try env.encStr("a") },
     ));
     try env.expectErrorMsg("max_distance must be non-negative", try env.fmt(
-        "SELECT zetasqlite_edit_distance({s}, {s}, -1)",
+        "SELECT zigquery_edit_distance({s}, {s}, -1)",
         .{ try env.encStr("abc"), try env.encStr("xyz") },
     ));
 }
@@ -982,147 +982,147 @@ test "EDIT_DISTANCE counts characters, and max_distance caps rather than rejects
 test "min_args guard rejects too few arguments instead of UB" {
     var env = try TestEnv.init();
     defer env.deinit();
-    try env.expectErrorMsg("zetasqlite_add: invalid argument num", "SELECT zetasqlite_add(1)");
+    try env.expectErrorMsg("zigquery_add: invalid argument num", "SELECT zigquery_add(1)");
 }
 
 test "extended string functions (ascii/length/case/pad/split/soundex)" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    try env.expectInt(97, try env.fmt("SELECT zetasqlite_ascii({s})", .{try env.encStr("abcd")}));
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_ascii({s})", .{try env.encStr("")}));
+    try env.expectInt(97, try env.fmt("SELECT zigquery_ascii({s})", .{try env.encStr("abcd")}));
+    try env.expectInt(0, try env.fmt("SELECT zigquery_ascii({s})", .{try env.encStr("")}));
     // rune vs byte length.
-    try env.expectInt(5, try env.fmt("SELECT zetasqlite_char_length({s})", .{try env.encStr("абвгд")}));
-    try env.expectInt(10, try env.fmt("SELECT zetasqlite_byte_length({s})", .{try env.encStr("абвгд")}));
+    try env.expectInt(5, try env.fmt("SELECT zigquery_char_length({s})", .{try env.encStr("абвгд")}));
+    try env.expectInt(10, try env.fmt("SELECT zigquery_byte_length({s})", .{try env.encStr("абвгд")}));
     // full-unicode case mapping.
-    try env.expectStringResult("ΚΑΘΊΣΜΑΤΑ", try env.fmt("SELECT zetasqlite_upper({s})", .{try env.encStr("καθίσματα")}));
+    try env.expectStringResult("ΚΑΘΊΣΜΑΤΑ", try env.fmt("SELECT zigquery_upper({s})", .{try env.encStr("καθίσματα")}));
     // rune-aware reverse.
-    try env.expectStringResult("дгвба", try env.fmt("SELECT zetasqlite_reverse({s})", .{try env.encStr("абвгд")}));
+    try env.expectStringResult("дгвба", try env.fmt("SELECT zigquery_reverse({s})", .{try env.encStr("абвгд")}));
     // lpad on runes, with repeated pattern.
     try env.expectStringResult("中文中例子", try env.fmt(
-        "SELECT zetasqlite_lpad({s}, 5, {s})",
+        "SELECT zigquery_lpad({s}, 5, {s})",
         .{ try env.encStr("例子"), try env.encStr("中文") },
     ));
-    try env.expectStringResult("  例子", try env.fmt("SELECT zetasqlite_lpad({s}, 4)", .{try env.encStr("例子")}));
+    try env.expectStringResult("  例子", try env.fmt("SELECT zigquery_lpad({s}, 4)", .{try env.encStr("例子")}));
     // initcap default delimiters (Greek).
-    try env.expectStringResult("Καθίσματα Ταινιών", try env.fmt("SELECT zetasqlite_initcap({s})", .{try env.encStr("καθίσματα ταινιών")}));
+    try env.expectStringResult("Καθίσματα Ταινιών", try env.fmt("SELECT zigquery_initcap({s})", .{try env.encStr("καθίσματα ταινιών")}));
     // soundex.
-    try env.expectStringResult("A261", try env.fmt("SELECT zetasqlite_soundex({s})", .{try env.encStr("Ashcraft")}));
-    try env.expectStringResult("", try env.fmt("SELECT zetasqlite_soundex({s})", .{try env.encStr("#1")}));
+    try env.expectStringResult("A261", try env.fmt("SELECT zigquery_soundex({s})", .{try env.encStr("Ashcraft")}));
+    try env.expectStringResult("", try env.fmt("SELECT zigquery_soundex({s})", .{try env.encStr("#1")}));
     // strpos / instr / starts_with / ends_with.
-    try env.expectInt(4, try env.fmt("SELECT zetasqlite_strpos({s}, {s})", .{ try env.encStr("foo@bar"), try env.encStr("@") }));
-    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 1, 2)", .{ try env.encStr("banana"), try env.encStr("an") }));
-    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1, 1)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    try env.expectInt(4, try env.fmt("SELECT zigquery_strpos({s}, {s})", .{ try env.encStr("foo@bar"), try env.encStr("@") }));
+    try env.expectInt(4, try env.fmt("SELECT zigquery_instr({s}, {s}, 1, 2)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    try env.expectInt(4, try env.fmt("SELECT zigquery_instr({s}, {s}, -1, 1)", .{ try env.encStr("banana"), try env.encStr("an") }));
     // INSTR's optional arguments and its backward search. Every expectation
     // below is BigQuery's (recidiviz-bigquery-sandbox); the docs carry the
     // -3 and helloooo ones too (string_functions.md#instr).
     //
     // Two arguments: position defaults to the start, occurrence to the first.
-    try env.expectInt(2, try env.fmt("SELECT zetasqlite_instr({s}, {s})", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(2, try env.fmt("SELECT zigquery_instr({s}, {s})", .{ try env.encStr("banana"), try env.encStr("a") }));
     // A negative position searches backward from the end, -1 being the last
     // unit, and the occurrence counts backward with it.
-    try env.expectInt(6, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1)", .{ try env.encStr("banana"), try env.encStr("a") }));
-    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1, 2)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(6, try env.fmt("SELECT zigquery_instr({s}, {s}, -1)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(4, try env.fmt("SELECT zigquery_instr({s}, {s}, -1, 2)", .{ try env.encStr("banana"), try env.encStr("a") }));
     // It bounds where a match *starts*, so this one runs past unit 4.
-    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -3)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    try env.expectInt(4, try env.fmt("SELECT zigquery_instr({s}, {s}, -3)", .{ try env.encStr("banana"), try env.encStr("an") }));
     // A position past either end returns 0 rather than erroring.
-    try env.expectInt(6, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 6)", .{ try env.encStr("banana"), try env.encStr("a") }));
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 7)", .{ try env.encStr("banana"), try env.encStr("a") }));
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -10)", .{ try env.encStr("banana"), try env.encStr("an") }));
+    try env.expectInt(6, try env.fmt("SELECT zigquery_instr({s}, {s}, 6)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(0, try env.fmt("SELECT zigquery_instr({s}, {s}, 7)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(0, try env.fmt("SELECT zigquery_instr({s}, {s}, -10)", .{ try env.encStr("banana"), try env.encStr("an") }));
     // Occurrences may overlap: the second "oo" of "helloooo" starts at 6.
-    try env.expectInt(6, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 1, 2)", .{ try env.encStr("helloooo"), try env.encStr("oo") }));
+    try env.expectInt(6, try env.fmt("SELECT zigquery_instr({s}, {s}, 1, 2)", .{ try env.encStr("helloooo"), try env.encStr("oo") }));
     // More occurrences asked for than exist, and an empty needle.
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_instr({s}, {s}, 1, 9)", .{ try env.encStr("banana"), try env.encStr("a") }));
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_instr({s}, {s})", .{ try env.encStr("banana"), try env.encStr("") }));
+    try env.expectInt(0, try env.fmt("SELECT zigquery_instr({s}, {s}, 1, 9)", .{ try env.encStr("banana"), try env.encStr("a") }));
+    try env.expectInt(1, try env.fmt("SELECT zigquery_instr({s}, {s})", .{ try env.encStr("banana"), try env.encStr("") }));
     // STRING counts characters, BYTES counts bytes: "héllo" puts the first
     // "l" at 3, and the identical value as BYTES puts it at 4.
-    try env.expectInt(3, try env.fmt("SELECT zetasqlite_instr({s}, {s})", .{ try env.encStr("héllo"), try env.encStr("l") }));
-    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s}, -1)", .{ try env.encStr("héllo"), try env.encStr("l") }));
-    try env.expectInt(4, try env.fmt("SELECT zetasqlite_instr({s}, {s})", .{ try env.encBytes("héllo"), try env.encBytes("l") }));
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_starts_with({s}, {s})", .{ try env.encStr("bar"), try env.encStr("b") }));
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_ends_with({s}, {s})", .{ try env.encStr("apple"), try env.encStr("e") }));
+    try env.expectInt(3, try env.fmt("SELECT zigquery_instr({s}, {s})", .{ try env.encStr("héllo"), try env.encStr("l") }));
+    try env.expectInt(4, try env.fmt("SELECT zigquery_instr({s}, {s}, -1)", .{ try env.encStr("héllo"), try env.encStr("l") }));
+    try env.expectInt(4, try env.fmt("SELECT zigquery_instr({s}, {s})", .{ try env.encBytes("héllo"), try env.encBytes("l") }));
+    try env.expectInt(1, try env.fmt("SELECT zigquery_starts_with({s}, {s})", .{ try env.encStr("bar"), try env.encStr("b") }));
+    try env.expectInt(1, try env.fmt("SELECT zigquery_ends_with({s}, {s})", .{ try env.encStr("apple"), try env.encStr("e") }));
     // translate.
     try env.expectStringResult("Thiz iz a kuukie", try env.fmt(
-        "SELECT zetasqlite_translate({s}, {s}, {s})",
+        "SELECT zigquery_translate({s}, {s}, {s})",
         .{ try env.encStr("This is a cookie"), try env.encStr("sco"), try env.encStr("zku") },
     ));
-    try env.expectInt(226, try env.fmt("SELECT zetasqlite_unicode({s})", .{try env.encStr("âbc")}));
+    try env.expectInt(226, try env.fmt("SELECT zigquery_unicode({s})", .{try env.encStr("âbc")}));
 }
 
 test "trim / normalize functions" {
     var env = try TestEnv.init();
     defer env.deinit();
-    try env.expectStringResult("apple   ", try env.fmt("SELECT zetasqlite_ltrim({s})", .{try env.encStr("   apple   ")}));
-    try env.expectStringResult("apple", try env.fmt("SELECT zetasqlite_trim({s})", .{try env.encStr("   apple   ")}));
-    try env.expectStringResult("apple", try env.fmt("SELECT zetasqlite_trim({s}, {s})", .{ try env.encStr("***apple***"), try env.encStr("*") }));
+    try env.expectStringResult("apple   ", try env.fmt("SELECT zigquery_ltrim({s})", .{try env.encStr("   apple   ")}));
+    try env.expectStringResult("apple", try env.fmt("SELECT zigquery_trim({s})", .{try env.encStr("   apple   ")}));
+    try env.expectStringResult("apple", try env.fmt("SELECT zigquery_trim({s}, {s})", .{ try env.encStr("***apple***"), try env.encStr("*") }));
     // NFC composes e + combining circumflex into ê.
-    try env.expectStringResult("\u{00ea}", try env.fmt("SELECT zetasqlite_normalize({s})", .{try env.encStr("e\u{0302}")}));
+    try env.expectStringResult("\u{00ea}", try env.fmt("SELECT zigquery_normalize({s})", .{try env.encStr("e\u{0302}")}));
 }
 
 test "base32 / base64 / hex encodings" {
     var env = try TestEnv.init();
     defer env.deinit();
-    try env.expectStringResult("MFRGGZDF74======", try env.fmt("SELECT zetasqlite_to_base32({s})", .{try env.enc(Value{ .bytes = "abcde\xFF" })}));
-    try env.expectBytesResult("abcde\xFF", try env.fmt("SELECT zetasqlite_from_base32({s})", .{try env.encStr("MFRGGZDF74======")}));
-    try env.expectStringResult("00010203aaeeefff", try env.fmt("SELECT zetasqlite_to_hex({s})", .{try env.enc(Value{ .bytes = "\x00\x01\x02\x03\xAA\xEE\xEF\xFF" })}));
-    try env.expectBytesResult("\x00\xAF", try env.fmt("SELECT zetasqlite_from_hex({s})", .{try env.encStr("0AF")}));
+    try env.expectStringResult("MFRGGZDF74======", try env.fmt("SELECT zigquery_to_base32({s})", .{try env.enc(Value{ .bytes = "abcde\xFF" })}));
+    try env.expectBytesResult("abcde\xFF", try env.fmt("SELECT zigquery_from_base32({s})", .{try env.encStr("MFRGGZDF74======")}));
+    try env.expectStringResult("00010203aaeeefff", try env.fmt("SELECT zigquery_to_hex({s})", .{try env.enc(Value{ .bytes = "\x00\x01\x02\x03\xAA\xEE\xEF\xFF" })}));
+    try env.expectBytesResult("\x00\xAF", try env.fmt("SELECT zigquery_from_hex({s})", .{try env.encStr("0AF")}));
 }
 
 test "regexp functions (RE2 shim)" {
     var env = try TestEnv.init();
     defer env.deinit();
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_regexp_contains({s}, {s})", .{ try env.encStr("a@foo.com"), try env.encStr("@foo\\.com$") }));
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_regexp_contains({s}, {s})", .{ try env.encStr("www.net"), try env.encStr("@") }));
+    try env.expectInt(1, try env.fmt("SELECT zigquery_regexp_contains({s}, {s})", .{ try env.encStr("a@foo.com"), try env.encStr("@foo\\.com$") }));
+    try env.expectInt(0, try env.fmt("SELECT zigquery_regexp_contains({s}, {s})", .{ try env.encStr("www.net"), try env.encStr("@") }));
     // capture group -> last submatch.
     try env.expectStringResult("com", try env.fmt(
-        "SELECT zetasqlite_regexp_extract({s}, {s})",
+        "SELECT zigquery_regexp_extract({s}, {s})",
         .{ try env.encStr("foo@example.com"), try env.encStr(".*@.*\\.([a-z]+)$") },
     ));
     // no groups -> whole match.
     try env.expectStringResult("foo", try env.fmt(
-        "SELECT zetasqlite_regexp_extract({s}, {s})",
+        "SELECT zigquery_regexp_extract({s}, {s})",
         .{ try env.encStr("foo@example.com"), try env.encStr("^[a-z]+") },
     ));
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_regexp_extract({s}, {s})", .{ try env.encStr("###"), try env.encStr("[a-z]+") }));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_regexp_extract({s}, {s})", .{ try env.encStr("###"), try env.encStr("[a-z]+") }));
     // replace with \1 rewrite.
     try env.expectStringResult("<h1>Heading</h1>", try env.fmt(
-        "SELECT zetasqlite_regexp_replace({s}, {s}, {s})",
+        "SELECT zigquery_regexp_replace({s}, {s}, {s})",
         .{ try env.encStr("# Heading"), try env.encStr("^# (.+)$"), try env.encStr("<h1>\\1</h1>") },
     ));
     // instr: 1-based byte position of the match.
-    try env.expectInt(3, try env.fmt("SELECT zetasqlite_regexp_instr({s}, {s})", .{ try env.encStr("ab@gmail.com"), try env.encStr("@[^.]*") }));
+    try env.expectInt(3, try env.fmt("SELECT zigquery_regexp_instr({s}, {s})", .{ try env.encStr("ab@gmail.com"), try env.encStr("@[^.]*") }));
 }
 
 test "FORMAT verbs" {
     var env = try TestEnv.init();
     defer env.deinit();
-    try env.expectStringResult("10 11 12 ff FF", try env.fmt("SELECT zetasqlite_format({s}, 10, 11, 10, 255, 255)", .{try env.encStr("%d %i %o %x %X")}));
-    try env.expectStringResult("|        11|", try env.fmt("SELECT zetasqlite_format({s}, 11)", .{try env.encStr("|%10d|")}));
-    try env.expectStringResult("+0000000012+", try env.fmt("SELECT zetasqlite_format({s}, 12)", .{try env.encStr("+%010d+")}));
-    try env.expectStringResult("123,456,789", try env.fmt("SELECT zetasqlite_format({s}, 123456789)", .{try env.encStr("%'d")}));
-    try env.expectStringResult("1.100000 2.200000E+00", try env.fmt("SELECT zetasqlite_format({s}, 1.1, 2.2)", .{try env.encStr("%f %E")}));
-    try env.expectStringResult("-abcd-", try env.fmt("SELECT zetasqlite_format({s}, {s})", .{ try env.encStr("-%s-"), try env.encStr("abcd") }));
+    try env.expectStringResult("10 11 12 ff FF", try env.fmt("SELECT zigquery_format({s}, 10, 11, 10, 255, 255)", .{try env.encStr("%d %i %o %x %X")}));
+    try env.expectStringResult("|        11|", try env.fmt("SELECT zigquery_format({s}, 11)", .{try env.encStr("|%10d|")}));
+    try env.expectStringResult("+0000000012+", try env.fmt("SELECT zigquery_format({s}, 12)", .{try env.encStr("+%010d+")}));
+    try env.expectStringResult("123,456,789", try env.fmt("SELECT zigquery_format({s}, 123456789)", .{try env.encStr("%'d")}));
+    try env.expectStringResult("1.100000 2.200000E+00", try env.fmt("SELECT zigquery_format({s}, 1.1, 2.2)", .{try env.encStr("%f %E")}));
+    try env.expectStringResult("-abcd-", try env.fmt("SELECT zigquery_format({s}, {s})", .{ try env.encStr("-%s-"), try env.encStr("abcd") }));
     // %T typed rendering of BYTES.
     try env.expectStringResult("b\"abc\"", try env.fmt(
-        "SELECT zetasqlite_format({s}, {s})",
+        "SELECT zigquery_format({s}, {s})",
         .{ try env.encStr("%T"), try env.enc(Value{ .bytes = "abc" }) },
     ));
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_format({s}, NULL)", .{try env.encStr("%s")}));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_format({s}, NULL)", .{try env.encStr("%s")}));
 }
 
 test "array functions (generate_array/array_to_string/array_reverse)" {
     var env = try TestEnv.init();
     defer env.deinit();
     // GENERATE_ARRAY(10, 0, -3) -> [10,7,4,1].
-    try env.expectInt(4, "SELECT zetasqlite_array_length(zetasqlite_generate_array(10, 0, -3))");
-    try env.expectInt(1, "SELECT zetasqlite_array_at_offset(zetasqlite_generate_array(10, 0, -3), 3)");
+    try env.expectInt(4, "SELECT zigquery_array_length(zigquery_generate_array(10, 0, -3))");
+    try env.expectInt(1, "SELECT zigquery_array_at_offset(zigquery_generate_array(10, 0, -3), 3)");
     // step wrong sign -> empty.
-    try env.expectInt(0, "SELECT zetasqlite_array_length(zetasqlite_generate_array(10, 0, 3))");
+    try env.expectInt(0, "SELECT zigquery_array_length(zigquery_generate_array(10, 0, 3))");
     // NULL bound -> empty array.
-    try env.expectInt(0, "SELECT zetasqlite_array_length(zetasqlite_generate_array(5, NULL, 1))");
-    try env.expectInt(3, "SELECT zetasqlite_array_at_offset(zetasqlite_array_reverse(zetasqlite_make_array(1, 2, 3)), 0)");
+    try env.expectInt(0, "SELECT zigquery_array_length(zigquery_generate_array(5, NULL, 1))");
+    try env.expectInt(3, "SELECT zigquery_array_at_offset(zigquery_array_reverse(zigquery_make_array(1, 2, 3)), 0)");
     try env.expectStringResult("a--b", try env.fmt(
-        "SELECT zetasqlite_array_to_string(zetasqlite_make_array({s}, {s}), {s})",
+        "SELECT zigquery_array_to_string(zigquery_make_array({s}, {s}), {s})",
         .{ try env.encStr("a"), try env.encStr("b"), try env.encStr("--") },
     ));
 }
@@ -1130,45 +1130,45 @@ test "array functions (generate_array/array_to_string/array_reverse)" {
 test "math sign / bit_count" {
     var env = try TestEnv.init();
     defer env.deinit();
-    try env.expectInt(1, "SELECT zetasqlite_sign(25)");
-    try env.expectInt(0, "SELECT zetasqlite_sign(0)");
-    try env.expectInt(-1, "SELECT zetasqlite_sign(-25)");
-    try env.expectInt(2, "SELECT zetasqlite_bit_count(5)");
-    try env.expectInt(64, "SELECT zetasqlite_bit_count(-1)");
-    try env.expectInt(16, try env.fmt("SELECT zetasqlite_bit_count({s})", .{try env.enc(Value{ .bytes = "\xFF\xFF" })}));
+    try env.expectInt(1, "SELECT zigquery_sign(25)");
+    try env.expectInt(0, "SELECT zigquery_sign(0)");
+    try env.expectInt(-1, "SELECT zigquery_sign(-25)");
+    try env.expectInt(2, "SELECT zigquery_bit_count(5)");
+    try env.expectInt(64, "SELECT zigquery_bit_count(-1)");
+    try env.expectInt(16, try env.fmt("SELECT zigquery_bit_count({s})", .{try env.enc(Value{ .bytes = "\xFF\xFF" })}));
 }
 
 test "inverse / hyperbolic / reciprocal trigonometry" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    try env.expectFloat(0.0, "SELECT zetasqlite_acos(1.0)");
-    try env.expectFloat(std.math.pi, "SELECT zetasqlite_acos(-1.0)");
-    try env.expectFloat(0.0, "SELECT zetasqlite_acosh(1.0)");
-    try env.expectFloat(0.0, "SELECT zetasqlite_asin(0.0)");
-    try env.expectFloat(0.0, "SELECT zetasqlite_asinh(0.0)");
-    try env.expectFloat(0.0, "SELECT zetasqlite_atanh(0.0)");
-    try env.expectFloat(1.0, "SELECT zetasqlite_cosh(0.0)");
-    try env.expectFloat(0.0, "SELECT zetasqlite_sinh(0.0)");
-    try env.expectFloat(0.0, "SELECT zetasqlite_tanh(0.0)");
-    try env.expectFloat(1.0, "SELECT zetasqlite_sec(0.0)");
-    try env.expectFloat(1.0, "SELECT zetasqlite_sech(0.0)");
-    try env.expectFloat(3.0, "SELECT zetasqlite_cbrt(27.0)");
+    try env.expectFloat(0.0, "SELECT zigquery_acos(1.0)");
+    try env.expectFloat(std.math.pi, "SELECT zigquery_acos(-1.0)");
+    try env.expectFloat(0.0, "SELECT zigquery_acosh(1.0)");
+    try env.expectFloat(0.0, "SELECT zigquery_asin(0.0)");
+    try env.expectFloat(0.0, "SELECT zigquery_asinh(0.0)");
+    try env.expectFloat(0.0, "SELECT zigquery_atanh(0.0)");
+    try env.expectFloat(1.0, "SELECT zigquery_cosh(0.0)");
+    try env.expectFloat(0.0, "SELECT zigquery_sinh(0.0)");
+    try env.expectFloat(0.0, "SELECT zigquery_tanh(0.0)");
+    try env.expectFloat(1.0, "SELECT zigquery_sec(0.0)");
+    try env.expectFloat(1.0, "SELECT zigquery_sech(0.0)");
+    try env.expectFloat(3.0, "SELECT zigquery_cbrt(27.0)");
 
     // A finite argument that leaves the domain is an execution error, and the
     // message is the one googlesql prints (math.h SetFloatingPointError).
-    try env.expectErrorMsg("Floating point error in function: ACOS(2)", "SELECT zetasqlite_acos(2.0)");
-    try env.expectErrorMsg("Floating point error in function: ASIN(2)", "SELECT zetasqlite_asin(2.0)");
-    try env.expectErrorMsg("Floating point error in function: ACOSH(0.5)", "SELECT zetasqlite_acosh(0.5)");
-    try env.expectErrorMsg("Floating point error in function: ATANH(2)", "SELECT zetasqlite_atanh(2.0)");
+    try env.expectErrorMsg("Floating point error in function: ACOS(2)", "SELECT zigquery_acos(2.0)");
+    try env.expectErrorMsg("Floating point error in function: ASIN(2)", "SELECT zigquery_asin(2.0)");
+    try env.expectErrorMsg("Floating point error in function: ACOSH(0.5)", "SELECT zigquery_acosh(0.5)");
+    try env.expectErrorMsg("Floating point error in function: ATANH(2)", "SELECT zigquery_atanh(2.0)");
     // The reciprocals go singular at 0 rather than out of range.
-    try env.expectErrorMsg("Floating point error in function: COT(0)", "SELECT zetasqlite_cot(0.0)");
-    try env.expectErrorMsg("Floating point error in function: COTH(0)", "SELECT zetasqlite_coth(0.0)");
-    try env.expectErrorMsg("Floating point error in function: CSC(0)", "SELECT zetasqlite_csc(0.0)");
-    try env.expectErrorMsg("Floating point error in function: CSCH(0)", "SELECT zetasqlite_csch(0.0)");
+    try env.expectErrorMsg("Floating point error in function: COT(0)", "SELECT zigquery_cot(0.0)");
+    try env.expectErrorMsg("Floating point error in function: COTH(0)", "SELECT zigquery_coth(0.0)");
+    try env.expectErrorMsg("Floating point error in function: CSC(0)", "SELECT zigquery_csc(0.0)");
+    try env.expectErrorMsg("Floating point error in function: CSCH(0)", "SELECT zigquery_csch(0.0)");
     // COSH/SINH overflow instead, which upstream words differently.
-    try env.expectErrorMsg("Floating point overflow in function: COSH(1000)", "SELECT zetasqlite_cosh(1000.0)");
-    try env.expectErrorMsg("Floating point overflow in function: SINH(1000)", "SELECT zetasqlite_sinh(1000.0)");
+    try env.expectErrorMsg("Floating point overflow in function: COSH(1000)", "SELECT zigquery_cosh(1000.0)");
+    try env.expectErrorMsg("Floating point overflow in function: SINH(1000)", "SELECT zigquery_sinh(1000.0)");
 
     // A non-finite argument is never an error, whatever comes out — the docs'
     // per-function tables reduce to that one distinction.
@@ -1178,59 +1178,59 @@ test "inverse / hyperbolic / reciprocal trigonometry" {
     // NaN survives a function boundary here. What these two assert is that
     // ACOS(+inf) and SEC(+inf) *do not raise*, which is the part `checked`
     // decides.
-    const inf = "zetasqlite_ieee_divide(1.0, 0.0)";
-    try env.expectNullResult("SELECT zetasqlite_acos(" ++ inf ++ ")");
-    try env.expectNullResult("SELECT zetasqlite_sec(" ++ inf ++ ")");
-    try env.expectInt(1, "SELECT zetasqlite_is_inf(zetasqlite_acosh(" ++ inf ++ "))");
-    try env.expectFloat(1.0, "SELECT zetasqlite_tanh(" ++ inf ++ ")");
-    try env.expectFloat(0.0, "SELECT zetasqlite_sech(" ++ inf ++ ")");
+    const inf = "zigquery_ieee_divide(1.0, 0.0)";
+    try env.expectNullResult("SELECT zigquery_acos(" ++ inf ++ ")");
+    try env.expectNullResult("SELECT zigquery_sec(" ++ inf ++ ")");
+    try env.expectInt(1, "SELECT zigquery_is_inf(zigquery_acosh(" ++ inf ++ "))");
+    try env.expectFloat(1.0, "SELECT zigquery_tanh(" ++ inf ++ ")");
+    try env.expectFloat(0.0, "SELECT zigquery_sech(" ++ inf ++ ")");
 
-    try env.expectNullResult("SELECT zetasqlite_acos(NULL)");
-    try env.expectNullResult("SELECT zetasqlite_cot(NULL)");
+    try env.expectNullResult("SELECT zigquery_acos(NULL)");
+    try env.expectNullResult("SELECT zigquery_cot(NULL)");
     // SAFE. turns the domain error into NULL, via the automatic safe_ wrapper.
-    try env.expectNullResult("SELECT zetasqlite_safe_acos(2.0)");
+    try env.expectNullResult("SELECT zigquery_safe_acos(2.0)");
 }
 
 test "rand stays inside [0, 1) and is not folded across rows" {
     var env = try TestEnv.init();
     defer env.deinit();
-    try env.expectInt(1, "SELECT zetasqlite_rand() >= 0.0 AND zetasqlite_rand() < 1.0");
+    try env.expectInt(1, "SELECT zigquery_rand() >= 0.0 AND zigquery_rand() < 1.0");
     // The point of `deterministic = false` in the bind table: with
     // SQLITE_DETERMINISTIC set, SQLite hoists this zero-argument call out of
     // the loop and every row sees one value.
-    try env.expectInt(20, "SELECT COUNT(DISTINCT zetasqlite_rand()) FROM " ++
+    try env.expectInt(20, "SELECT COUNT(DISTINCT zigquery_rand()) FROM " ++
         "(WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r WHERE i < 20) SELECT i FROM r)");
 }
 
 test "range_bucket counts boundaries at or below the point" {
     var env = try TestEnv.init();
     defer env.deinit();
-    const b = "zetasqlite_make_array(0, 10, 20, 30, 40)";
+    const b = "zigquery_make_array(0, 10, 20, 30, 40)";
     // A point that is in the array lands past its own last copy.
-    try env.expectInt(3, "SELECT zetasqlite_range_bucket(20, " ++ b ++ ")");
-    try env.expectInt(4, "SELECT zetasqlite_range_bucket(20, zetasqlite_make_array(0, 10, 20, 20, 40, 40))");
-    try env.expectInt(3, "SELECT zetasqlite_range_bucket(25, " ++ b ++ ")");
-    try env.expectInt(0, "SELECT zetasqlite_range_bucket(-10, " ++ b ++ ")");
-    try env.expectInt(5, "SELECT zetasqlite_range_bucket(80, " ++ b ++ ")");
-    try env.expectInt(0, "SELECT zetasqlite_range_bucket(80, zetasqlite_make_array())");
+    try env.expectInt(3, "SELECT zigquery_range_bucket(20, " ++ b ++ ")");
+    try env.expectInt(4, "SELECT zigquery_range_bucket(20, zigquery_make_array(0, 10, 20, 20, 40, 40))");
+    try env.expectInt(3, "SELECT zigquery_range_bucket(25, " ++ b ++ ")");
+    try env.expectInt(0, "SELECT zigquery_range_bucket(-10, " ++ b ++ ")");
+    try env.expectInt(5, "SELECT zigquery_range_bucket(80, " ++ b ++ ")");
+    try env.expectInt(0, "SELECT zigquery_range_bucket(80, zigquery_make_array())");
     try env.expectInt(1, try env.fmt(
-        "SELECT zetasqlite_range_bucket({s}, zetasqlite_make_array({s}, {s}, {s}))",
+        "SELECT zigquery_range_bucket({s}, zigquery_make_array({s}, {s}, {s}))",
         .{ try env.encStr("a"), try env.encStr("a"), try env.encStr("b"), try env.encStr("c") },
     ));
 
     // A NULL or NaN *point* is NULL; the same inside the array is an error.
     // (The NaN case arrives already collapsed to NULL — see the trigonometry
     // test — so this only pins the observable half of the rule.)
-    try env.expectNullResult("SELECT zetasqlite_range_bucket(NULL, " ++ b ++ ")");
-    try env.expectNullResult("SELECT zetasqlite_range_bucket(" ++
-        "zetasqlite_ieee_divide(0.0, 0.0), zetasqlite_make_array(1.0, 2.0))");
+    try env.expectNullResult("SELECT zigquery_range_bucket(NULL, " ++ b ++ ")");
+    try env.expectNullResult("SELECT zigquery_range_bucket(" ++
+        "zigquery_ieee_divide(0.0, 0.0), zigquery_make_array(1.0, 2.0))");
     try env.expectErrorMsg(
         "boundaries_array must not contain NULL or NaN",
-        "SELECT zetasqlite_range_bucket(80, zetasqlite_make_array(NULL, 10, 20))",
+        "SELECT zigquery_range_bucket(80, zigquery_make_array(NULL, 10, 20))",
     );
     try env.expectErrorMsg(
         "boundaries_array must be sorted in ascending order",
-        "SELECT zetasqlite_range_bucket(30, zetasqlite_make_array(10, 30, 20, 40))",
+        "SELECT zigquery_range_bucket(30, zigquery_make_array(10, 30, 20, 40))",
     );
 }
 
@@ -1238,56 +1238,56 @@ test "vector distances over dense and sparse vectors" {
     var env = try TestEnv.init();
     defer env.deinit();
 
-    try env.expectFloat(5.0, "SELECT zetasqlite_euclidean_distance(" ++
-        "zetasqlite_make_array(1.0, 2.0), zetasqlite_make_array(4.0, 6.0))");
-    try env.expectFloat(0.0, "SELECT zetasqlite_euclidean_distance(" ++
-        "zetasqlite_make_array(1.0, 2.0, 3.0), zetasqlite_make_array(1.0, 2.0, 3.0))");
-    try env.expectFloat(1.0, "SELECT zetasqlite_cosine_distance(" ++
-        "zetasqlite_make_array(1.0, 0.0), zetasqlite_make_array(0.0, 1.0))");
-    try env.expectFloat(0.0, "SELECT zetasqlite_cosine_distance(" ++
-        "zetasqlite_make_array(1.0, 2.0, 3.0), zetasqlite_make_array(1.0, 2.0, 3.0))");
+    try env.expectFloat(5.0, "SELECT zigquery_euclidean_distance(" ++
+        "zigquery_make_array(1.0, 2.0), zigquery_make_array(4.0, 6.0))");
+    try env.expectFloat(0.0, "SELECT zigquery_euclidean_distance(" ++
+        "zigquery_make_array(1.0, 2.0, 3.0), zigquery_make_array(1.0, 2.0, 3.0))");
+    try env.expectFloat(1.0, "SELECT zigquery_cosine_distance(" ++
+        "zigquery_make_array(1.0, 0.0), zigquery_make_array(0.0, 1.0))");
+    try env.expectFloat(0.0, "SELECT zigquery_cosine_distance(" ++
+        "zigquery_make_array(1.0, 2.0, 3.0), zigquery_make_array(1.0, 2.0, 3.0))");
     // Opposite directions are the far end of the range.
-    try env.expectFloat(2.0, "SELECT zetasqlite_cosine_distance(" ++
-        "zetasqlite_make_array(1.0, 0.0), zetasqlite_make_array(-1.0, 0.0))");
+    try env.expectFloat(2.0, "SELECT zigquery_cosine_distance(" ++
+        "zigquery_make_array(1.0, 0.0), zigquery_make_array(-1.0, 0.0))");
 
     // A zero vector has a Euclidean distance but no direction.
-    try env.expectFloat(5.0, "SELECT zetasqlite_euclidean_distance(" ++
-        "zetasqlite_make_array(3.0, 4.0), zetasqlite_make_array(0.0, 0.0))");
-    try env.expectErrorMsg("must not be a zero vector", "SELECT zetasqlite_cosine_distance(" ++
-        "zetasqlite_make_array(3.0, 4.0), zetasqlite_make_array(0.0, 0.0))");
+    try env.expectFloat(5.0, "SELECT zigquery_euclidean_distance(" ++
+        "zigquery_make_array(3.0, 4.0), zigquery_make_array(0.0, 0.0))");
+    try env.expectErrorMsg("must not be a zero vector", "SELECT zigquery_cosine_distance(" ++
+        "zigquery_make_array(3.0, 4.0), zigquery_make_array(0.0, 0.0))");
 
-    try env.expectErrorMsg("must share the same dimensions", "SELECT zetasqlite_euclidean_distance(" ++
-        "zetasqlite_make_array(1.0, 2.0), zetasqlite_make_array(1.0, 2.0, 3.0))");
-    try env.expectErrorMsg("must not be NULL", "SELECT zetasqlite_euclidean_distance(" ++
-        "zetasqlite_make_array(1.0, NULL), zetasqlite_make_array(1.0, 2.0))");
-    try env.expectNullResult("SELECT zetasqlite_euclidean_distance(NULL, zetasqlite_make_array(1.0))");
+    try env.expectErrorMsg("must share the same dimensions", "SELECT zigquery_euclidean_distance(" ++
+        "zigquery_make_array(1.0, 2.0), zigquery_make_array(1.0, 2.0, 3.0))");
+    try env.expectErrorMsg("must not be NULL", "SELECT zigquery_euclidean_distance(" ++
+        "zigquery_make_array(1.0, NULL), zigquery_make_array(1.0, 2.0))");
+    try env.expectNullResult("SELECT zigquery_euclidean_distance(NULL, zigquery_make_array(1.0))");
 
     // Sparse form: dimensions are named, absent ones are zero. 'x' and 'y' do
     // not overlap, so the vectors are orthogonal and 3-4-5 applies.
-    const sparse_a = try env.fmt("zetasqlite_make_array(zetasqlite_make_struct({s}, {s}, {s}, 3.0))", .{
+    const sparse_a = try env.fmt("zigquery_make_array(zigquery_make_struct({s}, {s}, {s}, 3.0))", .{
         try env.encStr("dimension"), try env.encStr("x"), try env.encStr("magnitude"),
     });
-    const sparse_b = try env.fmt("zetasqlite_make_array(zetasqlite_make_struct({s}, {s}, {s}, 4.0))", .{
+    const sparse_b = try env.fmt("zigquery_make_array(zigquery_make_struct({s}, {s}, {s}, 4.0))", .{
         try env.encStr("dimension"), try env.encStr("y"), try env.encStr("magnitude"),
     });
     try env.expectFloat(5.0, try env.fmt(
-        "SELECT zetasqlite_euclidean_distance({s}, {s})",
+        "SELECT zigquery_euclidean_distance({s}, {s})",
         .{ sparse_a, sparse_b },
     ));
     try env.expectFloat(1.0, try env.fmt(
-        "SELECT zetasqlite_cosine_distance({s}, {s})",
+        "SELECT zigquery_cosine_distance({s}, {s})",
         .{ sparse_a, sparse_b },
     ));
     // A shared dimension pairs up rather than adding a second axis.
-    const sparse_c = try env.fmt("zetasqlite_make_array(zetasqlite_make_struct({s}, {s}, {s}, 7.0))", .{
+    const sparse_c = try env.fmt("zigquery_make_array(zigquery_make_struct({s}, {s}, {s}, 7.0))", .{
         try env.encStr("dimension"), try env.encStr("x"), try env.encStr("magnitude"),
     });
     try env.expectFloat(4.0, try env.fmt(
-        "SELECT zetasqlite_euclidean_distance({s}, {s})",
+        "SELECT zigquery_euclidean_distance({s}, {s})",
         .{ sparse_a, sparse_c },
     ));
     try env.expectErrorMsg("same representation", try env.fmt(
-        "SELECT zetasqlite_euclidean_distance({s}, zetasqlite_make_array(3.0))",
+        "SELECT zigquery_euclidean_distance({s}, zigquery_make_array(3.0))",
         .{sparse_a},
     ));
 }
@@ -1297,35 +1297,35 @@ test "bit_cast reinterprets the bit pattern, not the value" {
     defer env.deinit();
 
     // Positive values are identity at every width.
-    try env.expectInt(123, "SELECT zetasqlite_bit_cast_to_int32(123)");
-    try env.expectInt(123, "SELECT zetasqlite_bit_cast_to_int64(123)");
-    try env.expectInt(123, "SELECT zetasqlite_bit_cast_to_uint32(123)");
-    try env.expectInt(123, "SELECT zetasqlite_bit_cast_to_uint64(123)");
+    try env.expectInt(123, "SELECT zigquery_bit_cast_to_int32(123)");
+    try env.expectInt(123, "SELECT zigquery_bit_cast_to_int64(123)");
+    try env.expectInt(123, "SELECT zigquery_bit_cast_to_uint32(123)");
+    try env.expectInt(123, "SELECT zigquery_bit_cast_to_uint64(123)");
 
     // The 32-bit forms differ only in how they re-widen the low 32 bits:
     // INT32 sign-extends, UINT32 zero-extends. This is the pair the docs'
     // examples turn on, and the corpus never exercises a negative input.
-    try env.expectInt(4294967295, "SELECT zetasqlite_bit_cast_to_uint32(-1)");
-    try env.expectInt(-1, "SELECT zetasqlite_bit_cast_to_int32(-1)");
-    try env.expectInt(-1, "SELECT zetasqlite_bit_cast_to_int32(zetasqlite_bit_cast_to_uint32(-1))");
-    try env.expectInt(-2147483648, "SELECT zetasqlite_bit_cast_to_int32(2147483648)");
-    try env.expectInt(2147483648, "SELECT zetasqlite_bit_cast_to_uint32(2147483648)");
+    try env.expectInt(4294967295, "SELECT zigquery_bit_cast_to_uint32(-1)");
+    try env.expectInt(-1, "SELECT zigquery_bit_cast_to_int32(-1)");
+    try env.expectInt(-1, "SELECT zigquery_bit_cast_to_int32(zigquery_bit_cast_to_uint32(-1))");
+    try env.expectInt(-2147483648, "SELECT zigquery_bit_cast_to_int32(2147483648)");
+    try env.expectInt(2147483648, "SELECT zigquery_bit_cast_to_uint32(2147483648)");
 
     // Anything above 32 bits is truncated away by the 32-bit forms.
-    try env.expectInt(1, "SELECT zetasqlite_bit_cast_to_uint32(4294967297)");
+    try env.expectInt(1, "SELECT zigquery_bit_cast_to_uint32(4294967297)");
 
     // The 64-bit forms preserve every bit, so the docs' round trip holds even
     // though BIT_CAST_TO_UINT64(-1) renders as -1 rather than
     // 18446744073709551615 — Value has no unsigned kind to render it with.
-    try env.expectInt(-1, "SELECT zetasqlite_bit_cast_to_uint64(-1)");
-    try env.expectInt(-1, "SELECT zetasqlite_bit_cast_to_int64(zetasqlite_bit_cast_to_uint64(-1))");
+    try env.expectInt(-1, "SELECT zigquery_bit_cast_to_uint64(-1)");
+    try env.expectInt(-1, "SELECT zigquery_bit_cast_to_int64(zigquery_bit_cast_to_uint64(-1))");
     try env.expectInt(
         std.math.minInt(i64),
-        "SELECT zetasqlite_bit_cast_to_int64(zetasqlite_bit_cast_to_uint64(-9223372036854775808))",
+        "SELECT zigquery_bit_cast_to_int64(zigquery_bit_cast_to_uint64(-9223372036854775808))",
     );
 
-    try env.expectNullResult("SELECT zetasqlite_bit_cast_to_int32(NULL)");
-    try env.expectNullResult("SELECT zetasqlite_bit_cast_to_uint64(NULL)");
+    try env.expectNullResult("SELECT zigquery_bit_cast_to_int32(NULL)");
+    try env.expectNullResult("SELECT zigquery_bit_cast_to_uint64(NULL)");
 }
 
 test "range constructor, accessors and predicates" {
@@ -1347,106 +1347,106 @@ test "range constructor, accessors and predicates" {
 
     // Constructor: bounds in order, either one NULL for UNBOUNDED.
     try env.expectValue(rng(.date, day(2022, 12, 1), day(2022, 12, 31)), try env.fmt(
-        "SELECT zetasqlite_range({s}, {s})",
+        "SELECT zigquery_range({s}, {s})",
         .{
             try lit(&env, .{ .date = day(2022, 12, 1) }),
             try lit(&env, .{ .date = day(2022, 12, 31) }),
         },
     ));
     try env.expectValue(rng(.date, null, day(2022, 12, 31)), try env.fmt(
-        "SELECT zetasqlite_range(NULL, {s})",
+        "SELECT zigquery_range(NULL, {s})",
         .{try lit(&env, .{ .date = day(2022, 12, 31) })},
     ));
 
     // start >= end is googlesql's error, verbatim; SAFE. turns it into NULL.
-    const backwards = try env.fmt("zetasqlite_range({s}, {s})", .{
+    const backwards = try env.fmt("zigquery_range({s}, {s})", .{
         try lit(&env, .{ .date = jan23 }), try lit(&env, .{ .date = jan22 }),
     });
     try env.expectErrorMsg(
         "Range start element must be smaller than range end element",
         try env.fmt("SELECT {s}", .{backwards}),
     );
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_safe_range({s}, {s})", .{
+    try env.expectNullResult(try env.fmt("SELECT zigquery_safe_range({s}, {s})", .{
         try lit(&env, .{ .date = jan23 }), try lit(&env, .{ .date = jan22 }),
     }));
     // Equal bounds are empty, not valid: the upper bound is exclusive.
-    try env.expectErrorMsg("must be smaller", try env.fmt("SELECT zetasqlite_range({s}, {s})", .{
+    try env.expectErrorMsg("must be smaller", try env.fmt("SELECT zigquery_range({s}, {s})", .{
         try lit(&env, .{ .date = jan22 }), try lit(&env, .{ .date = jan22 }),
     }));
 
     // Accessors, including UNBOUNDED reading back as NULL.
-    try env.expectValue(.{ .date = jan22 }, try env.fmt("SELECT zetasqlite_range_start({s})", .{outer}));
-    try env.expectValue(.{ .date = jan23 }, try env.fmt("SELECT zetasqlite_range_end({s})", .{outer}));
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_range_start({s})", .{
+    try env.expectValue(.{ .date = jan22 }, try env.fmt("SELECT zigquery_range_start({s})", .{outer}));
+    try env.expectValue(.{ .date = jan23 }, try env.fmt("SELECT zigquery_range_end({s})", .{outer}));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_range_start({s})", .{
         try lit(&env, rng(.date, null, jan23)),
     }));
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_range_end({s})", .{
+    try env.expectNullResult(try env.fmt("SELECT zigquery_range_end({s})", .{
         try lit(&env, rng(.date, jan22, null)),
     }));
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_is_start_unbounded({s})", .{
+    try env.expectInt(1, try env.fmt("SELECT zigquery_range_is_start_unbounded({s})", .{
         try lit(&env, rng(.date, null, jan23)),
     }));
 
     // RANGE_CONTAINS, range overload.
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+    try env.expectInt(1, try env.fmt("SELECT zigquery_range_contains({s}, {s})", .{
         outer, try lit(&env, rng(.date, day(2022, 4, 1), day(2022, 7, 1))),
     }));
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+    try env.expectInt(0, try env.fmt("SELECT zigquery_range_contains({s}, {s})", .{
         outer, try lit(&env, rng(.date, jan23, day(2023, 4, 1))),
     }));
     // RANGE_CONTAINS, element overload — dispatched purely on arg[1]'s tag.
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+    try env.expectInt(1, try env.fmt("SELECT zigquery_range_contains({s}, {s})", .{
         outer, try lit(&env, .{ .date = day(2022, 4, 1) }),
     }));
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+    try env.expectInt(0, try env.fmt("SELECT zigquery_range_contains({s}, {s})", .{
         outer, try lit(&env, .{ .date = day(2023, 4, 1) }),
     }));
     // The half-open edges: the lower bound is in, the upper is not.
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+    try env.expectInt(1, try env.fmt("SELECT zigquery_range_contains({s}, {s})", .{
         outer, try lit(&env, .{ .date = jan22 }),
     }));
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_range_contains({s}, {s})", .{
+    try env.expectInt(0, try env.fmt("SELECT zigquery_range_contains({s}, {s})", .{
         outer, try lit(&env, .{ .date = jan23 }),
     }));
 
     // RANGE_OVERLAPS is strict: abutting ranges do not overlap, which is the
     // whole difference between the MEETS and OVERLAPS sessionize modes.
-    try env.expectInt(0, try env.fmt("SELECT zetasqlite_range_overlaps({s}, {s})", .{
+    try env.expectInt(0, try env.fmt("SELECT zigquery_range_overlaps({s}, {s})", .{
         outer, try lit(&env, rng(.date, jan23, day(2023, 6, 1))),
     }));
-    try env.expectInt(1, try env.fmt("SELECT zetasqlite_range_overlaps({s}, {s})", .{
+    try env.expectInt(1, try env.fmt("SELECT zigquery_range_overlaps({s}, {s})", .{
         try lit(&env, rng(.date, day(2022, 2, 1), null)),
         try lit(&env, rng(.date, day(2021, 6, 15), null)),
     }));
 
     // RANGE_INTERSECT, including UNBOUNDED surviving into the result.
     try env.expectValue(rng(.date, day(2022, 2, 1), day(2022, 4, 15)), try env.fmt(
-        "SELECT zetasqlite_range_intersect({s}, {s})",
+        "SELECT zigquery_range_intersect({s}, {s})",
         .{
             try lit(&env, rng(.date, day(2022, 2, 1), null)),
             try lit(&env, rng(.date, day(2021, 6, 15), day(2022, 4, 15))),
         },
     ));
     try env.expectValue(rng(.date, day(2022, 2, 1), null), try env.fmt(
-        "SELECT zetasqlite_range_intersect({s}, {s})",
+        "SELECT zigquery_range_intersect({s}, {s})",
         .{
             try lit(&env, rng(.date, day(2022, 2, 1), null)),
             try lit(&env, rng(.date, day(2021, 6, 15), null)),
         },
     ));
-    const disjoint = try env.fmt("zetasqlite_range_intersect({s}, {s})", .{
+    const disjoint = try env.fmt("zigquery_range_intersect({s}, {s})", .{
         try lit(&env, rng(.date, day(2020, 2, 1), day(2020, 9, 1))),
         try lit(&env, rng(.date, day(2021, 6, 15), day(2022, 4, 15))),
     });
     try env.expectErrorMsg("do not overlap", try env.fmt("SELECT {s}", .{disjoint}));
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_safe_range_intersect({s}, {s})", .{
+    try env.expectNullResult(try env.fmt("SELECT zigquery_safe_range_intersect({s}, {s})", .{
         try lit(&env, rng(.date, day(2020, 2, 1), day(2020, 9, 1))),
         try lit(&env, rng(.date, day(2021, 6, 15), day(2022, 4, 15))),
     }));
 
     // NULL in, NULL out for every predicate.
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_range_contains({s}, NULL)", .{outer}));
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_range_overlaps({s}, NULL)", .{outer}));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_range_contains({s}, NULL)", .{outer}));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_range_overlaps({s}, NULL)", .{outer}));
 }
 
 test "generate_range_array splits a range and validates its step" {
@@ -1463,31 +1463,31 @@ test "generate_range_array splits a range and validates its step" {
 
     // Exact fit: five one-day subranges, no partial.
     try env.expectInt(5, try env.fmt(
-        "SELECT zetasqlite_array_length(zetasqlite_generate_range_array({s}, {s}))",
+        "SELECT zigquery_array_length(zigquery_generate_range_array({s}, {s}))",
         .{ src, one_day },
     ));
     try env.expectValue(rng(.date, jan1, day(2020, 1, 2)), try env.fmt(
-        "SELECT zetasqlite_array_at_offset(zetasqlite_generate_range_array({s}, {s}), 0)",
+        "SELECT zigquery_array_at_offset(zigquery_generate_range_array({s}, {s}), 0)",
         .{ src, one_day },
     ));
 
     // Two-day steps leave a one-day remainder: kept by default, kept when the
     // third argument is TRUE, dropped when it is FALSE.
     try env.expectInt(3, try env.fmt(
-        "SELECT zetasqlite_array_length(zetasqlite_generate_range_array({s}, {s}))",
+        "SELECT zigquery_array_length(zigquery_generate_range_array({s}, {s}))",
         .{ src, two_days },
     ));
     try env.expectInt(3, try env.fmt(
-        "SELECT zetasqlite_array_length(zetasqlite_generate_range_array({s}, {s}, true))",
+        "SELECT zigquery_array_length(zigquery_generate_range_array({s}, {s}, true))",
         .{ src, two_days },
     ));
     try env.expectInt(2, try env.fmt(
-        "SELECT zetasqlite_array_length(zetasqlite_generate_range_array({s}, {s}, false))",
+        "SELECT zigquery_array_length(zigquery_generate_range_array({s}, {s}, false))",
         .{ src, two_days },
     ));
     // The trailing subrange is clipped to the range's own end, not to a full step.
     try env.expectValue(rng(.date, day(2020, 1, 5), jan6), try env.fmt(
-        "SELECT zetasqlite_array_at_offset(zetasqlite_generate_range_array({s}, {s}), 2)",
+        "SELECT zigquery_array_at_offset(zigquery_generate_range_array({s}, {s}), 2)",
         .{ src, two_days },
     ));
 
@@ -1499,33 +1499,33 @@ test "generate_range_array splits a range and validates its step" {
     const month_src = try env.enc(rng(.date, day(2020, 1, 31), day(2020, 5, 1)));
     const one_month = try env.enc(.{ .interval = .{ .months = 1 } });
     try env.expectValue(rng(.date, day(2020, 1, 31), day(2020, 2, 29)), try env.fmt(
-        "SELECT zetasqlite_array_at_offset(zetasqlite_generate_range_array({s}, {s}), 0)",
+        "SELECT zigquery_array_at_offset(zigquery_generate_range_array({s}, {s}), 0)",
         .{ month_src, one_month },
     ));
     try env.expectValue(rng(.date, day(2020, 2, 29), day(2020, 3, 31)), try env.fmt(
-        "SELECT zetasqlite_array_at_offset(zetasqlite_generate_range_array({s}, {s}), 1)",
+        "SELECT zigquery_array_at_offset(zigquery_generate_range_array({s}, {s}), 1)",
         .{ month_src, one_month },
     ));
 
     // Step validation, messages as googlesql words them.
     try env.expectErrorMsg("step cannot be 0", try env.fmt(
-        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        "SELECT zigquery_generate_range_array({s}, {s})",
         .{ src, try env.enc(.{ .interval = .{} }) },
     ));
     try env.expectErrorMsg("step cannot be negative", try env.fmt(
-        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        "SELECT zigquery_generate_range_array({s}, {s})",
         .{ src, try env.enc(.{ .interval = .{ .days = -1 } }) },
     ));
     try env.expectErrorMsg("step should either have the Y-M part or the DAY part", try env.fmt(
-        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        "SELECT zigquery_generate_range_array({s}, {s})",
         .{ src, try env.enc(.{ .interval = .{ .months = 1, .days = 1 } }) },
     ));
     try env.expectErrorMsg("step with non-zero (H:M:S[.F]) part is not supported", try env.fmt(
-        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        "SELECT zigquery_generate_range_array({s}, {s})",
         .{ src, try env.enc(.{ .interval = .{ .hours = 1 } }) },
     ));
     try env.expectErrorMsg("input RANGE cannot have UNBOUNDED endpoints", try env.fmt(
-        "SELECT zetasqlite_generate_range_array({s}, {s})",
+        "SELECT zigquery_generate_range_array({s}, {s})",
         .{ try env.enc(rng(.date, jan1, null)), one_day },
     ));
 }
@@ -1534,18 +1534,18 @@ test "net functions" {
     var env = try TestEnv.init();
     defer env.deinit();
     // IPV4_FROM_INT64(0xABCDEF) -> bytes 00 ab cd ef.
-    try env.expectBytesResult("\x00\xAB\xCD\xEF", "SELECT zetasqlite_net_ipv4_from_int64(11259375)");
-    try env.expectInt(0xABCDEF, try env.fmt("SELECT zetasqlite_net_ipv4_to_int64({s})", .{try env.enc(Value{ .bytes = "\x00\xAB\xCD\xEF" })}));
+    try env.expectBytesResult("\x00\xAB\xCD\xEF", "SELECT zigquery_net_ipv4_from_int64(11259375)");
+    try env.expectInt(0xABCDEF, try env.fmt("SELECT zigquery_net_ipv4_to_int64({s})", .{try env.enc(Value{ .bytes = "\x00\xAB\xCD\xEF" })}));
     // IP_TO_STRING for v4 and v6.
-    try env.expectStringResult("48.49.50.51", try env.fmt("SELECT zetasqlite_net_ip_to_string({s})", .{try env.enc(Value{ .bytes = "0123" })}));
-    try env.expectStringResult("::1", try env.fmt("SELECT zetasqlite_net_ip_to_string({s})", .{try env.enc(Value{ .bytes = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01" })}));
+    try env.expectStringResult("48.49.50.51", try env.fmt("SELECT zigquery_net_ip_to_string({s})", .{try env.enc(Value{ .bytes = "0123" })}));
+    try env.expectStringResult("::1", try env.fmt("SELECT zigquery_net_ip_to_string({s})", .{try env.enc(Value{ .bytes = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01" })}));
     // IP_FROM_STRING round-trips.
-    try env.expectBytesResult("0123", try env.fmt("SELECT zetasqlite_net_ip_from_string({s})", .{try env.encStr("48.49.50.51")}));
-    try env.expectNullResult(try env.fmt("SELECT zetasqlite_net_safe_ip_from_string({s})", .{try env.encStr("::wxyz")}));
+    try env.expectBytesResult("0123", try env.fmt("SELECT zigquery_net_ip_from_string({s})", .{try env.encStr("48.49.50.51")}));
+    try env.expectNullResult(try env.fmt("SELECT zigquery_net_safe_ip_from_string({s})", .{try env.encStr("::wxyz")}));
     // HOST / PUBLIC_SUFFIX / REG_DOMAIN.
-    try env.expectStringResult("abc.xyz", try env.fmt("SELECT zetasqlite_net_host({s})", .{try env.encStr("http://abc.xyz")}));
-    try env.expectStringResult("xyz", try env.fmt("SELECT zetasqlite_net_public_suffix({s})", .{try env.encStr("http://abc.xyz")}));
-    try env.expectStringResult("amazon.co.uk", try env.fmt("SELECT zetasqlite_net_reg_domain({s})", .{try env.encStr("amazon.co.uk")}));
+    try env.expectStringResult("abc.xyz", try env.fmt("SELECT zigquery_net_host({s})", .{try env.encStr("http://abc.xyz")}));
+    try env.expectStringResult("xyz", try env.fmt("SELECT zigquery_net_public_suffix({s})", .{try env.encStr("http://abc.xyz")}));
+    try env.expectStringResult("amazon.co.uk", try env.fmt("SELECT zigquery_net_reg_domain({s})", .{try env.encStr("amazon.co.uk")}));
     // GENERATE_UUID shape.
-    try env.expectInt(36, "SELECT zetasqlite_length(zetasqlite_generate_uuid())");
+    try env.expectInt(36, "SELECT zigquery_length(zigquery_generate_uuid())");
 }

@@ -7,11 +7,7 @@
 //!     **Examples** sections of the GoogleSQL reference docs. The numbers on the
 //!     right-hand side are Google's own published output, scraped out of ASCII
 //!     tables, so they arrive untyped and are compared leniently.
-//!   - `zigquery/` — this engine's own regression suite, migrated out of
-//!     `testdata/corpus.json` (go-zetasqlite's `query_test.go`). Every expected
-//!     value there was machine-exported *with its type*, so those files declare
-//!     `.typed = true` and get the exact, kind-checked comparison the retired
-//!     `corpus_runner.zig` performed. See `src/internal/spec_expect.zig`.
+//!   - `zigquery/` — this engine's own regression suite.
 //!
 //! Spec files are discovered by walking the tree, sorted by path. There is no
 //! index to keep in step: a `.zon` file under `testdata/specs` is a spec.
@@ -20,7 +16,7 @@
 //!
 //! `NOT_IMPLEMENTED` is detected, not declared: a case that fails with
 //! `error.Unimplemented`, with the analyzer's "Function not found", or with
-//! SQLite's "no such function: zetasqlite_*" is counted `not_implemented`
+//! SQLite's "no such function: zigquery_*" is counted `not_implemented`
 //! rather than `fail`. Nothing in the corpus marks it — implement `ST_AREA`
 //! and its spec flips to PASS with no file edited, which is what makes the
 //! suite a live ledger of what we do not have, instead of a document that
@@ -37,7 +33,7 @@
 //! ## This file vs. `src/internal/spec_run.zig`
 //!
 //! The actual case-running/classification logic lives in `spec_run.zig`,
-//! part of the `zetasqlite` module — this file is the CLI shell around it:
+//! part of the `zigquery` module — this file is the CLI shell around it:
 //! argument parsing, the pass/fail baseline gate, `--markdown`, and the
 //! `--strict` exit code. `harness/spec_ui.zig` (a browsable results UI) is
 //! the other caller of `spec_run.run`, so both share one source of truth for
@@ -58,8 +54,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const zetasqlite = @import("zetasqlite");
-const spec_run = zetasqlite.spec_run;
+const zigquery = @import("zigquery");
+const spec_run = zigquery.spec_run;
 
 const Dialect = spec_run.Dialect;
 const Manifest = spec_run.Manifest;
@@ -215,9 +211,9 @@ fn report(
         try out.print(
             "{d} PASS / {d} FAIL / {d} NOT_IMPLEMENTED / {d} UNSUPPORTED ({d} stale) / {d} SKIP  (of {d})\n\n",
             .{
-                counts.get(.pass),           counts.get(.fail),
+                counts.get(.pass),            counts.get(.fail),
                 counts.get(.not_implemented), counts.get(.unsupported),
-                stale_count,                 counts.get(.skip),
+                stale_count,                  counts.get(.skip),
                 results.len,
             },
         );
@@ -225,10 +221,9 @@ fn report(
         try out.print(
             "{d} PASS / {d} FAIL / {d} NOT_IMPLEMENTED / {d} UNSUPPORTED / {d} SKIP  (of {d})\n\n",
             .{
-                counts.get(.pass),           counts.get(.fail),
+                counts.get(.pass),            counts.get(.fail),
                 counts.get(.not_implemented), counts.get(.unsupported),
-                counts.get(.skip),
-                results.len,
+                counts.get(.skip),            results.len,
             },
         );
     }

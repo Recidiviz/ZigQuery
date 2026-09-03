@@ -14,9 +14,9 @@
 //! Confirmed against the Go emulator; see testdata/golden.json.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const spec = zetasqlite.spec;
-const pb = zetasqlite.pb;
+const zigquery = @import("zigquery");
+const spec = zigquery.spec;
+const pb = zigquery.pb;
 const errors = @import("../../error.zig");
 const bqpb = @import("../../proto/bigquery.zig");
 
@@ -154,7 +154,7 @@ fn pbFields(
 /// A query's output columns as a TableSchema.
 pub fn pbSchema(
     arena: std.mem.Allocator,
-    cols: []const zetasqlite.driver.OutputColumn,
+    cols: []const zigquery.driver.OutputColumn,
 ) std.mem.Allocator.Error!*bqpb.TableSchema {
     const fields = try arena.alloc(*bqpb.TableFieldSchema, cols.len);
     for (cols, 0..) |col, i| {
@@ -169,7 +169,7 @@ pub fn pbSchema(
 pub fn writeSchema(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
-    cols: []const zetasqlite.driver.OutputColumn,
+    cols: []const zigquery.driver.OutputColumn,
 ) !void {
     try out.appendSlice(arena, "{\"fields\":[");
     for (cols, 0..) |col, i| {
@@ -184,7 +184,7 @@ const testing = std.testing;
 /// Runs `sql` through the engine and returns its serialized schema, so tests
 /// assert against real analyzer output rather than hand-built types.
 fn schemaOf(arena: std.mem.Allocator, sql: []const u8) ![]const u8 {
-    var db = try zetasqlite.driver.Db.open(testing.allocator, ":memory:");
+    var db = try zigquery.driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
     var rows = try db.query(sql, &.{}, .{});
     defer rows.deinit();
@@ -507,7 +507,7 @@ test "DDL from a posted schema actually creates a queryable table" {
     , .{});
     const ddl = try createTableDdl(arena, "p", "ds", "round_trip", schema);
 
-    var db = try zetasqlite.driver.Db.open(testing.allocator, ":memory:");
+    var db = try zigquery.driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
     try db.exec(ddl, &.{}, .{});
 
@@ -551,7 +551,7 @@ test "schema from a catalog spec matches the query-derived one" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var db = try zetasqlite.driver.Db.open(testing.allocator, ":memory:");
+    var db = try zigquery.driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
     try db.exec(
         "CREATE TABLE `p.d.spec_t` (a INT64, b STRING, c ARRAY<INT64>)",
@@ -576,7 +576,7 @@ test "catalogTable finds views and misses absent tables" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var db = try zetasqlite.driver.Db.open(testing.allocator, ":memory:");
+    var db = try zigquery.driver.Db.open(testing.allocator, ":memory:");
     defer db.close();
     try db.exec("CREATE TABLE `p.d.base` (a INT64)", &.{}, .{});
     try db.exec("CREATE OR REPLACE VIEW `p.d.v` AS SELECT a FROM `p.d.base`", &.{}, .{});

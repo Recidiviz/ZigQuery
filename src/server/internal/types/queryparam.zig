@@ -30,8 +30,8 @@
 //! parameters used as a function or operator argument.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 const schema = @import("schema.zig");
 const pb = @import("../../proto/bigquery.zig");
 

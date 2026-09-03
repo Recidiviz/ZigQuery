@@ -21,7 +21,7 @@ pub const TransformConfig = struct {
 };
 
 pub fn defaultTransformConfig() TransformConfig {
-    const debug = if (std.c.getenv("ZETASQLITE_DEBUG")) |v|
+    const debug = if (std.c.getenv("ZIGQUERY_DEBUG")) |v|
         std.mem.eql(u8, std.mem.sliceTo(v, 0), "true")
     else
         false;

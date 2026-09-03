@@ -94,7 +94,7 @@ pub fn canFormQuery(q: *const Q) bool {
 /// This is the one place the port must diverge from GoogleSQL's SQLBuilder.
 /// GoogleSQL inlines a pending expression at every use without a thought,
 /// because its output goes back to the *analyzer*. Ours goes to SQLite to be
-/// *executed*: projecting `zetasqlite_regexp_extract(...)` once and referencing
+/// *executed*: projecting `zigquery_regexp_extract(...)` once and referencing
 /// the alias three times is one evaluation per row, and inlining it three times
 /// is three. A function call is also where non-determinism lives — `RAND`,
 /// `GENERATE_UUID`, `CURRENT_TIMESTAMP` — and duplicating those changes results,
@@ -126,7 +126,7 @@ pub fn isCheapToDuplicate(expr: *const sb.SQLExpression) bool {
             }
             break :blk true;
         } else false,
-        // Function calls (every zetasqlite_* UDF), subqueries, EXISTS, CASE
+        // Function calls (every zigquery_* UDF), subqueries, EXISTS, CASE
         // and casts all get projected.
         .function, .subquery, .exists, .case, .cast => false,
     };

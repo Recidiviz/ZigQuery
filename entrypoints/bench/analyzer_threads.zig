@@ -27,8 +27,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 
 /// Statements chosen to reach the libraries most likely to carry
 /// process-wide state, not for SQL coverage.

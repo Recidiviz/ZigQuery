@@ -2,7 +2,7 @@
 //! Plain-struct codecs for the BigQuery Storage Read API protos.
 
 const std = @import("std");
-pub const wire = @import("zetasqlite").wire;
+pub const wire = @import("zigquery").wire;
 
 pub const ClientLibraryDestination = enum(i32) {
     CLIENT_LIBRARY_DESTINATION_UNSPECIFIED = 0,

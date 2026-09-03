@@ -1,6 +1,6 @@
 //! Port of go-zetasqlite internal/catalog.go (table subset).
 //!
-//! The persisted side is byte-faithful: the `zetasqlite_catalog` DDL, the
+//! The persisted side is byte-faithful: the `zigquery_catalog` DDL, the
 //! upsert/delete SQL and the JSON `spec` column all match Go, so a database
 //! written by go-zetasqlite loads here and vice versa.
 //!
@@ -54,7 +54,7 @@ pub const Error = error{
 // Exact SQL from Go catalog.go (multi-line shape preserved).
 pub const create_catalog_table_query =
     \\
-    \\CREATE TABLE IF NOT EXISTS zetasqlite_catalog(
+    \\CREATE TABLE IF NOT EXISTS zigquery_catalog(
     \\  name STRING NOT NULL PRIMARY KEY,
     \\  kind STRING NOT NULL,
     \\  spec STRING NOT NULL,
@@ -65,12 +65,12 @@ pub const create_catalog_table_query =
 ;
 pub const index_catalog_table_query =
     \\
-    \\CREATE INDEX IF NOT EXISTS catalog_last_updated_index ON zetasqlite_catalog(updatedAt DESC);
+    \\CREATE INDEX IF NOT EXISTS catalog_last_updated_index ON zigquery_catalog(updatedAt DESC);
     \\
 ;
 const upsert_catalog_query =
     \\
-    \\INSERT INTO zetasqlite_catalog (
+    \\INSERT INTO zigquery_catalog (
     \\  name,
     \\  kind,
     \\  spec,
@@ -89,16 +89,16 @@ const upsert_catalog_query =
 ;
 const delete_catalog_query =
     \\
-    \\DELETE FROM zetasqlite_catalog WHERE name = @name
+    \\DELETE FROM zigquery_catalog WHERE name = @name
     \\
 ;
-const load_query = "SELECT name, kind, spec FROM zetasqlite_catalog";
+const load_query = "SELECT name, kind, spec FROM zigquery_catalog";
 
 /// Go CatalogSpecKind values.
 pub const table_spec_kind = "table";
 pub const view_spec_kind = "view";
 pub const function_spec_kind = "function";
-const catalog_name = "zetasqlite";
+const catalog_name = "zigquery";
 
 /// One table change, in the order it happened. Names are canonical
 /// ("_"-joined) and arena-owned, so an entry outlives the spec it describes.
@@ -664,7 +664,7 @@ pub const Catalog = struct {
     /// visible immediately — a deliberate, strictly-more-correct deviation).
     /// Registers a spec the analyzer should resolve but nothing should persist.
     ///
-    /// `addNewTableSpec` writes a `zetasqlite_catalog` row, which is right for a
+    /// `addNewTableSpec` writes a `zigquery_catalog` row, which is right for a
     /// table SQLite is holding and wrong for one whose rows live somewhere else
     /// for the length of a process: a persisted spec would come back on reopen
     /// naming a table with nothing behind it. The INFORMATION_SCHEMA views take
@@ -1369,7 +1369,7 @@ test "addNewTableSpec persists a row and a fresh catalog syncs it" {
 
     // The persisted row exists with the Go schema/kind and decodable spec.
     {
-        var stmt = try db.prepare("SELECT name, kind, spec FROM zetasqlite_catalog");
+        var stmt = try db.prepare("SELECT name, kind, spec FROM zigquery_catalog");
         defer stmt.finalize();
         try testing.expect(try stmt.step());
         try testing.expectEqualStrings("t1", stmt.columnText(0));
@@ -1397,7 +1397,7 @@ test "addNewTableSpec persists a row and a fresh catalog syncs it" {
     try testing.expectEqual(@as(usize, 0), c1.tableCount());
     try testing.expectEqual(@as(?*spec.TableSpec, null), c1.findTableSpec("t1"));
     {
-        var stmt = try db.prepare("SELECT COUNT(*) FROM zetasqlite_catalog");
+        var stmt = try db.prepare("SELECT COUNT(*) FROM zigquery_catalog");
         defer stmt.finalize();
         try testing.expect(try stmt.step());
         try testing.expectEqual(@as(i64, 0), stmt.columnInt64(0));
@@ -1421,7 +1421,7 @@ test "temp table spec is registered in memory but not persisted" {
     try c.addNewTableSpec(&db, ts);
     try testing.expectEqual(@as(usize, 1), c.tableCount());
 
-    var stmt = try db.prepare("SELECT COUNT(*) FROM zetasqlite_catalog");
+    var stmt = try db.prepare("SELECT COUNT(*) FROM zigquery_catalog");
     defer stmt.finalize();
     try testing.expect(try stmt.step());
     try testing.expectEqual(@as(i64, 0), stmt.columnInt64(0));
@@ -1545,7 +1545,7 @@ test "catalogJson: user-defined SQL function resolves through the analyzer" {
         .language = "SQL",
         .args = args,
         .return_type = try spec.newSimpleType(alloc, .TYPE_INT64),
-        .body = "zetasqlite_add(@x, @y)",
+        .body = "zigquery_add(@x, @y)",
         .updated_at = "2024-01-02T03:04:05Z",
         .created_at = "2024-01-02T03:04:05Z",
     };
@@ -1559,12 +1559,12 @@ test "catalogJson: user-defined SQL function resolves through the analyzer" {
     defer c2.deinit();
     try c2.loadFromStorage(&db);
     const found = c2.findFunctionSpec("myadd") orelse return error.TestUnexpectedResult;
-    try testing.expectEqualStrings("zetasqlite_add(@x, @y)", found.body.?);
+    try testing.expectEqualStrings("zigquery_add(@x, @y)", found.body.?);
     try testing.expectEqual(@as(usize, 2), found.args.len);
 
     // CallSQL substitution: @x/@y replaced, wrapped in "( ... )".
     const call = try found.callSQL(alloc, &.{ "1", "2" });
-    try testing.expectEqualStrings("( zetasqlite_add(1, 2) )", call);
+    try testing.expectEqualStrings("( zigquery_add(1, 2) )", call);
 
     // Delete removes memory + persisted row; analysis then fails.
     try c2.deleteFunctionSpec(&db, "myadd");
@@ -1653,7 +1653,7 @@ test "INFORMATION_SCHEMA views come back after a reload" {
 
     // Only the user table is persisted.
     {
-        var stmt = try db.prepare("SELECT COUNT(*) FROM zetasqlite_catalog");
+        var stmt = try db.prepare("SELECT COUNT(*) FROM zigquery_catalog");
         defer stmt.finalize();
         try testing.expect(try stmt.step());
         try testing.expectEqual(@as(i64, 1), stmt.columnInt64(0));

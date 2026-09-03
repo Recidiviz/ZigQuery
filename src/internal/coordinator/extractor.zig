@@ -48,7 +48,7 @@ const unported_func_names = [_][:0]const u8{
     "eval_javascript",
 };
 
-/// Go's normalFuncs: every name registered as a `zetasqlite_<name>` scalar.
+/// Go's normalFuncs: every name registered as a `zigquery_<name>` scalar.
 /// Built from the same tables register.zig walks to create them, so the
 /// extractor cannot claim a function that was never registered.
 ///
@@ -124,10 +124,10 @@ const current_time_func_names = std.StaticStringMap(void).initComptime(.{
     .{"current_datetime"},
     .{"current_time"},
     .{"current_timestamp"},
-    .{"zetasqlite_current_date"},
-    .{"zetasqlite_current_datetime"},
-    .{"zetasqlite_current_time"},
-    .{"zetasqlite_current_timestamp"},
+    .{"zigquery_current_date"},
+    .{"zigquery_current_datetime"},
+    .{"zigquery_current_time"},
+    .{"zigquery_current_timestamp"},
 });
 
 /// Go: normalFuncMap membership, which contains every normalFuncs name plus
@@ -178,11 +178,11 @@ fn getZetasqliteFuncName(
     const exists_aggregate = aggregate_func_names.has(func_name);
     const exists_window = window_func_names.has(func_name);
 
-    var func_prefix: []const u8 = "zetasqlite";
+    var func_prefix: []const u8 = "zigquery";
     const error_mode = fcb.error_mode orelse .DEFAULT_ERROR_MODE;
     if (error_mode == .SAFE_ERROR_MODE) {
         if (!exists_normal) return safeUnsupported(func_name, exists_aggregate, exists_window);
-        func_prefix = "zetasqlite_safe";
+        func_prefix = "zigquery_safe";
     }
     // The operator names the analyzer spells with a leading `$` ($add,
     // $interval, ...) are registered under the bare name, so this strip has to
@@ -283,43 +283,43 @@ const FixedRange = struct {
 /// Go windowFuncFixedRanges: window functions whose SQLite frame is fixed by
 /// the runtime UDF's semantics; a user-supplied framing clause is an error.
 const window_func_fixed_ranges = std.StaticStringMap(FixedRange).initComptime(.{
-    .{ "zetasqlite_window_ntile", FixedRange{
+    .{ "zigquery_window_ntile", FixedRange{
         .unit = "ROWS",
         .start = "CURRENT ROW",
         .end = "UNBOUNDED FOLLOWING",
     } },
-    .{ "zetasqlite_window_cume_dist", FixedRange{
+    .{ "zigquery_window_cume_dist", FixedRange{
         .unit = "GROUPS",
         .start = "FOLLOWING",
         .start_offset_int = 1,
         .end = "UNBOUNDED FOLLOWING",
     } },
-    .{ "zetasqlite_window_dense_rank", FixedRange{
+    .{ "zigquery_window_dense_rank", FixedRange{
         .unit = "RANGE",
         .start = "UNBOUNDED PRECEDING",
         .end = "CURRENT ROW",
     } },
-    .{ "zetasqlite_window_rank", FixedRange{
+    .{ "zigquery_window_rank", FixedRange{
         .unit = "GROUPS",
         .start = "UNBOUNDED PRECEDING",
         .end = "CURRENT ROW EXCLUDE TIES",
     } },
-    .{ "zetasqlite_window_percent_rank", FixedRange{
+    .{ "zigquery_window_percent_rank", FixedRange{
         .unit = "GROUPS",
         .start = "CURRENT ROW",
         .end = "UNBOUNDED FOLLOWING",
     } },
-    .{ "zetasqlite_window_row_number", FixedRange{
+    .{ "zigquery_window_row_number", FixedRange{
         .unit = "ROWS",
         .start = "UNBOUNDED PRECEDING",
         .end = "CURRENT ROW",
     } },
-    .{ "zetasqlite_window_lag", FixedRange{
+    .{ "zigquery_window_lag", FixedRange{
         .unit = "ROWS",
         .start = "UNBOUNDED PRECEDING",
         .end = "CURRENT ROW",
     } },
-    .{ "zetasqlite_window_lead", FixedRange{
+    .{ "zigquery_window_lead", FixedRange{
         .unit = "ROWS",
         .start = "CURRENT ROW",
         .end = "UNBOUNDED FOLLOWING",
@@ -1845,11 +1845,11 @@ pub const NodeExtractor = struct {
         const type_proto = vwt.type orelse return error.InvalidAST;
         const value_proto = vwt.value orelse return error.InvalidAST;
 
-        const zetasqlite_value = try encoder.valueFromProto(alloc, value_proto, type_proto);
+        const zigquery_value = try encoder.valueFromProto(alloc, value_proto, type_proto);
 
         const literal = try alloc.create(types_data.LiteralData);
         literal.* = .{
-            .value = zetasqlite_value,
+            .value = zigquery_value,
             .type_name = @tagName(type_proto.type_kind orelse .TYPE_UNKNOWN),
         };
         return .{ .type = .literal, .literal = literal };
@@ -1960,9 +1960,9 @@ pub const NodeExtractor = struct {
                 return error.UnsupportedFunction;
             }
             const having_func: []const u8 = if (std.mem.eql(u8, original_func_name, "min_by"))
-                "zetasqlite_having_min"
+                "zigquery_having_min"
             else
-                "zetasqlite_having_max";
+                "zigquery_having_max";
 
             const having_args = try alloc.alloc(ExpressionData, 1);
             having_args[0] = arguments.items[1];
@@ -1976,7 +1976,7 @@ pub const NodeExtractor = struct {
 
             const fn_data = try alloc.create(types_data.FunctionCallData);
             fn_data.* = .{
-                .name = "zetasqlite_any_value",
+                .name = "zigquery_any_value",
                 .arguments = wrapped_args,
                 .signature = signature,
                 // ANY_VALUE(x) returns x's type, which is what MIN_BY(x, y)
@@ -2027,7 +2027,7 @@ pub const NodeExtractor = struct {
             order_by_args[1] = .{ .type = .literal, .literal = asc_literal };
             try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
                 alloc,
-                "zetasqlite_order_by",
+                "zigquery_order_by",
                 order_by_args,
             ));
         }
@@ -2035,7 +2035,7 @@ pub const NodeExtractor = struct {
         if (non_scalar.distinct orelse false) {
             try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
                 alloc,
-                "zetasqlite_distinct",
+                "zigquery_distinct",
                 &.{},
             ));
         }
@@ -2046,7 +2046,7 @@ pub const NodeExtractor = struct {
             limit_args[0] = limit;
             try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
                 alloc,
-                "zetasqlite_limit",
+                "zigquery_limit",
                 limit_args,
             ));
         }
@@ -2057,8 +2057,8 @@ pub const NodeExtractor = struct {
             const having_expr_data = try self.ExtractExpressionData(alloc, having_expr, ctx);
 
             const having_func: []const u8 = switch (having_modifier.kind orelse .INVALID) {
-                .MAX => "zetasqlite_having_max",
-                .MIN => "zetasqlite_having_min",
+                .MAX => "zigquery_having_max",
+                .MIN => "zigquery_having_min",
                 else => return error.UnsupportedNode, // Go: "unsupported having modifier kind"
             };
             const having_args = try alloc.alloc(ExpressionData, 1);
@@ -2074,7 +2074,7 @@ pub const NodeExtractor = struct {
             .IGNORE_NULLS => {
                 const ignore_nulls = try types_data.newFunctionCallExpressionData(
                     alloc,
-                    "zetasqlite_ignore_nulls",
+                    "zigquery_ignore_nulls",
                     &.{},
                 );
                 try arguments.append(alloc, ignore_nulls);
@@ -2152,7 +2152,7 @@ pub const NodeExtractor = struct {
         const base = non_scalar.parent orelse return error.InvalidAST;
 
         // Extract the base function call (isWindowFunc=true selects the
-        // zetasqlite_window_* runtime names).
+        // zigquery_window_* runtime names).
         const base_data = try self.extractFunctionCallData(alloc, base, ctx, true);
         const function = base_data.function orelse return error.InvalidAST;
 
@@ -2162,20 +2162,20 @@ pub const NodeExtractor = struct {
         if (non_scalar.distinct orelse false) {
             try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
                 alloc,
-                "zetasqlite_distinct",
+                "zigquery_distinct",
                 &.{},
             ));
         }
 
         // Go windowFunctionsIgnoreNullsByDefault: percentile_disc only.
         const ignore_nulls_by_default =
-            std.mem.eql(u8, function.name, "zetasqlite_window_percentile_disc");
+            std.mem.eql(u8, function.name, "zigquery_window_percentile_disc");
 
         switch (non_scalar.null_handling_modifier orelse .DEFAULT_NULL_HANDLING) {
             .IGNORE_NULLS => {
                 const ignore_nulls = try types_data.newFunctionCallExpressionData(
                     alloc,
-                    "zetasqlite_ignore_nulls",
+                    "zigquery_ignore_nulls",
                     &.{},
                 );
                 try arguments.append(alloc, ignore_nulls);
@@ -2183,7 +2183,7 @@ pub const NodeExtractor = struct {
             .DEFAULT_NULL_HANDLING => if (ignore_nulls_by_default) {
                 try arguments.append(alloc, try types_data.newFunctionCallExpressionData(
                     alloc,
-                    "zetasqlite_ignore_nulls",
+                    "zigquery_ignore_nulls",
                     &.{},
                 ));
             },
@@ -2261,7 +2261,7 @@ pub const NodeExtractor = struct {
     }
 
     /// Go extractGetStructFieldData: becomes
-    /// zetasqlite_get_struct_field(expr, <field index literal>).
+    /// zigquery_get_struct_field(expr, <field index literal>).
     fn extractGetStructFieldData(
         self: *const NodeExtractor,
         alloc: std.mem.Allocator,
@@ -2280,7 +2280,7 @@ pub const NodeExtractor = struct {
         args[1] = .{ .type = .literal, .literal = idx_literal };
         const data = try types_data.newFunctionCallExpressionData(
             alloc,
-            "zetasqlite_get_struct_field",
+            "zigquery_get_struct_field",
             args,
         );
         // The field's type is what this call returns.
@@ -2289,7 +2289,7 @@ pub const NodeExtractor = struct {
     }
 
     /// Go extractGetJsonFieldData: JSON field access lowers to
-    /// zetasqlite_get_json_field(expr, "<field_name>").
+    /// zigquery_get_json_field(expr, "<field_name>").
     fn extractGetJsonFieldData(
         self: *const NodeExtractor,
         alloc: std.mem.Allocator,
@@ -2308,14 +2308,14 @@ pub const NodeExtractor = struct {
         args[1] = .{ .type = .literal, .literal = name_literal };
         const data = try types_data.newFunctionCallExpressionData(
             alloc,
-            "zetasqlite_get_json_field",
+            "zigquery_get_json_field",
             args,
         );
         data.function.?.result_kind = resultKindOf(node.parent);
         return data;
     }
 
-    /// Go extractMakeStructData: becomes zetasqlite_make_struct(name1,
+    /// Go extractMakeStructData: becomes zigquery_make_struct(name1,
     /// value1, name2, value2, ...), field names from the struct type.
     fn extractMakeStructData(
         self: *const NodeExtractor,
@@ -2339,7 +2339,7 @@ pub const NodeExtractor = struct {
 
         const data = try types_data.newFunctionCallExpressionData(
             alloc,
-            "zetasqlite_make_struct",
+            "zigquery_make_struct",
             field_args,
         );
         data.function.?.result_kind = resultKindOf(parent);
@@ -2465,7 +2465,7 @@ test "extract SELECT 1 + 2 normalizes ZetaSQL:$add" {
     const expr = project.expr_list[0].expression;
     try testing.expectEqual(types_data.ExpressionType.function, expr.type);
     const function = expr.function.?;
-    try testing.expectEqualStrings("zetasqlite_add", function.name);
+    try testing.expectEqualStrings("zigquery_add", function.name);
     try testing.expectEqual(@as(usize, 2), function.arguments.len);
     try value_mod.expectValueEqual(.{ .int = 1 }, function.arguments[0].literal.?.value);
     try value_mod.expectValueEqual(.{ .int = 2 }, function.arguments[1].literal.?.value);
@@ -2481,10 +2481,10 @@ test "extract SELECT ABS(-3) normalizes ZetaSQL:abs" {
     const stmt = try TestHarness.statementData(alloc, "SELECT ABS(-3)");
     const expr = stmt.select.?.from_clause.?.project_scan.?.expr_list[0].expression;
     try testing.expectEqual(types_data.ExpressionType.function, expr.type);
-    try testing.expectEqualStrings("zetasqlite_abs", expr.function.?.name);
+    try testing.expectEqualStrings("zigquery_abs", expr.function.?.name);
 }
 
-test "extract SAFE.-prefixed call uses zetasqlite_safe prefix" {
+test "extract SAFE.-prefixed call uses zigquery_safe prefix" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
@@ -2492,7 +2492,7 @@ test "extract SAFE.-prefixed call uses zetasqlite_safe prefix" {
     const stmt = try TestHarness.statementData(alloc, "SELECT SAFE.ABS(-3)");
     const expr = stmt.select.?.from_clause.?.project_scan.?.expr_list[0].expression;
     try testing.expectEqual(types_data.ExpressionType.function, expr.type);
-    try testing.expectEqualStrings("zetasqlite_safe_abs", expr.function.?.name);
+    try testing.expectEqualStrings("zigquery_safe_abs", expr.function.?.name);
 }
 
 test "extract COUNT(*) aggregate scan" {
@@ -2512,7 +2512,7 @@ test "extract COUNT(*) aggregate scan" {
     try testing.expectEqual(@as(usize, 1), aggregate.aggregate_list.len);
     const agg_expr = aggregate.aggregate_list[0].expression;
     try testing.expectEqual(types_data.ExpressionType.function, agg_expr.type);
-    try testing.expectEqualStrings("zetasqlite_count_star", agg_expr.function.?.name);
+    try testing.expectEqualStrings("zigquery_count_star", agg_expr.function.?.name);
 }
 
 test "extract aggregate modifiers as trailing pseudo-arguments" {
@@ -2528,18 +2528,18 @@ test "extract aggregate modifiers as trailing pseudo-arguments" {
     while (from.type == .project) from = &from.project_scan.?.input_scan;
     try testing.expectEqual(types_data.ScanType.aggregate, from.type);
     const function = from.aggregate_scan.?.aggregate_list[0].expression.function.?;
-    try testing.expectEqualStrings("zetasqlite_array_agg", function.name);
+    try testing.expectEqualStrings("zigquery_array_agg", function.name);
 
     // Go order: base args, then ORDER BY, DISTINCT, LIMIT.
     try testing.expectEqual(@as(usize, 4), function.arguments.len);
     const order_by = function.arguments[1].function.?;
-    try testing.expectEqualStrings("zetasqlite_order_by", order_by.name);
+    try testing.expectEqualStrings("zigquery_order_by", order_by.name);
     try testing.expectEqual(@as(usize, 2), order_by.arguments.len);
     // Second arg is the ascending flag (!IsDescending -> false for DESC).
     try value_mod.expectValueEqual(.{ .bool = false }, order_by.arguments[1].literal.?.value);
-    try testing.expectEqualStrings("zetasqlite_distinct", function.arguments[2].function.?.name);
+    try testing.expectEqualStrings("zigquery_distinct", function.arguments[2].function.?.name);
     const limit = function.arguments[3].function.?;
-    try testing.expectEqualStrings("zetasqlite_limit", limit.name);
+    try testing.expectEqualStrings("zigquery_limit", limit.name);
     try value_mod.expectValueEqual(.{ .int = 2 }, limit.arguments[0].literal.?.value);
 }
 
@@ -2635,7 +2635,7 @@ test "extract filter, order by and limit scans" {
     try testing.expectEqual(types_data.ScanType.filter, scan.type);
     const filter = scan.filter_scan.?;
     try testing.expectEqual(types_data.ExpressionType.function, filter.filter_expr.type);
-    try testing.expectEqualStrings("zetasqlite_greater", filter.filter_expr.function.?.name);
+    try testing.expectEqualStrings("zigquery_greater", filter.filter_expr.function.?.name);
 }
 
 test "extract scalar subquery and cast" {
@@ -2687,7 +2687,7 @@ test "extract ROW_NUMBER analytic scan (fixed frame, group ORDER BY)" {
 
     try testing.expectEqual(@as(usize, 1), analytic.function_list.len);
     const function = analytic.function_list[0].expression.function.?;
-    try testing.expectEqualStrings("zetasqlite_window_row_number", function.name);
+    try testing.expectEqualStrings("zigquery_window_row_number", function.name);
     try testing.expectEqual(@as(usize, 0), function.arguments.len);
 
     // Window spec: no PARTITION BY, the group's ORDER BY on x, and the
@@ -2722,7 +2722,7 @@ test "extract SUM OVER with PARTITION BY and explicit frame" {
 
     try testing.expectEqual(@as(usize, 1), analytic.function_list.len);
     const function = analytic.function_list[0].expression.function.?;
-    try testing.expectEqualStrings("zetasqlite_window_sum", function.name);
+    try testing.expectEqualStrings("zigquery_window_sum", function.name);
     // One argument: the analyzer inlines the struct-field access
     // ($unnest.x) as the SUM argument rather than a column ref.
     try testing.expectEqual(@as(usize, 1), function.arguments.len);
@@ -2756,10 +2756,10 @@ test "extract analytic DISTINCT / RANK fixed GROUPS frame" {
         var from: *const ScanData = stmt.select.?.from_clause.?;
         while (from.type == .project) from = &from.project_scan.?.input_scan;
         const function = from.analytic_scan.?.function_list[0].expression.function.?;
-        try testing.expectEqualStrings("zetasqlite_window_count", function.name);
+        try testing.expectEqualStrings("zigquery_window_count", function.name);
         try testing.expectEqual(@as(usize, 2), function.arguments.len);
         try testing.expectEqualStrings(
-            "zetasqlite_distinct",
+            "zigquery_distinct",
             function.arguments[1].function.?.name,
         );
         const frame = function.window_spec.?.frame_clause.?;
@@ -2777,7 +2777,7 @@ test "extract analytic DISTINCT / RANK fixed GROUPS frame" {
         var from: *const ScanData = stmt.select.?.from_clause.?;
         while (from.type == .project) from = &from.project_scan.?.input_scan;
         const function = from.analytic_scan.?.function_list[0].expression.function.?;
-        try testing.expectEqualStrings("zetasqlite_window_rank", function.name);
+        try testing.expectEqualStrings("zigquery_window_rank", function.name);
         const frame = function.window_spec.?.frame_clause.?;
         try testing.expectEqualStrings("GROUPS", frame.unit);
         try testing.expectEqualStrings("UNBOUNDED PRECEDING", frame.start.?.type);
@@ -2785,7 +2785,7 @@ test "extract analytic DISTINCT / RANK fixed GROUPS frame" {
     }
 }
 
-test "extract STRUCT field access becomes zetasqlite_get_struct_field" {
+test "extract STRUCT field access becomes zigquery_get_struct_field" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
@@ -2794,7 +2794,7 @@ test "extract STRUCT field access becomes zetasqlite_get_struct_field" {
     const expr = stmt.select.?.from_clause.?.project_scan.?.expr_list[0].expression;
     try testing.expectEqual(types_data.ExpressionType.function, expr.type);
     const function = expr.function.?;
-    try testing.expectEqualStrings("zetasqlite_get_struct_field", function.name);
+    try testing.expectEqualStrings("zigquery_get_struct_field", function.name);
     try testing.expectEqual(@as(usize, 2), function.arguments.len);
     try value_mod.expectValueEqual(.{ .int = 1 }, function.arguments[1].literal.?.value);
 }

@@ -18,7 +18,7 @@
 #
 # Expected context layout, matching `zig build dist -Dshim-static-obj=...`
 # (see release.yml):
-#   dist/bin/{bigquery-emulator,zetasqlite-zig}
+#   dist/bin/{bigquery-emulator,zigquery}
 FROM gcr.io/distroless/cc-debian13:nonroot
 
 COPY dist/bin/ /usr/local/bin/

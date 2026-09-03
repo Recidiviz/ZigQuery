@@ -11,8 +11,8 @@
 //! the float rules that follow.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 const govalue = @import("govalue.zig");
 
 /// Named rather than inferred: writeValue and jsonStringify are mutually

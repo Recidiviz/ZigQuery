@@ -16,10 +16,10 @@ pub const Error = types_data.Error;
 /// internal/function_register.go currentTimeFuncMap.
 /// Only the prefixed names occur: the extractor rewrites the name before the transformer sees it.
 pub const current_time_func_names = std.StaticStringMap(void).initComptime(.{
-    .{"zetasqlite_current_date"},
-    .{"zetasqlite_current_datetime"},
-    .{"zetasqlite_current_time"},
-    .{"zetasqlite_current_timestamp"},
+    .{"zigquery_current_date"},
+    .{"zigquery_current_datetime"},
+    .{"zigquery_current_time"},
+    .{"zigquery_current_timestamp"},
 });
 
 /// Go NewLiteralExpressionFromGoValue: ValueFromGoValue + LiteralFromValue +

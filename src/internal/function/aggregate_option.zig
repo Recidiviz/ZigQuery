@@ -3,8 +3,8 @@
 //! Aggregate modifiers (DISTINCT / IGNORE NULLS / LIMIT / ORDER BY /
 //! HAVING MAX|MIN) travel from the transformer to the aggregate UDFs as
 //! ordinary string arguments produced by the scalar functions
-//! zetasqlite_distinct() / zetasqlite_limit(n) / zetasqlite_order_by(v, asc) /
-//! zetasqlite_ignore_nulls() / zetasqlite_having_max|min(v). Each produces a
+//! zigquery_distinct() / zigquery_limit(n) / zigquery_order_by(v, asc) /
+//! zigquery_ignore_nulls() / zigquery_having_max|min(v). Each produces a
 //! JSON marker string ({"type":"aggregate_*","value":...}) that the
 //! Aggregator's Step recognizes and strips from the argument list
 //! (parseAggregateOptions), exactly like Go.
@@ -17,7 +17,7 @@
 //! The JSON was worth dropping because it forced base64 on the payload: JSON
 //! strings cannot hold arbitrary bytes, so every marker paid an encode and a
 //! decode purely to survive the envelope. That cost is per row, not per query —
-//! zetasqlite_order_by takes the sort key, so it runs once per row of every
+//! zigquery_order_by takes the sort key, so it runs once per row of every
 //! ordered aggregate. Nothing observable depended on the JSON: a marker is
 //! produced and consumed inside one statement, never stored (generated SQL
 //! holds the *call*, not the marker), so no golden, corpus case or database
@@ -47,7 +47,7 @@ pub const Kind = enum(u8) {
     having_min = 6,
 };
 
-/// Go AggregateOrderBy: one per zetasqlite_order_by argument, carrying the
+/// Go AggregateOrderBy: one per zigquery_order_by argument, carrying the
 /// (per-row) sort key value.
 pub const AggregateOrderBy = struct {
     value: Value,
@@ -200,7 +200,7 @@ fn applyOption(
 // ----------------------------------------------------------------------
 // Scalar bind handlers (Go bindDistinct/bindLimit/bindOrderBy/
 // bindIgnoreNulls/bindHavingMax/bindHavingMin). Registered by
-// aggregate.zig as zetasqlite_distinct etc.
+// aggregate.zig as zigquery_distinct etc.
 // ----------------------------------------------------------------------
 
 pub fn bindDistinct(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -246,7 +246,7 @@ pub fn bindHavingMin(alloc: std.mem.Allocator, args: []const Value) Error!Value 
 }
 
 /// The scalar-function table registered alongside the aggregates. Names get
-/// the zetasqlite_ / zetasqlite_safe_ prefixes exactly like Go's normalFuncs
+/// the zigquery_ / zigquery_safe_ prefixes exactly like Go's normalFuncs
 /// entries for these six functions.
 pub const option_func_table = [_]bind.FuncInfo{
     .{ .name = "distinct", .handler = bindDistinct },

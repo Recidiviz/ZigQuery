@@ -1,4 +1,4 @@
-// C shim used by zetasqlite-zig: analyzes GoogleSQL statements one at a time
+// C shim used by zigquery: analyzes GoogleSQL statements one at a time
 // and returns each resolved AST as a serialized AnyResolvedNodeProto.
 //
 // Mirrors the analyzer configuration of Recidiviz/go-zetasqlite
@@ -162,14 +162,14 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // and FEATURE_PIPE_FINISH. Each of those is a clean "Pipe X not supported"
     // from the analyzer while its feature is off, not a surprise further down.
     googlesql::FEATURE_PIPES,
-    // TYPEOF(expr) -> the type's name. No `zetasqlite_typeof` answers it and
+    // TYPEOF(expr) -> the type's name. No `zigquery_typeof` answers it and
     // none is needed: the type is a static property of the expression, so the
     // analyzer's rewriter has already resolved it by the time the extractor
     // runs. What arrives is a constant-true CASE whose taken branch is the
     // name as a literal —
     //
     //   CASE WHEN true THEN X'60494e543634'   -- "INT64"
-    //        ELSE zetasqlite_cast(zetasqlite_is_null(x), ...) END
+    //        ELSE zigquery_cast(zigquery_is_null(x), ...) END
     //
     // with the untaken branch built from functions the engine already has, and
     // never evaluated because SQLite short-circuits CASE. It works over columns
@@ -532,7 +532,7 @@ void* GoogleSQL_CatalogCreate(char** out_error) {
     return nullptr;
   }
   handle->catalog = std::make_unique<googlesql::SimpleCatalog>(
-      "zetasqlite", &handle->type_factory);
+      "zigquery", &handle->type_factory);
   handle->catalog->AddBuiltinFunctions(
       googlesql::BuiltinFunctionOptions(handle->lang));
   return handle.release();
@@ -778,7 +778,7 @@ int GoogleSQL_AnalyzeNextStatement(const char* sql, size_t* resume_offset,
 }
 
 // ---------------------------------------------------------------------------
-// RE2 surface for zetasqlite-zig's REGEXP_* functions (Go uses the RE2-syntax
+// RE2 surface for zigquery's REGEXP_* functions (Go uses the RE2-syntax
 // `regexp` package; RE2 is already linked transitively via the analyzer).
 // ---------------------------------------------------------------------------
 

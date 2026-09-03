@@ -14,9 +14,9 @@
 //! running Go emulator.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
-const job_rows_vtab = zetasqlite.function.job_rows_vtab;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
+const job_rows_vtab = zigquery.function.job_rows_vtab;
 const queryparam = @import("../internal/types/queryparam.zig");
 const json_pb = @import("../json_pb.zig");
 const pb = @import("../proto/bigquery.zig");

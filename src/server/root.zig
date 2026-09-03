@@ -1,4 +1,4 @@
-//! bigquery-emulator server, ported to Zig on top of the zetasqlite engine.
+//! bigquery-emulator server, ported to Zig on top of the zigquery engine.
 //! Go counterpart: the `server/` and `internal/` trees of
 //! Recidiviz/bigquery-emulator.
 //!

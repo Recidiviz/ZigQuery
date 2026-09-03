@@ -12,9 +12,9 @@
 //! table's `{"fields":[...]}`. tools/../scratchpad/bench_insert.py writes both.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
+const zigquery = @import("zigquery");
 const bqserver = @import("bqserver");
-const driver = zetasqlite.driver;
+const driver = zigquery.driver;
 const tabledata = bqserver.tabledata_handler;
 const contentdata = bqserver.contentdata_repository;
 const schema_mod = bqserver.schema;

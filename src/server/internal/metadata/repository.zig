@@ -16,8 +16,8 @@
 //!   use instead.
 
 const std = @import("std");
-const zetasqlite = @import("zetasqlite");
-const driver = zetasqlite.driver;
+const zigquery = @import("zigquery");
+const driver = zigquery.driver;
 
 /// One statement per entry: the raw path prepares a single statement at a
 /// time (sqlite3_prepare_v2 stops at the first), so a multi-statement string

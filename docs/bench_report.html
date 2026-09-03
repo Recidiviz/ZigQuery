@@ -261,9 +261,9 @@
   <h1>GoogleSQL engine benchmark — consolidated</h1>
   <p class="lede">The 22-query <a href="https://github.com/goccy/googlesqlite/tree/main/bench">goccy/googlesqlite</a>
   corpus across five GoogleSQL implementations: the January&nbsp;2026 BigQuery-emulator survey,
-  goccy/googlesqlite v0.3.1's own published results, and zetasqlite-zig measured with
+  goccy/googlesqlite v0.3.1's own published results, and zigquery measured with
   <code>zig build gsql-bench</code>.</p>
-  <p class="sub">Compiled 30 July 2026 · zetasqlite-zig run on Apple M4 Pro, macOS 26.5.2, Zig 0.16.0, SQLite 3.51.0, ReleaseFast</p>
+  <p class="sub">Compiled 30 July 2026 · zigquery run on Apple M4 Pro, macOS 26.5.2, Zig 0.16.0, SQLite 3.51.0, ReleaseFast</p>
 
   <div class="banner">
     <div class="eyebrow">Methodology</div>
@@ -276,7 +276,7 @@
       goccy v0.7.0 (wasm). Internally comparable to each other.</li>
       <li><strong>Context B</strong> — goccy/googlesqlite v0.3.1 <code>bench/RESULTS.md</code>, published by
       upstream. Driver-level, prepared once and re-scanned per iteration.</li>
-      <li><strong>Context C</strong> — zetasqlite-zig, engine-level (no HTTP server), this repo's harness.
+      <li><strong>Context C</strong> — zigquery, engine-level (no HTTP server), this repo's harness.
       The plotted <code>full</code> column re-analyzes every iteration, so it carries work the Context&nbsp;B
       figure does not.</li>
     </ul>
@@ -284,7 +284,7 @@
 
   <div class="kpis">
     <div class="kpi">
-      <div class="label">Corpus queries run by zetasqlite-zig</div>
+      <div class="label">Corpus queries run by zigquery</div>
       <div class="value">20<span style="color:var(--text-muted);font-size:20px">/22</span></div>
       <div class="foot">Two need emulator-layer catalog features</div>
     </div>
@@ -313,27 +313,27 @@
     <div class="legend" id="legend-main"></div>
     <div class="scroll"><div class="plotmin" id="dotplot"></div></div>
     <p class="chart-note">Missing dots are queries an engine could not run, not zeroes.
-    <code>information_schema_columns</code> was not in the January survey and is unsupported by zetasqlite-zig;
-    <code>wildcard_table_scan</code> is unsupported by zetasqlite-zig.</p>
+    <code>information_schema_columns</code> was not in the January survey and is unsupported by zigquery;
+    <code>wildcard_table_scan</code> is unsupported by zigquery.</p>
   </div>
 
-  <h2>zetasqlite-zig against the January leader</h2>
+  <h2>zigquery against the January leader</h2>
   <p class="sub">recidiviz/bigquery-emulator (cgo) recorded the lowest time on 18 of 21 queries in the January survey.
-  This is the ratio of its time to zetasqlite-zig's <code>full</code> time, on a log axis centred at parity.</p>
+  This is the ratio of its time to zigquery's <code>full</code> time, on a log axis centred at parity.</p>
 
   <div class="card">
     <div class="legend">
-      <span class="legend-item"><span class="swatch" style="background:var(--faster)"></span>zetasqlite-zig faster</span>
-      <span class="legend-item"><span class="swatch" style="background:var(--slower)"></span>zetasqlite-zig slower</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--faster)"></span>zigquery faster</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--slower)"></span>zigquery slower</span>
     </div>
     <div class="scroll"><div class="plotmin" id="ratioplot"></div></div>
     <p class="chart-note">The three scalar losses are the whole story of the deficit: they are dominated by
     per-statement GoogleSQL analysis, which the cgo emulator amortizes behind a prepared statement.
-    Against zetasqlite-zig's own <code>prep</code> column the same three run 13.5×, 16.3× and 30.5× <em>faster</em>
+    Against zigquery's own <code>prep</code> column the same three run 13.5×, 16.3× and 30.5× <em>faster</em>
     than the cgo emulator. Cross-context — different machines.</p>
   </div>
 
-  <h2>Where zetasqlite-zig's time goes</h2>
+  <h2>Where zigquery's time goes</h2>
   <p class="sub">Each <code>full</code> iteration split by phase, normalised to 100%. Absolute per-op time on the right.</p>
 
   <div class="card">
@@ -357,7 +357,7 @@
   <h2>Notes</h2>
   <div class="card">
     <ul class="notes">
-      <li><strong>Two queries do not run on zetasqlite-zig.</strong>
+      <li><strong>Two queries do not run on zigquery.</strong>
       <code>information_schema_columns</code> needs INFORMATION_SCHEMA views, and
       <code>wildcard_table_scan</code> needs a wildcard table registered in the catalog. Both are BigQuery
       surface features that live in the emulator layer, not the translation engine — a scope boundary rather
@@ -370,7 +370,7 @@
       join and aggregate work. This is a property of upstream's generated data and affects every engine equally.</li>
       <li><strong>googlesqlite v0.3.1 differs from its <code>main</code> branch.</strong> The tagged release
       reports q3 at 32.65 s where main reports 33.23 s; v0.3.1's figures are used throughout.</li>
-      <li><strong>zetasqlite-zig's two columns bracket upstream's methodology.</strong> <code>full</code> runs
+      <li><strong>zigquery's two columns bracket upstream's methodology.</strong> <code>full</code> runs
       the whole pipeline per iteration (analyze → transform → sqlite3_prepare → step → decode);
       <code>prep</code> compiles once and re-executes but discards rows. Upstream prepares once <em>and</em>
       scans, so its equivalent sits between them. <code>full</code> is plotted throughout as the conservative choice.</li>
@@ -390,7 +390,7 @@
   "use strict";
 
   var ENGINES = [
-    { key: "z",   name: "zetasqlite-zig",     note: "engine-level · context C", css: "--series-z" },
+    { key: "z",   name: "zigquery",     note: "engine-level · context C", css: "--series-z" },
     { key: "r",   name: "recidiviz (cgo)",    note: "emulator · context A",     css: "--series-r" },
     { key: "g",   name: "goccy v0.6.6",       note: "emulator · context A",     css: "--series-g" },
     { key: "gsq", name: "goccy v0.7.0 (wasm)",note: "emulator · context A",     css: "--series-gsq" },
@@ -431,7 +431,7 @@
     { q: "q6_forecast_revenue",         c: "tpch_like", g: 24.0,    r: 6.5,   gsq: 15.2,    gsl: 18.138157,   z: 1.002944, zp: 0.864892 }
   ];
 
-  // zetasqlite-zig phase split, ms per op (from --phases, same run as z above).
+  // zigquery phase split, ms per op (from --phases, same run as z above).
   var PHASES = {
     array_agg_window:            { analyze: 0.0677, transform: 0.0023, prepare: 0.0137, step: 0.1567, other: 0.0353 },
     lag_lead:                    { analyze: 0.1025, transform: 0.0043, prepare: 0.0251, step: 1.0596, other: 0.1442 },
@@ -637,11 +637,11 @@
         ? ratio.toFixed(ratio < 10 ? 2 : 1) + "× faster"
         : (1 / ratio).toFixed(1) + "× slower";
       bar.setAttribute("role", "img");
-      bar.setAttribute("aria-label", d.q + ", zetasqlite-zig " + txt);
+      bar.setAttribute("aria-label", d.q + ", zigquery " + txt);
       bindTip(bar,
         '<div class="t-title">' + d.q + "</div>" +
         '<div class="t-row">recidiviz (cgo) <span class="t-val">' + fmtTime(d.r) + "</span></div>" +
-        '<div class="t-row">zetasqlite-zig <span class="t-val">' + fmtTime(d.z) + "</span></div>" +
+        '<div class="t-row">zigquery <span class="t-val">' + fmtTime(d.z) + "</span></div>" +
         '<div class="t-row" style="margin-top:4px">' + txt + "</div>");
       track.appendChild(bar);
 
@@ -712,7 +712,7 @@
   var table = document.getElementById("datatable");
   var thead = el("thead");
   var htr = el("tr");
-  ["Query", "zetasqlite-zig (full)", "zetasqlite-zig (prep)", "recidiviz cgo", "goccy v0.6.6", "goccy v0.7.0 wasm", "googlesqlite v0.3.1"]
+  ["Query", "zigquery (full)", "zigquery (prep)", "recidiviz cgo", "goccy v0.6.6", "goccy v0.7.0 wasm", "googlesqlite v0.3.1"]
     .forEach(function (h) { htr.appendChild(el("th", null, h)); });
   thead.appendChild(htr);
   table.appendChild(thead);

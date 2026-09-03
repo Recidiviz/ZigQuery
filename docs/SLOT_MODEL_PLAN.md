@@ -162,7 +162,7 @@ state to the second, and it must do both halves atomically (emit the select item
 
 GoogleSQL inlines a pending expression at every use site without a thought,
 because its output goes back to the *analyzer*. Ours goes to SQLite to
-*execute*: `SELECT zetasqlite_regexp_extract(…) AS c__5` referenced three times
+*execute*: `SELECT zigquery_regexp_extract(…) AS c__5` referenced three times
 is one evaluation per row today and three after inlining.
 
 So: **`pending` is only consulted for inlining when the column's reference count
@@ -295,7 +295,7 @@ the snapshot diff should be large and boringly uniform.
 - **`scan_aggregate.zig`** — `canSetGroupBy` → set `group_by_list` in place;
   aggregate outputs go to `pending`; then **always** `addSelectListIfNeeded`.
   Aggregates are a hard materialization boundary. Keep the existing two-form
-  discipline: `zetasqlite_group_by(...)`-wrapped in GROUP BY, unwrapped in the
+  discipline: `zigquery_group_by(...)`-wrapped in GROUP BY, unwrapped in the
   select list (`scan_aggregate.zig:59-68`).
 - **`scan_project.zig`** — computed columns go to `pending`; fill the select
   slot if free, else wrap. This is the 61%.
@@ -323,7 +323,7 @@ Land the counter and the gate as **two commits**: counter first with the gate
 hard-wired to "never inline" (zero output diff, proves the counting is correct
 in isolation), then flip it on.
 
-**Exit:** 746 PASS; verify by inspection that no `zetasqlite_*` call appears
+**Exit:** 746 PASS; verify by inspection that no `zigquery_*` call appears
 more than once per select list in the snapshot.
 
 ### S6 — Set-op single level
@@ -356,7 +356,7 @@ list instead (GoogleSQL: `SetAliasForSelectColumn`, `query_expression.cc:359`).
 
 | # | risk | why it bites | mitigation |
 | --- | --- | --- | --- |
-| R1 | Inlining duplicates UDF evaluation | our output is executed, not re-analyzed; `zetasqlite_*` calls are not cheap | use-count gate (§1.5), landed as its own verifiable commit |
+| R1 | Inlining duplicates UDF evaluation | our output is executed, not re-analyzed; `zigquery_*` calls are not cheap | use-count gate (§1.5), landed as its own verifiable commit |
 | R2 | `pending` leaks past a materialization boundary | a column inlined after its defining level was wrapped → wrong scope, silently wrong results | the xor invariant (§1.4); `addSelectListIfNeeded` is the only transition point |
 | R3 | LEFT/FULL JOIN NULL semantics | an expression computed below a join is not the same computed above it | join operands always materialize (S4) |
 | R4 | Aggregate/analytic outputs inlined | nested aggregates | both always `addSelectListIfNeeded` (S4) |
@@ -453,7 +453,7 @@ Recovering the rest means building the count properly: walk the extracted
 `StatementData` tree (which *is* fully eager — verified, `ScanData` is held by
 value) and add the synthesized pass-through references, which are derivable
 from each scan's `column_list`. That is a self-contained follow-up with a clear
-test: the remaining `project_scan` levels should fall and no `zetasqlite_*` call
+test: the remaining `project_scan` levels should fall and no `zigquery_*` call
 should appear twice in one select list.
 
 ## 7. Left alone deliberately

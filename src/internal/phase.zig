@@ -60,7 +60,7 @@ pub const Phase = enum {
 pub const Source = enum {
     /// The statement the caller actually asked for.
     engine,
-    /// The `zetasqlite_catalog` upserts and deletes behind every DDL.
+    /// The `zigquery_catalog` upserts and deletes behind every DDL.
     catalog,
     /// The datasets/tables/jobs tables, reached through the raw passthrough.
     metadata,

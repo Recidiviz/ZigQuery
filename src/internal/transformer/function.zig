@@ -5,7 +5,7 @@
 //! - current-time literal injection for current_* functions (only when a
 //!   deterministic time was provided; Go appends nothing otherwise and the
 //!   runtime UDF falls back to time.Now() at eval time)
-//! - the special zetasqlite_ifnull / zetasqlite_if / zetasqlite_case_*
+//! - the special zigquery_ifnull / zigquery_if / zigquery_case_*
 //!   rewrites into CASE expression objects
 //! - window specification construction (PARTITION BY / ORDER BY / frame)
 //! - the fast-path lowering of comparison/logical functions into native SQL
@@ -63,9 +63,9 @@ pub fn transform(
     }
 
     // Handle special ZetaSQL functions that need transformation.
-    if (std.mem.eql(u8, function.name, "zetasqlite_ifnull")) {
+    if (std.mem.eql(u8, function.name, "zigquery_ifnull")) {
         // IFNULL(a, b) => CASE WHEN a IS NULL THEN b ELSE a END
-        // Go: "zetasqlite_ifnull requires exactly 2 arguments"
+        // Go: "zigquery_ifnull requires exactly 2 arguments"
         if (args.items.len != 2) return error.InvalidAST;
         const when = try alloc.create(sqlbuilder.WhenClause);
         when.* = .{
@@ -80,16 +80,16 @@ pub fn transform(
         const whens = try alloc.alloc(*sqlbuilder.WhenClause, 1);
         whens[0] = when;
         return sqlbuilder.newCaseExpression(alloc, whens, args.items[0]);
-    } else if (std.mem.eql(u8, function.name, "zetasqlite_if")) {
+    } else if (std.mem.eql(u8, function.name, "zigquery_if")) {
         // IF(cond, then, else) => CASE WHEN cond THEN then ELSE else END
-        // Go: "zetasqlite_if requires exactly 3 arguments"
+        // Go: "zigquery_if requires exactly 3 arguments"
         if (args.items.len != 3) return error.InvalidAST;
         const when = try alloc.create(sqlbuilder.WhenClause);
         when.* = .{ .condition = args.items[0], .result = args.items[1] };
         const whens = try alloc.alloc(*sqlbuilder.WhenClause, 1);
         whens[0] = when;
         return sqlbuilder.newCaseExpression(alloc, whens, args.items[2]);
-    } else if (std.mem.eql(u8, function.name, "zetasqlite_case_no_value")) {
+    } else if (std.mem.eql(u8, function.name, "zigquery_case_no_value")) {
         // Arguments are condition, result, condition, result, ..., [else].
         var whens: std.ArrayList(*sqlbuilder.WhenClause) = .empty;
         var i: usize = 0;
@@ -102,9 +102,9 @@ pub fn transform(
         var else_expr: ?*SQLExpression = null;
         if (args.items.len % 2 == 1) else_expr = args.items[args.items.len - 1];
         return sqlbuilder.newCaseExpression(alloc, try whens.toOwnedSlice(alloc), else_expr);
-    } else if (std.mem.eql(u8, function.name, "zetasqlite_case_with_value")) {
+    } else if (std.mem.eql(u8, function.name, "zigquery_case_with_value")) {
         // First arg is the value, then condition, result, ..., [else].
-        // Go: "zetasqlite_case_with_value requires at least 3 arguments"
+        // Go: "zigquery_case_with_value requires at least 3 arguments"
         if (args.items.len < 3) return error.InvalidAST;
         const value_expr = args.items[0];
         const remaining = args.items[1..];
@@ -267,24 +267,24 @@ const Lowering = struct {
 
 const lowerings = std.StaticStringMap(Lowering).initComptime(.{
     // Comparison operators.
-    .{ "zetasqlite_equal", Lowering{ .op = "=", .form = .infix, .min_args = 2, .max_args = 2 } },
-    .{ "zetasqlite_not_equal", Lowering{ .op = "!=", .form = .infix, .min_args = 2, .max_args = 2 } },
-    .{ "zetasqlite_less", Lowering{ .op = "<", .form = .infix, .min_args = 2, .max_args = 2 } },
-    .{ "zetasqlite_greater", Lowering{ .op = ">", .form = .infix, .min_args = 2, .max_args = 2 } },
-    .{ "zetasqlite_less_or_equal", Lowering{ .op = "<=", .form = .infix, .min_args = 2, .max_args = 2 } },
-    .{ "zetasqlite_greater_or_equal", Lowering{ .op = ">=", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zigquery_equal", Lowering{ .op = "=", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zigquery_not_equal", Lowering{ .op = "!=", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zigquery_less", Lowering{ .op = "<", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zigquery_greater", Lowering{ .op = ">", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zigquery_less_or_equal", Lowering{ .op = "<=", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zigquery_greater_or_equal", Lowering{ .op = ">=", .form = .infix, .min_args = 2, .max_args = 2 } },
     // NULL-safe equality: `a IS b` is TRUE when both are NULL and `a = b`
     // otherwise. operators.md#is_operators
-    .{ "zetasqlite_is_not_distinct_from", Lowering{ .op = "IS", .form = .infix, .min_args = 2, .max_args = 2 } },
-    .{ "zetasqlite_is_distinct_from", Lowering{ .op = "IS NOT", .form = .infix, .min_args = 2, .max_args = 2 } },
-    .{ "zetasqlite_between", Lowering{ .op = "BETWEEN", .form = .between, .min_args = 3, .max_args = 3 } },
-    .{ "zetasqlite_in", Lowering{ .op = "IN", .form = .in_list, .min_args = 2 } },
+    .{ "zigquery_is_not_distinct_from", Lowering{ .op = "IS", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zigquery_is_distinct_from", Lowering{ .op = "IS NOT", .form = .infix, .min_args = 2, .max_args = 2 } },
+    .{ "zigquery_between", Lowering{ .op = "BETWEEN", .form = .between, .min_args = 3, .max_args = 3 } },
+    .{ "zigquery_in", Lowering{ .op = "IN", .form = .in_list, .min_args = 2 } },
     // Logical operators.
-    .{ "zetasqlite_and", Lowering{ .op = "AND", .form = .infix, .min_args = 2 } },
-    .{ "zetasqlite_or", Lowering{ .op = "OR", .form = .infix, .min_args = 2 } },
-    .{ "zetasqlite_not", Lowering{ .op = "NOT", .form = .prefix, .min_args = 1, .max_args = 1 } },
+    .{ "zigquery_and", Lowering{ .op = "AND", .form = .infix, .min_args = 2 } },
+    .{ "zigquery_or", Lowering{ .op = "OR", .form = .infix, .min_args = 2 } },
+    .{ "zigquery_not", Lowering{ .op = "NOT", .form = .prefix, .min_args = 1, .max_args = 1 } },
     // Lowers over ARRAY and STRUCT too, by the .any operand rule.
-    .{ "zetasqlite_is_null", Lowering{ .op = "IS NULL", .form = .is_null, .min_args = 1, .max_args = 1, .operands = .any } },
+    .{ "zigquery_is_null", Lowering{ .op = "IS NULL", .form = .is_null, .min_args = 1, .max_args = 1, .operands = .any } },
 });
 
 /// Whether the call can be lowered: the name maps to an operator, the argument
@@ -401,7 +401,7 @@ fn optimizeFunctionToSQL(
 /// Two supporting facts, neither local to this file:
 ///
 /// - Every value crossing the SQLite boundary is encoded top-level through
-///   `encoder.encodeTo`, `unnest_vtab.xColumn` and `zetasqlite_get_struct_field`
+///   `encoder.encodeTo`, `unnest_vtab.xColumn` and `zigquery_get_struct_field`
 ///   results included. An operator sees RANGE in its ordered form, never the
 ///   self-delimiting one an ARRAY or STRUCT nests.
 /// - `spec.sqliteTypeName` declares these columns TEXT (BYTES: BLOB), and
@@ -477,7 +477,7 @@ fn isPrimitiveSQLiteType(expr: ExpressionData) bool {
             // A UDF call yields the engine's encoding for its result type, an
             // operand like any other when that type qualifies. Covers both the
             // functions with no operator mapping and the mapped ones that fail
-            // the gate: `zetasqlite_in` over a STRUCT returns an encoded BOOL.
+            // the gate: `zigquery_in` over a STRUCT returns an encoded BOOL.
             return isPrimitiveKind(function.result_kind);
         },
         else => return false,
@@ -502,7 +502,7 @@ fn literalExprData(alloc: std.mem.Allocator, v: types_data.Value) !ExpressionDat
     return .{ .type = .literal, .literal = lit };
 }
 
-test "zetasqlite_ifnull rewrites to CASE" {
+test "zigquery_ifnull rewrites to CASE" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -512,7 +512,7 @@ test "zetasqlite_ifnull rewrites to CASE" {
     const fn_args = try a.alloc(ExpressionData, 2);
     fn_args[0] = try literalExprData(a, .null);
     fn_args[1] = try literalExprData(a, .{ .int = 2 });
-    const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_ifnull", fn_args);
+    const data = try types_data.newFunctionCallExpressionData(a, "zigquery_ifnull", fn_args);
 
     const expr = try transform(&coord, data, ctx);
     try testing.expectEqualStrings(
@@ -521,7 +521,7 @@ test "zetasqlite_ifnull rewrites to CASE" {
     );
 }
 
-test "zetasqlite_if and case rewrites" {
+test "zigquery_if and case rewrites" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -533,7 +533,7 @@ test "zetasqlite_if and case rewrites" {
         fn_args[0] = try literalExprData(a, .{ .bool = true });
         fn_args[1] = try literalExprData(a, .{ .int = 1 });
         fn_args[2] = try literalExprData(a, .{ .int = 2 });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_if", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_if", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings(
             "CASE WHEN true THEN 1 ELSE 2 END",
@@ -547,7 +547,7 @@ test "zetasqlite_if and case rewrites" {
         fn_args[0] = try literalExprData(a, .{ .bool = false });
         fn_args[1] = try literalExprData(a, .{ .int = 1 });
         fn_args[2] = try literalExprData(a, .{ .int = 9 });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_case_no_value", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_case_no_value", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings(
             "CASE WHEN false THEN 1 ELSE 9 END",
@@ -562,7 +562,7 @@ test "zetasqlite_if and case rewrites" {
         fn_args[1] = try literalExprData(a, .{ .int = 3 });
         fn_args[2] = try literalExprData(a, .{ .string = "x" });
         fn_args[3] = try literalExprData(a, .{ .string = "y" });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_case_with_value", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_case_with_value", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expect(expr.type == .case);
         try testing.expect(expr.case_expression.?.case_expr != null);
@@ -583,7 +583,7 @@ test "fast-path lowering of primitive comparisons and logic" {
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = try literalExprData(a, .{ .int = 1 });
         fn_args[1] = try literalExprData(a, .{ .int = 2 });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_equal", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("1 = 2", try expr.toString(a));
     }
@@ -594,7 +594,7 @@ test "fast-path lowering of primitive comparisons and logic" {
         fn_args[0] = try literalExprData(a, .{ .bool = true });
         fn_args[1] = try literalExprData(a, .{ .bool = false });
         fn_args[2] = try literalExprData(a, .{ .bool = true });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_and", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_and", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("true AND false AND true", try expr.toString(a));
     }
@@ -603,7 +603,7 @@ test "fast-path lowering of primitive comparisons and logic" {
     {
         const fn_args = try a.alloc(ExpressionData, 1);
         fn_args[0] = try literalExprData(a, .{ .bool = true });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_not", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_not", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("NOT (true)", try expr.toString(a));
     }
@@ -613,7 +613,7 @@ test "fast-path lowering of primitive comparisons and logic" {
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = try literalExprData(a, .{ .int = 1 });
         fn_args[1] = try literalExprData(a, .{ .int = 2 });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_in", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_in", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("1 IN (2)", try expr.toString(a));
     }
@@ -623,7 +623,7 @@ test "fast-path lowering of primitive comparisons and logic" {
         fn_args[1] = try literalExprData(a, .{ .int = 1 });
         fn_args[2] = try literalExprData(a, .{ .int = 5 });
         fn_args[3] = try literalExprData(a, .{ .int = 10 });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_in", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_in", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("5 IN (1,5,10)", try expr.toString(a));
     }
@@ -634,7 +634,7 @@ test "fast-path lowering of primitive comparisons and logic" {
         fn_args[0] = try literalExprData(a, .{ .int = 5 });
         fn_args[1] = try literalExprData(a, .{ .int = 1 });
         fn_args[2] = try literalExprData(a, .{ .int = 10 });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_between", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_between", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("5 BETWEEN 1 AND 10", try expr.toString(a));
     }
@@ -646,7 +646,7 @@ test "fast-path lowering of primitive comparisons and logic" {
         fn_args[1] = try literalExprData(a, .{ .int = 1 });
         const data = try types_data.newFunctionCallExpressionData(
             a,
-            "zetasqlite_is_not_distinct_from",
+            "zigquery_is_not_distinct_from",
             fn_args,
         );
         const expr = try transform(&coord, data, ctx);
@@ -658,9 +658,9 @@ test "fast-path lowering of primitive comparisons and logic" {
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = try literalExprData(a, .{ .int = 1 });
         fn_args[1] = try literalExprData(a, .null);
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_equal", fn_args);
         const expr = try transform(&coord, data, ctx);
-        try testing.expectEqualStrings("zetasqlite_equal(1, null)", try expr.toString(a));
+        try testing.expectEqualStrings("zigquery_equal(1, null)", try expr.toString(a));
     }
 }
 
@@ -705,7 +705,7 @@ test "every memcomparable kind lowers; the self-delimiting ones do not" {
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = try columnExprData(ctx, id, "x", kind);
         fn_args[1] = try columnExprData(ctx, id + 1, "y", kind);
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_less", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_less", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("`x` < `y`", try expr.toString(a));
     }
@@ -717,9 +717,9 @@ test "every memcomparable kind lowers; the self-delimiting ones do not" {
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = try columnExprData(ctx, id, "x", kind);
         fn_args[1] = try columnExprData(ctx, id + 1, "y", kind);
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_equal", fn_args);
         const expr = try transform(&coord, data, ctx);
-        try testing.expectEqualStrings("zetasqlite_equal(`x`, `y`)", try expr.toString(a));
+        try testing.expectEqualStrings("zigquery_equal(`x`, `y`)", try expr.toString(a));
     }
 }
 
@@ -735,19 +735,19 @@ test "IS NULL lowers over any kind; a primitive result type makes any call an op
     {
         const fn_args = try a.alloc(ExpressionData, 1);
         fn_args[0] = try columnExprData(ctx, 1, "arr", .TYPE_ARRAY);
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_is_null", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_is_null", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings("`arr` IS NULL", try expr.toString(a));
     }
 
     // A call with no operator mapping is an operand when its result type
-    // qualifies: zetasqlite_array_length returns INT64, a native INTEGER.
+    // qualifies: zigquery_array_length returns INT64, a native INTEGER.
     {
         const inner_args = try a.alloc(ExpressionData, 1);
         inner_args[0] = try columnExprData(ctx, 2, "arr", .TYPE_ARRAY);
         var inner = try types_data.newFunctionCallExpressionData(
             a,
-            "zetasqlite_array_length",
+            "zigquery_array_length",
             inner_args,
         );
         inner.function.?.result_kind = .TYPE_INT64;
@@ -755,10 +755,10 @@ test "IS NULL lowers over any kind; a primitive result type makes any call an op
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = inner;
         fn_args[1] = try literalExprData(a, .{ .int = 0 });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_equal", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings(
-            "zetasqlite_array_length(`arr`) = 0",
+            "zigquery_array_length(`arr`) = 0",
             try expr.toString(a),
         );
     }
@@ -770,17 +770,17 @@ test "IS NULL lowers over any kind; a primitive result type makes any call an op
         inner_args[0] = try columnExprData(ctx, 3, "arr", .TYPE_ARRAY);
         const inner = try types_data.newFunctionCallExpressionData(
             a,
-            "zetasqlite_array_length",
+            "zigquery_array_length",
             inner_args,
         );
 
         const fn_args = try a.alloc(ExpressionData, 2);
         fn_args[0] = inner;
         fn_args[1] = try literalExprData(a, .{ .int = 0 });
-        const data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_equal", fn_args);
+        const data = try types_data.newFunctionCallExpressionData(a, "zigquery_equal", fn_args);
         const expr = try transform(&coord, data, ctx);
         try testing.expectEqualStrings(
-            "zetasqlite_equal(zetasqlite_array_length(`arr`), 0)",
+            "zigquery_equal(zigquery_array_length(`arr`), 0)",
             try expr.toString(a),
         );
     }
@@ -798,12 +798,12 @@ test "a lowered operand keeps its parentheses when the parent binds tighter" {
     const or_args = try a.alloc(ExpressionData, 2);
     or_args[0] = try columnExprData(ctx, 1, "a", .TYPE_BOOL);
     or_args[1] = try columnExprData(ctx, 2, "b", .TYPE_BOOL);
-    const or_data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_or", or_args);
+    const or_data = try types_data.newFunctionCallExpressionData(a, "zigquery_or", or_args);
 
     const and_args = try a.alloc(ExpressionData, 2);
     and_args[0] = or_data;
     and_args[1] = try columnExprData(ctx, 3, "c", .TYPE_BOOL);
-    const and_data = try types_data.newFunctionCallExpressionData(a, "zetasqlite_and", and_args);
+    const and_data = try types_data.newFunctionCallExpressionData(a, "zigquery_and", and_args);
 
     const expr = try transform(&coord, and_data, ctx);
     try testing.expectEqualStrings(
@@ -815,12 +815,12 @@ test "a lowered operand keeps its parentheses when the parent binds tighter" {
     const and2_args = try a.alloc(ExpressionData, 2);
     and2_args[0] = try columnExprData(ctx, 1, "a", .TYPE_BOOL);
     and2_args[1] = try columnExprData(ctx, 2, "b", .TYPE_BOOL);
-    const and2 = try types_data.newFunctionCallExpressionData(a, "zetasqlite_and", and2_args);
+    const and2 = try types_data.newFunctionCallExpressionData(a, "zigquery_and", and2_args);
 
     const or2_args = try a.alloc(ExpressionData, 2);
     or2_args[0] = and2;
     or2_args[1] = try columnExprData(ctx, 3, "c", .TYPE_BOOL);
-    const or2 = try types_data.newFunctionCallExpressionData(a, "zetasqlite_or", or2_args);
+    const or2 = try types_data.newFunctionCallExpressionData(a, "zigquery_or", or2_args);
 
     const expr2 = try transform(&coord, or2, ctx);
     try testing.expectEqualStrings(
@@ -839,12 +839,12 @@ test "current-time literal injection" {
 
     const data = try types_data.newFunctionCallExpressionData(
         a,
-        "zetasqlite_current_date",
+        "zigquery_current_date",
         try a.alloc(ExpressionData, 0),
     );
     const expr = try transform(&coord, data, ctx);
     try testing.expectEqualStrings(
-        "zetasqlite_current_date(1136239445000000000)",
+        "zigquery_current_date(1136239445000000000)",
         try expr.toString(a),
     );
 
@@ -852,5 +852,5 @@ test "current-time literal injection" {
     // when WithCurrentTime is unset).
     const ctx2 = try testCtx(a);
     const expr2 = try transform(&coord, data, ctx2);
-    try testing.expectEqualStrings("zetasqlite_current_date()", try expr2.toString(a));
+    try testing.expectEqualStrings("zigquery_current_date()", try expr2.toString(a));
 }

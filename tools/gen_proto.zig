@@ -1421,7 +1421,7 @@ pub fn main(init: std.process.Init) !void {
     // Optional, because the second fdset's output lives in the server module,
     // which cannot reach src/proto/wire.zig by relative path: a file reached
     // that way joins the importing module, and wire.zig is already in the
-    // engine's. It has to come through the `zetasqlite` module import instead.
+    // engine's. It has to come through the `zigquery` module import instead.
     var wire_import: []const u8 = "@import(\"wire.zig\")";
     var desc: []const u8 = "Plain-struct codecs for the googlesql resolved AST protos.";
     // The header names the .fdset, but `addFileArg` hands us an absolute path,

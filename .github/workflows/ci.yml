@@ -51,7 +51,7 @@ jobs:
       # ephor's ZA601 already runs `zig fmt --check` over src/; these are the
       # trees its path_dir does not reach.
       - name: zig fmt
-        run: zig fmt --check build.zig harness tools
+        run: zig fmt --check build.zig entrypoints tools
 
       - name: ephor
         run: |
