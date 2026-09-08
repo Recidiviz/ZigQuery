@@ -136,12 +136,13 @@ pub fn loadJson(
                 const rows = arrayField(tbl, "data") orelse continue;
                 if (rows.len == 0) continue;
                 var content = contentdata.Repository{ .arena = arena, .db = db };
-                content.addTableData(
+                const result = content.addTableData(
                     project_id,
                     dataset_id,
                     table_id,
                     schemaFields(schema_node),
                     rows,
+                    false,
                 ) catch |err| {
                     // Lenient like the rest of JSONSource: a table whose rows
                     // will not load still exists, and empty beats absent.
@@ -152,6 +153,19 @@ pub fn loadJson(
                     stats.failed_rows += rows.len;
                     continue;
                 };
+                if (result.invalid.len > 0) {
+                    // The batch is all-or-nothing, one bad value leaves the table empty.
+                    const invalid = result.invalid;
+                    std.log.warn(
+                        "source table {s}.{s}.{s}: {d} rows failed to load: row {d} {s}: {s}",
+                        .{
+                            project_id,           dataset_id,            table_id,           rows.len,
+                            invalid[0].row_index, invalid[0].field_name, invalid[0].message,
+                        },
+                    );
+                    stats.failed_rows += rows.len;
+                    continue;
+                }
                 stats.rows += rows.len;
             }
         }
