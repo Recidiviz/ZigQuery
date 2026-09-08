@@ -202,8 +202,16 @@ fn elements(zoir: Zoir, node: Zoir.Node.Index) Zoir.Node.Index.Range {
     };
 }
 
-/// A ZON scalar as a bind parameter.
-fn cellFromNode(zoir: Zoir, node: Zoir.Node.Index) ?driver.Cell {
+/// A ZON value as a bind parameter.
+///
+/// `type_text` is the case's declared GoogleSQL type for this argument, when it has one.
+/// Identifies the empty array literal and empty struct literal `.{}`
+fn cellFromNode(
+    arena: std.mem.Allocator,
+    zoir: Zoir,
+    node: Zoir.Node.Index,
+    type_text: ?[]const u8,
+) !?driver.Cell {
     return switch (node.get(zoir)) {
         .null => .null,
         .true => .{ .bool = true },
@@ -214,8 +222,41 @@ fn cellFromNode(zoir: Zoir, node: Zoir.Node.Index) ?driver.Cell {
         },
         .float_literal => |f| .{ .float = @floatCast(f) },
         .string_literal => |s| .{ .string = s },
+        // Empty array unless the declared type says otherwise; `.{}` in value
+        // position reads as an empty array everywhere else too (spec_expect).
+        .empty_literal => if (type_text != null and
+            std.ascii.startsWithIgnoreCase(type_text.?, "STRUCT"))
+            .{ .struct_ = &.{} }
+        else
+            .{ .array = &.{} },
+        .array_literal => |range| {
+            const cells = try arena.alloc(driver.Cell, range.len);
+            var i: u32 = 0;
+            while (i < range.len) : (i += 1) {
+                cells[i] = try cellFromNode(arena, zoir, range.at(i), null) orelse return null;
+            }
+            return .{ .array = cells };
+        },
+        .struct_literal => |lit| {
+            const fields = try arena.alloc(driver.Cell.Field, lit.names.len);
+            for (lit.names, 0..) |name, i| {
+                const v = try cellFromNode(arena, zoir, lit.vals.at(@intCast(i)), null);
+                fields[i] = .{ .name = name.get(zoir), .value = v orelse return null };
+            }
+            return .{ .struct_ = fields };
+        },
         else => null,
     };
+}
+
+/// The `.arg_types` entry at `i` — the GoogleSQL type text a case declares for
+/// its `i`th positional argument, as `queryParameters.parameterType` would.
+fn argType(zoir: Zoir, c: Zoir.Node.Index, i: u32) ?[]const u8 {
+    const f = field(zoir, c, "arg_types") orelse return null;
+    const r = elements(zoir, f);
+    if (i >= r.len) return null;
+    const n = r.at(i).get(zoir);
+    return if (n == .string_literal) n.string_literal else null;
 }
 
 // ---- execution ----
@@ -456,7 +497,7 @@ fn runCase(
         const n = na.get(zoir);
         if (n == .struct_literal) {
             for (n.struct_literal.names, 0..) |name, i| {
-                const v = cellFromNode(zoir, n.struct_literal.vals.at(@intCast(i))) orelse continue;
+                const v = try cellFromNode(arena, zoir, n.struct_literal.vals.at(@intCast(i)), null) orelse continue;
                 try args.append(arena, .{ .name = name.get(zoir), .value = v });
             }
         }
@@ -465,8 +506,9 @@ fn runCase(
         const r = elements(zoir, a);
         var i: u32 = 0;
         while (i < r.len) : (i += 1) {
-            const v = cellFromNode(zoir, r.at(i)) orelse continue;
-            try args.append(arena, .{ .value = v });
+            const t = argType(zoir, c, i);
+            const v = try cellFromNode(arena, zoir, r.at(i), t) orelse continue;
+            try args.append(arena, .{ .value = v, .type_text = t });
         }
     }
 
