@@ -1,0 +1,101 @@
+// INT64's aliases: INT, SMALLINT, INTEGER, BIGINT, TINYINT, BYTEINT.
+// data-types.md#integer_types
+.{
+    .spec = "zigquery/types/integer",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            .desc = "CAST AS INT",
+            .sql = "SELECT CAST(\"1\" AS INT)",
+            .rows = .{
+                .{1},
+            },
+        },
+        .{
+            .desc = "CAST AS INTEGER",
+            .sql = "SELECT CAST(2 AS INTEGER)",
+            .rows = .{
+                .{2},
+            },
+        },
+        .{
+            .desc = "CAST AS BIGINT",
+            .sql = "SELECT CAST(3 AS BIGINT)",
+            .rows = .{
+                .{3},
+            },
+        },
+        .{
+            .desc = "CAST AS SMALLINT",
+            .sql = "SELECT CAST(4 AS SMALLINT)",
+            .rows = .{
+                .{4},
+            },
+        },
+        .{
+            .desc = "CAST AS TINYINT",
+            .sql = "SELECT CAST(5 AS TINYINT)",
+            .rows = .{
+                .{5},
+            },
+        },
+        .{
+            .desc = "CAST AS BYTEINT",
+            .sql = "SELECT CAST(6 AS BYTEINT)",
+            .rows = .{
+                .{6},
+            },
+        },
+        .{
+            .desc = "type names are case-insensitive",
+            .sql = "SELECT CAST(7 AS int), CAST(8 AS Integer)",
+            .rows = .{
+                .{ 7, 8 },
+            },
+        },
+        // An alias is the same type, so TYPEOF spells it INT64.
+        .{
+            .desc = "TYPEOF of an alias cast reports INT64",
+            .sql = "SELECT TYPEOF(CAST(1 AS INT)), TYPEOF(CAST(1 AS SMALLINT))",
+            .rows = .{
+                .{ "INT64", "INT64" },
+            },
+        },
+        .{
+            .desc = "aliases in a column definition",
+            .setup = .{
+                \\CREATE TABLE int_alias_ds.int_alias_tbl
+                \\  (a INT, b INTEGER, c BIGINT, d SMALLINT, e TINYINT, f BYTEINT)
+                ,
+                "INSERT INTO int_alias_ds.int_alias_tbl VALUES (1, 2, 3, 4, 5, 6)",
+            },
+            .sql = "SELECT a + b + c + d + e + f FROM int_alias_ds.int_alias_tbl",
+            .rows = .{
+                .{21},
+            },
+        },
+        .{
+            .desc = "INFORMATION_SCHEMA.COLUMNS reports every alias as INT64",
+            .setup = .{
+                \\CREATE TABLE int_alias_ds.int_alias_cols
+                \\  (a INT, b INTEGER, c BIGINT, d SMALLINT, e TINYINT, f BYTEINT)
+                ,
+            },
+            .sql =
+            \\SELECT column_name, data_type
+            \\FROM int_alias_ds.INFORMATION_SCHEMA.COLUMNS
+            \\WHERE table_name = 'int_alias_cols'
+            \\ORDER BY column_name
+            ,
+            .rows = .{
+                .{ "a", "INT64" },
+                .{ "b", "INT64" },
+                .{ "c", "INT64" },
+                .{ "d", "INT64" },
+                .{ "e", "INT64" },
+                .{ "f", "INT64" },
+            },
+        },
+    },
+}
