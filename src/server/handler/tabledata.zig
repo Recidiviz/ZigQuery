@@ -1,20 +1,26 @@
-//! Port of bigquery-emulator server/handler.go tabledataInsertAllHandler
-//! (:2969-3088), types/validation.go ValidateDataAgainstSchema (:44) and
-//! buildInsertErrorsResponse (:3094).
+//! tabledata.insertAll: the request rows, their validation against the table
+//! schema, and the `insertErrors` response.
+//! https://cloud.google.com/bigquery/docs/reference/rest/v2/tabledata/insertAll
 //!
-//! The unusual shape here is Go's, and clients depend on it: an unknown
-//! top-level field rejects the **whole batch** — nothing is written — yet the
-//! response is HTTP **200** carrying per-row `insertErrors`. Rows that were
-//! themselves fine get a `stopped` error. Every other failure (bad value, bad
-//! JSON, engine error) is a 500 instead, never a per-row error.
+//! An invalid row rejects the whole batch: nothing is written, the response is
+//! HTTP 200, and `insertErrors` lists the invalid rows as `invalid` and every
+//! other row as `stopped`. With `skipInvalidRows` the other rows are written
+//! and only the invalid ones are listed.
+//!
+//! A row is invalid when a top-level field is absent from the schema
+//! (`validateAgainstSchema`, checked before anything is bound) or when a value
+//! its column will not take (`contentdata.RowError`, found at bind time).
+//! Engine failures are 500s: prepare, transaction control, and a step that
+//! fails for any other reason.
 //!
 //! `insertId` is read off the wire and discarded: the emulator does no
-//! deduplication. `ignoreUnknownValues`, `skipInvalidRows`, `templateSuffix`
-//! and `traceId` are likewise parsed and ignored — notably `ignoreUnknownValues`
-//! does *not* soften the rejection above.
+//! deduplication. `ignoreUnknownValues`, `templateSuffix` and `traceId` are
+//! parsed and ignored; an unknown field is rejected whatever
+//! `ignoreUnknownValues` says.
 
 const std = @import("std");
 const errors = @import("../error.zig");
+const contentdata = @import("../internal/contentdata/repository.zig");
 const rowvalue = @import("../internal/types/rowvalue.zig");
 
 pub const Error = error{
@@ -23,11 +29,17 @@ pub const Error = error{
     InvalidRequest,
 } || std.mem.Allocator.Error;
 
-/// Go types.FieldValidationError (validation.go:36).
-pub const FieldValidationError = struct {
-    row_index: usize,
-    field_name: []const u8,
-};
+/// One `insertErrors` entry: which row, which field, and why. Go
+/// types.FieldValidationError (validation.go:36) plus the message, the same
+/// record the bind path reports, so both sources share the writer.
+pub const InsertError = contentdata.RowError;
+
+/// The request's `skipInvalidRows`; absent is false, as in the API.
+pub fn skipInvalidRows(root: std.json.Value) bool {
+    if (root != .object) return false;
+    const v = root.object.get("skipInvalidRows") orelse return false;
+    return v == .bool and v.bool;
+}
 
 /// The `json` object of each posted row, in order.
 ///
@@ -71,7 +83,7 @@ pub fn validateAgainstSchema(
     arena: std.mem.Allocator,
     fields: []const std.json.Value,
     rows: []const std.json.Value,
-) std.mem.Allocator.Error![]const FieldValidationError {
+) std.mem.Allocator.Error![]const InsertError {
     // Go builds the name set once (validation.go:45). Scanning the field list
     // per key instead is O(rows x keys x fields): on a 25-column, 18k-row
     // batch that is 5.7M string compares and 1.3 s, more than the insert.
@@ -79,14 +91,18 @@ pub fn validateAgainstSchema(
     try declared.ensureTotalCapacity(arena, @intCast(fields.len));
     for (fields) |f| declared.putAssumeCapacity(rowvalue.stringOf(f, "name"), {});
 
-    var out: std.ArrayList(FieldValidationError) = .empty;
+    var out: std.ArrayList(InsertError) = .empty;
     for (rows, 0..) |row, row_index| {
         if (row != .object) continue;
         var it = row.object.iterator();
         while (it.next()) |kv| {
             const name = kv.key_ptr.*;
             if (declared.contains(name)) continue;
-            try out.append(arena, .{ .row_index = row_index, .field_name = name });
+            try out.append(arena, .{
+                .row_index = @intCast(row_index),
+                .field_name = name,
+                .message = try std.fmt.allocPrint(arena, "no such field: {s}.", .{name}),
+            });
             break;
         }
     }
@@ -94,8 +110,10 @@ pub fn validateAgainstSchema(
 }
 
 /// Go buildInsertErrorsResponse. Every `invalid` entry first, in ascending row
-/// index, then a `stopped` entry for every row that was not itself invalid —
-/// nothing was inserted, so no row succeeded.
+/// index, then — unless `stopped` is null — a `stopped` entry for every row
+/// under that count that was not itself invalid: nothing was inserted, so no
+/// row succeeded. A `skipInvalidRows` request inserted the rest and passes
+/// null.
 ///
 /// Key order is alphabetical because the google-api-go-client structs carry
 /// ForceSendFields, which routes them through gensupport.MarshalJSON's map;
@@ -104,8 +122,8 @@ pub fn validateAgainstSchema(
 pub fn writeInsertErrors(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
-    errs: []const FieldValidationError,
-    total_rows: usize,
+    errs: []const InsertError,
+    stopped: ?usize,
 ) std.mem.Allocator.Error!void {
     try out.appendSlice(arena, "{\"insertErrors\":[");
 
@@ -114,18 +132,14 @@ pub fn writeInsertErrors(
         try out.appendSlice(arena, "{\"errors\":[{\"debugInfo\":\"\",\"location\":");
         try errors.writeJsonString(arena, out, e.field_name);
         try out.appendSlice(arena, ",\"message\":");
-        try errors.writeJsonString(arena, out, try std.fmt.allocPrint(
-            arena,
-            "no such field: {s}.",
-            .{e.field_name},
-        ));
+        try errors.writeJsonString(arena, out, e.message);
         try out.appendSlice(arena, ",\"reason\":\"invalid\"}],\"index\":");
         try out.print(arena, "{d}", .{e.row_index});
         try out.append(arena, '}');
     }
 
     var wrote_any = errs.len > 0;
-    for (0..total_rows) |i| {
+    for (0..(stopped orelse 0)) |i| {
         if (isInvalid(errs, i)) continue;
         if (wrote_any) try out.append(arena, ',');
         wrote_any = true;
@@ -141,7 +155,7 @@ pub fn writeInsertErrors(
     try out.appendSlice(arena, "]}");
 }
 
-fn isInvalid(errs: []const FieldValidationError, row_index: usize) bool {
+fn isInvalid(errs: []const InsertError, row_index: usize) bool {
     for (errs) |e| {
         if (e.row_index == row_index) return true;
     }
@@ -245,8 +259,9 @@ test "validation flags one unknown field per row" {
     ));
     const errs = try validateAgainstSchema(arena, fields, many);
     try testing.expectEqual(@as(usize, 1), errs.len);
-    try testing.expectEqual(@as(usize, 0), errs[0].row_index);
+    try testing.expectEqual(@as(u32, 0), errs[0].row_index);
     try testing.expectEqualStrings("u1", errs[0].field_name);
+    try testing.expectEqualStrings("no such field: u1.", errs[0].message);
 }
 
 test "validation reports rows 0 and 2 but not 1" {
@@ -264,8 +279,8 @@ test "validation reports rows 0 and 2 but not 1" {
     ));
     const errs = try validateAgainstSchema(arena, fields, rows);
     try testing.expectEqual(@as(usize, 2), errs.len);
-    try testing.expectEqual(@as(usize, 0), errs[0].row_index);
-    try testing.expectEqual(@as(usize, 2), errs[1].row_index);
+    try testing.expectEqual(@as(u32, 0), errs[0].row_index);
+    try testing.expectEqual(@as(u32, 2), errs[1].row_index);
 }
 
 test "an empty schema makes every field unknown" {
@@ -290,7 +305,11 @@ test "one bad field renders the Go emulator's insertErrors body" {
     try writeInsertErrors(
         arena,
         &out,
-        &.{.{ .row_index = 0, .field_name = "unknown_field" }},
+        &.{.{
+            .row_index = 0,
+            .field_name = "unknown_field",
+            .message = "no such field: unknown_field.",
+        }},
         1,
     );
     try testing.expectEqualStrings(
@@ -308,12 +327,39 @@ test "mixed valid and invalid rows: invalid first, then stopped" {
     // rows 0 and 2 come after them as `stopped`.
     var out: std.ArrayList(u8) = .empty;
     try writeInsertErrors(arena, &out, &.{
-        .{ .row_index = 1, .field_name = "bad_field" },
-        .{ .row_index = 3, .field_name = "bad1" },
+        .{ .row_index = 1, .field_name = "bad_field", .message = "no such field: bad_field." },
+        .{ .row_index = 3, .field_name = "bad1", .message = "no such field: bad1." },
     }, 4);
     try testing.expectEqualStrings(
         \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"bad_field","message":"no such field: bad_field.","reason":"invalid"}],"index":1},{"errors":[{"debugInfo":"","location":"bad1","message":"no such field: bad1.","reason":"invalid"}],"index":3},{"errors":[{"debugInfo":"","location":"","message":"","reason":"stopped"}],"index":0},{"errors":[{"debugInfo":"","location":"","message":"","reason":"stopped"}],"index":2}]}
     , out.items);
+}
+
+test "a skipInvalidRows response lists only the invalid rows" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var out: std.ArrayList(u8) = .empty;
+    try writeInsertErrors(arena, &out, &.{.{
+        .row_index = 1,
+        .field_name = "dob",
+        .message = "failed to convert 01-01-1980 to time.Time type",
+    }}, null);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"dob","message":"failed to convert 01-01-1980 to time.Time type","reason":"invalid"}],"index":1}]}
+    , out.items);
+}
+
+test "skipInvalidRows is read off the request and defaults to false" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try testing.expect(skipInvalidRows(try parse(arena, "{\"skipInvalidRows\":true,\"rows\":[]}")));
+    try testing.expect(!skipInvalidRows(try parse(arena, "{\"skipInvalidRows\":false}")));
+    try testing.expect(!skipInvalidRows(try parse(arena, "{\"rows\":[]}")));
+    try testing.expect(!skipInvalidRows(try parse(arena, "{\"skipInvalidRows\":\"true\"}")));
 }
 
 test "schema fields come out of a stored table resource" {

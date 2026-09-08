@@ -247,6 +247,10 @@ pub const Db = struct {
     /// the same name.
     temps: *catalog_mod.Catalog,
     last_error: ?[]u8 = null,
+    /// The 1-based bind index whose value failed to convert, when `last_error` came from a bind.
+    /// Cleared at the start of every bind pass.
+    /// Lets a caller binding one placeholder per column name the column in its own error.
+    last_error_param: ?i32 = null,
     /// Parameter mode of the currently-running script (set per runStatements).
     param_mode: ParamMode = .named,
     /// Collects the canonical names of temp tables/views created during the
@@ -357,6 +361,11 @@ pub const Db = struct {
     /// Diagnostic message for the last failed query/exec call.
     pub fn lastError(db: *Db) []const u8 {
         return db.last_error orelse "";
+    }
+
+    /// The bind index behind the last `error.DecodeFailed`, or null when it wasn't a bind failure.
+    pub fn lastErrorParam(db: *Db) ?i32 {
+        return db.last_error_param;
     }
 
     /// The storage format this build reads and writes, kept in the database's
@@ -1830,6 +1839,8 @@ pub const Db = struct {
         stmt_params: []const context_mod.CollectedParam,
         blobs: BlobLifetime,
     ) Error!usize {
+        db.last_error_param = null;
+
         const count = stmt.bindParameterCount();
         if (count <= 0) return 0;
         const ucount: usize = @intCast(count);
@@ -1906,11 +1917,11 @@ pub const Db = struct {
         // by some earlier conversion (function/bind.zig does the same before
         // it calls a UDF).
         value_mod.diagnostic = null;
-        var v = valueFromCell(arena, cell) catch |err| return db.failDecode(err);
+        var v = valueFromCell(arena, cell) catch |err| return db.failBind(err, idx);
         if (param_type) |t| {
-            v = castParamValue(arena, v, t) catch |err| return db.failDecode(err);
+            v = castParamValue(arena, v, t) catch |err| return db.failBind(err, idx);
         }
-        const repr = encoder.EncodeValue(arena, v) catch |err| return db.failDecode(err);
+        const repr = encoder.EncodeValue(arena, v) catch |err| return db.failBind(err, idx);
         switch (repr) {
             .null => try stmt.bindNull(idx),
             .int => |i| try stmt.bindInt64(idx, i),
@@ -1920,6 +1931,13 @@ pub const Db = struct {
                 .static => try stmt.bindBlobStatic(idx, b),
             },
         }
+    }
+
+    /// `failDecode` for a bind, which also names the placeholder.
+    fn failBind(db: *Db, err: anyerror, idx: i32) Error {
+        const out = db.failDecode(err);
+        if (out == error.DecodeFailed) db.last_error_param = idx;
+        return out;
     }
 
     fn failDecode(db: *Db, err: anyerror) Error {

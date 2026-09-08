@@ -937,12 +937,11 @@ pub const Server = struct {
         return .{ .body = "" };
     }
 
-    /// server/handler.go tabledataInsertAllHandler (:2969-3088).
+    /// /table/<table>/insertAll handler
     ///
-    /// The batch is all-or-nothing: an unknown top-level field in any row
-    /// rejects every row, answered 200 with per-row insertErrors, and no
-    /// other failure produces insertErrors at all — Go maps them to 500
-    /// internalError. See handler/tabledata.zig.
+    /// Responds:
+    /// 200 OK: batch was written; per-row errors may appear in `inserErrors`
+    /// 500: internal engine failure
     fn handleTabledataInsertAll(
         s: *Server,
         req: *const http_server.Request,
@@ -984,11 +983,29 @@ pub const Server = struct {
             return .{ .body = out.items };
         }
 
+        const skip_invalid = tabledata_handler.skipInvalidRows(parsed);
         var repo = contentdata.Repository{ .arena = arena, .db = s.db };
-        repo.addTableData(project_id, dataset_id, table_id, fields, rows) catch |err| switch (err) {
+        const result = repo.addTableData(
+            project_id,
+            dataset_id,
+            table_id,
+            fields,
+            rows,
+            skip_invalid,
+        ) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => return internalError(arena, repo.message),
         };
+        if (result.invalid.len > 0) {
+            var out: std.ArrayList(u8) = .empty;
+            try tabledata_handler.writeInsertErrors(
+                arena,
+                &out,
+                result.invalid,
+                if (skip_invalid) null else rows.len,
+            );
+            return .{ .body = out.items };
+        }
 
         return .{ .body = "{}" };
     }
@@ -2338,7 +2355,7 @@ test "an unknown field rejects the whole batch with 200 and insertErrors" {
     try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"0\"}") != null);
 }
 
-test "insertAll surfaces a bad value as a 500, not as insertErrors" {
+test "insertAll reports a value the column will not take as an invalid row" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -2347,12 +2364,70 @@ test "insertAll surfaces a bad value as a 500, not as insertErrors" {
     defer s.deinit();
     try createStreamTable(s, arena, "badvalue");
 
-    // Go maps every storage-layer failure to errInternalError.
+    // 200 with insertErrors, as BigQuery answers. Go answers 500, which the
+    // python client retries until its ten-minute deadline (OBT-26715).
     const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/badvalue/insertAll",
-        \\{"rows":[{"json":{"name":"a","age":"not a number"}}]}
+        \\{"rows":[{"json":{"name":"ok","age":"1"}},{"json":{"name":"a","age":"not a number"}}]}
     );
-    try testing.expectEqual(std.http.Status.internal_server_error, res.status);
-    try testing.expect(std.mem.indexOf(u8, res.body, "\"reason\":\"internalError\"") != null);
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"age","message":"Bad int64 value: not a number","reason":"invalid"}],"index":1},{"errors":[{"debugInfo":"","location":"","message":"","reason":"stopped"}],"index":0}]}
+    , res.body);
+
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.badvalue`"}
+    );
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"0\"}") != null);
+}
+
+test "insertAll keeps the engine's conversion message for a bad DATE" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"dated"},
+        \\ "schema":{"fields":[{"name":"a","type":"DATE","mode":"REQUIRED"}]}}
+    );
+
+    // big_query_emulator_test.py test_invalid_data_load_fails matches the
+    // message text in the error the client raises.
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/dated/insertAll",
+        \\{"rows":[{"json":{"a":"202-06-06"}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"a","message":"failed to convert 202-06-06 to time.Time type","reason":"invalid"}],"index":0}]}
+    , res.body);
+}
+
+test "insertAll with skipInvalidRows writes the fine rows and lists the rest" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "skipping");
+
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/skipping/insertAll",
+        \\{"skipInvalidRows":true,"rows":[
+        \\  {"json":{"name":"ok1","age":"1"}},
+        \\  {"json":{"name":"bad","age":"x"}},
+        \\  {"json":{"name":"ok2","age":"2"}}
+        \\]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"age","message":"Bad int64 value: x","reason":"invalid"}],"index":1}]}
+    , res.body);
+
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.skipping`"}
+    );
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"2\"}") != null);
 }
 
 test "insertAll with no rows is a no-op" {

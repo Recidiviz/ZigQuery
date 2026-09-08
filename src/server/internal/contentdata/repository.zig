@@ -1,17 +1,14 @@
-//! Port of bigquery-emulator internal/contentdata/repository.go AddTableData
-//! (:452) — the row-write half of the content store, as used by
-//! tabledata.insertAll.
+//! The row-write half of the content store: tabledata.insertAll's rows into a table's storage.
+//! https://cloud.google.com/bigquery/docs/reference/rest/v2/tabledata/insertAll
 //!
-//! Go prepares one `INSERT <table> (cols) VALUES (?,...)` and Execs it per row
-//! inside a transaction; `driver.Db.prepare` exists so this can do the same
-//! rather than re-analyzing the statement for every row.
+//! A prepared `INSERT INTO <table> (cols) VALUES (?, ...)` runs once per row inside a single
+//! transaction: the statement is analyzed once per batch, and the batch costs one fsync under WAL.
+//!  The table is named in full, so resolution needs no connection-wide default project or dataset.
 //!
-//! Differences from Go, by design:
-//! - `INSERT INTO`, not Go's `INSERT` — GoogleSQL accepts both and the rest of
-//!   this port spells it with INTO.
-//! - Go's `ContentRepoMode()` sets the analyzer's name path to
-//!   [project, dataset] so an unqualified table id resolves. The table is
-//!   named in full here instead, which needs no connection-wide state.
+//! Every schema column is bound for every row; a row missing a key writes NULL there.
+//! A value its column will not take marks the row invalid (`RowError`, carrying the column name and
+//!  the engine's message).
+//! The batch rolls back when any row is invalid, unless `skip_invalid_rows`, which commits the rest
 
 const std = @import("std");
 const zigquery = @import("zigquery");
@@ -20,27 +17,47 @@ const value = zigquery.value;
 const rowvalue = @import("../types/rowvalue.zig");
 
 pub const Error = error{
-    /// A row value could not be shaped to its column (see Normalizer).
+    /// The engine rejected the INSERT (prepare, transaction control, or a step
+    /// that failed for a reason other than a value conversion).
+    InsertFailed,
+} || std.mem.Allocator.Error;
+
+/// What `addTableData` reports back.
+pub const AddTableDataResult = struct {
+    /// One entry per row whose values the columns would not take, in row
+    /// order. Empty when every row landed.
+    invalid: []const RowError = &.{},
+};
+
+/// A value the column would not take, and which row and column it sat in.
+pub const RowError = struct {
+    row_index: u32,
+    field_name: []const u8,
+    /// The engine's text, e.g. "failed to convert 202-06-06".
+    message: []const u8,
+};
+
+/// A row value that could not be shaped to its column before binding.
+const CellError = error{
+    /// See Normalizer.
     InvalidRowValue,
     /// Go: "failed to unmarshal json value [%s]: %w".
     InvalidJsonValue,
     /// Go: "failed to decode base64 bytes: %v - %w".
     InvalidBase64Value,
-    /// The engine rejected the INSERT (prepare or exec).
-    InsertFailed,
 } || std.mem.Allocator.Error;
 
 pub const Repository = struct {
     arena: std.mem.Allocator,
     db: *driver.Db,
     /// Error text for the failure, which the handler puts in its 500 body.
-    /// Go returns these as plain errors and ServeHTTP wraps them in
-    /// errInternalError.
     message: []const u8 = "",
 
-    /// Appends `rows` to `project.dataset.table`. `fields` is the table's
-    /// stored BigQuery schema; every one of them is bound for every row, so a
-    /// row missing a key writes NULL there — Go AddTableData:535.
+    /// Appends `rows` to `project.dataset.table`.
+    ///`fields` is the table's stored BigQuery schema; every one of them is bound for every row,
+    /// so a row missing a key writes NULL there
+    ///
+    /// With `skip_invalid_rows` true, the valid rows commit; the rest do not.
     pub fn addTableData(
         r: *Repository,
         project_id: []const u8,
@@ -48,9 +65,10 @@ pub const Repository = struct {
         table_id: []const u8,
         fields: []const std.json.Value,
         rows: []const std.json.Value,
-    ) Error!void {
+        skip_invalid_rows: bool,
+    ) Error!AddTableDataResult {
         // Go returns before touching the connection at all.
-        if (rows.len == 0) return;
+        if (rows.len == 0) return .{};
 
         const sql = try r.insertSql(project_id, dataset_id, table_id, fields);
         var stmt = r.db.prepare(sql, .{}) catch return r.failEngine();
@@ -62,18 +80,67 @@ pub const Repository = struct {
         r.db.rawExec("BEGIN", &.{}) catch return r.failEngine();
         errdefer r.db.rawExec("ROLLBACK", &.{}) catch {};
 
-        const plans = try r.planFor(fields);
-        const params = try r.arena.alloc(driver.Param, fields.len);
-        var norm = rowvalue.Normalizer{ .arena = r.arena };
-        for (rows) |row| {
-            for (plans, 0..) |*plan, i| {
-                params[i] = .{ .value = try r.cellFor(&norm, row, plan) };
+        var batch = Batch{
+            .repo = r,
+            .stmt = &stmt,
+            .plans = try r.planFor(fields),
+            .params = try r.arena.alloc(driver.Param, fields.len),
+            .normalizer = .{ .arena = r.arena },
+        };
+        for (rows, 0..) |row, row_index| try batch.add(row, @intCast(row_index));
+
+        if (batch.invalid.items.len > 0 and !skip_invalid_rows) {
+            r.db.rawExec("ROLLBACK", &.{}) catch return r.failEngine();
+        } else {
+            r.db.rawExec("COMMIT", &.{}) catch return r.failEngine();
+        }
+        return .{ .invalid = batch.invalid.items };
+    }
+
+    /// The prepared INSERT and everything one row's bind needs.
+    const Batch = struct {
+        repo: *Repository,
+        stmt: *driver.PreparedStmt,
+        plans: []const ColumnPlan,
+        /// One slot per column, rebound for every row.
+        params: []driver.Param,
+        normalizer: rowvalue.Normalizer,
+        invalid: std.ArrayList(RowError) = .empty,
+
+        /// Binds and executes one row, or records why it could not be.
+        fn add(batch: *Batch, row: std.json.Value, row_index: u32) Error!void {
+            for (batch.plans, 0..) |*plan, i| {
+                batch.params[i] = .{ .value = batch.repo.cellFor(&batch.normalizer, row, plan) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return batch.reject(row_index, plan.name, batch.repo.message),
+                } };
             }
-            stmt.exec(params) catch return r.failEngine();
+            batch.stmt.exec(batch.params) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                // The bind cast rejected a value. The statement binds one placeholder per column in
+                // schema order, so the placeholder names the column.
+                error.DecodeFailed => {
+                    const ordinal = batch.repo.db.lastErrorParam() orelse return batch.repo.failEngine();
+                    const message = try batch.repo.arena.dupe(u8, batch.repo.db.lastError());
+                    return batch.reject(row_index, batch.plans[@intCast(ordinal - 1)].name, message);
+                },
+                else => return batch.repo.failEngine(),
+            };
         }
 
-        r.db.rawExec("COMMIT", &.{}) catch return r.failEngine();
-    }
+        fn reject(
+            batch: *Batch,
+            row_index: u32,
+            field_name: []const u8,
+            message: []const u8,
+        ) Error!void {
+            try batch.invalid.append(batch.repo.arena, .{
+                .row_index = row_index,
+                .field_name = field_name,
+                .message = message,
+            });
+        }
+    };
 
     /// ``INSERT INTO `p.d.t` (`c1`,`c2`) VALUES (?,?)``.
     fn insertSql(
@@ -154,7 +221,7 @@ pub const Repository = struct {
         norm: *rowvalue.Normalizer,
         row: std.json.Value,
         plan: *const ColumnPlan,
-    ) Error!driver.Cell {
+    ) CellError!driver.Cell {
         if (row != .object) return .null;
         const v = row.object.get(plan.name) orelse return .null;
 
@@ -270,16 +337,24 @@ fn insertInto(
 ) !void {
     try db.exec(ddl, &.{}, .{});
     var repo = Repository{ .arena = arena, .db = db };
-    repo.addTableData(
+    const result = repo.addTableData(
         "p",
         "d",
         "t",
         try fieldsOf(arena, fields_json),
         try rowsOf(arena, rows_json),
+        false,
     ) catch |err| {
         std.debug.print("addTableData failed: {t} — {s}\n", .{ err, repo.message });
         return err;
     };
+    const invalid = result.invalid;
+    if (invalid.len > 0) {
+        std.debug.print("row {d} rejected at {s}: {s}\n", .{
+            invalid[0].row_index, invalid[0].field_name, invalid[0].message,
+        });
+        return error.InvalidRow;
+    }
 }
 
 test "a batch of rows lands, with absent keys as NULL" {
@@ -319,7 +394,8 @@ test "an empty row list writes nothing and touches no connection" {
     try db.exec("CREATE TABLE `p.d.t` (`i` INT64)", &.{}, .{});
 
     var repo = Repository{ .arena = arena, .db = db };
-    try repo.addTableData("p", "d", "t", &.{}, &.{});
+    const result = try repo.addTableData("p", "d", "t", &.{}, &.{}, false);
+    try testing.expectEqual(@as(usize, 0), result.invalid.len);
 
     var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
     defer rows.deinit();
@@ -432,17 +508,26 @@ test "unparseable JSON is Go's error, and nothing is written" {
     try db.exec("CREATE TABLE `p.d.t` (`j` JSON)", &.{}, .{});
 
     var repo = Repository{ .arena = arena, .db = db };
-    try testing.expectError(error.InvalidJsonValue, repo.addTableData(
+    const result = try repo.addTableData(
         "p",
         "d",
         "t",
         try fieldsOf(arena, "[{\"name\":\"j\",\"type\":\"JSON\"}]"),
         try rowsOf(arena, "[{\"j\":\"{not json\"}]"),
-    ));
+        false,
+    );
+    const invalid = result.invalid;
+    try testing.expectEqual(@as(usize, 1), invalid.len);
+    try testing.expectEqual(@as(u32, 0), invalid[0].row_index);
+    try testing.expectEqualStrings("j", invalid[0].field_name);
     try testing.expectEqualStrings(
         "failed to unmarshal json value [{not json]",
-        repo.message,
+        invalid[0].message,
     );
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
 }
 
 test "bad base64 for a BYTES column is an error" {
@@ -455,14 +540,18 @@ test "bad base64 for a BYTES column is an error" {
     try db.exec("CREATE TABLE `p.d.t` (`b` BYTES)", &.{}, .{});
 
     var repo = Repository{ .arena = arena, .db = db };
-    try testing.expectError(error.InvalidBase64Value, repo.addTableData(
+    const result = try repo.addTableData(
         "p",
         "d",
         "t",
         try fieldsOf(arena, "[{\"name\":\"b\",\"type\":\"BYTES\"}]"),
         try rowsOf(arena, "[{\"b\":\"not base64!\"}]"),
-    ));
-    try testing.expect(std.mem.startsWith(u8, repo.message, "failed to decode base64 bytes:"));
+        false,
+    );
+    const invalid = result.invalid;
+    try testing.expectEqual(@as(usize, 1), invalid.len);
+    try testing.expectEqualStrings("b", invalid[0].field_name);
+    try testing.expect(std.mem.startsWith(u8, invalid[0].message, "failed to decode base64 bytes:"));
 }
 
 test "ARRAY and STRUCT columns round-trip" {
@@ -514,7 +603,40 @@ test "an empty REPEATED value stays empty" {
     try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
 }
 
-test "a failed row rolls the whole batch back" {
+test "a value the column will not take names its row and column, and rolls the batch back" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE `p.d.t` (`i` INT64, `d` DATE)", &.{}, .{});
+
+    const fields = try fieldsOf(arena,
+        \\[{"name":"i","type":"INTEGER"},{"name":"d","type":"DATE"}]
+    );
+    // Row 1 fails at the bind cast of the second column; row 2 at the first.
+    // Every invalid row is reported, not just the first one hit.
+    var repo = Repository{ .arena = arena, .db = db };
+    const result = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
+        \\[{"i":1,"d":"2024-01-02"},{"i":2,"d":"202-06-06"},{"i":"not a number"},{"i":4}]
+    ), false);
+    const invalid = result.invalid;
+    try testing.expectEqual(@as(usize, 2), invalid.len);
+    try testing.expectEqual(@as(u32, 1), invalid[0].row_index);
+    try testing.expectEqualStrings("d", invalid[0].field_name);
+    // big_query_emulator_test.py test_invalid_data_load_fails matches this text.
+    try testing.expectEqualStrings("failed to convert 202-06-06 to time.Time type", invalid[0].message);
+    try testing.expectEqual(@as(u32, 2), invalid[1].row_index);
+    try testing.expectEqualStrings("i", invalid[1].field_name);
+    try testing.expectEqualStrings("Bad int64 value: not a number", invalid[1].message);
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
+}
+
+test "skip_invalid_rows commits the rows that were fine" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -523,19 +645,24 @@ test "a failed row rolls the whole batch back" {
     defer db.close();
     try db.exec("CREATE TABLE `p.d.t` (`i` INT64)", &.{}, .{});
 
-    // The second row's value cannot be cast to INT64, so it fails mid-batch.
     var repo = Repository{ .arena = arena, .db = db };
-    try testing.expectError(error.InsertFailed, repo.addTableData(
+    const result = try repo.addTableData(
         "p",
         "d",
         "t",
         try fieldsOf(arena, "[{\"name\":\"i\",\"type\":\"INTEGER\"}]"),
-        try rowsOf(arena, "[{\"i\":1},{\"i\":\"not a number\"}]"),
-    ));
+        try rowsOf(arena, "[{\"i\":1},{\"i\":\"x\"},{\"i\":3}]"),
+        true,
+    );
+    const invalid = result.invalid;
+    try testing.expectEqual(@as(usize, 1), invalid.len);
+    try testing.expectEqual(@as(u32, 1), invalid[0].row_index);
 
-    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    var rows = try db.query("SELECT i FROM `p.d.t` ORDER BY i", &.{}, .{});
     defer rows.deinit();
-    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+    try testing.expectEqual(@as(i64, 3), (try rows.next()).?[0].int);
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
 }
 
 test "TimeFromTimestampValue keeps Go's unpadded fraction" {
