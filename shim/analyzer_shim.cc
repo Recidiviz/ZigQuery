@@ -297,6 +297,18 @@ absl::Status BuildLanguageOptions(googlesql::LanguageOptions* lang) {
   return lang->EnableReservableKeyword("QUALIFY", /*reserved=*/true);
 }
 
+// BigQuery's INT64 aliases. data-types.md#integer_types
+//
+// SimpleCatalog::FindType consults these named types before the simple-type
+// name table, which spells only INT64. Registered once per freshly built catalog.
+// AddType raises on a duplicate name.
+void AddBigQueryTypeAliases(googlesql::SimpleCatalog* catalog) {
+  for (const char* name :
+       {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"}) {
+    catalog->AddType(name, googlesql::types::Int64Type());
+  }
+}
+
 // Copies `payload` into a malloc'd NUL-terminated buffer.
 uint8_t* CopyToMalloc(const std::string& payload) {
   auto* buf = static_cast<uint8_t*>(std::malloc(payload.size() + 1));
@@ -533,6 +545,7 @@ void* GoogleSQL_CatalogCreate(char** out_error) {
   }
   handle->catalog = std::make_unique<googlesql::SimpleCatalog>(
       "zigquery", &handle->type_factory);
+  AddBigQueryTypeAliases(handle->catalog.get());
   handle->catalog->AddBuiltinFunctions(
       googlesql::BuiltinFunctionOptions(handle->lang));
   return handle.release();
@@ -728,6 +741,10 @@ int GoogleSQL_AnalyzeNextStatementParams(
     catalog = std::make_unique<googlesql::SimpleCatalog>("catalog",
                                                          &type_factory);
   }
+
+  // GoogleSQL_AnalyzeNextStatementParams builds a new catalog per call
+  // its Types and Builtins must be registered
+  AddBigQueryTypeAliases(catalog.get());
   catalog->AddBuiltinFunctions(googlesql::BuiltinFunctionOptions(lang));
 
   // After the catalog exists: resolving type text can reach named types.
