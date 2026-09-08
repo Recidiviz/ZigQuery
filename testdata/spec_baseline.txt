@@ -923,6 +923,16 @@ zigquery/functions/date/date_add	date_add
 zigquery/functions/date/date_add	date_add year clamps February 29th to the 28th
 zigquery/functions/date/date_add	date_add week is seven days
 zigquery/functions/date/date_add	date_add quarter
+zigquery/functions/date/date_add	date_add on a DATETIME answers a DATETIME
+zigquery/functions/date/date_add	date_add on a DATETIME by every calendar part
+zigquery/functions/date/date_add	date_add on a DATETIME by every clock part
+zigquery/functions/date/date_add	date_add on a DATETIME by a negative interval
+zigquery/functions/date/date_add	date_add on a TIMESTAMP answers a TIMESTAMP
+zigquery/functions/date/date_add	date_add on a TIMESTAMP by every fixed-length part
+zigquery/functions/date/date_add	date_add on a TIMESTAMP rejects a calendar part
+zigquery/functions/date/date_add	date_add on a DATE rejects a clock part
+zigquery/functions/date/date_add	date_add of a NULL DATETIME or TIMESTAMP is NULL
+zigquery/functions/date/date_add	safe.date_add on a DATETIME
 zigquery/functions/date/date_bucket	date_bucket floors toward -infinity, so it holds before the origin
 zigquery/functions/date/date_bucket	date_bucket with a month width lands on the origin's day of month, clamped short
 zigquery/functions/date/date_bucket	date_bucket with a mid-month origin turns the bucket over on that day
@@ -939,10 +949,23 @@ zigquery/functions/date/date_diff	date_diff with month (case 469)
 zigquery/functions/date/date_diff	date_diff with day (case 470)
 zigquery/functions/date/date_diff	date_diff counts boundaries of the weekday the part names
 zigquery/functions/date/date_diff	date_diff in ISOWEEK counts Monday boundaries across a year end
+zigquery/functions/date/date_diff	date_diff on DATETIMEs counts boundaries crossed
+zigquery/functions/date/date_diff	date_diff on DATETIMEs at every granularity
+zigquery/functions/date/date_diff	date_diff on TIMESTAMPs counts whole units, like TIMESTAMP_DIFF
+zigquery/functions/date/date_diff	date_diff on TIMESTAMPs rejects a calendar part
+zigquery/functions/date/date_diff	date_diff of a NULL DATETIME or TIMESTAMP is NULL
 zigquery/functions/date/date_from_unix_date	date_from_unix_date
 zigquery/functions/date/date_sub	date_sub
 zigquery/functions/date/date_sub	date_sub year and week
 zigquery/functions/date/date_sub	date_sub month across the start of the year
+zigquery/functions/date/date_sub	date_sub on a DATETIME answers a DATETIME
+zigquery/functions/date/date_sub	date_sub on a DATETIME by every calendar part
+zigquery/functions/date/date_sub	date_sub on a DATETIME by every clock part
+zigquery/functions/date/date_sub	date_sub on a TIMESTAMP answers a TIMESTAMP
+zigquery/functions/date/date_sub	date_sub on a TIMESTAMP by every fixed-length part
+zigquery/functions/date/date_sub	date_sub on a TIMESTAMP rejects a calendar part
+zigquery/functions/date/date_sub	date_sub of a NULL DATETIME or TIMESTAMP is NULL
+zigquery/functions/date/date_sub	date_sub bounds a DATETIME range in a join
 zigquery/functions/date/date_trunc	date_trunc with quarter
 zigquery/functions/date/date_trunc	date_trunc with day
 zigquery/functions/date/date_trunc	date_trunc with week
@@ -951,6 +974,16 @@ zigquery/functions/date/date_trunc	date_trunc with year
 zigquery/functions/date/date_trunc	date_trunc to WEEK(<weekday>) backs up to that weekday
 zigquery/functions/date/date_trunc	date_trunc to ISOWEEK lands on the Monday
 zigquery/functions/date/date_trunc	date_trunc to ISOYEAR anchors on January 4th
+zigquery/functions/date/date_trunc	date_trunc on a DATETIME answers a DATETIME
+zigquery/functions/date/date_trunc	date_trunc on a DATETIME at every calendar granularity
+zigquery/functions/date/date_trunc	date_trunc on a DATETIME at every clock granularity
+zigquery/functions/date/date_trunc	date_trunc on a TIMESTAMP answers a TIMESTAMP, in UTC by default
+zigquery/functions/date/date_trunc	date_trunc on a TIMESTAMP at every calendar granularity
+zigquery/functions/date/date_trunc	date_trunc on a TIMESTAMP at every clock granularity
+zigquery/functions/date/date_trunc	date_trunc on a TIMESTAMP in a named zone
+zigquery/functions/date/date_trunc	date_trunc on a TIMESTAMP across a DST change
+zigquery/functions/date/date_trunc	date_trunc on a DATE rejects a clock granularity
+zigquery/functions/date/date_trunc	date_trunc of a NULL DATETIME or TIMESTAMP is NULL
 zigquery/functions/date/extract	extract date
 zigquery/functions/date/extract	extract WEEK counts from the year's first Sunday, not the ISO week
 zigquery/functions/date/extract	extract DAYOFYEAR and DAYOFWEEK
@@ -987,6 +1020,8 @@ zigquery/functions/date/last_day	last_day with the remaining WEEK(<weekday>) sta
 zigquery/functions/date/last_day	last_day week start days wrap rather than skipping a week
 zigquery/functions/date/last_day	last_day with quarter
 zigquery/functions/date/last_day	last_day with isoyear ends on a Sunday, rarely December 31st
+zigquery/functions/date/last_day	last_day on a DATETIME answers a DATE
+zigquery/functions/date/last_day	last_day rejects a TIMESTAMP
 zigquery/functions/date/parse_date	base date is epoch
 zigquery/functions/date/parse_date	parse date exceeding month maximum
 zigquery/functions/date/parse_date	parse date beneath month minimum

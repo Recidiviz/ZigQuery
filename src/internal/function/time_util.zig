@@ -258,27 +258,52 @@ pub fn zoneOffsetSeconds(zone: []const u8, civ: i64) Error!i64 {
     if (zone.len == 0) return 0;
     if (std.mem.eql(u8, zone, "UTC") or std.mem.eql(u8, zone, "Z")) return 0;
 
-    // Fixed numeric offset: [+-]HH[:MM].
-    if (zone[0] == '+' or zone[0] == '-') {
-        const sign: i64 = if (zone[0] == '-') -1 else 1;
-        const rest = zone[1..];
-        var h: i64 = 0;
-        var m: i64 = 0;
-        if (rest.len >= 2 and std.ascii.isDigit(rest[0]) and std.ascii.isDigit(rest[1])) {
-            h = @as(i64, rest[0] - '0') * 10 + (rest[1] - '0');
-            if (rest.len >= 5 and rest[2] == ':') {
-                m = @as(i64, rest[3] - '0') * 10 + (rest[4] - '0');
-            }
-        } else return error.FailedConversion;
-        return sign * (h * 3600 + m * 60);
-    }
+    if (zone[0] == '+' or zone[0] == '-')
+        return fixedOffsetSeconds(zone) orelse invalidZone(zone);
 
     const millis = @divFloor(civ, 1000);
     const off: i32 = shim_ffi.timeZoneOffsetSeconds(zone, millis) catch |err| switch (err) {
-        error.InvalidTimeZone => return bind.fail("invalid time zone: {s}", .{zone}, error.FailedConversion),
+        error.InvalidTimeZone => return invalidZone(zone),
         else => return error.FailedConversion,
     };
     return off;
+}
+
+fn invalidZone(zone: []const u8) Error {
+    return bind.fail("Invalid time zone: {s}", .{zone}, error.FailedConversion);
+}
+
+/// Seconds east of UTC for the numeric offset form `(+|-)H[H][:M[M]]`, which also admits
+/// the colon-free `HHMM`. Null if `zone` is not one, minutes reach 60, or the offset
+/// passes the +/-14:00 bound. (timestamp_functions.md#timezone_definitions)
+fn fixedOffsetSeconds(zone: []const u8) ?i64 {
+    const rest = zone[1..];
+    var h_text = rest;
+    var m_text: []const u8 = "";
+    if (std.mem.indexOfScalar(u8, rest, ':')) |i| {
+        h_text = rest[0..i];
+        m_text = rest[i + 1 ..];
+    } else if (rest.len > 2) {
+        h_text = rest[0..2];
+        m_text = rest[2..];
+    }
+    const h = offsetField(h_text) orelse return null;
+    const m = if (m_text.len == 0) 0 else offsetField(m_text) orelse return null;
+    if (m > 59) return null;
+    const secs = h * 3600 + m * 60;
+    if (secs > 14 * 3600) return null;
+    return if (zone[0] == '-') -secs else secs;
+}
+
+/// One or two decimal digits as a number; null for anything else.
+fn offsetField(text: []const u8) ?i64 {
+    if (text.len == 0 or text.len > 2) return null;
+    var n: i64 = 0;
+    for (text) |ch| {
+        if (!std.ascii.isDigit(ch)) return null;
+        n = n * 10 + (ch - '0');
+    }
+    return n;
 }
 
 test "compose/decompose round trip and normalization" {
@@ -304,6 +329,10 @@ test "zone offsets" {
     try std.testing.expectEqual(@as(i64, 0), try zoneOffsetSeconds("UTC", 0));
     try std.testing.expectEqual(@as(i64, 9 * 3600), try zoneOffsetSeconds("+09:00", 0));
     try std.testing.expectEqual(@as(i64, -7 * 3600), try zoneOffsetSeconds("-07", 0));
+    try std.testing.expectEqual(@as(i64, 9 * 3600), try zoneOffsetSeconds("+9", 0));
+    try std.testing.expectEqual(@as(i64, 9 * 3600 + 1800), try zoneOffsetSeconds("+0930", 0));
+    try std.testing.expectError(error.FailedConversion, zoneOffsetSeconds("+15:00", 0));
+    try std.testing.expectError(error.FailedConversion, zoneOffsetSeconds("+09:60", 0));
     // LA in December (PST) vs August (PDT).
     const dec = compose(2008, 12, 25, 0, 0, 0, 0);
     const aug = compose(2022, 8, 1, 0, 0, 0, 0);
