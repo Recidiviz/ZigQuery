@@ -1683,6 +1683,16 @@ zigquery/types/boolean	null
 zigquery/types/bytes	bytes_formatting
 zigquery/types/date	date type
 zigquery/types/date	minimum / maximum date value
+zigquery/types/integer	CAST AS INT
+zigquery/types/integer	CAST AS INTEGER
+zigquery/types/integer	CAST AS BIGINT
+zigquery/types/integer	CAST AS SMALLINT
+zigquery/types/integer	CAST AS TINYINT
+zigquery/types/integer	CAST AS BYTEINT
+zigquery/types/integer	type names are case-insensitive
+zigquery/types/integer	TYPEOF of an alias cast reports INT64
+zigquery/types/integer	aliases in a column definition
+zigquery/types/integer	INFORMATION_SCHEMA.COLUMNS reports every alias as INT64
 zigquery/types/interval	interval operator
 zigquery/types/interval	interval from sub operator
 zigquery/types/struct	struct with bool

@@ -1469,6 +1469,10 @@ test "catalogJson: analyzer resolves bare and dotted table names" {
         error.AnalyzeFailed,
         analyzer_ffi.analyzeNextStatement(alloc, "SELECT 1 FROM missing_table", 0, catalog_json),
     );
+    // BigQuery's INT64 aliases resolve on the catalog that
+    // GoogleSQL_AnalyzeNextStatementParams rebuilds from JSON per call, the
+    // fallback when a connection's handle is unusable. data-types.md#integer_types
+    _ = try analyzer_ffi.analyzeNextStatement(alloc, "SELECT CAST(1 AS INT) FROM t1", 0, catalog_json);
 
     // A fresh catalog carries only the seeded MISSING_FUNCTIONS (no "{}"
     // sentinel anymore: contains_substr/min_by/max_by are always present).
