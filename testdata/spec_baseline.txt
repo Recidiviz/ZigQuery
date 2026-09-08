@@ -4936,6 +4936,16 @@ zigquery/syntax/cte/with_recursive	recursive cte with complex list and star in j
 zigquery/syntax/ddl/create_function	create function
 zigquery/syntax/ddl/create_function	use function
 zigquery/syntax/ddl/create_function	create temp function
+zigquery/syntax/ddl/create_or_replace_table	OR REPLACE ... AS SELECT swaps the schema and clears prior rows
+zigquery/syntax/ddl/create_or_replace_table	OR REPLACE ... AS SELECT can read the table it replaces
+zigquery/syntax/ddl/create_or_replace_table	OR REPLACE ... AS SELECT on a name that does not exist yet
+zigquery/syntax/ddl/create_or_replace_table	a column definition list cannot appear with AS SELECT
+zigquery/syntax/ddl/create_or_replace_table	intact: table exists with one row
+zigquery/syntax/ddl/create_or_replace_table	intact: OR REPLACE ... AS SELECT fails on an unresolved column
+zigquery/syntax/ddl/create_or_replace_table	intact: the failed replace left the original row in place
+zigquery/syntax/ddl/create_or_replace_table	OR REPLACE ... PARTITION BY ... CLUSTER BY ... OPTIONS(...) AS SELECT
+zigquery/syntax/ddl/create_or_replace_table	OPTIONS(...) AS SELECT records options, queryable via TABLE_OPTIONS
+zigquery/syntax/ddl/create_or_replace_table	OR REPLACE ... PARTITION BY ... CLUSTER BY ... OPTIONS(...) on a fresh name
 zigquery/syntax/ddl/drop_function	simple drop function
 zigquery/syntax/ddl/drop_table	simple drop
 zigquery/syntax/dml/merge	merge two tables with empty source
