@@ -7,7 +7,9 @@
 //!
 //! Every schema column is bound for every row; a row missing a key writes NULL there.
 //! A value its column will not take marks the row invalid (`RowError`, carrying the column name and
-//!  the engine's message).
+//!  the engine's message). That includes a NULL the engine's own NOT NULL rejects at step time, so
+//!  a column that is NOT NULL in storage but not REQUIRED in the stored schema still yields an
+//!  invalid row rather than an engine failure.
 //! The batch rolls back when any row is invalid, unless `skip_invalid_rows`, which commits the rest
 
 const std = @import("std");
@@ -110,10 +112,17 @@ pub const Repository = struct {
         /// Binds and executes one row, or records why it could not be.
         fn add(batch: *Batch, row: std.json.Value, row_index: u32) Error!void {
             for (batch.plans, 0..) |*plan, i| {
-                batch.params[i] = .{ .value = batch.repo.cellFor(&batch.normalizer, row, plan) catch |err| switch (err) {
+                const repo = batch.repo;
+                const cell = repo.cellFor(&batch.normalizer, row, plan) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
-                    else => return batch.reject(row_index, plan.name, batch.repo.message),
-                } };
+                    else => return batch.reject(row_index, plan.name, repo.message),
+                };
+                // An absent key and an explicit null are the same NULL.
+                if (plan.required and cell == .null) {
+                    const message = try rowvalue.missingRequiredMessage(repo.arena, &.{plan.name});
+                    return batch.reject(row_index, plan.name, message);
+                }
+                batch.params[i] = .{ .value = cell };
             }
             batch.stmt.exec(batch.params) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
@@ -124,8 +133,32 @@ pub const Repository = struct {
                     const message = try batch.repo.arena.dupe(u8, batch.repo.db.lastError());
                     return batch.reject(row_index, batch.plans[@intCast(ordinal - 1)].name, message);
                 },
+                error.ExecFailed => switch (batch.stepFailure()) {
+                    .not_null => |plan| {
+                        const arena = batch.repo.arena;
+                        const message = try rowvalue.missingRequiredMessage(arena, &.{plan.name});
+                        return batch.reject(row_index, plan.name, message);
+                    },
+                    .engine => return batch.repo.failEngine(),
+                },
                 else => return batch.repo.failEngine(),
             };
+        }
+
+        /// Why the step failed.
+        const StepFailure = union(enum) {
+            /// SQLite's NOT NULL rejected the row; the column it names.
+            not_null: *const ColumnPlan,
+            /// Anything else, which is the engine's failure, not the row's.
+            engine,
+        };
+
+        fn stepFailure(batch: *Batch) StepFailure {
+            const column = notNullColumn(batch.repo.db.lastError()) orelse return .engine;
+            for (batch.plans) |*plan| {
+                if (std.mem.eql(u8, plan.name, column)) return .{ .not_null = plan };
+            }
+            return .engine;
         }
 
         fn reject(
@@ -184,6 +217,8 @@ pub const Repository = struct {
         /// Normalizer inputs for everything the coercions do not claim.
         mode: []const u8,
         sub_fields: []const std.json.Value,
+        /// REQUIRED: NULL is an invalid row.
+        required: bool,
     };
 
     fn planFor(
@@ -205,6 +240,7 @@ pub const Repository = struct {
                     .none,
                 .mode = rowvalue.stringOf(field, "mode"),
                 .sub_fields = rowvalue.fieldsOf(field),
+                .required = std.mem.eql(u8, rowvalue.stringOf(field, "mode"), "REQUIRED"),
             };
         }
         return plans;
@@ -280,6 +316,9 @@ pub const Repository = struct {
             .none => {},
         };
 
+        // The column heads the path a nested failure reports.
+        try norm.path.append(r.arena, plan.name);
+        defer _ = norm.path.pop();
         return norm.cellForShape(v, plan.mode, plan.sub_fields) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {
@@ -294,6 +333,19 @@ pub const Repository = struct {
         return error.InsertFailed;
     }
 };
+
+/// The column SQLite names in a NOT NULL constraint failure, or null for any
+/// other error. The text is modernc's errstrForDB shape around SQLite's own:
+/// `constraint failed: NOT NULL constraint failed: <table>.<column> (19)`.
+fn notNullColumn(err_text: []const u8) ?[]const u8 {
+    const marker = "NOT NULL constraint failed: ";
+    const start = std.mem.indexOf(u8, err_text, marker) orelse return null;
+    var rest = err_text[start + marker.len ..];
+    if (std.mem.lastIndexOf(u8, rest, " (")) |paren| rest = rest[0..paren];
+    const dot = std.mem.lastIndexOfScalar(u8, rest, '.') orelse return null;
+    const column = rest[dot + 1 ..];
+    return if (column.len == 0) null else column;
+}
 
 /// Go zetasqlite.TimeFromTimestampValue (timestamp.go:12): epoch
 /// "seconds[.micros]" text. Reproduces its quirk of computing a zero-padded
@@ -634,6 +686,127 @@ test "a value the column will not take names its row and column, and rolls the b
     var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
     defer rows.deinit();
     try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
+}
+
+test "NULL in a REQUIRED column is an invalid row, key absent or explicit" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE `p.d.t` (`a` STRING NOT NULL, `b` STRING)", &.{}, .{});
+
+    const fields = try fieldsOf(arena,
+        \\[{"name":"a","type":"STRING","mode":"REQUIRED"},{"name":"b","type":"STRING"}]
+    );
+    var repo = Repository{ .arena = arena, .db = db };
+    const result = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
+        \\[{"a":"ok","b":null},{"a":null,"b":"x"},{"b":"y"}]
+    ), false);
+    const invalid = result.invalid;
+    try testing.expectEqual(@as(usize, 2), invalid.len);
+    try testing.expectEqual(@as(u32, 1), invalid[0].row_index);
+    try testing.expectEqualStrings("a", invalid[0].field_name);
+    try testing.expectEqualStrings(
+        "Missing required field: Msg_0_CLOUD_QUERY_TABLE.a.",
+        invalid[0].message,
+    );
+    try testing.expectEqual(@as(u32, 2), invalid[1].row_index);
+    try testing.expectEqualStrings("a", invalid[1].field_name);
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
+}
+
+test "a REQUIRED member of a RECORD is checked inside the value" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE `p.d.t` (`r` STRUCT<`x` INT64, `y` STRING>)", &.{}, .{});
+
+    const fields = try fieldsOf(arena,
+        \\[{"name":"r","type":"RECORD","fields":[
+        \\  {"name":"x","type":"INTEGER","mode":"REQUIRED"},{"name":"y","type":"STRING"}]}]
+    );
+    var repo = Repository{ .arena = arena, .db = db };
+    const result = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
+        \\[{"r":{"x":1}},{"r":{"y":"no x"}},{"r":{"x":null,"y":"z"}}]
+    ), true);
+    const invalid = result.invalid;
+    try testing.expectEqual(@as(usize, 2), invalid.len);
+    try testing.expectEqual(@as(u32, 1), invalid[0].row_index);
+    try testing.expectEqualStrings("r", invalid[0].field_name);
+    try testing.expectEqualStrings(
+        "Missing required field: Msg_0_CLOUD_QUERY_TABLE.r.x.",
+        invalid[0].message,
+    );
+    try testing.expectEqual(@as(u32, 2), invalid[1].row_index);
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
+test "a NOT NULL the stored schema does not declare is still an invalid row" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    // The table says NOT NULL; the schema the rows are checked against does
+    // not, as after a materialization job re-derived it from a query.
+    try db.exec("CREATE TABLE `p.d.t` (`a` STRING NOT NULL, `b` STRING)", &.{}, .{});
+
+    const fields = try fieldsOf(arena,
+        \\[{"name":"a","type":"STRING"},{"name":"b","type":"STRING"}]
+    );
+    var repo = Repository{ .arena = arena, .db = db };
+    const rows = try rowsOf(arena,
+        \\[{"a":"ok","b":null},{"a":null,"b":"x"},{"b":"y"},{"a":"also ok"}]
+    );
+
+    const all = try repo.addTableData("p", "d", "t", fields, rows, false);
+    try testing.expectEqual(@as(usize, 2), all.invalid.len);
+    try testing.expectEqual(@as(u32, 1), all.invalid[0].row_index);
+    try testing.expectEqualStrings("a", all.invalid[0].field_name);
+    try testing.expectEqualStrings(
+        "Missing required field: Msg_0_CLOUD_QUERY_TABLE.a.",
+        all.invalid[0].message,
+    );
+    try testing.expectEqual(@as(u32, 2), all.invalid[1].row_index);
+    try testing.expectEqualStrings("a", all.invalid[1].field_name);
+    {
+        var count = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+        defer count.deinit();
+        try testing.expectEqual(@as(i64, 0), (try count.next()).?[0].int);
+    }
+
+    // The statement-level ABORT leaves the transaction open, so with
+    // skip_invalid_rows the rows after a rejected one still land.
+    const skipped = try repo.addTableData("p", "d", "t", fields, rows, true);
+    try testing.expectEqual(@as(usize, 2), skipped.invalid.len);
+    var kept = try db.query("SELECT a FROM `p.d.t` ORDER BY a", &.{}, .{});
+    defer kept.deinit();
+    try testing.expectEqualStrings("also ok", (try kept.next()).?[0].string);
+    try testing.expectEqualStrings("ok", (try kept.next()).?[0].string);
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try kept.next());
+}
+
+test "notNullColumn reads the column out of SQLite's message" {
+    try testing.expectEqualStrings("a", notNullColumn(
+        "constraint failed: NOT NULL constraint failed: test_ds1_req.a (19)",
+    ).?);
+    try testing.expectEqualStrings("col_1", notNullColumn(
+        "NOT NULL constraint failed: t.col_1",
+    ).?);
+    try testing.expectEqual(@as(?[]const u8, null), notNullColumn("constraint failed: UNIQUE constraint failed: t.a (19)"));
+    try testing.expectEqual(@as(?[]const u8, null), notNullColumn("NOT NULL constraint failed: nodot (19)"));
 }
 
 test "skip_invalid_rows commits the rows that were fine" {
