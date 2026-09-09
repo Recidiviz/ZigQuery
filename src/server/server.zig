@@ -1211,6 +1211,10 @@ pub const Server = struct {
     /// first to preserve existing rows, but if the destination's shape does
     /// not admit the result, the table is rebuilt from the query, which is
     /// what Go effectively does.
+    ///
+    /// Shape is the analyzer's verdict. A row the destination's constraints
+    /// reject, such as NULL in a REQUIRED column, fails the job with the
+    /// engine's message and leaves the table as it was.
     fn materializeInto(
         s: *Server,
         arena: std.mem.Allocator,
@@ -1225,12 +1229,13 @@ pub const Server = struct {
     ) !void {
         if (jobs_handler.isAppend(dst)) {
             const append = try jobs_handler.appendDdl(arena, dst, sql);
-            if (s.db.exec(append, params, .{})) |_| return else |_| {
-                std.log.info(
+            if (s.db.exec(append, params, .{})) |_| return else |err| switch (err) {
+                error.ExecFailed => return error.MaterializeFailed,
+                else => std.log.info(
                     "append into {s}.{s}.{s} did not fit the existing shape; " ++
                         "rebuilding from the query, as Go does ({s})",
                     .{ dst.project_id, dst.dataset_id, dst.table_id, s.db.lastError() },
-                );
+                ),
             }
         }
         const replace = try jobs_handler.replaceDdl(arena, dst, sql);
@@ -2401,6 +2406,104 @@ test "insertAll keeps the engine's conversion message for a bad DATE" {
     try testing.expectEqualStrings(
         \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"a","message":"failed to convert 202-06-06 to time.Time type","reason":"invalid"}],"index":0}]}
     , res.body);
+}
+
+test "a REQUIRED column declared through tables.insert rejects NULL on every write path" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"source"},
+        \\ "schema":{"fields":[{"name":"col_1","type":"STRING"},{"name":"col_2","type":"STRING"}]}}
+    );
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"destination"},
+        \\ "schema":{"fields":[{"name":"col_1","type":"STRING","mode":"REQUIRED"},
+        \\                     {"name":"col_2","type":"STRING","mode":"REQUIRED"}]}}
+    );
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/source/insertAll",
+        \\{"rows":[{"json":{"col_1":"val_3","col_2":"val_4"}},{"json":{"col_1":null,"col_2":"val_2"}}]}
+    );
+
+    // insertAll: the null row is invalid and the batch stops.
+    const streamed = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/destination/insertAll",
+        \\{"rows":[{"json":{"col_1":"a","col_2":"b"}},{"json":{"col_1":null,"col_2":"c"}},{"json":{"col_2":"d"}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, streamed.status);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"col_1","message":"Missing required field: Msg_0_CLOUD_QUERY_TABLE.col_1.","reason":"invalid"}],"index":1},{"errors":[{"debugInfo":"","location":"col_1","message":"Missing required field: Msg_0_CLOUD_QUERY_TABLE.col_1.","reason":"invalid"}],"index":2},{"errors":[{"debugInfo":"","location":"","message":"","reason":"stopped"}],"index":0}]}
+    , streamed.body);
+
+    // INSERT ... SELECT from a source holding a NULL: the statement fails and
+    // writes nothing (OBT-19493).
+    const dml = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"INSERT INTO `test.ds1.destination` (col_1, col_2) SELECT col_1, col_2 FROM `test.ds1.source`"}}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, dml.status);
+    try testing.expect(std.mem.indexOf(u8, dml.body, "NOT NULL constraint failed") != null);
+
+    // A query job appending into the declared table: the same INSERT, and the
+    // constraint failure is the job's error, leaving the table and its
+    // declared schema alone.
+    const append = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT col_1, col_2 FROM `test.ds1.source`",
+        \\ "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"destination"},
+        \\ "writeDisposition":"WRITE_APPEND"}}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, append.status);
+    try testing.expect(std.mem.indexOf(u8, append.body, "NOT NULL constraint failed") != null);
+
+    // INSERT ... VALUES with an explicit NULL.
+    const values = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"INSERT INTO `test.ds1.destination` (col_1, col_2) VALUES (NULL, 'x')"}}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, values.status);
+
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.destination`"}
+    );
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"0\"}") != null);
+
+    // And tables.get still reports the mode.
+    const meta = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/destination", "");
+    try testing.expect(std.mem.indexOf(u8, meta.body, "\"mode\":\"REQUIRED\"") != null);
+}
+
+test "insertAll answers a NULL the engine rejects as an invalid row, not a 500" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"appended"},
+        \\ "schema":{"fields":[{"name":"a","type":"STRING","mode":"REQUIRED"},{"name":"b","type":"STRING"}]}}
+    );
+    // A query job appending into the table re-records its schema from the
+    // query, which carries no modes; the column stays NOT NULL in storage.
+    const append = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 'z' AS a, CAST(NULL AS STRING) AS b",
+        \\ "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"appended"},
+        \\ "writeDisposition":"WRITE_APPEND"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, append.status);
+
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/appended/insertAll",
+        \\{"rows":[{"json":{"a":"ok","b":"1"}},{"json":{"a":null,"b":"2"}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"a","message":"Missing required field: Msg_0_CLOUD_QUERY_TABLE.a.","reason":"invalid"}],"index":1},{"errors":[{"debugInfo":"","location":"","message":"","reason":"stopped"}],"index":0}]}
+    , res.body);
+
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.appended`"}
+    );
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"1\"}") != null);
 }
 
 test "insertAll with skipInvalidRows writes the fine rows and lists the rest" {

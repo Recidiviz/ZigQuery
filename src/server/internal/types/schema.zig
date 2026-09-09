@@ -358,6 +358,11 @@ pub fn fieldTypeText(
     return base;
 }
 
+fn isRequired(field: std.json.Value) bool {
+    const m = field.object.get("mode") orelse return false;
+    return m == .string and std.mem.eql(u8, m.string, "REQUIRED");
+}
+
 /// `CREATE TABLE `project.dataset.table` (`col` TYPE, ...)`.
 ///
 /// A schema with no fields produces a table with a single placeholder column,
@@ -388,6 +393,10 @@ pub fn createTableDdl(
                             name_v.string,
                             try fieldTypeText(arena, field),
                         });
+                        // REQUIRED is NOT NULL. Only a top-level column can
+                        // say it: STRUCT member types carry no nullability, so
+                        // a nested REQUIRED is enforced by the row writer.
+                        if (isRequired(field)) try out.appendSlice(arena, " NOT NULL");
                         wrote_any = true;
                     }
                 }
@@ -483,6 +492,54 @@ test "CREATE TABLE DDL covers scalars, REPEATED and nested RECORD" {
             "`c` STRUCT<`x` BOOL>, `d` ARRAY<STRUCT<`y` FLOAT64>>)",
         try createTableDdl(arena, "p", "ds", "t", schema),
     );
+}
+
+test "CREATE TABLE DDL makes a REQUIRED column NOT NULL" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const schema = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[
+        \\  {"name":"a","type":"STRING","mode":"REQUIRED"},
+        \\  {"name":"b","type":"STRING","mode":"NULLABLE"},
+        \\  {"name":"c","type":"STRING","mode":"REPEATED"},
+        \\  {"name":"r","type":"RECORD","mode":"REQUIRED","fields":[{"name":"x","type":"INTEGER","mode":"REQUIRED"}]}
+        \\]}
+    , .{});
+
+    try testing.expectEqualStrings(
+        "CREATE TABLE IF NOT EXISTS `p.ds.t` (`a` STRING NOT NULL, `b` STRING, " ++
+            "`c` ARRAY<STRING>, `r` STRUCT<`x` INT64> NOT NULL)",
+        try createTableDdl(arena, "p", "ds", "t", schema),
+    );
+}
+
+test "a REQUIRED column rejects NULL from DML and the statement rolls back" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const schema = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[{"name":"a","type":"STRING","mode":"REQUIRED"},{"name":"b","type":"STRING"}]}
+    , .{});
+    var db = try zigquery.driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(try createTableDdl(arena, "p", "ds", "req", schema), &.{}, .{});
+
+    try db.exec("INSERT INTO `p.ds.req` (a, b) VALUES ('ok', NULL)", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.ds.req` (a, b) VALUES ('also ok', 'x'), (NULL, 'y')", &.{}, .{}),
+    );
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("UPDATE `p.ds.req` SET a = NULL WHERE TRUE", &.{}, .{}),
+    );
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.ds.req`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
 }
 
 test "a schema-less table still creates" {
