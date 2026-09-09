@@ -1051,7 +1051,7 @@ pub const Server = struct {
         // materialization writes results. Run the DDL form instead of the
         // bare SELECT, then record the resulting table's metadata.
         const res = if (jobs_handler.destinationFromJobConfig(job)) |dst| blk: {
-            s.materializeInto(arena, dst, sql, params) catch |err| switch (err) {
+            const materialization_method = s.materializeInto(arena, dst, sql, params) catch |err| switch (err) {
                 error.MaterializeFailed => return .{
                     .status = .bad_request,
                     .body = try errors.body(
@@ -1062,7 +1062,7 @@ pub const Server = struct {
                 },
                 else => return err,
             };
-            try s.recordMaterializedTable(arena, dst);
+            try s.recordMaterializedTable(arena, dst, materialization_method);
             // The job's own result mirrors the query's SELECT output, the same
             // rows just written to the destination table — not the table's
             // full contents, which for WRITE_APPEND can hold more than this
@@ -1215,6 +1215,16 @@ pub const Server = struct {
     /// Shape is the analyzer's verdict. A row the destination's constraints
     /// reject, such as NULL in a REQUIRED column, fails the job with the
     /// engine's message and leaves the table as it was.
+    ///
+    /// Reports which form ran, because the two leave the destination's
+    /// declared resource in different states (see recordMaterializedTable).
+    const MaterializationMethod = enum {
+        /// The rows were appended; the table's shape is as declared.
+        appended,
+        /// The table was rebuilt from the query; its shape is the query's.
+        replaced,
+    };
+
     fn materializeInto(
         s: *Server,
         arena: std.mem.Allocator,
@@ -1226,14 +1236,13 @@ pub const Server = struct {
         /// ordinals are unchanged; and running the SQL twice (append, then
         /// replace) is safe because each exec re-slices from `params`.
         params: []const driver.Param,
-    ) !void {
+    ) !MaterializationMethod {
         if (jobs_handler.isAppend(dst)) {
             const append = try jobs_handler.appendDdl(arena, dst, sql);
-            if (s.db.exec(append, params, .{})) |_| return else |err| switch (err) {
+            if (s.db.exec(append, params, .{})) |_| return .appended else |err| switch (err) {
                 error.ExecFailed => return error.MaterializeFailed,
                 else => std.log.info(
-                    "append into {s}.{s}.{s} did not fit the existing shape; " ++
-                        "rebuilding from the query, as Go does ({s})",
+                    "append into {s}.{s}.{s} did not fit the existing shape; rebuilding ({s})",
                     .{ dst.project_id, dst.dataset_id, dst.table_id, s.db.lastError() },
                 ),
             }
@@ -1250,15 +1259,33 @@ pub const Server = struct {
             );
             return error.MaterializeFailed;
         };
+        return .replaced;
     }
 
-    /// Registers a table produced by a materialization job, deriving its
-    /// schema from the table the DDL just created.
+    /// Registers the table a materialization job wrote.
+    ///
+    /// An append writes rows into a table whose declared resource — modes,
+    /// clustering, partitioning, description — still describes it, so that
+    /// resource stands.
+    /// A table that has one only in the engine catalog gets
+    /// the same fill-in tables.get performs, which carries NOT NULL through as
+    /// REQUIRED.
+    /// A replace produces a new table, derived from the shape returned by  the query.
     fn recordMaterializedTable(
         s: *Server,
         arena: std.mem.Allocator,
         dst: jobs_handler.Destination,
+        materialization_method: MaterializationMethod,
     ) !void {
+        if (materialization_method == .appended) {
+            const p, const d, const t = .{ dst.project_id, dst.dataset_id, dst.table_id };
+            if (try s.repo.findTable(arena, p, d, t)) |_| return;
+            if (try s.tableResourceFromEngine(arena, p, d, t)) |resource| {
+                try s.repo.addTable(p, d, t, resource);
+                return;
+            }
+        }
+
         const probe = try std.fmt.allocPrint(
             arena,
             "SELECT * FROM `{s}.{s}.{s}` LIMIT 0",
@@ -2472,6 +2499,84 @@ test "a REQUIRED column declared through tables.insert rejects NULL on every wri
     try testing.expect(std.mem.indexOf(u8, meta.body, "\"mode\":\"REQUIRED\"") != null);
 }
 
+test "a WRITE_APPEND job keeps the destination's declared resource" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"declared"},
+        \\ "description":"declared up front",
+        \\ "clustering":{"fields":["a"]},
+        \\ "schema":{"fields":[{"name":"a","type":"STRING","mode":"REQUIRED"},{"name":"b","type":"STRING"}]}}
+    );
+
+    const append = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 'x' AS a, 'y' AS b",
+        \\ "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"declared"},
+        \\ "writeDisposition":"WRITE_APPEND"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, append.status);
+
+    const meta = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/declared", "");
+    try testing.expect(std.mem.indexOf(u8, meta.body, "\"mode\":\"REQUIRED\"") != null);
+    try testing.expect(
+        std.mem.indexOf(u8, meta.body, "\"clustering\":{\"fields\":[\"a\"]}") != null,
+    );
+    try testing.expect(std.mem.indexOf(u8, meta.body, "declared up front") != null);
+
+    // The mode still guards insertAll, before anything is bound.
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/declared/insertAll",
+        \\{"rows":[{"json":{"a":null,"b":"z"}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "Missing required field") != null);
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.declared`"}
+    );
+    try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"1\"}") != null);
+
+    // A truncate rebuilds the table from the query, and the resource follows.
+    const truncate = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 1 AS n",
+        \\ "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"declared"},
+        \\ "writeDisposition":"WRITE_TRUNCATE"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, truncate.status);
+    const after = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/declared", "");
+    try testing.expect(std.mem.indexOf(u8, after.body, "\"name\":\"n\"") != null);
+    try testing.expect(std.mem.indexOf(u8, after.body, "REQUIRED") == null);
+}
+
+test "a WRITE_APPEND into a DDL-created NOT NULL table records it as REQUIRED" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/test/datasets",
+        \\{"datasetReference":{"projectId":"test","datasetId":"ds1"}}
+    );
+    const ddl = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE `test.ds1.ddl` (a STRING NOT NULL, b STRING)"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ddl.status);
+
+    const append = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 'x' AS a, 'y' AS b",
+        \\ "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"ddl"},
+        \\ "writeDisposition":"WRITE_APPEND"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, append.status);
+
+    const meta = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/ddl", "");
+    try testing.expectEqual(std.http.Status.ok, meta.status);
+    try testing.expect(std.mem.indexOf(u8, meta.body, "\"mode\":\"REQUIRED\"") != null);
+}
+
 test "insertAll answers a NULL the engine rejects as an invalid row, not a 500" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -2491,6 +2596,11 @@ test "insertAll answers a NULL the engine rejects as an invalid row, not a 500" 
         \\ "writeDisposition":"WRITE_APPEND"}}}
     );
     try testing.expectEqual(std.http.Status.ok, append.status);
+
+    // The declared resource survives the append, so the pre-bind check is
+    // what catches the NULL below.
+    const meta = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/appended", "");
+    try testing.expect(std.mem.indexOf(u8, meta.body, "\"mode\":\"REQUIRED\"") != null);
 
     const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/appended/insertAll",
         \\{"rows":[{"json":{"a":"ok","b":"1"}},{"json":{"a":null,"b":"2"}}]}
