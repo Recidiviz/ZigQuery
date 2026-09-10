@@ -164,7 +164,7 @@ pub fn loadJson(
                     table_id,
                     schemaFields(schema_node),
                     rows,
-                    false,
+                    .{},
                 ) catch |err| {
                     // Lenient like the rest of JSONSource: a table whose rows
                     // will not load still exists, and empty beats absent.

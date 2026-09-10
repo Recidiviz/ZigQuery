@@ -51,6 +51,9 @@ pub const Normalizer = struct {
     /// value can name its full path. The caller pushes the column; RECORD
     /// members push themselves.
     path: std.ArrayList([]const u8) = .empty,
+    /// insertAll's `ignoreUnknownValues`
+    /// a member the schema does not declare is dropped rather than making the row invalid.
+    ignore_unknown: bool = false,
 
     /// `field` is a TableFieldSchema node from the table's stored schema.
     pub fn cellForField(
@@ -115,18 +118,17 @@ pub const Normalizer = struct {
                 }
                 out[i] = .{ .name = name, .value = value };
             }
-            // Go looks the *value's* keys up in the schema and nil-derefs on a
-            // miss; report it instead. Checked after the fields are built so
-            // the common path does no extra work.
-            var it = json.object.iterator();
-            while (it.next()) |kv| {
-                if (!hasField(fields, kv.key_ptr.*)) {
-                    n.message = try std.fmt.allocPrint(
-                        n.arena,
-                        "failed to find value from {s}",
-                        .{kv.key_ptr.*},
-                    );
-                    return error.UnknownStructField;
+            if (!n.ignore_unknown) {
+                var it = json.object.iterator();
+                while (it.next()) |kv| {
+                    if (!hasField(fields, kv.key_ptr.*)) {
+                        n.message = try std.fmt.allocPrint(
+                            n.arena,
+                            "failed to find value from {s}",
+                            .{kv.key_ptr.*},
+                        );
+                        return error.UnknownStructField;
+                    }
                 }
             }
             return .{ .struct_ = out };
@@ -337,6 +339,20 @@ test "a REQUIRED RECORD member that is absent or null names its path" {
     );
     // The path unwinds after a failure.
     try testing.expectEqual(@as(usize, 0), n.path.items.len);
+}
+
+test "ignore_unknown drops an undeclared RECORD member instead of failing" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var n = Normalizer{ .arena = arena, .ignore_unknown = true };
+
+    const field = try parse(arena,
+        \\{"name":"s","type":"RECORD","fields":[{"name":"a","type":"INTEGER"}]}
+    );
+    const cell = try n.cellForField(try parse(arena, "{\"a\":1,\"nope\":2}"), field);
+    try testing.expectEqual(@as(usize, 1), cell.struct_.len);
+    try testing.expectEqual(driver.Cell{ .int = 1 }, cell.struct_[0].value);
 }
 
 test "REPEATED RECORD keeps the element fields and drops the element mode" {
