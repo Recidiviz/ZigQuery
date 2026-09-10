@@ -2,21 +2,22 @@
 //! schema, and the `insertErrors` response.
 //! https://cloud.google.com/bigquery/docs/reference/rest/v2/tabledata/insertAll
 //!
-//! An invalid row rejects the whole batch: nothing is written, the response is
-//! HTTP 200, and `insertErrors` lists the invalid rows as `invalid` and every
-//! other row as `stopped`. With `skipInvalidRows` the other rows are written
-//! and only the invalid ones are listed.
+//! When row validity errors are encountered, the response is HTTP 200 with `insertErrors` body set
 //!
-//! A row is invalid when a top-level field is absent from the schema
-//! (`validateAgainstSchema`, checked before anything is bound) or when a value
-//! its column will not take (`contentdata.RowError`, found at bind time).
-//! Engine failures are 500s: prepare, transaction control, and a step that
-//! fails for any other reason.
+//! Insert errors:
+//! - Invalid rows are marked `invalid`
+//! - Valid rows are `stopped` unless `skipValidRows` is true, then they are omitted from the set
 //!
-//! `insertId` is read off the wire and discarded: the emulator does no
-//! deduplication. `ignoreUnknownValues`, `templateSuffix` and `traceId` are
-//! parsed and ignored; an unknown field is rejected whatever
-//! `ignoreUnknownValues` says.
+//! A row's validity is defined by:
+//!  - a row's field is absent from the schema
+//!  - a field's value is in a form its column will not take
+//!
+//! `ignoreUnknownValues` drops an undeclared field wherever it sits instead.
+//!
+//!  Engine failures are HTTP 00s: prepare, transaction control, and failures of any other reason.
+//!
+//! `insertId` is read off the wire and discarded: the emulator does no deduplication.
+//! `templateSuffix` and `traceId` are parsed and ignored.
 
 const std = @import("std");
 const errors = @import("../error.zig");
@@ -24,8 +25,6 @@ const contentdata = @import("../internal/contentdata/repository.zig");
 const rowvalue = @import("../internal/types/rowvalue.zig");
 
 pub const Error = error{
-    /// Go's json.Decode into TableDataInsertAllRequest failed; the handler
-    /// answers 400 invalid
     InvalidRequest,
 } || std.mem.Allocator.Error;
 
@@ -36,9 +35,106 @@ pub const InsertError = contentdata.RowError;
 
 /// The request's `skipInvalidRows`; absent is false, as in the API.
 pub fn skipInvalidRows(root: std.json.Value) bool {
+    return boolFlag(root, "skipInvalidRows");
+}
+
+/// The request's `ignoreUnknownValues`; absent is false, as in the API.
+pub fn ignoreUnknownValues(root: std.json.Value) bool {
+    return boolFlag(root, "ignoreUnknownValues");
+}
+
+fn boolFlag(root: std.json.Value, name: []const u8) bool {
     if (root != .object) return false;
-    const v = root.object.get("skipInvalidRows") orelse return false;
+    const v = root.object.get(name) orelse return false;
     return v == .bool and v.bool;
+}
+
+/// Each row with its undeclared top-level fields removed, declared ones in their posted order.
+/// A row with nothing to remove is passed through as is
+pub fn stripUnknownFields(
+    arena: std.mem.Allocator,
+    fields: []const std.json.Value,
+    rows: []const std.json.Value,
+) std.mem.Allocator.Error![]const std.json.Value {
+    var declared: std.StringHashMapUnmanaged(void) = .empty;
+    try declared.ensureTotalCapacity(arena, @intCast(fields.len));
+    for (fields) |f| declared.putAssumeCapacity(rowvalue.stringOf(f, "name"), {});
+
+    const out = try arena.alloc(std.json.Value, rows.len);
+    for (rows, 0..) |row, i| {
+        out[i] = row;
+        if (row != .object) continue;
+        var undeclared: usize = 0;
+        var it = row.object.iterator();
+        while (it.next()) |kv| {
+            if (!declared.contains(kv.key_ptr.*)) undeclared += 1;
+        }
+        if (undeclared == 0) continue;
+        var kept: std.json.ObjectMap = .empty;
+        try kept.ensureTotalCapacity(arena, @intCast(row.object.count() - undeclared));
+        it = row.object.iterator();
+        while (it.next()) |kv| {
+            if (!declared.contains(kv.key_ptr.*)) continue;
+            kept.putAssumeCapacity(kv.key_ptr.*, kv.value_ptr.*);
+        }
+        out[i] = .{ .object = kept };
+    }
+    return out;
+}
+
+/// The rows to hand the writer once `flagged` rows are set aside, and for each the index it had in
+/// the posted batch, so the writer's row numbers can be mapped back.
+/// The map is null when nothing was set aside.
+pub const WriteSet = struct {
+    rows: []const std.json.Value,
+    posted_index: ?[]const u32,
+};
+
+pub fn rowsToWrite(
+    arena: std.mem.Allocator,
+    rows: []const std.json.Value,
+    flagged: []const InsertError,
+) std.mem.Allocator.Error!WriteSet {
+    if (flagged.len == 0) return .{ .rows = rows, .posted_index = null };
+    const kept = try arena.alloc(std.json.Value, rows.len - flagged.len);
+    const index = try arena.alloc(u32, kept.len);
+    // `flagged` is ascending with one entry per row, so one cursor walks it.
+    var next_flagged: usize = 0;
+    var n: usize = 0;
+    for (rows, 0..) |row, i| {
+        if (next_flagged < flagged.len and flagged[next_flagged].row_index == i) {
+            next_flagged += 1;
+            continue;
+        }
+        kept[n] = row;
+        index[n] = @intCast(i);
+        n += 1;
+    }
+    return .{ .rows = kept, .posted_index = index };
+}
+
+/// Two error lists, each ascending by row, as one ascending list.
+pub fn mergeInsertErrorsByRow(
+    arena: std.mem.Allocator,
+    a: []const InsertError,
+    b: []const InsertError,
+) std.mem.Allocator.Error![]const InsertError {
+    if (a.len == 0) return b;
+    if (b.len == 0) return a;
+    const out = try arena.alloc(InsertError, a.len + b.len);
+    var i: usize = 0;
+    var j: usize = 0;
+    for (out) |*slot| {
+        const take_a = j == b.len or (i < a.len and a[i].row_index <= b[j].row_index);
+        if (take_a) {
+            slot.* = a[i];
+            i += 1;
+        } else {
+            slot.* = b[j];
+            j += 1;
+        }
+    }
+    return out;
 }
 
 /// The `json` object of each posted row, in order.
@@ -73,8 +169,8 @@ pub fn rowsFromBody(
 }
 
 /// Go ValidateDataAgainstSchema: every field of every row must be declared by
-/// the schema. Top-level names only — nested RECORD members are not checked
-/// here (and reaching one that is undeclared is a 500 later).
+/// the schema. Top-level names only; a RECORD member is the Normalizer's to
+/// check when the row is bound.
 ///
 /// At most one error per row, matching BigQuery. Go picks an arbitrary one
 /// because it ranges over a map; this reports the first in document order,
@@ -365,6 +461,86 @@ test "skipInvalidRows is read off the request and defaults to false" {
     try testing.expect(!skipInvalidRows(try parse(arena, "{\"skipInvalidRows\":false}")));
     try testing.expect(!skipInvalidRows(try parse(arena, "{\"rows\":[]}")));
     try testing.expect(!skipInvalidRows(try parse(arena, "{\"skipInvalidRows\":\"true\"}")));
+}
+
+test "ignoreUnknownValues is read off the request and defaults to false" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try testing.expect(ignoreUnknownValues(try parse(arena, "{\"ignoreUnknownValues\":true}")));
+    try testing.expect(!ignoreUnknownValues(try parse(arena, "{\"rows\":[]}")));
+    try testing.expect(!ignoreUnknownValues(try parse(arena, "{\"ignoreUnknownValues\":1}")));
+}
+
+test "stripUnknownFields keeps declared keys in posted order and drops the rest" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const fields = try fieldsFrom(arena,
+        \\[{"name":"name","type":"STRING"},{"name":"age","type":"INTEGER"}]
+    );
+    const rows = try rowsFromBody(arena, try parse(arena,
+        \\{"rows":[{"json":{"zzz":1,"age":30,"name":"Alice","extra":{"deep":true}}},{"json":{}}]}
+    ));
+    const stripped = try stripUnknownFields(arena, fields, rows);
+    try testing.expectEqual(@as(usize, 2), stripped.len);
+    try testing.expectEqual(@as(usize, 2), stripped[0].object.count());
+    try testing.expectEqualStrings("age", stripped[0].object.keys()[0]);
+    try testing.expectEqualStrings("name", stripped[0].object.keys()[1]);
+    try testing.expectEqual(@as(usize, 0), stripped[1].object.count());
+    // Nothing undeclared survives for the validator to find, and a row with
+    // nothing to remove is the posted value itself.
+    const remaining = try validateAgainstSchema(arena, fields, stripped);
+    try testing.expectEqual(@as(usize, 0), remaining.len);
+    const clean = try rowsFromBody(arena, try parse(arena, "{\"rows\":[{\"json\":{\"age\":1}}]}"));
+    const untouched = try stripUnknownFields(arena, fields, clean);
+    try testing.expectEqual(clean[0].object.count(), untouched[0].object.count());
+}
+
+test "rowsToWrite sets flagged rows aside and remembers where the rest were" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rows = try rowsFromBody(arena, try parse(arena,
+        \\{"rows":[{"json":{"a":0}},{"json":{"a":1}},{"json":{"a":2}},{"json":{"a":3}}]}
+    ));
+    const none = try rowsToWrite(arena, rows, &.{});
+    try testing.expectEqual(rows.ptr, none.rows.ptr);
+    try testing.expectEqual(@as(?[]const u32, null), none.posted_index);
+
+    const some = try rowsToWrite(arena, rows, &.{
+        .{ .row_index = 0, .field_name = "zzz", .message = "no such field: zzz." },
+        .{ .row_index = 2, .field_name = "zzz", .message = "no such field: zzz." },
+    });
+    try testing.expectEqual(@as(usize, 2), some.rows.len);
+    try testing.expectEqual(@as(i64, 1), some.rows[0].object.get("a").?.integer);
+    try testing.expectEqual(@as(i64, 3), some.rows[1].object.get("a").?.integer);
+    try testing.expectEqualSlices(u32, &.{ 1, 3 }, some.posted_index.?);
+}
+
+test "mergeInsertErrorsByRow interleaves two ascending lists" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const a = [_]InsertError{
+        .{ .row_index = 0, .field_name = "zzz", .message = "no such field: zzz." },
+        .{ .row_index = 4, .field_name = "zzz", .message = "no such field: zzz." },
+    };
+    const b = [_]InsertError{
+        .{ .row_index = 2, .field_name = "age", .message = "Bad int64 value: x" },
+        .{ .row_index = 5, .field_name = "age", .message = "Bad int64 value: y" },
+    };
+    const merged = try mergeInsertErrorsByRow(arena, &a, &b);
+    try testing.expectEqual(@as(usize, 4), merged.len);
+    try testing.expectEqual(@as(u32, 0), merged[0].row_index);
+    try testing.expectEqual(@as(u32, 2), merged[1].row_index);
+    try testing.expectEqual(@as(u32, 4), merged[2].row_index);
+    try testing.expectEqual(@as(u32, 5), merged[3].row_index);
+    try testing.expectEqual(a[0..].ptr, (try mergeInsertErrorsByRow(arena, &a, &.{})).ptr);
 }
 
 test "schema fields come out of a stored table resource" {

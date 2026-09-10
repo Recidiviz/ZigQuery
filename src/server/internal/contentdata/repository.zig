@@ -10,7 +10,8 @@
 //!  the engine's message). That includes a NULL the engine's own NOT NULL rejects at step time, so
 //!  a column that is NOT NULL in storage but not REQUIRED in the stored schema still yields an
 //!  invalid row rather than an engine failure.
-//! The batch rolls back when any row is invalid, unless `skip_invalid_rows`, which commits the rest
+//! The batch rolls back when any row is invalid, unless `skip_invalid_rows` is true. WHen true, the
+//! only the valid rows will commit.
 
 const std = @import("std");
 const zigquery = @import("zigquery");
@@ -24,11 +25,21 @@ pub const Error = error{
     InsertFailed,
 } || std.mem.Allocator.Error;
 
+/// tabledata.insertAll's two switches, both false by default.
+pub const Options = struct {
+    /// Write the rows that are valid (known field and valid encoding);
+    /// Otherwise one invalid row will roll the batch back.
+    skip_invalid_rows: bool = false,
+    /// Drop a member the schema does not declare; without it the row is marked invalid.
+    ignore_unknown_values: bool = false,
+};
+
 /// What `addTableData` reports back.
 pub const AddTableDataResult = struct {
     /// One entry per row whose values the columns would not take, in row
-    /// order. Empty when every row landed.
-    invalid: []const RowError = &.{},
+    /// order. Empty when every row landed. Mutable so a caller that wrote a
+    /// subset of a posted batch can restore the posted indices.
+    invalid: []RowError = &.{},
 };
 
 /// A value the column would not take, and which row and column it sat in.
@@ -59,7 +70,6 @@ pub const Repository = struct {
     ///`fields` is the table's stored BigQuery schema; every one of them is bound for every row,
     /// so a row missing a key writes NULL there
     ///
-    /// With `skip_invalid_rows` true, the valid rows commit; the rest do not.
     pub fn addTableData(
         r: *Repository,
         project_id: []const u8,
@@ -67,7 +77,7 @@ pub const Repository = struct {
         table_id: []const u8,
         fields: []const std.json.Value,
         rows: []const std.json.Value,
-        skip_invalid_rows: bool,
+        options: Options,
     ) Error!AddTableDataResult {
         // Go returns before touching the connection at all.
         if (rows.len == 0) return .{};
@@ -87,11 +97,11 @@ pub const Repository = struct {
             .stmt = &stmt,
             .plans = try r.planFor(fields),
             .params = try r.arena.alloc(driver.Param, fields.len),
-            .normalizer = .{ .arena = r.arena },
+            .normalizer = .{ .arena = r.arena, .ignore_unknown = options.ignore_unknown_values },
         };
         for (rows, 0..) |row, row_index| try batch.add(row, @intCast(row_index));
 
-        if (batch.invalid.items.len > 0 and !skip_invalid_rows) {
+        if (batch.invalid.items.len > 0 and !options.skip_invalid_rows) {
             r.db.rawExec("ROLLBACK", &.{}) catch return r.failEngine();
         } else {
             r.db.rawExec("COMMIT", &.{}) catch return r.failEngine();
@@ -395,7 +405,7 @@ fn insertInto(
         "t",
         try fieldsOf(arena, fields_json),
         try rowsOf(arena, rows_json),
-        false,
+        .{},
     ) catch |err| {
         std.debug.print("addTableData failed: {t} — {s}\n", .{ err, repo.message });
         return err;
@@ -446,7 +456,7 @@ test "an empty row list writes nothing and touches no connection" {
     try db.exec("CREATE TABLE `p.d.t` (`i` INT64)", &.{}, .{});
 
     var repo = Repository{ .arena = arena, .db = db };
-    const result = try repo.addTableData("p", "d", "t", &.{}, &.{}, false);
+    const result = try repo.addTableData("p", "d", "t", &.{}, &.{}, .{});
     try testing.expectEqual(@as(usize, 0), result.invalid.len);
 
     var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
@@ -566,7 +576,7 @@ test "unparseable JSON is Go's error, and nothing is written" {
         "t",
         try fieldsOf(arena, "[{\"name\":\"j\",\"type\":\"JSON\"}]"),
         try rowsOf(arena, "[{\"j\":\"{not json\"}]"),
-        false,
+        .{},
     );
     const invalid = result.invalid;
     try testing.expectEqual(@as(usize, 1), invalid.len);
@@ -598,7 +608,7 @@ test "bad base64 for a BYTES column is an error" {
         "t",
         try fieldsOf(arena, "[{\"name\":\"b\",\"type\":\"BYTES\"}]"),
         try rowsOf(arena, "[{\"b\":\"not base64!\"}]"),
-        false,
+        .{},
     );
     const invalid = result.invalid;
     try testing.expectEqual(@as(usize, 1), invalid.len);
@@ -672,7 +682,7 @@ test "a value the column will not take names its row and column, and rolls the b
     var repo = Repository{ .arena = arena, .db = db };
     const result = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
         \\[{"i":1,"d":"2024-01-02"},{"i":2,"d":"202-06-06"},{"i":"not a number"},{"i":4}]
-    ), false);
+    ), .{});
     const invalid = result.invalid;
     try testing.expectEqual(@as(usize, 2), invalid.len);
     try testing.expectEqual(@as(u32, 1), invalid[0].row_index);
@@ -703,7 +713,7 @@ test "NULL in a REQUIRED column is an invalid row, key absent or explicit" {
     var repo = Repository{ .arena = arena, .db = db };
     const result = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
         \\[{"a":"ok","b":null},{"a":null,"b":"x"},{"b":"y"}]
-    ), false);
+    ), .{});
     const invalid = result.invalid;
     try testing.expectEqual(@as(usize, 2), invalid.len);
     try testing.expectEqual(@as(u32, 1), invalid[0].row_index);
@@ -736,7 +746,7 @@ test "a REQUIRED member of a RECORD is checked inside the value" {
     var repo = Repository{ .arena = arena, .db = db };
     const result = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
         \\[{"r":{"x":1}},{"r":{"y":"no x"}},{"r":{"x":null,"y":"z"}}]
-    ), true);
+    ), .{ .skip_invalid_rows = true });
     const invalid = result.invalid;
     try testing.expectEqual(@as(usize, 2), invalid.len);
     try testing.expectEqual(@as(u32, 1), invalid[0].row_index);
@@ -771,7 +781,7 @@ test "a NOT NULL the stored schema does not declare is still an invalid row" {
         \\[{"a":"ok","b":null},{"a":null,"b":"x"},{"b":"y"},{"a":"also ok"}]
     );
 
-    const all = try repo.addTableData("p", "d", "t", fields, rows, false);
+    const all = try repo.addTableData("p", "d", "t", fields, rows, .{});
     try testing.expectEqual(@as(usize, 2), all.invalid.len);
     try testing.expectEqual(@as(u32, 1), all.invalid[0].row_index);
     try testing.expectEqualStrings("a", all.invalid[0].field_name);
@@ -789,7 +799,8 @@ test "a NOT NULL the stored schema does not declare is still an invalid row" {
 
     // The statement-level ABORT leaves the transaction open, so with
     // skip_invalid_rows the rows after a rejected one still land.
-    const skipped = try repo.addTableData("p", "d", "t", fields, rows, true);
+    const skipping: Options = .{ .skip_invalid_rows = true };
+    const skipped = try repo.addTableData("p", "d", "t", fields, rows, skipping);
     try testing.expectEqual(@as(usize, 2), skipped.invalid.len);
     var kept = try db.query("SELECT a FROM `p.d.t` ORDER BY a", &.{}, .{});
     defer kept.deinit();
@@ -809,6 +820,35 @@ test "notNullColumn reads the column out of SQLite's message" {
     try testing.expectEqual(@as(?[]const u8, null), notNullColumn("NOT NULL constraint failed: nodot (19)"));
 }
 
+test "ignore_unknown_values drops an undeclared RECORD member; without it the row is invalid" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE `p.d.t` (`r` STRUCT<`x` INT64>)", &.{}, .{});
+
+    const fields = try fieldsOf(arena,
+        \\[{"name":"r","type":"RECORD","fields":[{"name":"x","type":"INTEGER"}]}]
+    );
+    var repo = Repository{ .arena = arena, .db = db };
+    const rejected = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
+        \\[{"r":{"x":1,"zzz":2}}]
+    ), .{});
+    try testing.expectEqual(@as(usize, 1), rejected.invalid.len);
+    try testing.expectEqualStrings("failed to find value from zzz", rejected.invalid[0].message);
+
+    const kept = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
+        \\[{"r":{"x":1,"zzz":2}}]
+    ), .{ .ignore_unknown_values = true });
+    try testing.expectEqual(@as(usize, 0), kept.invalid.len);
+
+    var rows = try db.query("SELECT r.x FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
 test "skip_invalid_rows commits the rows that were fine" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -825,7 +865,7 @@ test "skip_invalid_rows commits the rows that were fine" {
         "t",
         try fieldsOf(arena, "[{\"name\":\"i\",\"type\":\"INTEGER\"}]"),
         try rowsOf(arena, "[{\"i\":1},{\"i\":\"x\"},{\"i\":3}]"),
-        true,
+        .{ .skip_invalid_rows = true },
     );
     const invalid = result.invalid;
     try testing.expectEqual(@as(usize, 1), invalid.len);

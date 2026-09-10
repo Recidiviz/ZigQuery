@@ -985,37 +985,52 @@ pub const Server = struct {
                 .{table_id},
             ));
 
-        const rows = tabledata_handler.rowsFromBody(arena, parsed) catch
+        var rows = tabledata_handler.rowsFromBody(arena, parsed) catch
             return badRequest(arena, "failed to decode request body");
+        const skip_invalid = tabledata_handler.skipInvalidRows(parsed);
+        const ignore_unknown = tabledata_handler.ignoreUnknownValues(parsed);
 
-        const validation = try tabledata_handler.validateAgainstSchema(arena, fields, rows);
-        if (validation.len > 0) {
-            // Nothing is written, and the status stays 200: the errors are
-            // the response body, not an HTTP failure.
-            var out: std.ArrayList(u8) = .empty;
-            try tabledata_handler.writeInsertErrors(arena, &out, validation, rows.len);
-            return .{ .body = out.items };
+        // An undeclared field is dropped or makes its row invalid, and an
+        // invalid row stops the batch unless the rest may be written.
+        var unknown: []const tabledata_handler.InsertError = &.{};
+        if (ignore_unknown) {
+            rows = try tabledata_handler.stripUnknownFields(arena, fields, rows);
+        } else {
+            unknown = try tabledata_handler.validateAgainstSchema(arena, fields, rows);
+            if (unknown.len > 0 and !skip_invalid) {
+                // Nothing is written, and the status stays 200: the errors
+                // are the response body, not an HTTP failure.
+                var out: std.ArrayList(u8) = .empty;
+                try tabledata_handler.writeInsertErrors(arena, &out, unknown, rows.len);
+                return .{ .body = out.items };
+            }
         }
 
-        const skip_invalid = tabledata_handler.skipInvalidRows(parsed);
+        const write_set = try tabledata_handler.rowsToWrite(arena, rows, unknown);
         var repo = contentdata.Repository{ .arena = arena, .db = s.db };
         const result = repo.addTableData(
             project_id,
             dataset_id,
             table_id,
             fields,
-            rows,
-            skip_invalid,
+            write_set.rows,
+            .{ .skip_invalid_rows = skip_invalid, .ignore_unknown_values = ignore_unknown },
         ) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => return internalError(arena, repo.message),
         };
-        if (result.invalid.len > 0) {
+        // The writer numbered the rows it was given; report the posted ones.
+        if (write_set.posted_index) |posted| {
+            for (result.invalid) |*e| e.row_index = posted[e.row_index];
+        }
+
+        const invalid = try tabledata_handler.mergeInsertErrorsByRow(arena, unknown, result.invalid);
+        if (invalid.len > 0) {
             var out: std.ArrayList(u8) = .empty;
             try tabledata_handler.writeInsertErrors(
                 arena,
                 &out,
-                result.invalid,
+                invalid,
                 if (skip_invalid) null else rows.len,
             );
             return .{ .body = out.items };
@@ -2896,6 +2911,70 @@ test "insertAll answers a NULL the engine rejects as an invalid row, not a 500" 
         \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.appended`"}
     );
     try testing.expect(std.mem.indexOf(u8, q.body, "{\"v\":\"1\"}") != null);
+}
+
+test "skipInvalidRows sets unknown-field rows aside and writes the rest" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "mixed");
+
+    // Row 0 has an undeclared field, row 2 a value its column will not take;
+    // both are reported at their posted positions, row 1 lands, and nothing
+    // is `stopped`.
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/mixed/insertAll",
+        \\{"skipInvalidRows":true,"rows":[
+        \\  {"json":{"name":"a","zzz":1}},
+        \\  {"json":{"name":"b","age":"2"}},
+        \\  {"json":{"name":"c","age":"x"}}
+        \\]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"zzz","message":"no such field: zzz.","reason":"invalid"}],"index":0},{"errors":[{"debugInfo":"","location":"age","message":"Bad int64 value: x","reason":"invalid"}],"index":2}]}
+    , res.body);
+
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT name FROM `test.ds1.mixed`"}
+    );
+    try testing.expectEqualStrings("b", try onlyCell(arena, q.body));
+}
+
+test "ignoreUnknownValues drops undeclared fields and writes the row" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "loose");
+
+    const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/loose/insertAll",
+        \\{"ignoreUnknownValues":true,"rows":[{"json":{"name":"a","age":"1","zzz":{"deep":true}}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings("{}", res.body);
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.loose`"}
+    );
+    try testing.expectEqualStrings("1", try onlyCell(arena, q.body));
+
+    // Ignoring unknown values does not soften a bad value: without
+    // skipInvalidRows the batch still stops.
+    const bad = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/loose/insertAll",
+        \\{"ignoreUnknownValues":true,"rows":[{"json":{"name":"ok","age":"2"}},{"json":{"name":"no","age":"x","zzz":1}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, bad.status);
+    try testing.expectEqualStrings(
+        \\{"insertErrors":[{"errors":[{"debugInfo":"","location":"age","message":"Bad int64 value: x","reason":"invalid"}],"index":1},{"errors":[{"debugInfo":"","location":"","message":"","reason":"stopped"}],"index":0}]}
+    , bad.body);
+    const after = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.loose`"}
+    );
+    try testing.expectEqualStrings("1", try onlyCell(arena, after.body));
 }
 
 test "insertAll with skipInvalidRows writes the fine rows and lists the rest" {
