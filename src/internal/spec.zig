@@ -12,11 +12,52 @@ const pb = @import("../proto/resolved_ast.zig");
 
 pub const Error = error{ OutOfMemory, Unimplemented, InvalidType };
 
-/// Go spec.go NameWithType.
+/// A named entry of a composite type: one field of a STRUCT's `field_types`,
+/// or one argument of a FunctionSpec. `is_not_null` is a STRUCT field declared
+/// `NOT NULL` (BigQuery's nested REQUIRED); the DDL renderer turns it into a
+/// CHECK on the column. Serialised only when set.
 pub const NameWithType = struct {
     name: []const u8 = "",
     type: ?*Type = null,
+    is_not_null: bool = false,
 };
+
+/// BigQuery's prefix for a REQUIRED field left NULL, as its streaming API reports it;
+/// the table's row type is `Msg_0_CLOUD_QUERY_TABLE` for every table.
+/// The full message appends `.<column>.<member>...` and a final `.`.
+pub const missing_required_prefix = "Missing required field: Msg_0_CLOUD_QUERY_TABLE";
+
+/// BigQuery's message when DML leaves a REQUIRED member NULL:
+/// `Required field y.x cannot be null; error in writing field y`. `path` is
+/// the dotted member path from the column down; `column` is its first segment.
+pub fn requiredFieldMessage(
+    alloc: std.mem.Allocator,
+    column: []const u8,
+    path: []const u8,
+) error{OutOfMemory}![]u8 {
+    return std.fmt.allocPrint(
+        alloc,
+        "Required field {s} cannot be null; error in writing field {s}",
+        .{ path, column },
+    );
+}
+
+/// The `path` and `column` a `requiredFieldMessage` text names, or null for
+/// any other text. The text may be embedded in a longer error.
+pub const RequiredField = struct { path: []const u8, column: []const u8 };
+
+pub fn requiredFieldFromMessage(text: []const u8) ?RequiredField {
+    const head = "Required field ";
+    const middle = " cannot be null; error in writing field ";
+    const start = std.mem.indexOf(u8, text, head) orelse return null;
+    const after_head = text[start + head.len ..];
+    const mid = std.mem.indexOf(u8, after_head, middle) orelse return null;
+    const path = after_head[0..mid];
+    var column = after_head[mid + middle.len ..];
+    if (std.mem.indexOf(u8, column, " (")) |paren| column = column[0..paren];
+    if (path.len == 0 or column.len == 0) return null;
+    return .{ .path = path, .column = column };
+}
 
 /// A deep copy of `t` in `arena`, so it can outlive whatever produced it.
 ///
@@ -42,6 +83,7 @@ pub fn cloneType(arena: std.mem.Allocator, t: *const Type) std.mem.Allocator.Err
         f.* = .{
             .name = try arena.dupe(u8, src.name),
             .type = if (src.type) |ft| try cloneType(arena, ft) else null,
+            .is_not_null = src.is_not_null,
         };
         dst.* = f;
     }
@@ -233,6 +275,97 @@ pub const ColumnSpec = struct {
     }
 };
 
+/// A STRUCT member declared NOT NULL, located by position so the check walks
+/// the stored value without comparing names: `1.[].0` is the first member of
+/// every element of the array in the column's second member.
+const RequiredMember = struct {
+    position: []const u8,
+    /// The `requiredFieldMessage` a NULL there raises, rendered once here so
+    /// the check allocates nothing.
+    message: []const u8,
+};
+
+/// CONSTRAINT `col` CHECK (zigquery_required(`col`, '<pos>', '<msg>', ...))`
+/// for a column with NOT NULL members somewhere inside its type, else null.
+fn requiredCheckConstraintSQL(alloc: std.mem.Allocator, col: *const ColumnSpec) Error!?[]u8 {
+    var members: std.ArrayList(RequiredMember) = .empty;
+    try collectRequiredMembers(alloc, col.type, "", col.name, &members);
+    if (members.items.len == 0) return null;
+
+    var out: std.ArrayList(u8) = .empty;
+    try out.print(alloc, "CONSTRAINT `{s}` CHECK (zigquery_required(`{s}`", .{
+        col.name, col.name,
+    });
+    for (members.items) |m| {
+        try out.append(alloc, ',');
+        try appendSqlStringLiteral(&out, alloc, m.position);
+        try out.append(alloc, ',');
+        try appendSqlStringLiteral(&out, alloc, m.message);
+    }
+    try out.appendSlice(alloc, "))");
+    return try out.toOwnedSlice(alloc);
+}
+
+/// `'text'` with every `'` doubled: a member's name can carry one, and it
+/// lands in the message.
+fn appendSqlStringLiteral(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    text: []const u8,
+) error{OutOfMemory}!void {
+    try out.append(alloc, '\'');
+    for (text) |c| {
+        if (c == '\'') try out.append(alloc, '\'');
+        try out.append(alloc, c);
+    }
+    try out.append(alloc, '\'');
+}
+
+fn collectRequiredMembers(
+    alloc: std.mem.Allocator,
+    t: *const Type,
+    position: []const u8,
+    names: []const u8,
+    members: *std.ArrayList(RequiredMember),
+) Error!void {
+    return collectRequiredMembersOf(alloc, t, position, names, names, members);
+}
+
+/// `column` is the column's own name, carried down unchanged: a name may
+/// contain a `.`, so it cannot be recovered from `names` by splitting.
+fn collectRequiredMembersOf(
+    alloc: std.mem.Allocator,
+    t: *const Type,
+    position: []const u8,
+    names: []const u8,
+    column: []const u8,
+    members: *std.ArrayList(RequiredMember),
+) Error!void {
+    if (t.isArray()) {
+        const elem = t.element_type orelse return;
+        const inner = if (position.len == 0)
+            "[]"
+        else
+            try std.fmt.allocPrint(alloc, "{s}.[]", .{position});
+        return collectRequiredMembersOf(alloc, elem, inner, names, column, members);
+    }
+    if (!t.isStruct()) return;
+    for (t.field_types, 0..) |field, i| {
+        const pos = if (position.len == 0)
+            try std.fmt.allocPrint(alloc, "{d}", .{i})
+        else
+            try std.fmt.allocPrint(alloc, "{s}.{d}", .{ position, i });
+        const path = try std.fmt.allocPrint(alloc, "{s}.{s}", .{ names, field.name });
+        if (field.is_not_null) {
+            try members.append(alloc, .{
+                .position = pos,
+                .message = try requiredFieldMessage(alloc, column, path),
+            });
+        }
+        if (field.type) |ft| try collectRequiredMembersOf(alloc, ft, pos, path, column, members);
+    }
+}
+
 /// One `OPTIONS(name=value)` entry from CREATE TABLE / CREATE VIEW, as
 /// INFORMATION_SCHEMA.TABLE_OPTIONS reports it.
 ///
@@ -307,6 +440,9 @@ pub const TableSpec = struct {
         var columns: std.ArrayList([]const u8) = .empty;
         for (self.columns) |c| {
             try columns.append(alloc, try c.sqliteSchema(alloc));
+        }
+        for (self.columns) |c| {
+            if (try requiredCheckConstraintSQL(alloc, c)) |check| try columns.append(alloc, check);
         }
         // No PRIMARY KEY clause, deliberately. BigQuery only accepts
         // `PRIMARY KEY ... NOT ENFORCED`: the key is optimizer metadata for
@@ -482,6 +618,7 @@ fn appendTypeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, t: *const T
             } else {
                 try out.appendSlice(alloc, "null");
             }
+            if (field.is_not_null) try out.appendSlice(alloc, ",\"isNotNull\":true");
             try out.append(alloc, '}');
         }
         try out.append(alloc, ']');
@@ -667,6 +804,9 @@ fn typeFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*Type {
                 }
                 if (item.object.get("type")) |tv| {
                     if (tv == .object) nwt.type = try typeFromValue(alloc, tv);
+                }
+                if (item.object.get("isNotNull")) |b| {
+                    if (b == .bool) nwt.is_not_null = b.bool;
                 }
                 fields[i] = nwt;
             }
@@ -1024,6 +1164,128 @@ test "pkIndexSchema lowers a primary key to a non-unique index" {
         .query = "SELECT 1",
     };
     try testing.expectEqual(@as(?[]u8, null), try view.pkIndexSchema(alloc));
+}
+
+test "a NOT NULL STRUCT member round-trips through the type JSON and stays out of it when unset" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const with = try makeGoShapeSpec(alloc);
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const y = try alloc.create(NameWithType);
+    y.* = .{ .name = "y", .type = try newSimpleType(alloc, .TYPE_STRING) };
+    const record = try alloc.create(Type);
+    record.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{ x, y } };
+    const col = try alloc.create(ColumnSpec);
+    col.* = .{ .name = "r", .type = record };
+    with.columns = &.{col};
+
+    const encoded = try with.toJson(alloc);
+    // x carries the key; y, unset, ends its entry right after its type.
+    try testing.expect(std.mem.indexOf(u8, encoded, "\"name\":\"x\",\"type\":{") != null);
+    const x_then_y = "\"fieldTypes\":null},\"isNotNull\":true},{\"name\":\"y\"";
+    try testing.expect(std.mem.indexOf(u8, encoded, x_then_y) != null);
+    const y_entry = "\"name\":\"y\",\"type\":{\"name\":\"\",\"kind\":8,\"signatureKind\":0," ++
+        "\"elementType\":null,\"fieldTypes\":null}}]";
+    try testing.expect(std.mem.indexOf(u8, encoded, y_entry) != null);
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expect(decoded.columns[0].type.field_types[0].is_not_null);
+    try testing.expect(!decoded.columns[0].type.field_types[1].is_not_null);
+    try testing.expect((try cloneType(alloc, record)).field_types[0].is_not_null);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+}
+
+test "SQLiteSchema adds one CHECK per column with NOT NULL members, positioned" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // r STRUCT<x INT64 NOT NULL, inner STRUCT<y STRING NOT NULL>>,
+    // rs ARRAY<STRUCT<k INT64 NOT NULL>>, plain STRUCT<z INT64>
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const y = try alloc.create(NameWithType);
+    y.* = .{ .name = "y", .type = try newSimpleType(alloc, .TYPE_STRING), .is_not_null = true };
+    const inner_t = try alloc.create(Type);
+    inner_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{y} };
+    const inner = try alloc.create(NameWithType);
+    inner.* = .{ .name = "inner", .type = inner_t };
+    const r_t = try alloc.create(Type);
+    r_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{ x, inner } };
+
+    const k = try alloc.create(NameWithType);
+    k.* = .{ .name = "k", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const elem_t = try alloc.create(Type);
+    elem_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{k} };
+    const rs_t = try alloc.create(Type);
+    rs_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_ARRAY), .element_type = elem_t };
+
+    const z = try alloc.create(NameWithType);
+    z.* = .{ .name = "z", .type = try newSimpleType(alloc, .TYPE_INT64) };
+    const plain_t = try alloc.create(Type);
+    plain_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{z} };
+
+    const r = try alloc.create(ColumnSpec);
+    r.* = .{ .name = "r", .type = r_t };
+    const rs = try alloc.create(ColumnSpec);
+    rs.* = .{ .name = "rs", .type = rs_t };
+    const plain = try alloc.create(ColumnSpec);
+    plain.* = .{ .name = "plain", .type = plain_t };
+    const t = try alloc.create(TableSpec);
+    t.* = .{
+        .name_path = &.{"t"},
+        .columns = &.{ r, rs, plain },
+        .create_mode = create_mode_create_default,
+    };
+
+    try testing.expectEqualStrings(
+        "CREATE TABLE `t` (`r` TEXT,`rs` TEXT,`plain` TEXT," ++
+            "CONSTRAINT `r` CHECK (zigquery_required(`r`," ++
+            "'0','Required field r.x cannot be null; error in writing field r'," ++
+            "'1.0','Required field r.inner.y cannot be null; error in writing field r'))," ++
+            "CONSTRAINT `rs` CHECK (zigquery_required(`rs`," ++
+            "'[].0','Required field rs.k cannot be null; error in writing field rs'))) ",
+        try t.sqliteSchema(alloc),
+    );
+}
+
+test "SQLiteSchema quotes a member name's apostrophe and keeps a dotted column name whole" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const its = try alloc.create(NameWithType);
+    its.* = .{ .name = "it's", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const r_t = try alloc.create(Type);
+    r_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{its} };
+    const r = try alloc.create(ColumnSpec);
+    r.* = .{ .name = "a.b", .type = r_t };
+    const t = try alloc.create(TableSpec);
+    t.* = .{ .name_path = &.{"t"}, .columns = &.{r}, .create_mode = create_mode_create_default };
+
+    try testing.expectEqualStrings(
+        "CREATE TABLE `t` (`a.b` TEXT,CONSTRAINT `a.b` CHECK (zigquery_required(`a.b`," ++
+            "'0','Required field a.b.it''s cannot be null; error in writing field a.b'))) ",
+        try t.sqliteSchema(alloc),
+    );
+}
+
+test "requiredFieldFromMessage reads the path and column back, embedded or not" {
+    const ui_text = "Required field y.x cannot be null; error in writing field y";
+    const bare = requiredFieldFromMessage(ui_text).?;
+    try testing.expectEqualStrings("y.x", bare.path);
+    try testing.expectEqualStrings("y", bare.column);
+    const wrapped = requiredFieldFromMessage(
+        "constraint failed: Required field r.inner.y cannot be null; error in writing field r (19)",
+    ).?;
+    try testing.expectEqualStrings("r.inner.y", wrapped.path);
+    try testing.expectEqualStrings("r", wrapped.column);
+    const other = "NOT NULL constraint failed: t.a";
+    try testing.expectEqual(@as(?RequiredField, null), requiredFieldFromMessage(other));
+    const empty = "Required field  cannot be null; error in writing field ";
+    try testing.expectEqual(@as(?RequiredField, null), requiredFieldFromMessage(empty));
 }
 
 test "metadata and source SQL round-trip through JSON and stay out of it when empty" {

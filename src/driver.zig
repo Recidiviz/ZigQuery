@@ -2451,9 +2451,31 @@ fn columnSpecsFromDefs(
             },
             .is_not_null = if (def.annotations) |ann| (ann.not_null orelse false) else false,
         };
+        if (def.annotations) |ann| applyNestedNotNull(col.type, ann);
         columns[i] = col;
     }
     return columns;
+}
+
+/// `STRUCT<x INT64 NOT NULL>` and deeper:
+/// the analyzer's `child_list` has one entry per STRUCT field up to the last one annotated,
+///  and one for an ARRAY's element, so it is walked and the type indexed, never the reverse.
+/// An ARRAY member carries no nullability: BigQuery stores a NULL array as empty, so there is
+/// nothing for NOT NULL to reject.
+fn applyNestedNotNull(t: *spec.Type, ann: *const pb.ResolvedColumnAnnotationsProto) void {
+    if (t.isArray()) {
+        if (ann.child_list.len != 1) return;
+        if (t.element_type) |elem| applyNestedNotNull(elem, ann.child_list[0]);
+        return;
+    }
+    if (!t.isStruct()) return;
+    for (ann.child_list, 0..) |child, i| {
+        if (i >= t.field_types.len) break;
+        const field = t.field_types[i];
+        const ft = field.type orelse continue;
+        field.is_not_null = !ft.isArray() and (child.not_null orelse false);
+        applyNestedNotNull(ft, child);
+    }
 }
 
 /// DDL `OPTIONS(name=value)` as INFORMATION_SCHEMA.TABLE_OPTIONS reports them.
@@ -3731,6 +3753,106 @@ test "DROP TABLE IF EXISTS on nothing is a no-op, DROP TABLE on nothing is an er
     try db.exec("DROP VIEW IF EXISTS `p.d.nothing`", &.{}, .{});
     // Without IF EXISTS, SQLite rejects it first.
     try testing.expectError(error.ExecFailed, db.exec("DROP TABLE d.nothing", &.{}, .{}));
+}
+
+test "a NOT NULL STRUCT member is enforced by DML and reported in BigQuery's words" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec(
+        "CREATE TABLE `p.d.t` (id INT64, r STRUCT<x INT64 NOT NULL, y STRING>, " ++
+            "rs ARRAY<STRUCT<k INT64 NOT NULL>>)",
+        &.{},
+        .{},
+    );
+    const table = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expect(table.columns[1].type.field_types[0].is_not_null);
+    try testing.expect(!table.columns[1].type.field_types[1].is_not_null);
+    try testing.expect(table.columns[2].type.element_type.?.field_types[0].is_not_null);
+
+    try db.exec("INSERT INTO `p.d.t` VALUES (1, STRUCT(1, 'a'), [STRUCT(2)])", &.{}, .{});
+    // A NULL parent has no members to require.
+    try db.exec("INSERT INTO `p.d.t` VALUES (2, NULL, [])", &.{}, .{});
+
+    const cases = [_][]const u8{
+        "INSERT INTO `p.d.t` VALUES (3, STRUCT(NULL, 'a'), [])",
+        "INSERT INTO `p.d.t` SELECT 4, STRUCT(CAST(NULL AS INT64) AS x, 'b' AS y), [] " ++
+            "FROM UNNEST([1])",
+        "UPDATE `p.d.t` SET r = STRUCT(NULL, 'c') WHERE id = 1",
+        "INSERT INTO `p.d.t` VALUES (5, NULL, [STRUCT(1), STRUCT(NULL)])",
+    };
+    for (cases) |sql| {
+        try testing.expectError(error.ExecFailed, db.exec(sql, &.{}, .{}));
+    }
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.d.t` VALUES (6, STRUCT(NULL, 'a'), [])", &.{}, .{}),
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        db.lastError(),
+        "Required field r.x cannot be null; error in writing field r",
+    ) != null);
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.d.t` VALUES (7, NULL, [STRUCT(NULL)])", &.{}, .{}),
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        db.lastError(),
+        "Required field rs.k cannot be null; error in writing field rs",
+    ) != null);
+
+    // A column the check does not reference is free to change.
+    try db.exec("UPDATE `p.d.t` SET id = 10 WHERE id = 1", &.{}, .{});
+    var rows = try db.query("SELECT COUNT(*), MAX(id) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 2), row[0].int);
+    try testing.expectEqual(@as(i64, 10), row[1].int);
+}
+
+test "NOT NULL on an ARRAY member is recorded as nothing, and a NULL array lands" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec(
+        "CREATE TABLE `p.d.t` (r STRUCT<a ARRAY<INT64> NOT NULL, x INT64 NOT NULL>)",
+        &.{},
+        .{},
+    );
+    const table = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expect(!table.columns[0].type.field_types[0].is_not_null);
+    try testing.expect(table.columns[0].type.field_types[1].is_not_null);
+
+    try db.exec("INSERT INTO `p.d.t` VALUES (STRUCT(CAST(NULL AS ARRAY<INT64>), 1))", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.d.t` VALUES (STRUCT([1], NULL))", &.{}, .{}),
+    );
+}
+
+test "a member name with an apostrophe still makes a table with a working check" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE `p.d.t` (r STRUCT<`it's` INT64 NOT NULL>)", &.{}, .{});
+    try db.exec("INSERT INTO `p.d.t` VALUES (STRUCT(1))", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.d.t` VALUES (STRUCT(NULL))", &.{}, .{}),
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        db.lastError(),
+        "Required field r.it's cannot be null; error in writing field r",
+    ) != null);
 }
 
 test "a view keeps the GoogleSQL it was written with" {

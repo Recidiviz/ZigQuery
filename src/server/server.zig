@@ -2450,6 +2450,89 @@ test "nested modes and field descriptions come back exactly as posted" {
     ) != null);
 }
 
+test "a nested REQUIRED posted through tables.insert is enforced by DML and by insertAll" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"nested_req"},
+        \\ "schema":{"fields":[{"name":"id","type":"INTEGER"},
+        \\   {"name":"r","type":"RECORD","fields":[
+        \\     {"name":"x","type":"INTEGER","mode":"REQUIRED"},{"name":"y","type":"STRING"}]}]}}
+    );
+
+    const dml = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"INSERT INTO `test.ds1.nested_req` VALUES (1, STRUCT(NULL AS x, 'a' AS y))"}}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, dml.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        dml.body,
+        "Required field r.x cannot be null; error in writing field r",
+    ) != null);
+
+    const stream_path = "/projects/test/datasets/ds1/tables/nested_req/insertAll";
+    const streamed = try request(s, arena, .POST, stream_path,
+        \\{"rows":[{"json":{"id":2,"r":{"y":"no x"}}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, streamed.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        streamed.body,
+        "Missing required field: Msg_0_CLOUD_QUERY_TABLE.r.x.",
+    ) != null);
+
+    const ok = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"INSERT INTO `test.ds1.nested_req` VALUES (3, STRUCT(3 AS x, 'c' AS y))"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ok.status);
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT COUNT(*) AS n FROM `test.ds1.nested_req`"}
+    );
+    try testing.expectEqualStrings("1", try onlyCell(arena, q.body));
+
+    // A posted schema is what tables.get answers with here.
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/nested_req", "");
+    try testing.expect(
+        std.mem.indexOf(u8, got.body, "\"mode\":\"REQUIRED\",\"name\":\"x\"") != null,
+    );
+}
+
+test "a DDL-made table reports its nested NOT NULL members as REQUIRED" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    const ddl = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"CREATE TABLE `test.ds1.ddl_req` (r STRUCT<x INT64 NOT NULL, y STRING>, rs ARRAY<STRUCT<k INT64 NOT NULL>>)"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ddl.status);
+
+    // No posted schema exists, so the spec renders the modes.
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/ddl_req", "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got.body,
+        \\"fields":[{"mode":"REQUIRED","name":"x","type":"INTEGER"},{"name":"y","type":"STRING"}],"name":"r"
+        ,
+    ) != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got.body,
+        \\"fields":[{"mode":"REQUIRED","name":"k","type":"INTEGER"}],"mode":"REPEATED","name":"rs"
+        ,
+    ) != null);
+}
+
 test "deleting a view drops it from the engine, and tables are listed by id" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
