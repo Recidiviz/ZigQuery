@@ -33,6 +33,9 @@ pub const LoadStats = struct {
     failed_tables: usize = 0,
     rows: usize = 0,
     failed_rows: usize = 0,
+    /// Tables that lost at least one row, so the summary can say a partial
+    /// load happened without listing every rejection.
+    tables_with_failed_rows: u32 = 0,
 };
 
 /// Loads a `--data-from-json` document: projects and datasets into the
@@ -157,6 +160,9 @@ pub fn loadJson(
                 // native JSON types rather than strings.
                 const rows = arrayField(tbl, "data") orelse continue;
                 if (rows.len == 0) continue;
+                // A row the columns will not take is that row's problem, as
+                // it is for insertAll with skipInvalidRows: the others land,
+                // and every rejection is named so the fixture can be fixed.
                 var content = contentdata.Repository{ .arena = arena, .db = db };
                 const result = content.addTableData(
                     project_id,
@@ -164,7 +170,7 @@ pub fn loadJson(
                     table_id,
                     schemaFields(schema_node),
                     rows,
-                    .{},
+                    .{ .skip_invalid_rows = true },
                 ) catch |err| {
                     // Lenient like the rest of JSONSource: a table whose rows
                     // will not load still exists, and empty beats absent.
@@ -173,22 +179,21 @@ pub fn loadJson(
                         .{ project_id, dataset_id, table_id, rows.len, err, content.message },
                     );
                     stats.failed_rows += rows.len;
+                    stats.tables_with_failed_rows += 1;
                     continue;
                 };
-                if (result.invalid.len > 0) {
-                    // The batch is all-or-nothing, one bad value leaves the table empty.
-                    const invalid = result.invalid;
+                for (result.invalid) |rejected| {
                     std.log.warn(
-                        "source table {s}.{s}.{s}: {d} rows failed to load: row {d} {s}: {s}",
+                        "source table {s}.{s}.{s}: row {d} not loaded, {s}: {s}",
                         .{
-                            project_id,           dataset_id,            table_id,           rows.len,
-                            invalid[0].row_index, invalid[0].field_name, invalid[0].message,
+                            project_id,         dataset_id,          table_id,
+                            rejected.row_index, rejected.field_name, rejected.message,
                         },
                     );
-                    stats.failed_rows += rows.len;
-                    continue;
                 }
-                stats.rows += rows.len;
+                if (result.invalid.len > 0) stats.tables_with_failed_rows += 1;
+                stats.failed_rows += result.invalid.len;
+                stats.rows += rows.len - result.invalid.len;
             }
         }
     }
@@ -315,7 +320,7 @@ test "a table with no `data` member still loads" {
     try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
 }
 
-test "rows that cannot be shaped leave the table present but empty" {
+test "a row that cannot be shaped is left out, and the rest of the table loads" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -328,8 +333,8 @@ test "rows that cannot be shaped leave the table present but empty" {
     testing.log_level = .err;
     defer testing.log_level = saved_log_level;
 
-    // "not a number" cannot cast to INT64, so the batch rolls back — but
-    // JSONSource is lenient and the table still exists.
+    // "not a number" cannot cast to INT64; that row is reported and the other
+    // one lands.
     const stats = try loadInto(arena, db,
         \\[{"id":"p","datasets":[{"id":"d","tables":[
         \\  {"id":"t","columns":[{"name":"a","type":"INTEGER"}],
@@ -337,12 +342,70 @@ test "rows that cannot be shaped leave the table present but empty" {
         \\]}]}]
     );
     try testing.expectEqual(@as(usize, 1), stats.tables);
-    try testing.expectEqual(@as(usize, 0), stats.rows);
-    try testing.expectEqual(@as(usize, 2), stats.failed_rows);
+    try testing.expectEqual(@as(usize, 1), stats.rows);
+    try testing.expectEqual(@as(usize, 1), stats.failed_rows);
+    try testing.expectEqual(@as(u32, 1), stats.tables_with_failed_rows);
 
-    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
     defer rows.deinit();
-    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
+}
+
+test "a REQUIRED column rejects the rows that leave it NULL, absent key or explicit" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    const saved_log_level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = saved_log_level;
+
+    const stats = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","schema":{"fields":[
+        \\     {"name":"a","type":"STRING","mode":"REQUIRED"},{"name":"b","type":"STRING"}]},
+        \\   "data":[{"b":"no a"},{"a":null,"b":"null a"},{"a":"kept","b":"fine"}]},
+        \\  {"id":"clean","columns":[{"name":"x","type":"INTEGER"}],"data":[{"x":1}]}
+        \\]}]}]
+    );
+    try testing.expectEqual(@as(usize, 2), stats.tables);
+    try testing.expectEqual(@as(usize, 2), stats.rows);
+    try testing.expectEqual(@as(usize, 2), stats.failed_rows);
+    try testing.expectEqual(@as(u32, 1), stats.tables_with_failed_rows);
+
+    var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("kept", (try rows.next()).?[0].string);
+    try testing.expectEqual(@as(?[]const driver.Cell, null), try rows.next());
+}
+
+test "an undeclared RECORD member in a fixture row is a rejection, not dropped" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    const saved_log_level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = saved_log_level;
+
+    const stats = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","schema":{"fields":[
+        \\     {"name":"r","type":"RECORD","fields":[{"name":"x","type":"INTEGER"}]}]},
+        \\   "data":[{"r":{"x":1,"typo":2}},{"r":{"x":3}}]}
+        \\]}]}]
+    );
+    try testing.expectEqual(@as(usize, 1), stats.rows);
+    try testing.expectEqual(@as(usize, 1), stats.failed_rows);
+
+    var rows = try db.query("SELECT r.x FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 3), (try rows.next()).?[0].int);
 }
 
 test "loads projects, datasets and tables, and the tables are queryable" {

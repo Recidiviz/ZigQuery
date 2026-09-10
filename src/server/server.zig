@@ -170,14 +170,20 @@ pub const Server = struct {
             };
             std.log.info(
                 "loaded {d} projects, {d} datasets, {d} tables ({d} failed), " ++
-                    "{d} rows ({d} failed) from {s}",
+                    "{d} rows ({d} failed, across {d} tables) from {s}",
                 .{
-                    stats.projects, stats.datasets,
-                    stats.tables,   stats.failed_tables,
-                    stats.rows,     stats.failed_rows,
-                    path,
+                    stats.projects,                stats.datasets,
+                    stats.tables,                  stats.failed_tables,
+                    stats.rows,                    stats.failed_rows,
+                    stats.tables_with_failed_rows, path,
                 },
             );
+            if (stats.failed_rows > 0) {
+                std.log.warn(
+                    "{d} rows in {d} tables of {s} were not loaded; each is named above",
+                    .{ stats.failed_rows, stats.tables_with_failed_rows, path },
+                );
+            }
         }
         // Startup loading is engine work but not request work, and counting it
         // would put analysis and SQLite time in the phase totals that never
