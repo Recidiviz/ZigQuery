@@ -76,6 +76,26 @@ pub fn writeTableListEntry(
     try writeJsonValue(arena, out, .{ .object = obj });
 }
 
+/// The posted body reduced to what the catalog keeps for it: every key the
+/// server does not compute, plus `schema`, whose nested modes and field
+/// descriptions only the posted node carries. Rendered with sorted keys.
+pub fn writeMetadata(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    posted: std.json.Value,
+) !void {
+    var obj: std.json.ObjectMap = .empty;
+    if (posted == .object) {
+        var it = posted.object.iterator();
+        while (it.next()) |kv| {
+            const k = kv.key_ptr.*;
+            if (isServerComputedKey(k) and !std.mem.eql(u8, k, "schema")) continue;
+            try obj.put(arena, k, kv.value_ptr.*);
+        }
+    }
+    try writeJsonValue(arena, out, .{ .object = obj });
+}
+
 /// Keys the emulator always computes, whatever the client posted.
 fn isServerComputedKey(k: []const u8) bool {
     const computed = [_][]const u8{

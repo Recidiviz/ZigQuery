@@ -121,6 +121,9 @@ pub const Server = struct {
             .pragmas = store.pragmas(),
             .busy_timeout_ms = 5000,
         });
+        // Until a job runs, DDL that names only `dataset.table` means this
+        // project; each job then sets its own.
+        s.db.default_project = s.project;
         // The connection's pragmas, when an environment override changed them.
         // A comparison run's whole claim rests on the knob having been
         // applied, and this is the only place that can say so.
@@ -157,8 +160,6 @@ pub const Server = struct {
                 arena,
                 s.db,
                 &s.repo,
-                s.endpoint,
-                @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
                 bytes,
             ) catch |err| {
                 std.log.err(
@@ -312,6 +313,10 @@ pub const Server = struct {
         project_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
+        // DDL in this job resolves `dataset.table` against the job's project;
+        // outside a job it is the server's, whatever ran last.
+        s.db.default_project = project_id;
+        defer s.db.default_project = s.project;
 
         const q = query_handler.parseRequest(arena, req.body, req.query) catch |err| switch (err) {
             error.OutOfMemory => return err,
@@ -637,7 +642,6 @@ pub const Server = struct {
             );
             s.db.exec(ddl, &.{}, .{}) catch {};
         }
-        try s.repo.deleteTablesInDataset(project_id, dataset_id);
         try s.repo.deleteDataset(project_id, dataset_id);
         return .{ .body = "" };
     }
@@ -661,12 +665,20 @@ pub const Server = struct {
         const schema_node: ?std.json.Value =
             if (parsed == .object) parsed.object.get("schema") else null;
 
+        if (try server.db.catalogTable(arena, project_id, dataset_id, table_id)) |_| {
+            return .{
+                .status = .conflict,
+                .body = try errors.body(arena, .duplicate, try std.fmt.allocPrint(
+                    arena,
+                    "Already Exists: Table {s}:{s}.{s}",
+                    .{ project_id, dataset_id, table_id },
+                )),
+            };
+        }
+
         // A table only becomes queryable once the DDL runs; Go does the same
         // through its content repository.
-        var kind: []const u8 = "TABLE";
-        var effective_schema = schema_node;
         if (tables_handler.viewQueryFromBody(parsed)) |view_sql| {
-            kind = "VIEW";
             const ddl = try std.fmt.allocPrint(
                 arena,
                 "CREATE OR REPLACE VIEW `{s}.{s}.{s}` AS {s}",
@@ -682,15 +694,6 @@ pub const Server = struct {
                     ),
                 };
             };
-            // A client posts a view with no schema; the columns are whatever
-            // the SELECT resolves to. Go returns them from CreateView and
-            // assigns them to the resource (handler.go tablesInsertHandler),
-            // which is what google-cloud-bigquery reads off create_table().
-            if (try server.db.catalogTable(arena, project_id, dataset_id, table_id)) |view_spec| {
-                if (try schemaJsonFromSpec(arena, view_spec)) |derived| {
-                    effective_schema = derived;
-                }
-            }
         } else {
             const ddl = schema_mod.createTableDdl(
                 arena,
@@ -720,21 +723,17 @@ pub const Server = struct {
             };
         }
 
-        const meta = tables_handler.TableMeta{
-            .project_id = project_id,
-            .dataset_id = dataset_id,
-            .table_id = table_id,
-            .endpoint = server.endpoint,
-            .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
-            .schema = effective_schema,
-            .kind = kind,
-            .posted = parsed,
-        };
-        var out: std.ArrayList(u8) = .empty;
-        try tables_handler.writeTable(arena, &out, meta);
-        try server.repo.addTable(project_id, dataset_id, table_id, out.items);
+        // The posted body is the table's resource from here on; the DDL just
+        // made the spec it hangs off.
+        var metadata_json: std.ArrayList(u8) = .empty;
+        try tables_handler.writeMetadata(arena, &metadata_json, parsed);
+        const db = server.db;
+        db.setTableMetadata(arena, project_id, dataset_id, table_id, metadata_json.items) catch
+            return internalError(arena, "table was created but its metadata was not recorded");
 
-        return .{ .body = out.items };
+        const table_spec = (try db.catalogTable(arena, project_id, dataset_id, table_id)) orelse
+            return internalError(arena, "table was created but is not in the catalog");
+        return .{ .body = try server.tableResource(arena, table_spec) };
     }
 
     fn handleTablesGet(
@@ -745,76 +744,97 @@ pub const Server = struct {
         table_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
-        if (try s.repo.findTable(arena, project_id, dataset_id, table_id)) |stored| {
-            return .{ .body = stored };
-        }
-
-        // Not in the metadata store, which does not mean it does not exist:
-        // anything created by SQL rather than by tables.insert — a
-        // CREATE OR REPLACE VIEW run as a query job, a CTAS — lives in the
-        // engine catalog only. Go reconciles these eagerly via
-        // ChangedCatalog + syncCatalog (handler.go:2218-2320); here the
-        // metadata store is treated as a cache over the engine, which is the
-        // actual source of truth, and the row is filled in on first read.
-        if (try s.tableResourceFromEngine(arena, project_id, dataset_id, table_id)) |resource| {
-            try s.repo.addTable(project_id, dataset_id, table_id, resource);
-            return .{ .body = resource };
-        }
-
-        return notFound(arena, try std.fmt.allocPrint(
-            arena,
-            "table {s} is not found",
-            .{table_id},
-        ));
+        const table_spec = (try s.db.catalogTable(arena, project_id, dataset_id, table_id)) orelse
+            return notFound(arena, try std.fmt.allocPrint(
+                arena,
+                "table {s} is not found",
+                .{table_id},
+            ));
+        return .{ .body = try s.tableResource(arena, table_spec) };
     }
 
-    /// Builds a table resource for something the engine knows about but the
-    /// metadata store does not, deriving its schema from the engine. Returns
-    /// null when the engine does not have it either.
+    /// The metadata API's resource for a catalog spec: what the client posted
+    /// (`TableSpec.metadata`) under the keys the server computes. A spec
+    /// nobody posted — created by DDL — renders its schema from its columns
+    /// and, for a view, its query from the SQL it was written with.
     ///
-    /// Public because the Storage Read API needs the same fallback: a table
-    /// created by `CREATE TABLE` rather than `tables.insert` is in the engine's
-    /// catalog and not in the metadata store, and a session over one must fall
-    /// back the way `tables.get` does.
-    pub fn tableResourceFromEngine(
+    /// Public because the Storage Read API renders the same resource for a
+    /// session's table.
+    pub fn tableResource(
         s: *Server,
         arena: std.mem.Allocator,
-        project_id: []const u8,
-        dataset_id: []const u8,
-        table_id: []const u8,
-    ) !?[]const u8 {
-        // Look the object up in the catalog rather than probing with a
-        // SELECT. A probe answers "is this currently resolvable", not "does
-        // this exist": while views are being materialized their dependencies
-        // are dropped and recreated constantly, so a probe reports a
-        // perfectly good view as missing whenever it happens to race one of
-        // those windows.
-        const table_spec = (try s.db.catalogTable(
-            arena,
-            project_id,
-            dataset_id,
-            table_id,
-        )) orelse return null;
-
-        const schema_json = try schemaJsonFromSpec(arena, table_spec);
-
+        table_spec: *const zigquery.spec.TableSpec,
+    ) ![]const u8 {
         var out: std.ArrayList(u8) = .empty;
-        try tables_handler.writeTable(arena, &out, .{
-            .project_id = project_id,
-            .dataset_id = dataset_id,
-            .table_id = table_id,
-            .endpoint = s.endpoint,
-            .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
-            .schema = schema_json,
-            .kind = if (table_spec.is_view) "VIEW" else "TABLE",
-        });
+        try tables_handler.writeTable(arena, &out, try s.tableMeta(arena, table_spec));
         return out.items;
     }
 
-    /// server/handler.go tablesPatchHandler: a key-level merge of the posted
-    /// body over the stored resource (metadata.Table.Update is `maps.Copy`
-    /// then override), answering with the merged resource. `schema` is
-    /// rejected outright, as Go does.
+    /// The parsed `metadata` of a spec, or null when nothing was posted.
+    fn postedOf(
+        arena: std.mem.Allocator,
+        table_spec: *const zigquery.spec.TableSpec,
+    ) !?std.json.Value {
+        const text = table_spec.metadata;
+        if (text.len == 0) return null;
+        const v = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch return null;
+        return if (v == .object) v else null;
+    }
+
+    /// The `schema` node a resource for this spec carries: the posted one
+    /// when there is one, since only it knows nested modes and field
+    /// descriptions, else the columns.
+    fn schemaNode(
+        arena: std.mem.Allocator,
+        table_spec: *const zigquery.spec.TableSpec,
+    ) !?std.json.Value {
+        if (try postedOf(arena, table_spec)) |posted| {
+            if (posted.object.get("schema")) |schema| return schema;
+        }
+        return schemaJsonFromSpec(arena, table_spec);
+    }
+
+    fn tableMeta(
+        s: *Server,
+        arena: std.mem.Allocator,
+        table_spec: *const zigquery.spec.TableSpec,
+    ) !tables_handler.TableMeta {
+        const path = table_spec.name_path;
+        var posted = try postedOf(arena, table_spec);
+        // A view made by DDL has no posted `view`; the resource still reports
+        // the query, as BigQuery does.
+        if (table_spec.is_view and table_spec.source_sql.len > 0 and
+            (posted == null or !posted.?.object.contains("view")))
+        {
+            var view: std.json.ObjectMap = .empty;
+            try view.put(arena, "query", .{ .string = table_spec.source_sql });
+            try view.put(arena, "useLegacySql", .{ .bool = false });
+            var obj: std.json.ObjectMap = .empty;
+            if (posted) |p| {
+                var it = p.object.iterator();
+                while (it.next()) |kv| try obj.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+            }
+            try obj.put(arena, "view", .{ .object = view });
+            posted = .{ .object = obj };
+        }
+        // A synthetic spec (a job's result table) carries no creation time.
+        const created_micros = zigquery.catalog.epochMicrosFromRfc3339(table_spec.created_at);
+        const created_millis: i64 = if (created_micros) |us|
+            @divFloor(us, std.time.us_per_ms)
+        else
+            s.started_ms;
+        return .{
+            .project_id = path[0],
+            .dataset_id = path[1],
+            .table_id = path[2],
+            .endpoint = s.endpoint,
+            .created_millis = created_millis,
+            .schema = try schemaNode(arena, table_spec),
+            .kind = if (table_spec.is_view) "VIEW" else "TABLE",
+            .posted = posted,
+        };
+    }
+
     fn handleTablesPatch(
         s: *Server,
         req: *const http_server.Request,
@@ -829,23 +849,15 @@ pub const Server = struct {
         if (patch == .object and patch.object.contains("schema")) {
             return badRequest(arena, "schema updates unsupported");
         }
-
-        // Fall back to the engine for a table that was created by SQL and has
-        // never been read, exactly as tables.get does.
-        const stored = (try s.repo.findTable(arena, project_id, dataset_id, table_id)) orelse
-            (try s.tableResourceFromEngine(arena, project_id, dataset_id, table_id)) orelse
+        const table_spec = (try s.db.catalogTable(arena, project_id, dataset_id, table_id)) orelse
             return notFound(arena, try std.fmt.allocPrint(
                 arena,
                 "table {s} is not found",
                 .{table_id},
             ));
 
-        const current = std.json.parseFromSliceLeaky(std.json.Value, arena, stored, .{}) catch {
-            return .{ .body = stored };
-        };
-
         var merged: std.json.ObjectMap = .empty;
-        if (current == .object) {
+        if (try postedOf(arena, table_spec)) |current| {
             var it = current.object.iterator();
             while (it.next()) |kv| try merged.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
@@ -854,19 +866,23 @@ pub const Server = struct {
             while (it.next()) |kv| try merged.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
 
-        var out: std.ArrayList(u8) = .empty;
-        try tables_handler.writeTable(arena, &out, .{
-            .project_id = project_id,
-            .dataset_id = dataset_id,
-            .table_id = table_id,
-            .endpoint = s.endpoint,
-            .created_millis = creationMillisOf(current),
-            .schema = schemaOf(current),
-            .kind = typeOf(current),
-            .posted = .{ .object = merged },
-        });
-        try s.repo.addTable(project_id, dataset_id, table_id, out.items);
-        return .{ .body = out.items };
+        var metadata_json: std.ArrayList(u8) = .empty;
+        try tables_handler.writeMetadata(arena, &metadata_json, .{ .object = merged });
+        const json = metadata_json.items;
+        const outcome = s.db.setTableMetadata(arena, project_id, dataset_id, table_id, json);
+        outcome catch |err| switch (err) {
+            // A query's result table exists for the analyzer only; there
+            // is nothing to keep an update on.
+            error.NotPersistent => return badRequest(arena, try std.fmt.allocPrint(
+                arena,
+                "table {s} is a query result and cannot be updated",
+                .{table_id},
+            )),
+            else => return internalError(arena, "table metadata was not recorded"),
+        };
+        const updated = (try s.db.catalogTable(arena, project_id, dataset_id, table_id)) orelse
+            return internalError(arena, "table vanished while being patched");
+        return .{ .body = try s.tableResource(arena, updated) };
     }
 
     /// A catalog spec's columns as the parsed `schema` node of a table
@@ -888,34 +904,28 @@ pub const Server = struct {
         dataset_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
-        const metas = try s.repo.listTables(arena, project_id, dataset_id);
+        const specs = try s.db.catalogTablesIn(arena, project_id, dataset_id);
+        // The catalog holds registration order; the API lists by id.
+        std.mem.sort(*const zigquery.spec.TableSpec, @constCast(specs), {}, tableIdLessThan);
 
         var out: std.ArrayList(u8) = .empty;
         try out.appendSlice(arena, "{\"tables\":[");
-        for (metas, 0..) |meta_json, i| {
+        for (specs, 0..) |table_spec, i| {
             if (i > 0) try out.append(arena, ',');
-            // Stored metadata is the full resource; list returns the
-            // abbreviated form, so re-render from the parsed value.
-            const v = std.json.parseFromSliceLeaky(std.json.Value, arena, meta_json, .{}) catch {
-                try out.appendSlice(arena, meta_json);
-                continue;
-            };
-            try tables_handler.writeTableListEntry(arena, &out, .{
-                .project_id = project_id,
-                .dataset_id = dataset_id,
-                .table_id = tableIdOf(v) orelse "",
-                .endpoint = s.endpoint,
-                .created_millis = creationMillisOf(v),
-                .kind = typeOf(v),
-                // Go's TableListTables echoes clustering, labels and the
-                // partitioning fields off the stored resource.
-                .posted = v,
-            });
+            try tables_handler.writeTableListEntry(arena, &out, try s.tableMeta(arena, table_spec));
         }
         try out.appendSlice(arena, "],\"totalItems\":");
-        try out.print(arena, "{d}", .{metas.len});
+        try out.print(arena, "{d}", .{specs.len});
         try out.append(arena, '}');
         return .{ .body = out.items };
+    }
+
+    fn tableIdLessThan(
+        _: void,
+        a: *const zigquery.spec.TableSpec,
+        b: *const zigquery.spec.TableSpec,
+    ) bool {
+        return std.mem.lessThan(u8, a.name_path[2], b.name_path[2]);
     }
 
     fn handleTablesDelete(
@@ -926,14 +936,22 @@ pub const Server = struct {
         table_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
-        // Drop from the content database too, so a later CREATE succeeds.
+        const table_spec = (try s.db.catalogTable(arena, project_id, dataset_id, table_id)) orelse
+            return notFound(arena, try std.fmt.allocPrint(
+                arena,
+                "table {s} is not found",
+                .{table_id},
+            ));
+        // IF EXISTS: the spec is what is being removed; the SQLite object may
+        // already be gone, and the spec must not outlive this request either way.
         const ddl = try std.fmt.allocPrint(
             arena,
-            "DROP TABLE IF EXISTS `{s}.{s}.{s}`",
-            .{ project_id, dataset_id, table_id },
+            "DROP {s} IF EXISTS `{s}.{s}.{s}`",
+            .{ if (table_spec.is_view) "VIEW" else "TABLE", project_id, dataset_id, table_id },
         );
-        s.db.exec(ddl, &.{}, .{}) catch {};
-        try s.repo.deleteTable(project_id, dataset_id, table_id);
+        s.db.exec(ddl, &.{}, .{}) catch {
+            return internalError(arena, try query_handler.wrapEngineError(arena, s.db.lastError()));
+        };
         return .{ .body = "" };
     }
 
@@ -954,17 +972,13 @@ pub const Server = struct {
             return badRequest(arena, "failed to decode request body");
         };
 
-        // Go resolves the table in withTableMiddleware, before the handler
-        // runs, and 404s from the metadata store alone.
-        const stored = (try s.repo.findTable(arena, project_id, dataset_id, table_id)) orelse
+        const table_spec = (try s.db.catalogTable(arena, project_id, dataset_id, table_id)) orelse
             return notFound(arena, try std.fmt.allocPrint(
                 arena,
                 "table {s} is not found",
                 .{table_id},
             ));
-        const meta = std.json.parseFromSliceLeaky(std.json.Value, arena, stored, .{}) catch
-            return internalError(arena, "failed to decode metadata to table");
-        const fields = tabledata_handler.schemaFieldsOf(meta) orelse
+        const fields = tabledata_handler.fieldsOfSchema(try schemaNode(arena, table_spec)) orelse
             return internalError(arena, try std.fmt.allocPrint(
                 arena,
                 "table {s} has no schema",
@@ -1021,6 +1035,10 @@ pub const Server = struct {
         project_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
+        // DDL in this job resolves `dataset.table` against the job's project;
+        // outside a job it is the server's, whatever ran last.
+        s.db.default_project = project_id;
+        defer s.db.default_project = s.project;
 
         const job = jobs_handler.parseInsert(arena, req.body) catch {
             return badRequest(arena, "failed to decode request body");
@@ -1051,6 +1069,12 @@ pub const Server = struct {
         // materialization writes results. Run the DDL form instead of the
         // bare SELECT, then record the resulting table's metadata.
         const res = if (jobs_handler.destinationFromJobConfig(job)) |dst| blk: {
+            const prior_metadata: []const u8 = if (try s.db.catalogTable(
+                arena,
+                dst.project_id,
+                dst.dataset_id,
+                dst.table_id,
+            )) |existing| existing.metadata else "";
             const materialization_method = s.materializeInto(arena, dst, sql, params) catch |err| switch (err) {
                 error.MaterializeFailed => return .{
                     .status = .bad_request,
@@ -1062,7 +1086,7 @@ pub const Server = struct {
                 },
                 else => return err,
             };
-            try s.recordMaterializedTable(arena, dst, materialization_method);
+            try s.recordMaterializedTable(arena, dst, materialization_method, prior_metadata);
             // The job's own result mirrors the query's SELECT output, the same
             // rows just written to the destination table — not the table's
             // full contents, which for WRITE_APPEND can hold more than this
@@ -1262,58 +1286,21 @@ pub const Server = struct {
         return .replaced;
     }
 
-    /// Registers the table a materialization job wrote.
-    ///
-    /// An append writes rows into a table whose declared resource — modes,
-    /// clustering, partitioning, description — still describes it, so that
-    /// resource stands.
-    /// A table that has one only in the engine catalog gets
-    /// the same fill-in tables.get performs, which carries NOT NULL through as
-    /// REQUIRED.
-    /// A replace produces a new table, derived from the shape returned by  the query.
+    /// After a materialization job: the destination's dataset exists in the
+    /// metadata store, and a rebuilt destination keeps the resource keys it
+    /// had before the job, schema aside — BigQuery keeps a truncated table's
+    /// description, labels and clustering. An append changed nothing the
+    /// catalog does not already hold.
     fn recordMaterializedTable(
         s: *Server,
         arena: std.mem.Allocator,
         dst: jobs_handler.Destination,
         materialization_method: MaterializationMethod,
+        prior_metadata: []const u8,
     ) !void {
-        if (materialization_method == .appended) {
-            const p, const d, const t = .{ dst.project_id, dst.dataset_id, dst.table_id };
-            if (try s.repo.findTable(arena, p, d, t)) |_| return;
-            if (try s.tableResourceFromEngine(arena, p, d, t)) |resource| {
-                try s.repo.addTable(p, d, t, resource);
-                return;
-            }
+        if (materialization_method == .replaced) {
+            try s.carryMetadataOverRebuild(arena, dst, prior_metadata);
         }
-
-        const probe = try std.fmt.allocPrint(
-            arena,
-            "SELECT * FROM `{s}.{s}.{s}` LIMIT 0",
-            .{ dst.project_id, dst.dataset_id, dst.table_id },
-        );
-        var schema_json: ?std.json.Value = null;
-        if (s.db.query(probe, &.{}, .{})) |r| {
-            var rows = r;
-            defer rows.deinit();
-            var sbuf: std.ArrayList(u8) = .empty;
-            try schema_mod.writeSchema(arena, &sbuf, rows.columnTypes());
-            schema_json = std.json.parseFromSliceLeaky(
-                std.json.Value,
-                arena,
-                sbuf.items,
-                .{},
-            ) catch null;
-        } else |_| {}
-
-        var meta: std.ArrayList(u8) = .empty;
-        try tables_handler.writeTable(arena, &meta, .{
-            .project_id = dst.project_id,
-            .dataset_id = dst.dataset_id,
-            .table_id = dst.table_id,
-            .endpoint = s.endpoint,
-            .created_millis = @divFloor(@as(i64, @bitCast(nowSeed())), 1000),
-            .schema = schema_json,
-        });
         // The destination dataset may not have been created explicitly.
         if (!try s.repo.datasetExists(dst.project_id, dst.dataset_id)) {
             var ds_meta: std.ArrayList(u8) = .empty;
@@ -1327,7 +1314,39 @@ pub const Server = struct {
             try s.repo.addDataset(dst.project_id, dst.dataset_id, ds_meta.items);
             try s.db.ensureDataset(dst.project_id, dst.dataset_id);
         }
-        try s.repo.addTable(dst.project_id, dst.dataset_id, dst.table_id, meta.items);
+    }
+
+    /// Re-attaches a rebuilt destination's posted keys, minus `schema`, which
+    /// the query now defines.
+    fn carryMetadataOverRebuild(
+        s: *Server,
+        arena: std.mem.Allocator,
+        dst: jobs_handler.Destination,
+        prior_metadata: []const u8,
+    ) !void {
+        if (prior_metadata.len == 0) return;
+        const prior = std.json.parseFromSliceLeaky(std.json.Value, arena, prior_metadata, .{}) catch
+            return;
+        if (prior != .object) return;
+        var kept: std.json.ObjectMap = .empty;
+        var it = prior.object.iterator();
+        while (it.next()) |kv| {
+            if (std.mem.eql(u8, kv.key_ptr.*, "schema")) continue;
+            try kept.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+        }
+        if (kept.count() == 0) return;
+        var metadata_json: std.ArrayList(u8) = .empty;
+        try tables_handler.writeMetadata(arena, &metadata_json, .{ .object = kept });
+        s.db.setTableMetadata(
+            arena,
+            dst.project_id,
+            dst.dataset_id,
+            dst.table_id,
+            metadata_json.items,
+        ) catch |err| std.log.warn(
+            "metadata for {s}.{s}.{s} not carried over the rebuild: {t}",
+            .{ dst.project_id, dst.dataset_id, dst.table_id, err },
+        );
     }
 
     /// server/handler.go jobsGetHandler.
@@ -1370,32 +1389,6 @@ pub const Server = struct {
         return .{ .body = out.items };
     }
 };
-
-fn tableIdOf(v: std.json.Value) ?[]const u8 {
-    if (v != .object) return null;
-    const ref = v.object.get("tableReference") orelse return null;
-    if (ref != .object) return null;
-    const id = ref.object.get("tableId") orelse return null;
-    return if (id == .string) id.string else null;
-}
-
-fn creationMillisOf(v: std.json.Value) i64 {
-    if (v != .object) return 0;
-    const c = v.object.get("creationTime") orelse return 0;
-    if (c != .string) return 0;
-    return std.fmt.parseInt(i64, c.string, 10) catch 0;
-}
-
-fn typeOf(v: std.json.Value) []const u8 {
-    if (v != .object) return "TABLE";
-    const t = v.object.get("type") orelse return "TABLE";
-    return if (t == .string) t.string else "TABLE";
-}
-
-fn schemaOf(v: std.json.Value) ?std.json.Value {
-    if (v != .object) return null;
-    return v.object.get("schema");
-}
 
 fn notFound(arena: std.mem.Allocator, msg: []const u8) !http_server.Response {
     return .{ .status = .not_found, .body = try errors.body(arena, .not_found, msg) };
@@ -2180,6 +2173,295 @@ test "posted table fields survive a round trip, and patch merges over them" {
 
     const after = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/clustered", "");
     try testing.expectEqualStrings(patched.body, after.body);
+}
+
+test "a table made by a CTAS job is listed, streams rows, and a replace shows through" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/test/datasets",
+        \\{"datasetReference":{"projectId":"test","datasetId":"ds1"}}
+    );
+    const ctas = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE `test.ds1.made` AS SELECT 1 AS n, 'x' AS s"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ctas.status);
+
+    // tables.list and insertAll see it without anyone calling tables.get.
+    const listed = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables", "");
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"tableId\":\"made\"") != null);
+    const streamed = try request(
+        s,
+        arena,
+        .POST,
+        "/projects/test/datasets/ds1/tables/made/insertAll",
+        \\{"rows":[{"json":{"n":2,"s":"y"}}]}
+        ,
+    );
+    try testing.expectEqual(std.http.Status.ok, streamed.status);
+    try testing.expectEqualStrings("{}", streamed.body);
+
+    // A replace through DDL is what tables.get reports next.
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/made", "");
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"name\":\"s\"") != null);
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE OR REPLACE TABLE `test.ds1.made` AS SELECT DATE '2026-01-01' AS d"}}}
+    );
+    const after = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/made", "");
+    try testing.expect(std.mem.indexOf(u8, after.body, "\"name\":\"d\",\"type\":\"DATE\"") != null);
+    try testing.expect(std.mem.indexOf(u8, after.body, "\"name\":\"s\"") == null);
+}
+
+test "DDL that omits the project lands in the server's project" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "mat");
+
+    // The table recidiviz's materialization writes: no project in the name.
+    const ddl = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE ds1.short (a STRING)"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ddl.status);
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/short", "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    const listed = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables", "");
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"tableId\":\"short\"") != null);
+    const streamed = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/short/insertAll",
+        \\{"rows":[{"json":{"a":"x"}}]}
+    );
+    try testing.expectEqual(std.http.Status.ok, streamed.status);
+
+    // A replace over a table made through tables.insert replaces it.
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE OR REPLACE TABLE ds1.mat AS SELECT 2 AS id"}}}
+    );
+    const mat = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/mat", "");
+    try testing.expect(std.mem.indexOf(u8, mat.body, "\"name\":\"id\"") != null);
+    try testing.expect(std.mem.indexOf(u8, mat.body, "\"name\":\"age\"") == null);
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT id FROM `test.ds1.mat`"}
+    );
+    try testing.expectEqualStrings("2", try onlyCell(arena, q.body));
+
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"DROP TABLE ds1.short"}}}
+    );
+    const gone = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/short", "");
+    try testing.expectEqual(std.http.Status.not_found, gone.status);
+}
+
+test "a one-part table whose name reads like a path does not answer for it" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "foo" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/foo/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE foo_bar_baz (x INT64)"}}}
+    );
+    const got = try request(s, arena, .GET, "/projects/foo/datasets/bar/tables/baz", "");
+    try testing.expectEqual(std.http.Status.not_found, got.status);
+    const patched = try request(s, arena, .PATCH, "/projects/foo/datasets/bar/tables/baz", "{}");
+    try testing.expectEqual(std.http.Status.not_found, patched.status);
+    const deleted = try request(s, arena, .DELETE, "/projects/foo/datasets/bar/tables/baz", "");
+    try testing.expectEqual(std.http.Status.not_found, deleted.status);
+}
+
+test "a query's result table cannot be patched into the catalog" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 1 AS n"}}}
+    );
+    const job_id = try jobIdOf(arena, insert.body);
+    const path = try std.fmt.allocPrint(
+        arena,
+        "/projects/test/datasets/_anon/tables/{s}",
+        .{job_id},
+    );
+
+    const patched = try request(s, arena, .PATCH, path, "{\"description\":\"phantom\"}");
+    try testing.expectEqual(std.http.Status.bad_request, patched.status);
+
+    var rows = try s.db.rawQuery(
+        "SELECT COUNT(*) FROM zigquery_catalog WHERE name LIKE 'test__anon_%'",
+        &.{},
+    );
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
+}
+
+test "tables.delete removes a spec whose SQLite object is already gone" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "dangling");
+    // Pull the object out from under the spec, as an interrupted rebuild would.
+    try s.db.rawExec("DROP TABLE test_ds1_dangling", &.{});
+
+    const deleted = try request(s, arena, .DELETE, "/projects/test/datasets/ds1/tables/dangling", "");
+    try testing.expectEqual(std.http.Status.ok, deleted.status);
+    const gone = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/dangling", "");
+    try testing.expectEqual(std.http.Status.not_found, gone.status);
+    // And the name is free again.
+    try createStreamTable(s, arena, "dangling");
+    const back = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/dangling", "");
+    try testing.expectEqual(std.http.Status.ok, back.status);
+}
+
+test "tables.insert over an existing table is a conflict, and the table is untouched" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "dup");
+
+    const again = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"dup"},
+        \\ "schema":{"fields":[{"name":"b","type":"INTEGER"}]}}
+    );
+    try testing.expectEqual(std.http.Status.conflict, again.status);
+    try testing.expect(std.mem.indexOf(u8, again.body, "\"reason\":\"duplicate\"") != null);
+    try testing.expect(
+        std.mem.indexOf(u8, again.body, "Already Exists: Table test:ds1.dup") != null,
+    );
+
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/dup", "");
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"name\":\"age\"") != null);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"name\":\"b\"") == null);
+}
+
+test "DDL in a job resolves dataset.table against the job's project" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    const ddl = try request(s, arena, .POST, "/projects/other/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE ds1.t (a STRING)"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ddl.status);
+    const theirs = try request(s, arena, .GET, "/projects/other/datasets/ds1/tables/t", "");
+    try testing.expectEqual(std.http.Status.ok, theirs.status);
+    const ours = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "");
+    try testing.expectEqual(std.http.Status.not_found, ours.status);
+
+    // jobs.query takes the same path.
+    const q = try request(s, arena, .POST, "/projects/other/queries",
+        \\{"query":"DROP TABLE IF EXISTS ds1.t"}
+    );
+    try testing.expectEqual(std.http.Status.ok, q.status);
+    const dropped = try request(s, arena, .GET, "/projects/other/datasets/ds1/tables/t", "");
+    try testing.expectEqual(std.http.Status.not_found, dropped.status);
+
+    // The job's project does not outlive the job.
+    try testing.expectEqualStrings("test", s.db.default_project.?);
+}
+
+test "a view made by DDL reports the query it was written with" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "base");
+    const ddl = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE VIEW `test.ds1.v` AS SELECT name FROM `test.ds1.base` WHERE age > 1"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ddl.status);
+
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/v", "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"type\":\"VIEW\"") != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got.body,
+        \\"view":{"query":"SELECT name FROM `test.ds1.base` WHERE age > 1","useLegacySql":false}
+        ,
+    ) != null);
+    try testing.expect(
+        std.mem.indexOf(u8, got.body, "\"name\":\"name\",\"type\":\"STRING\"") != null,
+    );
+}
+
+test "nested modes and field descriptions come back exactly as posted" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    const created = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"nested"},
+        \\ "schema":{"fields":[
+        \\   {"name":"id","type":"INTEGER","mode":"REQUIRED","description":"the id"},
+        \\   {"name":"r","type":"RECORD","mode":"REPEATED","fields":[
+        \\     {"name":"x","type":"STRING","mode":"REQUIRED"},{"name":"y","type":"BOOLEAN"}]}]}}
+    );
+    try testing.expectEqual(std.http.Status.ok, created.status);
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/nested", "");
+    try testing.expectEqualStrings(created.body, got.body);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"description\":\"the id\"") != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got.body,
+        \\{"mode":"REQUIRED","name":"x","type":"STRING"}
+        ,
+    ) != null);
+}
+
+test "deleting a view drops it from the engine, and tables are listed by id" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "zulu");
+    try createStreamTable(s, arena, "alpha");
+    _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"mid_view"},
+        \\ "view":{"query":"SELECT name FROM `test.ds1.alpha`","useLegacySql":false}}
+    );
+
+    const listed = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables", "");
+    const alpha = std.mem.indexOf(u8, listed.body, "\"tableId\":\"alpha\"").?;
+    const mid = std.mem.indexOf(u8, listed.body, "\"tableId\":\"mid_view\"").?;
+    const zulu = std.mem.indexOf(u8, listed.body, "\"tableId\":\"zulu\"").?;
+    try testing.expect(alpha < mid and mid < zulu);
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"totalItems\":3") != null);
+
+    const view_path = "/projects/test/datasets/ds1/tables/mid_view";
+    const deleted = try request(s, arena, .DELETE, view_path, "");
+    try testing.expectEqual(std.http.Status.ok, deleted.status);
+    const gone = try request(s, arena, .GET, view_path, "");
+    try testing.expectEqual(std.http.Status.not_found, gone.status);
+    const q = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT * FROM `test.ds1.mid_view`"}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, q.status);
+
+    const again = try request(s, arena, .DELETE, view_path, "");
+    try testing.expectEqual(std.http.Status.not_found, again.status);
 }
 
 test "tables.patch refuses to change a schema, as Go does" {
