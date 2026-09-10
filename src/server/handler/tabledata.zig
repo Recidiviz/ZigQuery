@@ -167,7 +167,12 @@ fn isInvalid(errs: []const InsertError, row_index: usize) bool {
 /// therefore a 500 there too.
 pub fn schemaFieldsOf(table_meta: std.json.Value) ?[]const std.json.Value {
     if (table_meta != .object) return null;
-    const schema = table_meta.object.get("schema") orelse return null;
+    return fieldsOfSchema(table_meta.object.get("schema"));
+}
+
+/// The `fields` array of a `schema` node.
+pub fn fieldsOfSchema(schema_node: ?std.json.Value) ?[]const std.json.Value {
+    const schema = schema_node orelse return null;
     if (schema != .object) return null;
     const fields = schema.object.get("fields") orelse return null;
     if (fields != .array) return null;

@@ -35,14 +35,12 @@ pub const LoadStats = struct {
     failed_rows: usize = 0,
 };
 
-/// Loads a `--data-from-json` document into the content database and the
-/// metadata store.
+/// Loads a `--data-from-json` document: projects and datasets into the
+/// metadata store, tables and rows into the engine.
 pub fn loadJson(
     arena: std.mem.Allocator,
     db: *driver.Db,
     repo: *metadata.Repository,
-    endpoint: []const u8,
-    now_millis: i64,
     bytes: []const u8,
 ) !LoadStats {
     var stats = LoadStats{};
@@ -92,6 +90,17 @@ pub fn loadJson(
                 // is the REST spelling. Accept both.
                 const schema_node = normalizeSchema(arena, tbl) catch null;
 
+                // Loading over a database that already holds the table keeps
+                // what is there; the fixture's schema is not applied to it.
+                if (try db.catalogTable(arena, project_id, dataset_id, table_id)) |_| {
+                    std.log.warn(
+                        "source table {s}.{s}.{s} already exists; not replaced",
+                        .{ project_id, dataset_id, table_id },
+                    );
+                    stats.failed_tables += 1;
+                    continue;
+                }
+
                 const ddl = schema_mod.createTableDdl(
                     arena,
                     project_id,
@@ -114,16 +123,29 @@ pub fn loadJson(
                     continue;
                 };
 
-                var meta: std.ArrayList(u8) = .empty;
-                try tables_handler.writeTable(arena, &meta, .{
-                    .project_id = project_id,
-                    .dataset_id = dataset_id,
-                    .table_id = table_id,
-                    .endpoint = endpoint,
-                    .created_millis = now_millis,
-                    .schema = schema_node,
-                });
-                try repo.addTable(project_id, dataset_id, table_id, meta.items);
+                // The posted schema rides on the spec, as it does for
+                // tables.insert, so nested modes come back from tables.get.
+                if (schema_node) |schema| {
+                    var posted: std.json.ObjectMap = .empty;
+                    try posted.put(arena, "schema", schema);
+                    var metadata_json: std.ArrayList(u8) = .empty;
+                    try tables_handler.writeMetadata(arena, &metadata_json, .{ .object = posted });
+                    db.setTableMetadata(
+                        arena,
+                        project_id,
+                        dataset_id,
+                        table_id,
+                        metadata_json.items,
+                    ) catch |err| {
+                        // Lenient like the rest of the loader.
+                        std.log.warn(
+                            "source table {s}.{s}.{s}: schema not recorded: {t}",
+                            .{ project_id, dataset_id, table_id, err },
+                        );
+                        stats.failed_tables += 1;
+                        continue;
+                    };
+                }
                 stats.tables += 1;
 
                 // A table's rows live beside its schema in `data`, keyed by
@@ -221,7 +243,7 @@ const testing = std.testing;
 
 fn loadInto(arena: std.mem.Allocator, db: *driver.Db, json: []const u8) !LoadStats {
     var repo = try metadata.Repository.init(db);
-    return loadJson(arena, db, &repo, "h:1", 0, json);
+    return loadJson(arena, db, &repo, json);
 }
 
 test "a table's `data` rows load and are queryable" {
@@ -389,6 +411,54 @@ test "a single bad table does not abort the load" {
     try testing.expectEqual(@as(usize, 2), stats.tables);
     var rows = try db.query("SELECT b FROM `p.d.also_good`", &.{}, .{});
     defer rows.deinit();
+}
+
+test "a table whose schema cannot be recorded is counted, and the load goes on" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    // A dotted id is split by the DDL path, so the spec lands under a name the
+    // loader's own lookup cannot see; the next table still loads.
+    const stats = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"a.b","columns":[{"name":"x","type":"INTEGER"}]},
+        \\  {"id":"fine","columns":[{"name":"x","type":"INTEGER"}],"data":[{"x":1}]}
+        \\]}]}]
+    );
+    try testing.expectEqual(@as(usize, 1), stats.failed_tables);
+    try testing.expectEqual(@as(usize, 1), stats.tables);
+    try testing.expectEqual(@as(usize, 1), stats.rows);
+}
+
+test "loading over a table that already exists leaves it alone" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const first = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","columns":[{"name":"a","type":"STRING"}],"data":[{"a":"kept"}]}]}]}]
+    );
+    try testing.expectEqual(@as(usize, 1), first.tables);
+    const second = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","columns":[{"name":"b","type":"INTEGER"}],"data":[{"b":2}]}]}]}]
+    );
+    try testing.expectEqual(@as(usize, 0), second.tables);
+    try testing.expectEqual(@as(usize, 1), second.failed_tables);
+
+    const table_spec = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("a", table_spec.columns[0].name);
+    var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("kept", (try rows.next()).?[0].string);
 }
 
 test "a single project object is accepted, not just a list" {

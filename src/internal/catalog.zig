@@ -49,6 +49,9 @@ pub const Error = error{
     /// DeleteTableSpec on a name that is not in the catalog (Go: "failed to
     /// find table spec from map by %s").
     TableNotFound,
+    /// An update aimed at a spec that is never persisted: a TEMP overlay entry
+    /// or a synthetic registration.
+    NotPersistent,
 };
 
 // Exact SQL from Go catalog.go (multi-line shape preserved).
@@ -416,6 +419,30 @@ pub const Catalog = struct {
         }
     }
 
+    /// Replaces a persistent spec, memory and row, for a change the analyzer does not see:
+    /// `appendTableJson` renders the name and columns only, so
+    /// `metadata` and `source_sql` edits need no entry in the change log and
+    /// no handle resync. The caller keeps name and columns as they were.
+    pub fn updateTableSpec(
+        c: *Catalog,
+        db: *sqlite.Db,
+        table_spec: *const spec.TableSpec,
+    ) Error!void {
+        if (table_spec.is_temp or table_spec.is_synthetic) return error.NotPersistent;
+        const arena = c.arena_state.allocator();
+        const encoded = table_spec.toJson(arena) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        const owned = spec.tableSpecFromJson(arena, encoded) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        const idx = c.table_map.get(try owned.tableName(arena)) orelse return error.TableNotFound;
+        c.tables.items[idx] = owned;
+        try c.saveTableSpec(db, owned, encoded);
+    }
+
     /// Registers a spec into a per-connection TEMP overlay, never persisting
     /// it.
     ///
@@ -673,6 +700,7 @@ pub const Catalog = struct {
     /// The caller owns `table_spec` and everything it points at, and must keep
     /// them alive until `deleteTableSpec` removes it.
     pub fn addSyntheticTableSpec(c: *Catalog, table_spec: *spec.TableSpec) Error!void {
+        table_spec.is_synthetic = true;
         return c.addTableSpecToMemory(table_spec);
     }
 
@@ -1298,6 +1326,60 @@ pub fn nowTimestamps(alloc: std.mem.Allocator) error{OutOfMemory}!Timestamps {
     return timestampsFromMicros(alloc, micros);
 }
 
+/// Unix microseconds for an RFC3339 timestamp of the shape `nowTimestamps`
+/// and Go's time.Time write: `YYYY-MM-DDTHH:MM:SS[.frac]Z`, or with a
+/// `+HH:MM` / `-HH:MM` offset. Null for anything else.
+pub fn epochMicrosFromRfc3339(text: []const u8) ?i64 {
+    if (text.len < 20) return null;
+    const secs = civilSecondsOf(text[0..19]) orelse return null;
+    const frac = fractionOf(text[19..]);
+    const offset_secs = zoneOffsetOf(text[19 + frac.len ..]) orelse return null;
+    return (secs - offset_secs) * std.time.us_per_s + frac.micros;
+}
+
+/// Seconds since the epoch for `YYYY-MM-DDTHH:MM:SS`, as if UTC.
+fn civilSecondsOf(text: *const [19]u8) ?i64 {
+    if (text[4] != '-' or text[7] != '-' or text[10] != 'T' or text[13] != ':' or text[16] != ':') {
+        return null;
+    }
+    const year = std.fmt.parseInt(i64, text[0..4], 10) catch return null;
+    const month = std.fmt.parseInt(i64, text[5..7], 10) catch return null;
+    const day = std.fmt.parseInt(i64, text[8..10], 10) catch return null;
+    const hh = std.fmt.parseInt(i64, text[11..13], 10) catch return null;
+    const mm = std.fmt.parseInt(i64, text[14..16], 10) catch return null;
+    const ss = std.fmt.parseInt(i64, text[17..19], 10) catch return null;
+    const days = value_mod.daysFromCivil(year, month, day);
+    return days * std.time.s_per_day + hh * 3600 + mm * 60 + ss;
+}
+
+/// An optional `.digits` fraction of a second: its microseconds and how many
+/// bytes it took, both zero when there is none.
+fn fractionOf(text: []const u8) struct { micros: i64, len: usize } {
+    if (text.len == 0 or text[0] != '.') return .{ .micros = 0, .len = 0 };
+    var micros: i64 = 0;
+    var scale: i64 = 100_000;
+    var i: usize = 1;
+    while (i < text.len and std.ascii.isDigit(text[i])) : (i += 1) {
+        micros += @as(i64, text[i] - '0') * scale;
+        scale = @divTrunc(scale, 10);
+    }
+    return .{ .micros = micros, .len = i };
+}
+
+/// The zone suffix's offset in seconds: `Z`, or `+HH:MM` / `-HH:MM`.
+fn zoneOffsetOf(text: []const u8) ?i64 {
+    if (std.mem.eql(u8, text, "Z")) return 0;
+    if (text.len != 6 or text[3] != ':') return null;
+    const sign: i64 = switch (text[0]) {
+        '+' => 1,
+        '-' => -1,
+        else => return null,
+    };
+    const oh = std.fmt.parseInt(i64, text[1..3], 10) catch return null;
+    const om = std.fmt.parseInt(i64, text[4..6], 10) catch return null;
+    return sign * (oh * 3600 + om * 60);
+}
+
 fn timestampsFromMicros(alloc: std.mem.Allocator, micros: i64) error{OutOfMemory}!Timestamps {
     const secs = @divFloor(micros, std.time.us_per_s);
     const us: u64 = @intCast(@mod(micros, std.time.us_per_s));
@@ -1354,6 +1436,75 @@ test "timestamp formatting" {
     const t = try timestampsFromMicros(arena_state.allocator(), micros);
     try testing.expectEqualStrings("2024-01-02 03:04:05.123456+00:00", t.sql);
     try testing.expectEqualStrings("2024-01-02T03:04:05.123456Z", t.rfc3339);
+}
+
+test "RFC3339 timestamps parse back to the micros they were formatted from" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const micros: i64 = (value_mod.daysFromCivil(2024, 1, 2) * std.time.s_per_day +
+        3 * 3600 + 4 * 60 + 5) * std.time.us_per_s + 123456;
+    const t = try timestampsFromMicros(arena_state.allocator(), micros);
+    try testing.expectEqual(micros, epochMicrosFromRfc3339(t.rfc3339).?);
+    // Go writes no fraction for a whole second, and a zone offset when not UTC.
+    try testing.expectEqual(micros - 123456, epochMicrosFromRfc3339("2024-01-02T03:04:05Z").?);
+    try testing.expectEqual(
+        micros - 123456,
+        epochMicrosFromRfc3339("2024-01-02T05:04:05+02:00").?,
+    );
+    try testing.expectEqual(@as(?i64, null), epochMicrosFromRfc3339(""));
+    try testing.expectEqual(@as(?i64, null), epochMicrosFromRfc3339("2024-01-02 03:04:05"));
+}
+
+test "updateTableSpec swaps the spec, persists it, and leaves the change log alone" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c1 = try Catalog.init(testing.allocator);
+    defer c1.deinit();
+    try c1.createCatalogTablesIfNotExist(&db);
+    try c1.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "p", "d", "t1" }));
+    const logged = c1.changes.items.len;
+
+    var updated = (c1.findTableSpec("p_d_t1") orelse return error.TestUnexpectedResult).*;
+    updated.metadata = "{\"description\":\"posted\"}";
+    try c1.updateTableSpec(&db, &updated);
+    try testing.expectEqual(logged, c1.changes.items.len);
+    try testing.expectEqualStrings(
+        "{\"description\":\"posted\"}",
+        (c1.findTableSpec("p_d_t1") orelse return error.TestUnexpectedResult).metadata,
+    );
+
+    // The row carries it, so a fresh catalog reads it back.
+    var c2 = try Catalog.init(testing.allocator);
+    defer c2.deinit();
+    try c2.loadFromStorage(&db);
+    const found = c2.findTableSpec("p_d_t1") orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("{\"description\":\"posted\"}", found.metadata);
+    try testing.expectEqual(@as(usize, 2), found.columns.len);
+
+    var missing = updated;
+    missing.name_path = &.{ "p", "d", "nope" };
+    try testing.expectError(error.TableNotFound, c1.updateTableSpec(&db, &missing));
+
+    // A synthetic spec is registered for the analyzer and never written; an
+    // update must not smuggle it into a row.
+    const synthetic = try testTableSpec(alloc, &.{ "p", "_anon", "job1" });
+    try c1.addSyntheticTableSpec(synthetic);
+    var patched = synthetic.*;
+    patched.metadata = "{\"description\":\"phantom\"}";
+    try testing.expectError(error.NotPersistent, c1.updateTableSpec(&db, &patched));
+    {
+        var stmt = try db.prepare(
+            "SELECT COUNT(*) FROM zigquery_catalog WHERE name = 'p__anon_job1'",
+        );
+        defer stmt.finalize();
+        try testing.expect(try stmt.step());
+        try testing.expectEqual(@as(i64, 0), stmt.columnInt64(0));
+    }
 }
 
 test "addNewTableSpec persists a row and a fresh catalog syncs it" {

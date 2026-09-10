@@ -246,6 +246,10 @@ pub const Db = struct {
     /// Lookups check this first, so a TEMP object shadows a persistent one of
     /// the same name.
     temps: *catalog_mod.Catalog,
+    /// The project a two-part DDL name (`dataset.table`) belongs to, when a
+    /// server sets one. BigQuery resolves such names against the job's
+    /// project; without a default the path is registered as written.
+    default_project: ?[]const u8 = null,
     last_error: ?[]u8 = null,
     /// The 1-based bind index whose value failed to convert, when `last_error` came from a bind.
     /// Cleared at the start of every bind pass.
@@ -643,7 +647,16 @@ pub const Db = struct {
         // reading a definition that another connection replaced a moment ago.
         var g = db.lockCatalog();
         defer g.unlock();
-        return g.catalog.tableSpecByName(canonical);
+        const found = g.catalog.tableSpecByName(canonical) orelse return null;
+        // The join is not injective: `foo_bar_baz` as one segment collides with
+        // `foo.bar.baz`. Only the path that was asked for counts.
+        if (!pathIs(found.name_path, project_id, dataset_id, table_id)) return null;
+        return found;
+    }
+
+    fn pathIs(path: []const []const u8, p: []const u8, d: []const u8, t: []const u8) bool {
+        return path.len == 3 and std.mem.eql(u8, path[0], p) and std.mem.eql(u8, path[1], d) and
+            std.mem.eql(u8, path[2], t);
     }
 
     /// Every table and view the GoogleSQL catalog holds under
@@ -673,6 +686,40 @@ pub const Db = struct {
             try out.append(arena, table_spec);
         }
         return out.toOwnedSlice(arena);
+    }
+
+    /// A DDL name path, normalized, with `default_project` prepended for`dataset.table` paths
+    fn qualifyPath(
+        db: *Db,
+        arena: std.mem.Allocator,
+        path: []const []const u8,
+    ) error{OutOfMemory}![]const []const u8 {
+        const normalized = try normalizePath(arena, path);
+        const project = db.default_project orelse return normalized;
+        if (normalized.len != 2) return normalized;
+        return try arena.dupe([]const u8, &.{ project, normalized[0], normalized[1] });
+    }
+
+    /// Attaches the metadata API's resource text to `project.dataset.table`,
+    /// replacing what was there, and stamps `updated_at`. The analyzer-visible
+    /// shape is untouched, so this is a slot swap with no handle resync.
+    pub fn setTableMetadata(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        table_id: []const u8,
+        metadata_json: []const u8,
+    ) catalog_mod.Error!void {
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id, table_id });
+        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const current = g.catalog.tableSpecByName(canonical) orelse return error.TableNotFound;
+        var updated = current.*;
+        updated.metadata = metadata_json;
+        updated.updated_at = now.rfc3339;
+        try g.catalog.updateTableSpec(&db.sqlite_db, &updated);
     }
 
     /// Tells the GoogleSQL catalog that `project.dataset` exists, so
@@ -1602,6 +1649,10 @@ pub const Db = struct {
         table_spec: *spec.TableSpec,
         args: []const Param,
     ) Error!usize {
+        // A TEMP table has no dataset to qualify into.
+        if (!table_spec.is_temp) {
+            table_spec.name_path = try db.qualifyPath(arena, table_spec.name_path);
+        }
         const table_name = try table_spec.tableName(arena);
         const replacing = table_spec.create_mode == spec.create_mode_create_or_replace;
         const from_query = table_spec.query.len != 0;
@@ -1738,17 +1789,22 @@ pub const Db = struct {
         }
 
         const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        const is_temp = (create.create_scope orelse .CREATE_DEFAULT_SCOPE) == .CREATE_TEMP;
         const table_spec = try arena.create(spec.TableSpec);
         table_spec.* = .{
-            .is_temp = (create.create_scope orelse .CREATE_DEFAULT_SCOPE) == .CREATE_TEMP,
+            .is_temp = is_temp,
             .is_view = true,
-            .name_path = try normalizePath(arena, create.name_path),
+            .name_path = if (is_temp)
+                try normalizePath(arena, create.name_path)
+            else
+                try db.qualifyPath(arena, create.name_path),
             .columns = columns,
             .create_mode = goCreateMode(create.create_mode),
             .query = query_str,
             .updated_at = now.rfc3339,
             .created_at = now.rfc3339,
             .options = try optionSpecsFrom(arena, base.option_list),
+            .source_sql = base.sql orelse "",
         };
 
         if (table_spec.create_mode == spec.create_mode_create_or_replace) {
@@ -1759,7 +1815,15 @@ pub const Db = struct {
             );
             _ = try db.execSql(arena, drop_sql, &.{});
         }
-        const create_sql = fragment.toString(arena) catch return error.OutOfMemory;
+        // The transformer named the view as written; the spec's name is the
+        // one SQLite must know it by.
+        const qualified = sqlbuilder.CreateViewStatement{
+            .if_not_exists = create_view_stmt.if_not_exists,
+            .view_name = try table_spec.tableName(arena),
+            .query = create_view_stmt.query,
+        };
+        const create_fragment = sqlbuilder.SQLFragment{ .create_view_statement = &qualified };
+        const create_sql = create_fragment.toString(arena) catch return error.OutOfMemory;
         _ = try db.execSql(arena, create_sql, &.{});
         db.registerTableSpec(table_spec) catch |err|
             return db.failCatalog(err);
@@ -1781,12 +1845,29 @@ pub const Db = struct {
             // separate node kind handled by the UDF milestone).
             return error.Unimplemented;
         }
-        const formatted = try transformStatement(db, arena, node, opts);
+        _ = node;
+        _ = opts;
+        // A TEMP object is registered as written; anything else under the
+        // project the name resolves to.
+        const as_written = try formatNamePath(arena, drop_stmt.name_path);
+        const name = if (db.temps.findTableSpec(as_written) != null)
+            as_written
+        else
+            try spec.formatPath(arena, try db.qualifyPath(arena, drop_stmt.name_path));
+        const drop = sqlbuilder.DropStatement{
+            .if_exists = drop_stmt.is_if_exists orelse false,
+            .object_type = object_type,
+            .object_name = name,
+        };
+        const drop_fragment = sqlbuilder.SQLFragment{ .drop_statement = &drop };
+        const formatted = drop_fragment.toString(arena) catch return error.OutOfMemory;
         const consumed = try db.execSql(arena, formatted, args);
 
-        const name = try formatNamePath(arena, drop_stmt.name_path);
-        db.unregisterTableSpec(name) catch |err|
-            return db.failCatalog(err);
+        // IF EXISTS covers the catalog too: nothing to remove is not an error.
+        db.unregisterTableSpec(name) catch |err| switch (err) {
+            error.TableNotFound => if (!drop.if_exists) return db.failCatalog(err),
+            else => return db.failCatalog(err),
+        };
         return consumed;
     }
 
@@ -3575,6 +3656,123 @@ test "INFORMATION_SCHEMA.TABLE_OPTIONS reports DDL options for tables and views"
         try testing.expectEqualStrings(want[i].value, row[3].string);
     }
     try testing.expectEqual(want.len, i);
+}
+
+test "a default project qualifies two-part DDL names" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
+    try testing.expect((try db.catalogTable(arena, "p", "d", "t")) != null);
+    try db.exec("INSERT INTO d.t VALUES (1)", &.{}, .{});
+
+    // Both spellings reach the one table. Each read is closed before the
+    // replace below, which drops the table SQLite would otherwise hold open.
+    {
+        var short = try db.query("SELECT a FROM d.t", &.{}, .{});
+        defer short.deinit();
+        try testing.expectEqual(@as(i64, 1), (try short.next()).?[0].int);
+    }
+    {
+        var full = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
+        defer full.deinit();
+        try testing.expectEqual(@as(i64, 1), (try full.next()).?[0].int);
+    }
+
+    // A replace lands on that table rather than beside it.
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS s", &.{}, .{});
+    try testing.expectEqual(@as(usize, 1), (try db.catalogTablesIn(arena, "p", "d")).len);
+    const replaced = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("s", replaced.columns[0].name);
+
+    try db.exec("CREATE VIEW d.v AS SELECT s FROM d.t", &.{}, .{});
+    try testing.expect((try db.catalogTable(arena, "p", "d", "v")) != null);
+    {
+        var via_view = try db.query("SELECT s FROM `p.d.v`", &.{}, .{});
+        defer via_view.deinit();
+        try testing.expectEqualStrings("x", (try via_view.next()).?[0].string);
+    }
+
+    try db.exec("DROP VIEW d.v", &.{}, .{});
+    try db.exec("DROP TABLE d.t", &.{}, .{});
+    try testing.expectEqual(@as(usize, 0), (try db.catalogTablesIn(arena, "p", "d")).len);
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT s FROM `p.d.t`", &.{}, .{}));
+
+    // A TEMP table stays where it was written, for the script that made it.
+    try db.exec("CREATE TEMP TABLE scratch (a INT64); DROP TABLE scratch; SELECT 1", &.{}, .{});
+}
+
+test "catalogTable answers only the path it was asked for" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // One segment whose canonical name reads like three. The SQLite object
+    // name is the same for both spellings, so only the spec's path can tell.
+    try db.exec("CREATE TABLE foo_bar_baz (x INT64)", &.{}, .{});
+    try testing.expectEqual(
+        @as(?*const spec.TableSpec, null),
+        try db.catalogTable(arena, "foo", "bar", "baz"),
+    );
+    try testing.expectEqual(@as(usize, 0), (try db.catalogTablesIn(arena, "foo", "bar")).len);
+}
+
+test "DROP TABLE IF EXISTS on nothing is a no-op, DROP TABLE on nothing is an error" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    try db.exec("DROP TABLE IF EXISTS d.nothing", &.{}, .{});
+    try db.exec("DROP VIEW IF EXISTS `p.d.nothing`", &.{}, .{});
+    // Without IF EXISTS, SQLite rejects it first.
+    try testing.expectError(error.ExecFailed, db.exec("DROP TABLE d.nothing", &.{}, .{}));
+}
+
+test "a view keeps the GoogleSQL it was written with" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE `p.d.t` (a INT64, b STRING)", &.{}, .{});
+    const view_sql = "SELECT a, UPPER(b) AS b FROM `p.d.t` WHERE a > 1";
+    try db.exec("CREATE VIEW `p.d.v` AS " ++ view_sql, &.{}, .{});
+
+    const view = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expect(view.is_view);
+    try testing.expectEqualStrings(view_sql, view.source_sql);
+    // The engine's own text is the SQLite translation, kept apart from it.
+    try testing.expect(std.mem.indexOf(u8, view.query, "p_d_t") != null);
+}
+
+test "setTableMetadata is what catalogTable reads back" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE `p.d.t` (a INT64)", &.{}, .{});
+    const before = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("", before.metadata);
+
+    try db.setTableMetadata(arena, "p", "d", "t", "{\"description\":\"posted\"}");
+    const after = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("{\"description\":\"posted\"}", after.metadata);
+    try testing.expectEqualStrings("a", after.columns[0].name);
+    // A published spec is never mutated in place: the earlier pointer is intact.
+    try testing.expectEqualStrings("", before.metadata);
+
+    try testing.expectError(
+        error.TableNotFound,
+        db.setTableMetadata(arena, "p", "d", "nope", "{}"),
+    );
 }
 
 test "a quoted description renders the way BigQuery escapes it" {

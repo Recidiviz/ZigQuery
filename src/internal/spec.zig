@@ -253,8 +253,7 @@ pub const DatasetSpec = struct {
     created_at: []const u8 = "",
 };
 
-/// Go spec.go TableSpec. `updated_at`/`created_at` hold the RFC3339 strings
-/// Go's time.Time marshals to; they are round-tripped opaquely.
+/// A representation of a table in BigQuery
 pub const TableSpec = struct {
     is_temp: bool = false,
     is_view: bool = false,
@@ -263,12 +262,26 @@ pub const TableSpec = struct {
     primary_key: []const []const u8 = &.{},
     create_mode: i64 = create_mode_unspecified,
     query: []const u8 = "",
-    updated_at: []const u8 = "",
-    created_at: []const u8 = "",
+    updated_at: []const u8 = "", // RFC3339 timestamp
+    created_at: []const u8 = "", // RFC3339 timestamp
     /// DDL OPTIONS. Go's TableSpec has no such field, so this is serialised
     /// only when non-empty — see toJson — keeping the JSON byte-identical to
     /// Go's for every spec that has none.
     options: []const *OptionSpec = &.{},
+    /// The metadata API's view of the table: the resource keys a client
+    /// posted (schema with nested modes and descriptions, clustering,
+    /// partitioning, labels, description, view, ...), as one JSON object's
+    /// text. Opaque to the engine and carried as a JSON string, so the bytes
+    /// come back exactly as they went in. Empty for a table nobody posted.
+    /// Serialised only when non-empty, like `options`.
+    metadata: []const u8 = "",
+    /// A view's defining query as the client wrote it, in GoogleSQL. `query`
+    /// holds the SQLite translation the engine runs; the metadata API reports
+    /// this one. Serialised only when non-empty.
+    source_sql: []const u8 = "",
+    /// Registered for the analyzer only, never persisted: a job's result table
+    /// or an INFORMATION_SCHEMA view. Runtime state, not part of the JSON.
+    is_synthetic: bool = false,
 
     /// Go TableSpec.Column.
     pub fn column(self: *const TableSpec, name: []const u8) ?*ColumnSpec {
@@ -407,10 +420,27 @@ pub const TableSpec = struct {
             }
             try out.append(alloc, ']');
         }
+        try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
+        try appendStringFieldIfSet(&out, alloc, "sourceSql", self.source_sql);
         try out.append(alloc, '}');
         return out.toOwnedSlice(alloc);
     }
 };
+
+/// `,"key":"value"`, or nothing for an empty value: the fields Go's TableSpec
+/// lacks stay out of the JSON when unused.
+fn appendStringFieldIfSet(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    key: []const u8,
+    value: []const u8,
+) Error!void {
+    if (value.len == 0) return;
+    try out.appendSlice(alloc, ",\"");
+    try out.appendSlice(alloc, key);
+    try out.appendSlice(alloc, "\":");
+    try appendJsonString(out, alloc, value);
+}
 
 fn appendColumnSpecJson(
     out: *std.ArrayList(u8),
@@ -561,6 +591,12 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
             }
             table_spec.options = opts;
         }
+    }
+    if (obj.get("metadata")) |v| {
+        if (v == .string) table_spec.metadata = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("sourceSql")) |v| {
+        if (v == .string) table_spec.source_sql = try alloc.dupe(u8, v.string);
     }
     return table_spec;
 }
@@ -988,6 +1024,35 @@ test "pkIndexSchema lowers a primary key to a non-unique index" {
         .query = "SELECT 1",
     };
     try testing.expectEqual(@as(?[]u8, null), try view.pkIndexSchema(alloc));
+}
+
+test "metadata and source SQL round-trip through JSON and stay out of it when empty" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare = try makeGoShapeSpec(alloc);
+    const bare_json = try bare.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"metadata\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"sourceSql\"") == null);
+
+    const with = try makeGoShapeSpec(alloc);
+    // The resource text is carried as a string: its own quotes and nesting
+    // are escaped, never re-serialised.
+    with.metadata =
+        \\{"description":"he said \"hi\"","schema":{"fields":[{"name":"a","type":"INTEGER"}]}}
+    ;
+    with.source_sql = "SELECT a FROM `p.d.t`";
+    const encoded = try with.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, encoded, ",\"metadata\":\"{\\\"description\\\"") != null);
+    try testing.expect(
+        std.mem.indexOf(u8, encoded, ",\"sourceSql\":\"SELECT a FROM `p.d.t`\"}") != null,
+    );
+
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expectEqualStrings(with.metadata, decoded.metadata);
+    try testing.expectEqualStrings(with.source_sql, decoded.source_sql);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 
 test "options round-trip through JSON and stay out of it when empty" {
