@@ -44,9 +44,6 @@
 
 namespace {
 
-// Ported verbatim from go-zetasqlite internal/analyzer.go `enabledFeatures`
-// (Go LanguageFeatureFeatureX -> C++ FEATURE_X; the current googlesql tree
-// dropped the V_1_1/V_1_2/V_1_3 prefixes).
 constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     googlesql::FEATURE_ANALYTIC_FUNCTIONS,
     googlesql::FEATURE_NAMED_ARGUMENTS,
@@ -54,6 +51,7 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     googlesql::FEATURE_BIGNUMERIC_TYPE,
     googlesql::FEATURE_DECIMAL_ALIAS,
     googlesql::FEATURE_CREATE_TABLE_NOT_NULL,
+    googlesql::FEATURE_CREATE_TABLE_FIELD_ANNOTATIONS,
     // `PRIMARY KEY ... NOT ENFORCED`, which is the only form BigQuery accepts:
     // there a primary key is optimizer metadata (join elimination), never a
     // uniqueness guarantee. Without this the analyzer rejects the syntax

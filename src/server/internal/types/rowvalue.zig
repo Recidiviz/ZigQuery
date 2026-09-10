@@ -33,7 +33,7 @@ pub fn missingRequiredMessage(
     path: []const []const u8,
 ) std.mem.Allocator.Error![]const u8 {
     var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(arena, "Missing required field: Msg_0_CLOUD_QUERY_TABLE");
+    try out.appendSlice(arena, zigquery.spec.missing_required_prefix);
     for (path) |name| {
         try out.append(arena, '.');
         try out.appendSlice(arena, name);

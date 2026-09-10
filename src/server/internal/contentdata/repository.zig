@@ -149,6 +149,13 @@ pub const Repository = struct {
                         const message = try rowvalue.missingRequiredMessage(arena, &.{plan.name});
                         return batch.reject(row_index, plan.name, message);
                     },
+                    .missing_required => |found| {
+                        const arena = batch.repo.arena;
+                        const column = found.plan.name;
+                        const segments = try streamingPathSegments(arena, column, found.path);
+                        const message = try rowvalue.missingRequiredMessage(arena, segments);
+                        return batch.reject(row_index, found.plan.name, message);
+                    },
                     .engine => return batch.repo.failEngine(),
                 },
                 else => return batch.repo.failEngine(),
@@ -159,16 +166,29 @@ pub const Repository = struct {
         const StepFailure = union(enum) {
             /// SQLite's NOT NULL rejected the row; the column it names.
             not_null: *const ColumnPlan,
+            /// The CHECK behind a NOT NULL STRUCT member rejected the row;
+            /// contains the column it names, and the dotted path of the member.
+            missing_required: struct { plan: *const ColumnPlan, path: []const u8 },
             /// Anything else, which is the engine's failure, not the row's.
             engine,
         };
 
         fn stepFailure(batch: *Batch) StepFailure {
-            const column = notNullColumn(batch.repo.db.lastError()) orelse return .engine;
-            for (batch.plans) |*plan| {
-                if (std.mem.eql(u8, plan.name, column)) return .{ .not_null = plan };
+            const err_text = batch.repo.db.lastError();
+            if (zigquery.spec.requiredFieldFromMessage(err_text)) |found| {
+                const plan = batch.planNamed(found.column) orelse return .engine;
+                return .{ .missing_required = .{ .plan = plan, .path = found.path } };
             }
-            return .engine;
+            const column = notNullColumn(err_text) orelse return .engine;
+            const plan = batch.planNamed(column) orelse return .engine;
+            return .{ .not_null = plan };
+        }
+
+        fn planNamed(batch: *Batch, name: []const u8) ?*const ColumnPlan {
+            for (batch.plans) |*plan| {
+                if (std.mem.eql(u8, plan.name, name)) return plan;
+            }
+            return null;
         }
 
         fn reject(
@@ -347,6 +367,25 @@ pub const Repository = struct {
 /// The column SQLite names in a NOT NULL constraint failure, or null for any
 /// other error. The text is modernc's errstrForDB shape around SQLite's own:
 /// `constraint failed: NOT NULL constraint failed: <table>.<column> (19)`.
+/// The column, then each member of the dotted `path` below it. The column is
+/// taken whole, since its own name may contain a `.`.
+fn streamingPathSegments(
+    arena: std.mem.Allocator,
+    column: []const u8,
+    path: []const u8,
+) std.mem.Allocator.Error![]const []const u8 {
+    var segments: std.ArrayList([]const u8) = .empty;
+    try segments.append(arena, column);
+    const below = if (path.len > column.len and std.mem.startsWith(u8, path, column) and
+        path[column.len] == '.')
+        path[column.len + 1 ..]
+    else
+        path;
+    var it = std.mem.splitScalar(u8, below, '.');
+    while (it.next()) |segment| try segments.append(arena, segment);
+    return segments.toOwnedSlice(arena);
+}
+
 fn notNullColumn(err_text: []const u8) ?[]const u8 {
     const marker = "NOT NULL constraint failed: ";
     const start = std.mem.indexOf(u8, err_text, marker) orelse return null;
@@ -807,6 +846,60 @@ test "a NOT NULL the stored schema does not declare is still an invalid row" {
     try testing.expectEqualStrings("also ok", (try kept.next()).?[0].string);
     try testing.expectEqualStrings("ok", (try kept.next()).?[0].string);
     try testing.expectEqual(@as(?[]const driver.Cell, null), try kept.next());
+}
+
+test "a NOT NULL STRUCT member the stored schema does not declare is still an invalid row" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    // A registered table whose SQLite object carries the CHECK spec.zig renders
+    // for `r STRUCT<x INT64 NOT NULL>`, while the posted schema says nothing
+    // about it.
+    try db.exec("CREATE TABLE `p.d.t` (`r` STRUCT<`x` INT64, `y` STRING>)", &.{}, .{});
+    try db.rawExec("DROP TABLE `p_d_t`", &.{});
+    try db.rawExec(
+        "CREATE TABLE `p_d_t` (`r` TEXT, CONSTRAINT `r` CHECK (zigquery_required(`r`," ++
+            "'0','Required field r.x cannot be null; error in writing field r')))",
+        &.{},
+    );
+
+    const fields = try fieldsOf(arena,
+        \\[{"name":"r","type":"RECORD","fields":[{"name":"x","type":"INTEGER"},{"name":"y","type":"STRING"}]}]
+    );
+    var repo = Repository{ .arena = arena, .db = db };
+    const result = try repo.addTableData("p", "d", "t", fields, try rowsOf(arena,
+        \\[{"r":{"x":1,"y":"a"}},{"r":{"y":"no x"}},{"r":null}]
+    ), .{ .skip_invalid_rows = true });
+    try testing.expectEqual(@as(usize, 1), result.invalid.len);
+    try testing.expectEqual(@as(u32, 1), result.invalid[0].row_index);
+    try testing.expectEqualStrings("r", result.invalid[0].field_name);
+    try testing.expectEqualStrings(
+        "Missing required field: Msg_0_CLOUD_QUERY_TABLE.r.x.",
+        result.invalid[0].message,
+    );
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 2), (try rows.next()).?[0].int);
+}
+
+test "streamingPathSegments keeps a dotted column name as one segment" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const plain = try streamingPathSegments(arena, "r", "r.inner.y");
+    try testing.expectEqual(@as(usize, 3), plain.len);
+    try testing.expectEqualStrings("r", plain[0]);
+    try testing.expectEqualStrings("inner", plain[1]);
+    try testing.expectEqualStrings("y", plain[2]);
+    const dotted = try streamingPathSegments(arena, "a.b", "a.b.x");
+    try testing.expectEqual(@as(usize, 2), dotted.len);
+    try testing.expectEqualStrings("a.b", dotted[0]);
+    try testing.expectEqualStrings("x", dotted[1]);
 }
 
 test "notNullColumn reads the column out of SQLite's message" {

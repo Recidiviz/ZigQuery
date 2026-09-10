@@ -91,7 +91,11 @@ pub fn writeFieldMode(
         try out.appendSlice(arena, "\"fields\":[");
         for (elem.field_types, 0..) |f, i| {
             if (i > 0) try out.append(arena, ',');
-            try writeField(arena, out, f.name, f.type orelse elem);
+            try writeFieldMode(arena, out, .{
+                .name = f.name,
+                .type = f.type orelse elem,
+                .required = f.is_not_null,
+            });
         }
         try out.append(arena, ']');
         need_comma = true;
@@ -146,7 +150,11 @@ fn pbFields(
 ) std.mem.Allocator.Error![]*bqpb.TableFieldSchema {
     const subs = try arena.alloc(*bqpb.TableFieldSchema, elem.field_types.len);
     for (elem.field_types, 0..) |f, i| {
-        subs[i] = try pbField(arena, .{ .name = f.name, .type = f.type orelse elem });
+        subs[i] = try pbField(arena, .{
+            .name = f.name,
+            .type = f.type orelse elem,
+            .required = f.is_not_null,
+        });
     }
     return subs;
 }
@@ -339,6 +347,8 @@ pub fn fieldTypeText(
                     try out.appendSlice(arena, sub_name);
                     try out.appendSlice(arena, "` ");
                     try out.appendSlice(arena, try fieldTypeText(arena, sub));
+                    // REQUIRED on a member is NOT NULL on the field.
+                    if (sub == .object and isRequired(sub)) try out.appendSlice(arena, " NOT NULL");
                 }
             }
         }
@@ -393,9 +403,7 @@ pub fn createTableDdl(
                             name_v.string,
                             try fieldTypeText(arena, field),
                         });
-                        // REQUIRED is NOT NULL. Only a top-level column can
-                        // say it: STRUCT member types carry no nullability, so
-                        // a nested REQUIRED is enforced by the row writer.
+                        // REQUIRED is NOT NULL on the column
                         if (isRequired(field)) try out.appendSlice(arena, " NOT NULL");
                         wrote_any = true;
                     }
@@ -510,7 +518,7 @@ test "CREATE TABLE DDL makes a REQUIRED column NOT NULL" {
 
     try testing.expectEqualStrings(
         "CREATE TABLE IF NOT EXISTS `p.ds.t` (`a` STRING NOT NULL, `b` STRING, " ++
-            "`c` ARRAY<STRING>, `r` STRUCT<`x` INT64> NOT NULL)",
+            "`c` ARRAY<STRING>, `r` STRUCT<`x` INT64 NOT NULL> NOT NULL)",
         try createTableDdl(arena, "p", "ds", "t", schema),
     );
 }
