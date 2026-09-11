@@ -47,6 +47,11 @@ pub const Error = error{
     UnsupportedFunction,
     /// SQLite prepare/step failed (message in Db.lastError).
     ExecFailed,
+    /// A CREATE named a dataset the catalog does not hold, and the connection
+    /// requires datasets to be declared (`Db.require_dataset`). The message
+    /// in Db.lastError is BigQuery's own, verbatim, so a server can answer
+    /// with it; nothing was created.
+    DatasetNotFound,
     /// Result-cell decoding failed.
     DecodeFailed,
     /// The database was written in a storage format this build cannot read.
@@ -250,6 +255,15 @@ pub const Db = struct {
     /// server sets one. BigQuery resolves such names against the job's
     /// project; without a default the path is registered as written.
     default_project: ?[]const u8 = null,
+    /// Whether a CREATE into `project.dataset.x` must name a dataset the
+    /// catalog holds, as BigQuery insists ("Not found: Dataset p:ds was not
+    /// found in location US"). Off by default: the engine library and the
+    /// spec corpus create `ds.t` freely and the catalog infers the dataset.
+    /// A server, whose clients declare datasets through the metadata API,
+    /// turns it on so the two agree on which datasets exist. Deliberately
+    /// separate from `default_project`, which is a name-resolution rule and
+    /// is set by engine tests that never declare a dataset.
+    require_dataset: bool = false,
     last_error: ?[]u8 = null,
     /// The 1-based bind index whose value failed to convert, when `last_error` came from a bind.
     /// Cleared at the start of every bind pass.
@@ -722,19 +736,125 @@ pub const Db = struct {
         try g.catalog.updateTableSpec(&db.sqlite_db, &updated);
     }
 
-    /// Tells the GoogleSQL catalog that `project.dataset` exists, so
-    /// `<project>.INFORMATION_SCHEMA.SCHEMATA` reports it even before it holds
-    /// a table. Idempotent. The metadata store gets the same news through its
-    /// own `addDataset`; this is the SQL-analysis side's copy of it — see
-    /// `Catalog.ensureDataset`.
-    pub fn ensureDataset(
+    /// Declares that `project.dataset` exists, carrying the metadata API's
+    /// resource text. The catalog is a dataset's only store: datasets.get and
+    /// datasets.list read the resource back from here, `require_dataset`
+    /// consults it, and `<project>.INFORMATION_SCHEMA.SCHEMATA` reports the
+    /// dataset even before it holds a table. Declaring a dataset again
+    /// replaces its resource (datasets.patch) and keeps its creation time.
+    pub fn addDataset(
         db: *Db,
+        arena: std.mem.Allocator,
         project_id: []const u8,
         dataset_id: []const u8,
-    ) error{OutOfMemory}!void {
+        metadata_json: []const u8,
+    ) catalog_mod.Error!void {
+        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var ds = spec.DatasetSpec{
+            .name_path = &.{ project_id, dataset_id },
+            .metadata = metadata_json,
+            .updated_at = now.rfc3339,
+            .created_at = now.rfc3339,
+        };
         var g = db.lockCatalog();
         defer g.unlock();
-        try g.catalog.ensureDataset(&.{ project_id, dataset_id }, "");
+        if (g.catalog.datasetSpecByName(canonical)) |current| {
+            if (!current.is_synthetic and pathIs2(current.name_path, project_id, dataset_id)) {
+                ds.created_at = current.created_at;
+            }
+        }
+        try g.catalog.addNewDatasetSpec(&db.sqlite_db, &ds);
+    }
+
+    /// Forgets a declared dataset. Its tables are the caller's business
+    /// (datasets.delete drops them first). A dataset the catalog only
+    /// inferred from a table's path is not declared, so it reports
+    /// `DatasetNotFound` like an unknown one.
+    pub fn deleteDataset(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) catalog_mod.Error!void {
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const current = g.catalog.datasetSpecByName(canonical) orelse return error.DatasetNotFound;
+        if (!pathIs2(current.name_path, project_id, dataset_id)) return error.DatasetNotFound;
+        try g.catalog.deleteDatasetSpec(&db.sqlite_db, canonical);
+    }
+
+    /// The declared dataset `project.dataset`, or null. Inferred datasets do
+    /// not count: this is the metadata API's "does this dataset exist", and
+    /// nobody created those. Pointer lifetime is as `catalogTable` describes.
+    pub fn catalogDataset(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) error{OutOfMemory}!?*const spec.DatasetSpec {
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const found = g.catalog.datasetSpecByName(canonical) orelse return null;
+        if (found.is_synthetic) return null;
+        if (!pathIs2(found.name_path, project_id, dataset_id)) return null;
+        return found;
+    }
+
+    /// Every declared dataset under `project`, in declaration order.
+    pub fn catalogDatasetsIn(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+    ) error{OutOfMemory}![]*const spec.DatasetSpec {
+        var out: std.ArrayList(*const spec.DatasetSpec) = .empty;
+        var g = db.lockCatalog();
+        defer g.unlock();
+        for (try g.catalog.liveDatasets(arena)) |ds| {
+            if (ds.is_synthetic) continue;
+            if (!std.mem.eql(u8, ds.name_path[0], project_id)) continue;
+            try out.append(arena, ds);
+        }
+        return out.toOwnedSlice(arena);
+    }
+
+    /// Whether the engine knows `project.dataset` at all — declared, or
+    /// inferred from a table already living in it.
+    pub fn datasetExists(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) error{OutOfMemory}!bool {
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const found = g.catalog.datasetSpecByName(canonical) orelse return false;
+        return pathIs2(found.name_path, project_id, dataset_id);
+    }
+
+    fn pathIs2(path: []const []const u8, p: []const u8, d: []const u8) bool {
+        return path.len == 2 and std.mem.eql(u8, path[0], p) and std.mem.eql(u8, path[1], d);
+    }
+
+    /// The `require_dataset` check, for a CREATE whose (qualified) name is
+    /// `name_path`. BigQuery's own message goes into `lastError`. Only a
+    /// `project.dataset.x` name can be checked: a shorter one has no dataset
+    /// to look up, and the anonymous results dataset and INFORMATION_SCHEMA
+    /// are the engine's own, never declared by anyone.
+    fn requireDataset(db: *Db, arena: std.mem.Allocator, name_path: []const []const u8) Error!void {
+        if (!db.require_dataset or name_path.len != 3) return;
+        if (std.mem.eql(u8, name_path[1], function.job_rows_vtab.anon_segment)) return;
+        if (std.mem.eql(u8, name_path[1], function.info_schema_vtab.info_schema_segment)) return;
+        if (try db.datasetExists(arena, name_path[0], name_path[1])) return;
+        db.setLastError(try std.fmt.allocPrint(
+            arena,
+            "Not found: Dataset {s}:{s} was not found in location US",
+            .{ name_path[0], name_path[1] },
+        ));
+        return error.DatasetNotFound;
     }
 
     /// Snapshots the live table specs for the INFORMATION_SCHEMA vtabs.
@@ -1476,6 +1596,7 @@ pub const Db = struct {
         opts: QueryOptions,
     ) Error!void {
         const fn_spec = try db.newFunctionSpec(arena, cf, opts);
+        if (!fn_spec.is_temp) try db.requireDataset(arena, fn_spec.name_path);
         if (fn_spec.is_temp)
             db.temps.addNewFunctionSpec(&db.sqlite_db, fn_spec) catch |err|
                 return db.failCatalog(err)
@@ -1652,6 +1773,7 @@ pub const Db = struct {
         // A TEMP table has no dataset to qualify into.
         if (!table_spec.is_temp) {
             table_spec.name_path = try db.qualifyPath(arena, table_spec.name_path);
+            try db.requireDataset(arena, table_spec.name_path);
         }
         const table_name = try table_spec.tableName(arena);
         const replacing = table_spec.create_mode == spec.create_mode_create_or_replace;
@@ -1806,6 +1928,7 @@ pub const Db = struct {
             .options = try optionSpecsFrom(arena, base.option_list),
             .source_sql = base.sql orelse "",
         };
+        if (!is_temp) try db.requireDataset(arena, table_spec.name_path);
 
         if (table_spec.create_mode == spec.create_mode_create_or_replace) {
             const drop_sql = try std.fmt.allocPrint(
@@ -3743,6 +3866,100 @@ test "catalogTable answers only the path it was asked for" {
         try db.catalogTable(arena, "foo", "bar", "baz"),
     );
     try testing.expectEqual(@as(usize, 0), (try db.catalogTablesIn(arena, "foo", "bar")).len);
+}
+
+test "require_dataset refuses a CREATE into an undeclared dataset with BigQuery's message" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    db.default_project = "p";
+    db.require_dataset = true;
+
+    // Refused before any SQLite work: no object, no spec.
+    try testing.expectError(error.DatasetNotFound, db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{}));
+    try testing.expectEqualStrings("Not found: Dataset p:d was not found in location US", db.lastError());
+    try testing.expectEqual(@as(?*const spec.TableSpec, null), try db.catalogTable(arena, "p", "d", "t"));
+    {
+        var rows = try db.rawQuery("SELECT name FROM sqlite_master WHERE name = 'p_d_t'", &.{});
+        defer rows.deinit();
+        try testing.expect((try rows.next()) == null);
+    }
+    try testing.expectError(
+        error.DatasetNotFound,
+        db.exec("CREATE VIEW d.v AS SELECT 1 AS x", &.{}, .{}),
+    );
+    try testing.expectError(
+        error.DatasetNotFound,
+        db.exec("CREATE FUNCTION p.d.f(x INT64) AS (x + 1)", &.{}, .{}),
+    );
+
+    // Declared, the same statements go through.
+    try db.addDataset(arena, "p", "d", "{\"id\":\"d\"}");
+    try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE FUNCTION p.d.f(x INT64) AS (x + 1)", &.{}, .{});
+    try testing.expect((try db.catalogTable(arena, "p", "d", "t")) != null);
+
+    // The engine's own datasets are exempt: TEMP objects have none, and the
+    // anonymous results dataset is never declared by anyone.
+    try db.exec("CREATE TEMP TABLE scratch (a INT64)", &.{}, .{});
+    try db.exec("CREATE TABLE `p._anon.job1` (a INT64)", &.{}, .{});
+
+    // Off — the library default — the catalog infers the dataset instead.
+    db.require_dataset = false;
+    try db.exec("CREATE TABLE other.t (a INT64)", &.{}, .{});
+    try testing.expect(try db.datasetExists(arena, "p", "other"));
+    try testing.expectEqual(@as(?*const spec.DatasetSpec, null), try db.catalogDataset(arena, "p", "other"));
+    try testing.expectEqual(@as(usize, 1), (try db.catalogDatasetsIn(arena, "p")).len);
+}
+
+test "declared datasets persist across connections, keep their creation time, and delete cleanly" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena,
+        ".zig-cache/tmp/{s}/datasets.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    var created_at: []const u8 = "";
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try db.addDataset(arena, "p", "ds", "{\"id\":\"ds\"}");
+        const first = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
+        created_at = try arena.dupe(u8, first.created_at);
+        try testing.expect(created_at.len > 0);
+        // Declaring again (datasets.patch) replaces the resource only.
+        try db.addDataset(arena, "p", "ds", "{\"id\":\"ds\",\"description\":\"kept\"}");
+        const second = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
+        try testing.expectEqualStrings(created_at, second.created_at);
+        try testing.expectEqualStrings("{\"id\":\"ds\",\"description\":\"kept\"}", second.metadata);
+        try testing.expectEqual(@as(usize, 1), (try db.catalogDatasetsIn(arena, "p")).len);
+    }
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        const reloaded = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
+        try testing.expectEqualStrings("{\"id\":\"ds\",\"description\":\"kept\"}", reloaded.metadata);
+        try testing.expectEqualStrings(created_at, reloaded.created_at);
+
+        try db.deleteDataset(arena, "p", "ds");
+        try testing.expectEqual(@as(?*const spec.DatasetSpec, null), try db.catalogDataset(arena, "p", "ds"));
+        try testing.expect(!try db.datasetExists(arena, "p", "ds"));
+        try testing.expectError(error.DatasetNotFound, db.deleteDataset(arena, "p", "ds"));
+    }
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try testing.expectEqual(@as(usize, 0), (try db.catalogDatasetsIn(arena, "p")).len);
+    }
 }
 
 test "DROP TABLE IF EXISTS on nothing is a no-op, DROP TABLE on nothing is an error" {
