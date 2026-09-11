@@ -126,11 +126,13 @@
         },
         .{
             .desc = "assign_struct_field_in_null_struct",
+            // The reference expects an error for the NULL row. BigQuery builds the
+            // struct from it: STRUCT(100, NULL, NULL), one row affected
+            // (recidiviz-bigquery-sandbox, 2026-09-10).
             .sql =
             \\# Fails because there is a row where struct_value is NULL.
             \\UPDATE Table2 SET struct_value.int64_value = 100 WHERE True
             ,
-            .expect_error_any = true,
         },
         .{
             .desc = "update_array_struct_with_set_null_struct",
@@ -257,11 +259,13 @@
         },
         .{
             .desc = "assign_null_struct_subfield",
+            // The reference expects an error where struct_field is NULL. BigQuery
+            // builds it: struct_field becomes STRUCT(1000, NULL)
+            // (recidiviz-bigquery-sandbox, 2026-09-10).
             .sql =
             \\# Fails because struct_value.struct_field is not set in all rows.
             \\UPDATE Table3 SET struct_value.struct_field.nested_value1 = 1000 WHERE True
             ,
-            .expect_error_any = true,
         },
     },
 }
