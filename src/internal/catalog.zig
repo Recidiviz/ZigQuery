@@ -2,7 +2,10 @@
 //!
 //! The persisted side is byte-faithful: the `zigquery_catalog` DDL, the
 //! upsert/delete SQL and the JSON `spec` column all match Go, so a database
-//! written by go-zetasqlite loads here and vice versa.
+//! written by go-zetasqlite loads here. The reverse stopped holding when
+//! datasets moved in: they persist as a fourth `kind` (`dataset`), which is
+//! the emulator's business rather than the engine's and which Go's loader
+//! would reject.
 //!
 //! The in-memory side is redesigned per the port plan: where Go builds a
 //! live googlesql.SimpleCatalog through the engine API, this port renders
@@ -49,6 +52,9 @@ pub const Error = error{
     /// DeleteTableSpec on a name that is not in the catalog (Go: "failed to
     /// find table spec from map by %s").
     TableNotFound,
+    /// deleteDatasetSpec on a dataset the catalog does not hold, or only
+    /// inferred from a table's path.
+    DatasetNotFound,
     /// An update aimed at a spec that is never persisted: a TEMP overlay entry
     /// or a synthetic registration.
     NotPersistent,
@@ -101,6 +107,12 @@ const load_query = "SELECT name, kind, spec FROM zigquery_catalog";
 pub const table_spec_kind = "table";
 pub const view_spec_kind = "view";
 pub const function_spec_kind = "function";
+/// Not a Go kind: Go keeps datasets in the emulator's metadata store. Here
+/// they persist beside tables so the catalog is their only store. The row
+/// key is the "_"-joined path, shared with every other kind — a dataset
+/// `p.ds` and a one-part table literally named `p_ds` would collide, the same
+/// non-injectivity `Db.catalogTable` guards against by re-checking the path.
+pub const dataset_spec_kind = "dataset";
 const catalog_name = "zigquery";
 
 /// One table change, in the order it happened. Names are canonical
@@ -160,10 +172,13 @@ pub const Catalog = struct {
     functions: std.ArrayList(*spec.FunctionSpec),
     /// Canonical function name -> index into `functions` (Go: c.funcMap).
     func_map: std.StringHashMap(usize),
-    /// Insertion-ordered, append-only (Go has no analogue): datasets the
-    /// catalog has been told exist, independent of whether they hold a table.
-    /// See `ensureDataset`.
-    datasets: std.ArrayList(*spec.DatasetSpec),
+    /// Insertion-ordered datasets (Go has no analogue): every dataset the
+    /// catalog has been told exists or has inferred from a table's path. A
+    /// deleted dataset leaves a null tombstone, for the same reason `tables`
+    /// does, and slots are never reused, so a `*spec.DatasetSpec` handed out
+    /// stays valid for the catalog's lifetime. See `addNewDatasetSpec` and
+    /// `ensureDataset`.
+    datasets: std.ArrayList(?*spec.DatasetSpec),
     /// `project_dataset` -> index into `datasets`.
     dataset_map: std.StringHashMap(usize),
     /// Append-only, ordered log of table changes.
@@ -380,6 +395,9 @@ pub const Catalog = struct {
             } else if (std.mem.eql(u8, kind, function_spec_kind)) {
                 const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
                 try c.loadFunctionSpec(spec_json);
+            } else if (std.mem.eql(u8, kind, dataset_spec_kind)) {
+                const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
+                try c.loadDatasetSpec(spec_json);
             } else {
                 return error.InvalidSpec; // Go: "unknown catalog spec kind %s"
             }
@@ -759,7 +777,7 @@ pub const Catalog = struct {
             path[prefix.len + 1] = view.view;
             try c.registerSyntheticView(arena, path, view);
         }
-        try c.ensureDataset(prefix, "");
+        try c.ensureDataset(prefix);
     }
 
     /// Builds and registers one INFORMATION_SCHEMA view's `TableSpec` at
@@ -796,28 +814,24 @@ pub const Catalog = struct {
         try c.changes.append(c.gpa, .{ .table_added = canonical });
     }
 
-    /// Records that `[project, dataset]` exists and registers the project's
-    /// SCHEMATA view (`<project>.INFORMATION_SCHEMA.SCHEMATA`), both once per
-    /// project. Idempotent: a dataset already known is left alone.
+    /// Records that a table's `[project, dataset]` exists, when nothing has
+    /// said so yet. Idempotent: a dataset already known — declared or
+    /// inferred — is left alone.
     ///
     /// Go has no analogue — the reference emulator tracks datasets only in its
-    /// metadata store — but the SQL catalog needs to know a dataset exists
-    /// before it holds a table, or a freshly created, still-empty dataset is
-    /// invisible to a project-scoped SCHEMATA scan (buildSchemata's data comes
-    /// from real tables' own paths; TABLES/COLUMNS need no such registration,
-    /// since an empty dataset genuinely has zero rows there).
+    /// metadata store — but INFORMATION_SCHEMA is served from the catalog, so
+    /// it has to know about every dataset a table lands in even when nobody
+    /// declared it (the engine library and the spec corpus create
+    /// `ds.t` freely). The entry is synthetic: memory-only, and invisible to
+    /// the metadata API, which only reports datasets someone declared through
+    /// `addNewDatasetSpec`.
     ///
-    /// Called both directly, when a dataset is created (server.zig addDataset),
-    /// and via `ensureInfoSchema`, when a table is registered under a dataset
-    /// the catalog has not seen yet. A project-less dataset (`name_path.len !=
-    /// 2`, e.g. a bare `CREATE TABLE ds.t`) has no project segment to register
-    /// a project-scoped SCHEMATA under, so it is left to the existing
-    /// dataset-scoped `ds.INFORMATION_SCHEMA.SCHEMATA` form instead.
-    pub fn ensureDataset(
-        c: *Catalog,
-        name_path: []const []const u8,
-        created_at: []const u8,
-    ) error{OutOfMemory}!void {
+    /// Reached via `ensureInfoSchema`, so `loadTableSpec` takes it too. A
+    /// project-less dataset (`name_path.len != 2`, e.g. a bare `CREATE TABLE
+    /// ds.t`) has no project segment to register a project-scoped SCHEMATA
+    /// under, so it is left to the existing dataset-scoped
+    /// `ds.INFORMATION_SCHEMA.SCHEMATA` form instead.
+    fn ensureDataset(c: *Catalog, name_path: []const []const u8) error{OutOfMemory}!void {
         if (name_path.len != 2) return;
         const arena = c.arena_state.allocator();
         const canonical = try spec.formatPath(arena, name_path);
@@ -827,21 +841,121 @@ pub const Catalog = struct {
         dataset_path[0] = try arena.dupe(u8, name_path[0]);
         dataset_path[1] = try arena.dupe(u8, name_path[1]);
         const entry = try arena.create(spec.DatasetSpec);
-        entry.* = .{ .name_path = dataset_path, .created_at = try arena.dupe(u8, created_at) };
-        try c.datasets.append(c.gpa, entry);
-        try c.dataset_map.put(canonical, c.datasets.items.len - 1);
+        entry.* = .{ .name_path = dataset_path, .is_synthetic = true };
+        try c.addDatasetToMemory(entry, canonical);
+    }
 
+    /// Registers `ds` under `canonical`, replacing whatever slot held that
+    /// name — this is how a declared dataset supersedes the synthetic entry a
+    /// table's registration inferred, and why load order does not matter
+    /// (`loadFromStorage` has no ORDER BY, so a table row can precede its
+    /// dataset row). Also registers the project's SCHEMATA view
+    /// (`<project>.INFORMATION_SCHEMA.SCHEMATA`), once per project.
+    ///
+    /// Datasets are not logged in `changes`: the analyzer catalog has no
+    /// dataset concept, and SCHEMATA reads the live registry.
+    fn addDatasetToMemory(
+        c: *Catalog,
+        ds: *spec.DatasetSpec,
+        canonical: []const u8,
+    ) error{OutOfMemory}!void {
+        if (c.dataset_map.get(canonical)) |idx| {
+            c.datasets.items[idx] = ds;
+        } else {
+            try c.datasets.append(c.gpa, ds);
+            try c.dataset_map.put(canonical, c.datasets.items.len - 1);
+        }
+
+        const arena = c.arena_state.allocator();
         const schemata_view = for (&info_schema_vtab.views) |*v| {
             if (std.mem.eql(u8, v.view, "SCHEMATA")) break v;
         } else unreachable; // SCHEMATA is always in info_schema_vtab.views.
         const project_path = try arena.alloc([]const u8, 3);
-        project_path[0] = try arena.dupe(u8, name_path[0]);
+        project_path[0] = try arena.dupe(u8, ds.name_path[0]);
         project_path[1] = info_schema_vtab.info_schema_segment;
         project_path[2] = schemata_view.view;
         try c.registerSyntheticView(arena, project_path, schemata_view);
     }
 
-    /// Every dataset the catalog has been told exists, in registration order.
+    fn loadDatasetSpec(c: *Catalog, spec_json: []const u8) Error!void {
+        const arena = c.arena_state.allocator();
+        const ds = spec.datasetSpecFromJson(arena, spec_json) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        if (ds.name_path.len != 2) return error.InvalidSpec;
+        try c.addDatasetToMemory(ds, try ds.datasetName(arena));
+    }
+
+    /// Declares a dataset: in-memory registration plus the persisted upsert,
+    /// the dataset counterpart of `addNewTableSpec`. Both a fresh dataset and
+    /// a patched one come through here — Go's UpdateDataset is the same
+    /// upsert. The spec is deep-copied into the catalog arena via its JSON,
+    /// so callers may pass short-lived memory. A synthetic spec is refused:
+    /// inferred datasets are `ensureDataset`'s business and never persist.
+    pub fn addNewDatasetSpec(
+        c: *Catalog,
+        db: *sqlite.Db,
+        ds: *const spec.DatasetSpec,
+    ) Error!void {
+        if (ds.is_synthetic) return error.NotPersistent;
+        if (ds.name_path.len != 2) return error.InvalidSpec;
+        const arena = c.arena_state.allocator();
+        const encoded = ds.toJson(arena) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        const owned = spec.datasetSpecFromJson(arena, encoded) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSpec,
+        };
+        const canonical = try owned.datasetName(arena);
+        try c.addDatasetToMemory(owned, canonical);
+
+        var scope = phase.SourceScope.begin(.catalog);
+        defer scope.end();
+        const now = try nowTimestamps(arena);
+        var stmt = try db.prepare(upsert_catalog_query);
+        defer stmt.finalize();
+        try stmt.bindText(1, canonical);
+        try stmt.bindText(2, dataset_spec_kind);
+        try stmt.bindText(3, encoded);
+        try stmt.bindText(4, now.sql);
+        try stmt.bindText(5, now.sql);
+        _ = try stmt.step();
+    }
+
+    /// Removes a declared dataset from memory and from storage. A dataset the
+    /// catalog only inferred is not deletable through the metadata API, so it
+    /// reports `DatasetNotFound` like an unknown one.
+    ///
+    /// Tombstones rather than compacts, as `deleteTableSpec` does. The
+    /// dataset's INFORMATION_SCHEMA views stay registered: they are hidden
+    /// from listings by the vtab and would be recreated by the next table
+    /// anyway.
+    pub fn deleteDatasetSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
+        const idx = c.dataset_map.get(name) orelse return error.DatasetNotFound;
+        const current = c.datasets.items[idx] orelse return error.DatasetNotFound;
+        if (current.is_synthetic) return error.DatasetNotFound;
+        _ = c.dataset_map.remove(name);
+        c.datasets.items[idx] = null;
+
+        var scope = phase.SourceScope.begin(.catalog);
+        defer scope.end();
+        var stmt = try db.prepare(delete_catalog_query);
+        defer stmt.finalize();
+        try stmt.bindText(1, name);
+        _ = try stmt.step();
+    }
+
+    /// Spec currently registered under a canonical dataset name, declared or
+    /// inferred, if any.
+    pub fn datasetSpecByName(c: *const Catalog, name: []const u8) ?*spec.DatasetSpec {
+        const idx = c.dataset_map.get(name) orelse return null;
+        return c.datasets.items[idx];
+    }
+
+    /// Every live dataset, declared or inferred, in registration order.
     ///
     /// Copies into `alloc` rather than returning `c.datasets.items` directly,
     /// same as `liveTableSpecs`: the slice must stay valid for a reader who
@@ -851,7 +965,11 @@ pub const Catalog = struct {
         c: *const Catalog,
         alloc: std.mem.Allocator,
     ) error{OutOfMemory}![]const *spec.DatasetSpec {
-        return alloc.dupe(*spec.DatasetSpec, c.datasets.items);
+        var out = try std.ArrayList(*spec.DatasetSpec).initCapacity(alloc, c.dataset_map.count());
+        for (c.datasets.items) |maybe| {
+            if (maybe) |ds| out.appendAssumeCapacity(ds);
+        }
+        return out.items;
     }
 
     // ------------------------------------------------------------------
@@ -1819,4 +1937,115 @@ test "INFORMATION_SCHEMA views come back after a reload" {
     try c2.loadFromStorage(&db);
     try testing.expectEqual(@as(usize, 1 + info_schema_vtab.views.len), c2.tableCount());
     try testing.expect(c2.findTableSpec("ds_INFORMATION_SCHEMA_TABLES") != null);
+}
+
+test "a declared dataset persists as a dataset row, reloads with its resource, and deletes" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c1 = try Catalog.init(testing.allocator);
+    defer c1.deinit();
+    try c1.createCatalogTablesIfNotExist(&db);
+    const resource = "{\"datasetReference\":{\"datasetId\":\"ds\",\"projectId\":\"p\"},\"id\":\"ds\"}";
+    try c1.addNewDatasetSpec(&db, &.{
+        .name_path = &.{ "p", "ds" },
+        .metadata = resource,
+        .created_at = "2024-01-02T03:04:05Z",
+    });
+
+    const declared = c1.datasetSpecByName("p_ds") orelse return error.TestUnexpectedResult;
+    try testing.expect(!declared.is_synthetic);
+    try testing.expectEqualStrings(resource, declared.metadata);
+    try testing.expectEqual(@as(usize, 1), (try c1.liveDatasets(alloc)).len);
+    // The project's SCHEMATA view comes with it, so `p.INFORMATION_SCHEMA.
+    // SCHEMATA` resolves before the dataset holds a table.
+    try testing.expect(c1.findTableSpec("p_INFORMATION_SCHEMA_SCHEMATA") != null);
+
+    // Persisted under its own kind, beside tables and functions.
+    {
+        var stmt = try db.prepare("SELECT name, kind FROM zigquery_catalog");
+        defer stmt.finalize();
+        try testing.expect(try stmt.step());
+        try testing.expectEqualStrings("p_ds", stmt.columnText(0));
+        try testing.expectEqualStrings(dataset_spec_kind, stmt.columnText(1));
+        try testing.expect(!(try stmt.step()));
+    }
+
+    var c2 = try Catalog.init(testing.allocator);
+    defer c2.deinit();
+    try c2.loadFromStorage(&db);
+    const reloaded = c2.datasetSpecByName("p_ds") orelse return error.TestUnexpectedResult;
+    try testing.expect(!reloaded.is_synthetic);
+    try testing.expectEqualStrings(resource, reloaded.metadata);
+    try testing.expectEqualStrings("2024-01-02T03:04:05Z", reloaded.created_at);
+
+    // Delete tombstones the slot and removes the row; a second delete, or a
+    // delete of something never declared, is DatasetNotFound.
+    try c1.deleteDatasetSpec(&db, "p_ds");
+    try testing.expectEqual(@as(?*spec.DatasetSpec, null), c1.datasetSpecByName("p_ds"));
+    try testing.expectEqual(@as(usize, 0), (try c1.liveDatasets(alloc)).len);
+    {
+        var stmt = try db.prepare("SELECT COUNT(*) FROM zigquery_catalog");
+        defer stmt.finalize();
+        try testing.expect(try stmt.step());
+        try testing.expectEqual(@as(i64, 0), stmt.columnInt64(0));
+    }
+    try testing.expectError(error.DatasetNotFound, c1.deleteDatasetSpec(&db, "p_ds"));
+    try testing.expectError(error.DatasetNotFound, c1.deleteDatasetSpec(&db, "p_never"));
+
+    // Declaring it again takes a fresh slot.
+    try c1.addNewDatasetSpec(&db, &.{ .name_path = &.{ "p", "ds" } });
+    try testing.expectEqual(@as(usize, 1), (try c1.liveDatasets(alloc)).len);
+
+    // A synthetic spec is never persisted through this path.
+    try testing.expectError(error.NotPersistent, c1.addNewDatasetSpec(&db, &.{
+        .name_path = &.{ "p", "inferred" },
+        .is_synthetic = true,
+    }));
+}
+
+test "a table's dataset is inferred as synthetic and a declaration replaces it in place" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c1 = try Catalog.init(testing.allocator);
+    defer c1.deinit();
+    try c1.createCatalogTablesIfNotExist(&db);
+    try c1.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "p", "ds", "t" }));
+
+    const inferred = c1.datasetSpecByName("p_ds") orelse return error.TestUnexpectedResult;
+    try testing.expect(inferred.is_synthetic);
+    // Not declared, so not deletable — and not persisted: the table is the
+    // only row.
+    try testing.expectError(error.DatasetNotFound, c1.deleteDatasetSpec(&db, "p_ds"));
+    {
+        var stmt = try db.prepare("SELECT COUNT(*) FROM zigquery_catalog");
+        defer stmt.finalize();
+        try testing.expect(try stmt.step());
+        try testing.expectEqual(@as(i64, 1), stmt.columnInt64(0));
+    }
+
+    // Declaring it upgrades the same slot rather than adding a second entry.
+    try c1.addNewDatasetSpec(&db, &.{ .name_path = &.{ "p", "ds" }, .metadata = "{\"id\":\"ds\"}" });
+    const live = try c1.liveDatasets(alloc);
+    try testing.expectEqual(@as(usize, 1), live.len);
+    try testing.expect(!live[0].is_synthetic);
+    try testing.expectEqualStrings("{\"id\":\"ds\"}", live[0].metadata);
+
+    // On reload the table row comes first (rowid order), so its inferred
+    // dataset is registered before the dataset row arrives; the declaration
+    // must still win.
+    var c2 = try Catalog.init(testing.allocator);
+    defer c2.deinit();
+    try c2.loadFromStorage(&db);
+    const reloaded = c2.datasetSpecByName("p_ds") orelse return error.TestUnexpectedResult;
+    try testing.expect(!reloaded.is_synthetic);
+    try testing.expectEqualStrings("{\"id\":\"ds\"}", reloaded.metadata);
+    try testing.expectEqual(@as(usize, 1), (try c2.liveDatasets(alloc)).len);
 }

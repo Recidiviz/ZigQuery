@@ -379,12 +379,73 @@ pub const OptionSpec = struct {
     value: []const u8 = "",
 };
 
-/// A dataset the catalog has been told exists, independent of any table it may or may not hold
+/// A dataset the catalog has been told exists, independent of any table it
+/// may or may not hold.
+///
+/// Go has no analogue: the reference emulator keeps datasets only in its
+/// metadata store. Here the catalog is the single store for them, as it is
+/// for tables since the metadata consolidation, so the REST resource rides
+/// on the spec (`metadata`) and the spec persists as a `dataset` row in
+/// `zigquery_catalog`.
 pub const DatasetSpec = struct {
     /// `[project, dataset]`.
     name_path: []const []const u8 = &.{},
-    created_at: []const u8 = "",
+    updated_at: []const u8 = "", // RFC3339 timestamp
+    created_at: []const u8 = "", // RFC3339 timestamp
+    /// The metadata API's view of the dataset: the resource JSON a client
+    /// posted or patched, echoed back by datasets.get. Empty for a dataset
+    /// the catalog only inferred.
+    metadata: []const u8 = "",
+    /// Inferred from a table's path rather than declared by anyone: the
+    /// catalog registers one for every dataset a table lands in, so
+    /// INFORMATION_SCHEMA can report it. Memory-only, never persisted, and
+    /// invisible to the metadata API; an explicit registration under the
+    /// same name replaces it.
+    is_synthetic: bool = false,
+
+    /// The canonical "_"-joined name, which is the `zigquery_catalog` key.
+    pub fn datasetName(self: *const DatasetSpec, alloc: std.mem.Allocator) error{OutOfMemory}![]u8 {
+        return formatPath(alloc, self.name_path);
+    }
+
+    pub fn toJson(self: *const DatasetSpec, alloc: std.mem.Allocator) Error![]u8 {
+        var out: std.ArrayList(u8) = .empty;
+        try out.appendSlice(alloc, "{\"namePath\":");
+        try appendJsonStringArray(&out, alloc, self.name_path);
+        try out.appendSlice(alloc, ",\"updatedAt\":");
+        try appendJsonString(&out, alloc, self.updated_at);
+        try out.appendSlice(alloc, ",\"createdAt\":");
+        try appendJsonString(&out, alloc, self.created_at);
+        try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
+        try out.append(alloc, '}');
+        return out.toOwnedSlice(alloc);
+    }
 };
+
+/// json.Unmarshal into DatasetSpec (the shape `DatasetSpec.toJson` produces).
+pub fn datasetSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*DatasetSpec {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, json_text, .{}) catch |err|
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidType,
+        };
+    if (parsed != .object) return error.InvalidType;
+    const obj = parsed.object;
+
+    const ds = try alloc.create(DatasetSpec);
+    ds.* = .{};
+    ds.name_path = try stringSliceField(alloc, obj, "namePath");
+    if (obj.get("updatedAt")) |v| {
+        if (v == .string) ds.updated_at = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("createdAt")) |v| {
+        if (v == .string) ds.created_at = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("metadata")) |v| {
+        if (v == .string) ds.metadata = try alloc.dupe(u8, v.string);
+    }
+    return ds;
+}
 
 /// A representation of a table in BigQuery
 pub const TableSpec = struct {
@@ -1314,6 +1375,42 @@ test "metadata and source SQL round-trip through JSON and stay out of it when em
     const decoded = try tableSpecFromJson(alloc, encoded);
     try testing.expectEqualStrings(with.metadata, decoded.metadata);
     try testing.expectEqualStrings(with.source_sql, decoded.source_sql);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+}
+
+test "a dataset spec round-trips through JSON, metadata only when set" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare = DatasetSpec{
+        .name_path = &.{ "p", "ds" },
+        .updated_at = "2024-01-02T03:04:05Z",
+        .created_at = "2024-01-02T03:04:05Z",
+    };
+    try testing.expectEqualStrings(
+        \\{"namePath":["p","ds"],"updatedAt":"2024-01-02T03:04:05Z","createdAt":"2024-01-02T03:04:05Z"}
+    ,
+        try bare.toJson(alloc),
+    );
+    try testing.expectEqualStrings("p_ds", try bare.datasetName(alloc));
+
+    var with = bare;
+    with.metadata =
+        \\{"datasetReference":{"datasetId":"ds","projectId":"p"},"id":"ds","labels":{"k":"v"}}
+    ;
+    // `is_synthetic` is a memory-only marker and never reaches the JSON.
+    with.is_synthetic = true;
+    const encoded = try with.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, encoded, "synthetic") == null);
+    try testing.expect(std.mem.indexOf(u8, encoded, ",\"metadata\":\"{\\\"datasetReference\\\"") != null);
+
+    const decoded = try datasetSpecFromJson(alloc, encoded);
+    try testing.expectEqualStrings("p", decoded.name_path[0]);
+    try testing.expectEqualStrings("ds", decoded.name_path[1]);
+    try testing.expectEqualStrings(with.metadata, decoded.metadata);
+    try testing.expectEqualStrings(with.created_at, decoded.created_at);
+    try testing.expect(!decoded.is_synthetic);
     try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 

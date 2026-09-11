@@ -432,6 +432,10 @@ pub const RunResult = struct {
     /// back — which this request cannot know. Null only when the query failed.
     set: ?ResultSet = null,
     ok: bool,
+    /// The HTTP status a failed run should answer with. A query BigQuery
+    /// refuses as malformed is 400; one that names a dataset that does not
+    /// exist is 404, the same way the metadata API answers.
+    status: std.http.Status = .ok,
     total_bytes: usize = 0,
 };
 
@@ -447,12 +451,22 @@ pub fn runQueryFormatted(
     /// top-level TIMESTAMP column exists, so a later reader can choose.
     want_int64_timestamps: bool,
 ) !RunResult {
-    var rows = db.query(sql, params, .{}) catch {
-        const msg = try wrapEngineError(arena, db.lastError());
-        return .{
-            .body = try errors.body(arena, .invalid_query, msg),
+    var rows = db.query(sql, params, .{}) catch |err| switch (err) {
+        // The engine's message is BigQuery's own, verbatim: no "failed to
+        // analyze" prefix, and the API's 404 rather than a query error.
+        error.DatasetNotFound => return .{
+            .body = try errors.body(arena, .not_found, db.lastError()),
             .ok = false,
-        };
+            .status = .not_found,
+        },
+        else => {
+            const msg = try wrapEngineError(arena, db.lastError());
+            return .{
+                .body = try errors.body(arena, .invalid_query, msg),
+                .ok = false,
+                .status = .bad_request,
+            };
+        },
     };
     defer rows.deinit();
 
@@ -486,6 +500,7 @@ pub fn runQueryFormatted(
                 try wrapEngineError(arena, db.lastError()),
             ),
             .ok = false,
+            .status = .bad_request,
         };
     }) |row| {
         for (row) |v| try cells.append(arena, switch (v) {
