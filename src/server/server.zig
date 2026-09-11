@@ -32,7 +32,6 @@ const jobs_handler = @import("handler/jobs.zig");
 const datasets_handler = @import("handler/datasets.zig");
 const tables_handler = @import("handler/tables.zig");
 const tabledata_handler = @import("handler/tabledata.zig");
-const metadata = @import("internal/metadata/repository.zig");
 const contentdata = @import("internal/contentdata/repository.zig");
 const phase = zigquery.phase;
 const schema_mod = @import("internal/types/schema.zig");
@@ -86,7 +85,6 @@ pub const Server = struct {
     /// a number and a lead.
     slow_queries: stats_mod.SlowQueries(16, 400) = .{},
     started_ms: i64 = 0,
-    repo: metadata.Repository,
     rng: std.Random.DefaultPrng,
     /// Host:port, for the selfLink-style URLs handlers build.
     endpoint: []const u8,
@@ -100,7 +98,6 @@ pub const Server = struct {
             .project = undefined,
             .db = undefined,
             .jobs = .{ .gpa = gpa },
-            .repo = undefined,
             // Seeded from the clock: job ids only need to be unique within a
             // run, and Go's randomID is likewise not cryptographic. Zig 0.16
             // moved wall-clock reads behind std.Io, so read libc directly —
@@ -139,14 +136,15 @@ pub const Server = struct {
         };
         try s.dropStaleJobTables(arena);
 
-        s.repo = try metadata.Repository.init(s.db);
-        try s.repo.addProjectIfNotExists(s.project);
+        // Clients declare datasets through the metadata API, so a CREATE into
+        // one nobody declared is BigQuery's "Not found: Dataset" rather than
+        // the engine library's quiet inference.
+        s.db.require_dataset = true;
 
         if (opts.dataset) |dataset_id| {
             var meta: std.ArrayList(u8) = .empty;
-            try datasets_handler.writeDataset(arena, &meta, s.project, dataset_id, true);
-            try s.repo.addDataset(s.project, dataset_id, meta.items);
-            try s.db.ensureDataset(s.project, dataset_id);
+            try datasets_handler.writeDataset(arena, &meta, s.project, dataset_id);
+            try s.db.addDataset(arena, s.project, dataset_id, meta.items);
         }
 
         for (opts.data_from_json) |path| {
@@ -159,7 +157,6 @@ pub const Server = struct {
             const stats = source_mod.loadJson(
                 arena,
                 s.db,
-                &s.repo,
                 bytes,
             ) catch |err| {
                 std.log.err(
@@ -344,7 +341,7 @@ pub const Server = struct {
             int64_ts,
         );
         if (!res.ok) {
-            return .{ .status = .bad_request, .body = res.body };
+            return .{ .status = res.status, .body = res.body };
         }
 
         // Go's jobs.query does NOT persist a job — only jobs.insert does, so
@@ -533,9 +530,8 @@ pub const Server = struct {
         };
 
         var meta: std.ArrayList(u8) = .empty;
-        try datasets_handler.writeDataset(arena, &meta, project_id, dataset_id, true);
-        try s.repo.addDataset(project_id, dataset_id, meta.items);
-        try s.db.ensureDataset(project_id, dataset_id);
+        try datasets_handler.writeDataset(arena, &meta, project_id, dataset_id);
+        try s.db.addDataset(arena, project_id, dataset_id, meta.items);
 
         return .{ .body = meta.items };
     }
@@ -546,10 +542,32 @@ pub const Server = struct {
         project_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
-        const ids = try s.repo.listDatasets(arena, project_id);
+        const specs = try s.db.catalogDatasetsIn(arena, project_id);
+        // The catalog holds declaration order; the API lists by id.
+        std.mem.sort(*const zigquery.spec.DatasetSpec, specs, {}, datasetIdLessThan);
+        const resources = try arena.alloc([]const u8, specs.len);
+        for (specs, resources) |ds, *resource| resource.* = try datasetResource(arena, ds);
         var out: std.ArrayList(u8) = .empty;
-        try datasets_handler.writeDatasetList(arena, &out, project_id, ids);
+        try datasets_handler.writeDatasetList(arena, &out, resources);
         return .{ .body = out.items };
+    }
+
+    fn datasetIdLessThan(
+        _: void,
+        a: *const zigquery.spec.DatasetSpec,
+        b: *const zigquery.spec.DatasetSpec,
+    ) bool {
+        return std.mem.lessThan(u8, a.name_path[1], b.name_path[1]);
+    }
+
+    /// The resource a declared dataset reports: what was posted or patched,
+    /// verbatim. A declaration that carried none (the `--dataset` flag, a
+    /// loader fixture) reports the bare reference.
+    fn datasetResource(arena: std.mem.Allocator, ds: *const zigquery.spec.DatasetSpec) ![]const u8 {
+        if (ds.metadata.len > 0) return ds.metadata;
+        var out: std.ArrayList(u8) = .empty;
+        try datasets_handler.writeDataset(arena, &out, ds.name_path[0], ds.name_path[1]);
+        return out.items;
     }
 
     fn handleDatasetsGet(
@@ -559,23 +577,18 @@ pub const Server = struct {
         dataset_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
-        if (!try s.repo.datasetExists(project_id, dataset_id)) {
-            return notFound(arena, try std.fmt.allocPrint(
-                arena,
-                "dataset {s} is not found",
-                .{dataset_id},
-            ));
-        }
-        var out: std.ArrayList(u8) = .empty;
-        try datasets_handler.writeDataset(arena, &out, project_id, dataset_id, false);
-        return .{ .body = out.items };
+        const ds = (try s.db.catalogDataset(arena, project_id, dataset_id)) orelse
+            return datasetNotFound(arena, project_id, dataset_id);
+        return .{ .body = try datasetResource(arena, ds) };
     }
 
     /// server/handler.go datasetsPatchHandler.
     ///
     /// Clients patch datasets to set things like defaultTableExpirationMs.
     /// The posted body is stored and echoed back with the reference filled
-    /// in, so a field the emulator does not otherwise model still round-trips.
+    /// in, so a field the emulator does not otherwise model still round-trips
+    /// — through datasets.get and datasets.list as well, which report the
+    /// stored resource.
     fn handleDatasetsPatch(
         s: *Server,
         req: *const http_server.Request,
@@ -583,12 +596,8 @@ pub const Server = struct {
         dataset_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
-        if (!try s.repo.datasetExists(project_id, dataset_id)) {
-            return notFound(arena, try std.fmt.allocPrint(
-                arena,
-                "dataset {s} is not found",
-                .{dataset_id},
-            ));
+        if (try s.db.catalogDataset(arena, project_id, dataset_id) == null) {
+            return datasetNotFound(arena, project_id, dataset_id);
         }
 
         const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch
@@ -609,11 +618,10 @@ pub const Server = struct {
 
             try tables_handler.writeJsonValue(arena, &out, .{ .object = merged });
         } else {
-            try datasets_handler.writeDataset(arena, &out, project_id, dataset_id, true);
+            try datasets_handler.writeDataset(arena, &out, project_id, dataset_id);
         }
 
-        try s.repo.addDataset(project_id, dataset_id, out.items);
-        try s.db.ensureDataset(project_id, dataset_id);
+        try s.db.addDataset(arena, project_id, dataset_id, out.items);
         return .{ .body = out.items };
     }
 
@@ -624,17 +632,15 @@ pub const Server = struct {
         dataset_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
+        if (try s.db.catalogDataset(arena, project_id, dataset_id) == null) {
+            return datasetNotFound(arena, project_id, dataset_id);
+        }
         // deleteContents drops the tables too; without it Go errors when the
         // dataset is non-empty. The emulator is permissive here.
         //
-        // They have to leave the content database as well, exactly as
-        // tables.delete does: tables.get falls back to the engine catalog when
-        // the metadata store misses, so a table dropped from metadata alone
-        // stays visible and the next CREATE reports it already exists.
-        //
-        // The engine is asked rather than the metadata store, because it is
-        // the one that knows about objects created by SQL — a CTAS or a
-        // CREATE VIEW run as a query job never reaches tables.insert.
+        // The engine is asked for them because it is the one store of tables,
+        // SQL-made ones included — a CTAS or a CREATE VIEW run as a query job
+        // never reaches tables.insert.
         for (try s.db.catalogTablesIn(arena, project_id, dataset_id)) |table_spec| {
             const ddl = try std.fmt.allocPrint(
                 arena,
@@ -648,7 +654,7 @@ pub const Server = struct {
             );
             s.db.exec(ddl, &.{}, .{}) catch {};
         }
-        try s.repo.deleteDataset(project_id, dataset_id);
+        try s.db.deleteDataset(arena, project_id, dataset_id);
         return .{ .body = "" };
     }
 
@@ -671,6 +677,9 @@ pub const Server = struct {
         const schema_node: ?std.json.Value =
             if (parsed == .object) parsed.object.get("schema") else null;
 
+        if (!try server.db.datasetExists(arena, project_id, dataset_id)) {
+            return datasetNotFound(arena, project_id, dataset_id);
+        }
         if (try server.db.catalogTable(arena, project_id, dataset_id, table_id)) |_| {
             return .{
                 .status = .conflict,
@@ -910,6 +919,9 @@ pub const Server = struct {
         dataset_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
+        if (!try s.db.datasetExists(arena, project_id, dataset_id)) {
+            return datasetNotFound(arena, project_id, dataset_id);
+        }
         const specs = try s.db.catalogTablesIn(arena, project_id, dataset_id);
         // The catalog holds registration order; the API lists by id.
         std.mem.sort(*const zigquery.spec.TableSpec, @constCast(specs), {}, tableIdLessThan);
@@ -1090,6 +1102,17 @@ pub const Server = struct {
         // materialization writes results. Run the DDL form instead of the
         // bare SELECT, then record the resulting table's metadata.
         const res = if (jobs_handler.destinationFromJobConfig(job)) |dst| blk: {
+            // BigQuery refuses the job before running anything when the
+            // destination's dataset does not exist; so does the engine's own
+            // check inside the DDL below, but this one names the dataset in
+            // the API's own wording and skips the query entirely.
+            if (!try s.db.datasetExists(arena, dst.project_id, dst.dataset_id)) {
+                return notFound(arena, try std.fmt.allocPrint(
+                    arena,
+                    "Not found: Dataset {s}:{s} was not found in location US",
+                    .{ dst.project_id, dst.dataset_id },
+                ));
+            }
             const prior_metadata: []const u8 = if (try s.db.catalogTable(
                 arena,
                 dst.project_id,
@@ -1141,7 +1164,7 @@ pub const Server = struct {
                 "job failed: {s}\n  sql: {s}",
                 .{ s.db.lastError(), sql[0..@min(sql.len, 600)] },
             );
-            return .{ .status = .bad_request, .body = res.body };
+            return .{ .status = res.status, .body = res.body };
         }
 
         var resource: std.ArrayList(u8) = .empty;
@@ -1322,19 +1345,6 @@ pub const Server = struct {
         if (materialization_method == .replaced) {
             try s.carryMetadataOverRebuild(arena, dst, prior_metadata);
         }
-        // The destination dataset may not have been created explicitly.
-        if (!try s.repo.datasetExists(dst.project_id, dst.dataset_id)) {
-            var ds_meta: std.ArrayList(u8) = .empty;
-            try datasets_handler.writeDataset(
-                arena,
-                &ds_meta,
-                dst.project_id,
-                dst.dataset_id,
-                true,
-            );
-            try s.repo.addDataset(dst.project_id, dst.dataset_id, ds_meta.items);
-            try s.db.ensureDataset(dst.project_id, dst.dataset_id);
-        }
     }
 
     /// Re-attaches a rebuilt destination's posted keys, minus `schema`, which
@@ -1413,6 +1423,22 @@ pub const Server = struct {
 
 fn notFound(arena: std.mem.Allocator, msg: []const u8) !http_server.Response {
     return .{ .status = .not_found, .body = try errors.body(arena, .not_found, msg) };
+}
+
+/// BigQuery's answer when a metadata call names a dataset that does not
+/// exist: datasets.get, tables.list and tables.insert all use this form. A
+/// query job into one adds "was not found in location US" — see
+/// `driver.Db.requireDataset`.
+fn datasetNotFound(
+    arena: std.mem.Allocator,
+    project_id: []const u8,
+    dataset_id: []const u8,
+) !http_server.Response {
+    return notFound(arena, try std.fmt.allocPrint(
+        arena,
+        "Not found: Dataset {s}:{s}",
+        .{ project_id, dataset_id },
+    ));
 }
 
 fn notFoundJob(arena: std.mem.Allocator, job_id: []const u8) !http_server.Response {
@@ -2105,6 +2131,189 @@ test "deleting a dataset takes its tables out of the engine too" {
     }
 }
 
+test "a CREATE or a destination table in an undeclared dataset is BigQuery's 404" {
+    // Probed against BigQuery 2026-09-11: a query job into a dataset that
+    // does not exist fails before anything runs, with `notFound` and this
+    // exact message. The engine's own inference of datasets from table
+    // paths is for the library; the emulator's clients declare them.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const expected =
+        \\{"error":{"errors":[{"reason":"notFound","location":"","debugInfo":"","message":"Not found: Dataset test:nope was not found in location US"}],"code":404,"message":"Not found: Dataset test:nope was not found in location US"}}
+    ;
+    const via_query = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"CREATE TABLE `test.nope.t` (a INT64)"}
+    );
+    try testing.expectEqual(std.http.Status.not_found, via_query.status);
+    try testing.expectEqualStrings(expected, via_query.body);
+
+    const via_job = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE `test.nope.t` (a INT64)"}}}
+    );
+    try testing.expectEqual(std.http.Status.not_found, via_job.status);
+    try testing.expectEqualStrings(expected, via_job.body);
+
+    const materialized = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 1 AS x",
+        \\ "destinationTable":{"projectId":"test","datasetId":"nope","tableId":"mat"}}}}
+    );
+    try testing.expectEqual(std.http.Status.not_found, materialized.status);
+    try testing.expectEqualStrings(expected, materialized.body);
+
+    // Nothing was invented along the way: the metadata API answers as
+    // BigQuery does for a dataset that never existed.
+    const got = try request(s, arena, .GET, "/projects/test/datasets/nope", "");
+    try testing.expectEqual(std.http.Status.not_found, got.status);
+    try testing.expectEqualStrings(
+        \\{"error":{"errors":[{"reason":"notFound","location":"","debugInfo":"","message":"Not found: Dataset test:nope"}],"code":404,"message":"Not found: Dataset test:nope"}}
+    , got.body);
+    const tables = try request(s, arena, .GET, "/projects/test/datasets/nope/tables", "");
+    try testing.expectEqual(std.http.Status.not_found, tables.status);
+    const listed = try request(s, arena, .GET, "/projects/test/datasets", "");
+    try testing.expectEqualStrings("{\"datasets\":[]}", listed.body);
+
+    // Once declared, the same statements go through.
+    _ = try request(s, arena, .POST, "/projects/test/datasets",
+        \\{"datasetReference":{"projectId":"test","datasetId":"nope"}}
+    );
+    const ok = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE `test.nope.t` (a INT64)"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ok.status);
+}
+
+test "deleting a dataset takes it out of the metadata API and INFORMATION_SCHEMA alike" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "t");
+
+    const schemata_sql =
+        \\{"query":"SELECT schema_name FROM `test`.INFORMATION_SCHEMA.SCHEMATA ORDER BY schema_name"}
+    ;
+    const before = try request(s, arena, .POST, "/projects/test/queries", schemata_sql);
+    try testing.expectEqual(std.http.Status.ok, before.status);
+    try testing.expect(std.mem.indexOf(u8, before.body, "\"ds1\"") != null);
+
+    const deleted = try request(s, arena, .DELETE, "/projects/test/datasets/ds1", "");
+    try testing.expectEqual(std.http.Status.ok, deleted.status);
+
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1", "");
+    try testing.expectEqual(std.http.Status.not_found, got.status);
+    const tables = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables", "");
+    try testing.expectEqual(std.http.Status.not_found, tables.status);
+    const listed = try request(s, arena, .GET, "/projects/test/datasets", "");
+    try testing.expectEqualStrings("{\"datasets\":[]}", listed.body);
+    // A second delete is a miss, not a no-op.
+    const again = try request(s, arena, .DELETE, "/projects/test/datasets/ds1", "");
+    try testing.expectEqual(std.http.Status.not_found, again.status);
+
+    // SCHEMATA reads the same store, so the dataset is gone there too.
+    const after = try request(s, arena, .POST, "/projects/test/queries", schemata_sql);
+    try testing.expectEqual(std.http.Status.ok, after.status);
+    for (try cellsOf(arena, after.body)) |name| {
+        if (std.mem.eql(u8, name, "ds1")) return error.TestUnexpectedResult;
+    }
+}
+
+test "patched dataset fields round-trip through get and list, which is ordered by id" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    for ([_][]const u8{ "b_ds", "a_ds" }) |id| {
+        const res = try request(s, arena, .POST, "/projects/test/datasets", try std.fmt.allocPrint(
+            arena,
+            \\{{"datasetReference":{{"projectId":"test","datasetId":"{s}"}}}}
+        ,
+            .{id},
+        ));
+        try testing.expectEqual(std.http.Status.ok, res.status);
+    }
+
+    const patched = try request(s, arena, .PATCH, "/projects/test/datasets/b_ds",
+        \\{"labels":{"team":"data"},"description":"kept"}
+    );
+    try testing.expectEqual(std.http.Status.ok, patched.status);
+
+    // datasets.get reports what was stored, reference included.
+    const got = try request(s, arena, .GET, "/projects/test/datasets/b_ds", "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expectEqualStrings(patched.body, got.body);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"description\":\"kept\"") != null);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"datasetId\":\"b_ds\"") != null);
+
+    // datasets.list carries the same resources, in id order regardless of
+    // declaration order.
+    const listed = try request(s, arena, .GET, "/projects/test/datasets", "");
+    const a_at = std.mem.indexOf(u8, listed.body, "\"datasetId\":\"a_ds\"") orelse
+        return error.TestUnexpectedResult;
+    const b_at = std.mem.indexOf(u8, listed.body, "\"datasetId\":\"b_ds\"") orelse
+        return error.TestUnexpectedResult;
+    try testing.expect(a_at < b_at);
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"team\":\"data\"") != null);
+
+    // Patching an undeclared dataset is a miss.
+    const missing = try request(s, arena, .PATCH, "/projects/test/datasets/c_ds", "{}");
+    try testing.expectEqual(std.http.Status.not_found, missing.status);
+}
+
+test "declared datasets survive a restart on a file-backed database" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // tmpDir lives at .zig-cache/tmp/<sub_path> relative to the test cwd;
+    // sqlite resolves the same relative path against the same cwd.
+    const db_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/datasets.db", .{tmp.sub_path});
+
+    {
+        var s = try Server.init(testing.allocator, testing_io, .{
+            .project = "test",
+            .database = db_path,
+            .dataset = "ds1",
+        });
+        defer s.deinit();
+        const patched = try request(s, arena, .PATCH, "/projects/test/datasets/ds1",
+            \\{"description":"kept"}
+        );
+        try testing.expectEqual(std.http.Status.ok, patched.status);
+    }
+    {
+        var s = try Server.init(testing.allocator, testing_io, .{
+            .project = "test",
+            .database = db_path,
+        });
+        defer s.deinit();
+        const got = try request(s, arena, .GET, "/projects/test/datasets/ds1", "");
+        try testing.expectEqual(std.http.Status.ok, got.status);
+        try testing.expect(std.mem.indexOf(u8, got.body, "\"description\":\"kept\"") != null);
+        const listed = try request(s, arena, .GET, "/projects/test/datasets", "");
+        try testing.expect(std.mem.indexOf(u8, listed.body, "\"datasetId\":\"ds1\"") != null);
+
+        // It lives in the catalog table under its own kind: no metadata
+        // store beside it.
+        var rows = try s.db.rawQuery(
+            "SELECT kind FROM zigquery_catalog WHERE name = 'test_ds1'",
+            &.{},
+        );
+        defer rows.deinit();
+        const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+        try testing.expectEqualStrings("dataset", row[0].text);
+    }
+}
+
 // ---- tabledata.insertAll ----
 
 /// tables.insert with a two-column schema, the shape a client creates before
@@ -2376,6 +2585,19 @@ test "DDL in a job resolves dataset.table against the job's project" {
 
     var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
     defer s.deinit();
+    // The name resolves against `other`, where nobody has declared ds1 yet —
+    // and BigQuery does not invent datasets.
+    const refused = try request(s, arena, .POST, "/projects/other/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE ds1.t (a STRING)"}}}
+    );
+    try testing.expectEqual(std.http.Status.not_found, refused.status);
+    try testing.expectEqualStrings(
+        \\{"error":{"errors":[{"reason":"notFound","location":"","debugInfo":"","message":"Not found: Dataset other:ds1 was not found in location US"}],"code":404,"message":"Not found: Dataset other:ds1 was not found in location US"}}
+    , refused.body);
+    _ = try request(s, arena, .POST, "/projects/other/datasets",
+        \\{"datasetReference":{"projectId":"other","datasetId":"ds1"}}
+    );
+
     const ddl = try request(s, arena, .POST, "/projects/other/jobs",
         \\{"configuration":{"query":{"query":"CREATE TABLE ds1.t (a STRING)"}}}
     );

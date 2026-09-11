@@ -21,7 +21,6 @@ const std = @import("std");
 const zigquery = @import("zigquery");
 const driver = zigquery.driver;
 const schema_mod = @import("internal/types/schema.zig");
-const metadata = @import("internal/metadata/repository.zig");
 const datasets_handler = @import("handler/datasets.zig");
 const tables_handler = @import("handler/tables.zig");
 const contentdata = @import("internal/contentdata/repository.zig");
@@ -38,12 +37,11 @@ pub const LoadStats = struct {
     tables_with_failed_rows: u32 = 0,
 };
 
-/// Loads a `--data-from-json` document: projects and datasets into the
-/// metadata store, tables and rows into the engine.
+/// Loads a `--data-from-json` document: datasets, tables and rows, all into
+/// the engine, whose catalog is the one store for every one of them.
 pub fn loadJson(
     arena: std.mem.Allocator,
     db: *driver.Db,
-    repo: *metadata.Repository,
     bytes: []const u8,
 ) !LoadStats {
     var stats = LoadStats{};
@@ -70,7 +68,6 @@ pub fn loadJson(
     for (projects) |proj| {
         if (proj != .object) continue;
         const project_id = stringField(proj, "id") orelse continue;
-        try repo.addProjectIfNotExists(project_id);
         stats.projects += 1;
 
         const datasets = arrayField(proj, "datasets") orelse continue;
@@ -79,9 +76,8 @@ pub fn loadJson(
             const dataset_id = stringField(ds, "id") orelse continue;
 
             var ds_meta: std.ArrayList(u8) = .empty;
-            try datasets_handler.writeDataset(arena, &ds_meta, project_id, dataset_id, true);
-            try repo.addDataset(project_id, dataset_id, ds_meta.items);
-            try db.ensureDataset(project_id, dataset_id);
+            try datasets_handler.writeDataset(arena, &ds_meta, project_id, dataset_id);
+            try db.addDataset(arena, project_id, dataset_id, ds_meta.items);
             stats.datasets += 1;
 
             const tables = arrayField(ds, "tables") orelse continue;
@@ -247,8 +243,7 @@ fn arrayField(v: std.json.Value, name: []const u8) ?[]const std.json.Value {
 const testing = std.testing;
 
 fn loadInto(arena: std.mem.Allocator, db: *driver.Db, json: []const u8) !LoadStats {
-    var repo = try metadata.Repository.init(db);
-    return loadJson(arena, db, &repo, json);
+    return loadJson(arena, db, json);
 }
 
 test "a table's `data` rows load and are queryable" {
