@@ -3855,6 +3855,101 @@ test "a member name with an apostrophe still makes a table with a working check"
     ) != null);
 }
 
+test "UPDATE SET r.x rebuilds the struct, merges members, and descends" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        "CREATE TABLE `p.d.t` (id INT64, r STRUCT<x INT64, y STRING, nested STRUCT<z INT64>>)",
+        &.{},
+        .{},
+    );
+    try db.exec(
+        "INSERT INTO `p.d.t` VALUES (1, NULL), (2, STRUCT(1, 'a', STRUCT(9))), " ++
+            "(3, STRUCT(3, 'c', NULL))",
+        &.{},
+        .{},
+    );
+
+    // A NULL parent is rebuilt from NULL siblings (recidiviz-bigquery-sandbox, 2026-09-10).
+    try db.exec("UPDATE `p.d.t` SET r.x = 5 WHERE id = 1", &.{}, .{});
+    // Two members of one column fold into one assignment.
+    try db.exec("UPDATE `p.d.t` SET r.x = 5, r.y = 'b' WHERE id = 2", &.{}, .{});
+    // A deeper path rebuilds only the struct it descends through.
+    try db.exec("UPDATE `p.d.t` SET r.nested.z = 42 WHERE id = 2", &.{}, .{});
+    // Untouched rows and members stay as they were.
+
+    var rows = try db.query(
+        "SELECT id, r.x, r.y, r.nested.z FROM `p.d.t` ORDER BY id",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    const r1 = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 5), r1[1].int);
+    try testing.expectEqual(Cell.null, r1[2]);
+    try testing.expectEqual(Cell.null, r1[3]);
+    const r2 = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 5), r2[1].int);
+    try testing.expectEqualStrings("b", r2[2].string);
+    try testing.expectEqual(@as(i64, 42), r2[3].int);
+    const r3 = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 3), r3[1].int);
+    try testing.expectEqualStrings("c", r3[2].string);
+    try testing.expectEqual(Cell.null, r3[3]);
+}
+
+test "UPDATE SET r.x = NULL on a NOT NULL member is rejected with BigQuery's words" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE `p.d.t` (id INT64, r STRUCT<x INT64 NOT NULL, y STRING>)", &.{}, .{});
+    try db.exec("INSERT INTO `p.d.t` VALUES (1, STRUCT(1, 'a'))", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("UPDATE `p.d.t` SET r.x = NULL WHERE id = 1", &.{}, .{}),
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        db.lastError(),
+        "Required field r.x cannot be null; error in writing field r",
+    ) != null);
+    // The sibling assignment in the same statement did not land either.
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("UPDATE `p.d.t` SET r.y = 'z', r.x = NULL WHERE id = 1", &.{}, .{}),
+    );
+    var rows = try db.query("SELECT r.x, r.y FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 1), row[0].int);
+    try testing.expectEqualStrings("a", row[1].string);
+}
+
+test "UPDATE targets the analyzer or the transformer refuse" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        "CREATE TABLE `p.d.t` (id INT64, r STRUCT<x INT64>, rs ARRAY<STRUCT<k INT64>>)",
+        &.{},
+        .{},
+    );
+    try db.exec("INSERT INTO `p.d.t` VALUES (1, STRUCT(1), [STRUCT(2)])", &.{}, .{});
+    // Overlap and repetition are the analyzer's to reject.
+    try testing.expectError(
+        error.AnalyzeFailed,
+        db.exec("UPDATE `p.d.t` SET r = STRUCT(2), r.x = 3 WHERE id = 1", &.{}, .{}),
+    );
+    try testing.expectError(
+        error.AnalyzeFailed,
+        db.exec("UPDATE `p.d.t` SET r.x = 1, r.x = 2 WHERE id = 1", &.{}, .{}),
+    );
+    // An array element is not a target here.
+    const element_target = "UPDATE `p.d.t` SET rs[OFFSET(0)].k = 5 WHERE id = 1";
+    try testing.expect(if (db.exec(element_target, &.{}, .{})) |_| false else |_| true);
+}
+
 test "a view keeps the GoogleSQL it was written with" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();

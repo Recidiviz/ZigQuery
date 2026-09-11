@@ -769,25 +769,7 @@ pub const NodeExtractor = struct {
         const table_scan = try alloc.create(ScanData);
         table_scan.* = try extractTableScanData(alloc, table_scan_node);
 
-        const set_items = try alloc.alloc(*types_data.SetItemData, node.update_item_list.len);
-        for (node.update_item_list, 0..) |item, i| {
-            const target = item.target orelse return error.InvalidAST;
-            const target_data = try self.ExtractExpressionData(alloc, target, ctx);
-
-            const set_value = item.set_value orelse return error.InvalidAST;
-            const value_expr = set_value.value orelse return error.InvalidAST;
-            const value_data = try self.ExtractExpressionData(alloc, value_expr, ctx);
-
-            // Go: column name from the target column ref, else fallback.
-            var column_name: []const u8 = "unknown_column";
-            if (target_data.type == .column) {
-                if (target_data.column) |col_ref| column_name = col_ref.column_name;
-            }
-
-            const set_item = try alloc.create(types_data.SetItemData);
-            set_item.* = .{ .column = column_name, .value = value_data };
-            set_items[i] = set_item;
-        }
+        const set_items = try self.extractSetItems(alloc, node.update_item_list, ctx);
 
         var where_clause: ?*ExpressionData = null;
         if (node.where_expr) |where_expr| {
@@ -2260,6 +2242,15 @@ pub const NodeExtractor = struct {
         return .{ .type = .subquery, .subquery = subquery_data };
     }
 
+    fn extractSetItems(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        items: []const *pb.ResolvedUpdateItemProto,
+        ctx: *TransformContext,
+    ) Error![]*types_data.SetItemData {
+        return ExtractorSetItems.extract(self, alloc, items, ctx);
+    }
+
     /// Go extractGetStructFieldData: becomes
     /// zigquery_get_struct_field(expr, <field index literal>).
     fn extractGetStructFieldData(
@@ -2343,6 +2334,217 @@ pub const NodeExtractor = struct {
             field_args,
         );
         data.function.?.result_kind = resultKindOf(parent);
+        return data;
+    }
+};
+
+/// A `SET` target, resolved to its column and the member path below it:
+/// `SET r.inner.z = v` is column `r` with path `[2, 0]`, field indices from the outside in.
+/// A bare column has an empty path.
+const UpdateTarget = struct {
+    /// The column ref node the path descends from.
+    base: *const pb.AnyResolvedExprProto,
+    path: []const i64,
+};
+
+/// One assignment to a member of a column, keyed by its path.
+const MemberAssignment = struct {
+    path: []const i64,
+    value: ExpressionData,
+};
+
+/// Every assignment to one column, in the order the statement listed them.
+const ColumnAssignments = struct {
+    base: *const pb.AnyResolvedExprProto,
+    column_name: []const u8,
+    members: std.ArrayList(MemberAssignment) = .empty,
+    /// `SET r = v`: the column assigned whole.
+    whole: ?ExpressionData = null,
+};
+
+fn updateTargetOf(
+    alloc: std.mem.Allocator,
+    target: *const pb.AnyResolvedExprProto,
+) Error!UpdateTarget {
+    var indices: std.ArrayList(i64) = .empty;
+    var current = target;
+    while (true) {
+        const node = current.node orelse return error.InvalidAST;
+        switch (node) {
+            .resolved_get_struct_field_node => |n| {
+                try indices.append(alloc, n.field_idx orelse return error.InvalidAST);
+                current = n.expr orelse return error.InvalidAST;
+            },
+            .resolved_column_ref_node => break,
+            else => {
+                value_mod.setDiagnostic(
+                    "UPDATE can set a column or a STRUCT field of one; nothing else",
+                    .{},
+                );
+                return error.Unimplemented;
+            },
+        }
+    }
+    std.mem.reverse(i64, indices.items);
+    return .{ .base = current, .path = indices.items };
+}
+
+const ExtractorSetItems = struct {
+    /// `SET` items as SQLite column assignments.
+    /// A member assignment, `SET r.x = v`, has no SQLite equivalent, so the column is assigned a
+    /// rebuilt struct: the named member takes the value and every other
+    /// member is read back from the current row.
+    ///
+    /// All of a column's member assignments fold into that one rebuild, since SQLite keeps only the
+    /// last of two assignments to the same column.
+    /// The analyzer has already rejected overlaps (`SET r = ..., r.x = ...`) and repeats.
+    ///
+    /// A NULL parent is rebuilt from NULL siblings: `SET r.x = 5` on a NULL
+    /// `r` yields `STRUCT(5, NULL, ...)`, which is what BigQuery does.
+    /// data-manipulation-language.md#update_statement
+    fn extract(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        items: []const *pb.ResolvedUpdateItemProto,
+        ctx: *TransformContext,
+    ) Error![]*types_data.SetItemData {
+        var columns: std.ArrayList(*ColumnAssignments) = .empty;
+        for (items) |item| {
+            if (item.update_item_element_list.len > 0 or item.insert_list.len > 0 or
+                item.delete_list.len > 0 or item.update_list.len > 0)
+            {
+                // BigQuery's own refusal (recidiviz-bigquery-sandbox, 2026-09-10).
+                value_mod.setDiagnostic(
+                    "UPDATE ... SET does not support array modification with []",
+                    .{},
+                );
+                return error.Unimplemented;
+            }
+            const target = try updateTargetOf(alloc, item.target orelse return error.InvalidAST);
+            const set_value = item.set_value orelse return error.InvalidAST;
+            const value_expr = set_value.value orelse return error.InvalidAST;
+            const value = try self.ExtractExpressionData(alloc, value_expr, ctx);
+
+            const base_data = try self.ExtractExpressionData(alloc, target.base, ctx);
+            const column_ref = base_data.column orelse return error.InvalidAST;
+            const group = try groupFor(alloc, &columns, target.base, column_ref.column_name);
+            if (target.path.len == 0) {
+                group.whole = value;
+            } else {
+                try group.members.append(alloc, .{ .path = target.path, .value = value });
+            }
+        }
+
+        const set_items = try alloc.alloc(*types_data.SetItemData, columns.items.len);
+        for (columns.items, 0..) |group, i| {
+            const set_item = try alloc.create(types_data.SetItemData);
+            set_item.* = .{
+                .column = group.column_name,
+                .value = if (group.whole) |whole|
+                    whole
+                else
+                    try rebuiltColumn(self, alloc, group, ctx),
+            };
+            set_items[i] = set_item;
+        }
+        return set_items;
+    }
+
+    fn groupFor(
+        alloc: std.mem.Allocator,
+        columns: *std.ArrayList(*ColumnAssignments),
+        base: *const pb.AnyResolvedExprProto,
+        column_name: []const u8,
+    ) Error!*ColumnAssignments {
+        for (columns.items) |group| {
+            if (std.mem.eql(u8, group.column_name, column_name)) return group;
+        }
+        const group = try alloc.create(ColumnAssignments);
+        group.* = .{ .base = base, .column_name = column_name };
+        try columns.append(alloc, group);
+        return group;
+    }
+
+    /// The column's current value with its member assignments applied.
+    fn rebuiltColumn(
+        self: *const NodeExtractor,
+        alloc: std.mem.Allocator,
+        group: *const ColumnAssignments,
+        ctx: *TransformContext,
+    ) Error!ExpressionData {
+        const current = try self.ExtractExpressionData(alloc, group.base, ctx);
+        const base_node = group.base.node orelse return error.InvalidAST;
+        const column_type = switch (base_node) {
+            .resolved_column_ref_node => |n| (n.parent orelse return error.InvalidAST).type,
+            else => return error.InvalidAST,
+        };
+        const type_proto = column_type orelse return error.InvalidAST;
+        return rebuildStruct(alloc, current, type_proto, group.members.items, 0);
+    }
+
+    /// `zigquery_make_struct` over every field of `struct_type`: the field an
+    /// assignment names at `depth` takes the value, a field an assignment
+    /// descends through is rebuilt the same way one level down, and every
+    /// other field is read from `current`.
+    fn rebuildStruct(
+        alloc: std.mem.Allocator,
+        current: ExpressionData,
+        type_proto: *const pb.TypeProto,
+        assignments: []const MemberAssignment,
+        depth: usize,
+    ) Error!ExpressionData {
+        const struct_type = type_proto.struct_type orelse return error.InvalidAST;
+        const field_args = try alloc.alloc(ExpressionData, struct_type.field.len * 2);
+        for (struct_type.field, 0..) |field, i| {
+            const name_literal = try alloc.create(types_data.LiteralData);
+            name_literal.* = .{
+                .value = .{ .string = field.field_name orelse "" },
+                .type_name = "STRING",
+            };
+            field_args[i * 2] = .{ .type = .literal, .literal = name_literal };
+
+            const field_type = field.field_type orelse return error.InvalidAST;
+            var exact: ?ExpressionData = null;
+            var deeper: std.ArrayList(MemberAssignment) = .empty;
+            for (assignments) |a| {
+                if (a.path[depth] != @as(i64, @intCast(i))) continue;
+                if (a.path.len == depth + 1) exact = a.value else try deeper.append(alloc, a);
+            }
+            const member = try memberOf(alloc, current, i, field_type);
+            field_args[i * 2 + 1] = if (exact) |value|
+                value
+            else if (deeper.items.len > 0)
+                try rebuildStruct(alloc, member, field_type, deeper.items, depth + 1)
+            else
+                member;
+        }
+        const data = try types_data.newFunctionCallExpressionData(
+            alloc,
+            "zigquery_make_struct",
+            field_args,
+        );
+        data.function.?.result_kind = type_proto.type_kind orelse .TYPE_STRUCT;
+        return data;
+    }
+
+    /// `zigquery_get_struct_field(current, index)`, typed as the field.
+    fn memberOf(
+        alloc: std.mem.Allocator,
+        current: ExpressionData,
+        index: usize,
+        field_type: *const pb.TypeProto,
+    ) Error!ExpressionData {
+        const idx_literal = try alloc.create(types_data.LiteralData);
+        idx_literal.* = .{ .value = .{ .int = @intCast(index) }, .type_name = "INT64" };
+        const args = try alloc.alloc(ExpressionData, 2);
+        args[0] = current;
+        args[1] = .{ .type = .literal, .literal = idx_literal };
+        const data = try types_data.newFunctionCallExpressionData(
+            alloc,
+            "zigquery_get_struct_field",
+            args,
+        );
+        data.function.?.result_kind = field_type.type_kind orelse .TYPE_UNKNOWN;
         return data;
     }
 };
