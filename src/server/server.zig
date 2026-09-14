@@ -2174,6 +2174,13 @@ test "a CREATE or a destination table in an undeclared dataset is BigQuery's 404
     try testing.expectEqual(std.http.Status.not_found, via_job.status);
     try testing.expectEqualStrings(expected, via_job.body);
 
+    // A `dataset.function` name resolves against the request's project, as a table's does.
+    const via_function = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"CREATE FUNCTION nope.f(x INT64) AS (x + 1)"}
+    );
+    try testing.expectEqual(std.http.Status.not_found, via_function.status);
+    try testing.expectEqualStrings(expected, via_function.body);
+
     const materialized = try request(s, arena, .POST, "/projects/test/jobs",
         \\{"configuration":{"query":{"query":"SELECT 1 AS x",
         \\ "destinationTable":{"projectId":"test","datasetId":"nope","tableId":"mat"}}}}
