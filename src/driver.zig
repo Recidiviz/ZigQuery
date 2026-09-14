@@ -3962,6 +3962,74 @@ test "declared datasets persist across connections, keep their creation time, an
     }
 }
 
+test "a dataset and a table sharing a canonical name both survive a reopen" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena,
+        ".zig-cache/tmp/{s}/shared_name.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    // Dataset `p.a_b` and table `p.a.b` are both `p_a_b`; each keeps its own catalog row.
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try db.addDataset(arena, "p", "a", "");
+        try db.addDataset(arena, "p", "a_b", "");
+        try db.exec("CREATE TABLE p.a.b (x INT64)", &.{}, .{});
+        try db.exec("INSERT INTO p.a.b (x) VALUES (7)", &.{}, .{});
+    }
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try testing.expect((try db.catalogDataset(arena, "p", "a_b")) != null);
+        try testing.expect((try db.catalogTable(arena, "p", "a", "b")) != null);
+        // Deleting the dataset takes its own row only.
+        try db.deleteDataset(arena, "p", "a_b");
+    }
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        const gone = try db.catalogDataset(arena, "p", "a_b");
+        try testing.expectEqual(@as(?*const spec.DatasetSpec, null), gone);
+        var rows = try db.query("SELECT x FROM p.a.b", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(i64, 7), row[0].int);
+    }
+}
+
+test "a view cannot take a table's name, so the name keeps its one catalog row" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The invariant `Catalog.tableSpecKind` states: a name never moves between `table` and `view`.
+    try db.exec("CREATE TABLE p.ds.t (a INT64)", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("CREATE VIEW p.ds.t AS SELECT 1 AS n", &.{}, .{}),
+    );
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("CREATE OR REPLACE VIEW p.ds.t AS SELECT 1 AS n", &.{}, .{}),
+    );
+    const t = (try db.catalogTable(arena, "p", "ds", "t")) orelse return error.TestUnexpectedResult;
+    try testing.expect(!t.is_view);
+    var rows = try db.rawQuery("SELECT kind FROM zigquery_catalog WHERE name = 'p_ds_t'", &.{});
+    defer rows.deinit();
+    const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("table", row[0].text);
+    try testing.expect((try rows.next()) == null);
+}
+
 test "DROP TABLE IF EXISTS on nothing is a no-op, DROP TABLE on nothing is an error" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();

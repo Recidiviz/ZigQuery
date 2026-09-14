@@ -1,40 +1,31 @@
-//! Port of go-zetasqlite internal/catalog.go (table subset).
+//! The GoogleSQL catalog: the tables, views, functions and datasets the engine knows, persisted
+//! in SQLite and rendered for the C++ analyzer shim.
 //!
-//! The persisted side is byte-faithful: the `zigquery_catalog` DDL, the
-//! upsert/delete SQL and the JSON `spec` column all match Go, so a database
-//! written by go-zetasqlite loads here. The reverse stopped holding when
-//! datasets moved in: they persist as a fourth `kind` (`dataset`), which is
-//! the emulator's business rather than the engine's and which Go's loader
-//! would reject.
+//! Each persisted object is one `zigquery_catalog` row, keyed on `(name, kind)`:
+//! - `name` is the "_"-joined path
+//! - `kind` is `table`, `view`, `function` or `dataset`
+//! - `spec` holds the spec's JSON (see `create_catalog_table_query`).
+//!  `loadFromStorage` reads every row once, at open.
 //!
-//! The in-memory side is redesigned per the port plan: where Go builds a
-//! live googlesql.SimpleCatalog through the engine API, this port renders
-//! `SimpleCatalogProto` in protobuf-JSON form for the C++ analyzer shim to
-//! deserialize. Go's dotted-path registration (addTableSpecRecursive: the
-//! full dotted name plus every suffix at the root, and sub-catalogs per path
-//! segment) is mirrored structurally with nested `catalog` entries; every
-//! SimpleTableProto carries `name`=canonical ("_"-joined SQLite table name,
-//! what Table.Name() reports back through the resolved AST) and
-//! `nameInCatalog`=the name it resolves under.
+//! TEMP objects and synthetic registrations (INFORMATION_SCHEMA, query results) live in-memory only
 //!
-//! That rendering is incremental, not per-statement. The shim holds a
-//! persistent catalog handle and this catalog keeps an append-only change
-//! log; `renderDelta` hands a consumer's `Cursor` just the entries it has not
-//! seen, so a statement analyzed against an unchanged catalog renders nothing
-//! at all. `catalogJson` — the whole tree in one proto — is reserved for
-//! seeding a fresh handle and for the stateless fallback path.
+//! The analyzer sees the catalog as `SimpleCatalogProto` in protobuf-JSON form. A table registers
+//! at the root under its full dotted name and every suffix of it, and under one nested `catalog`
+//! entry per path segment. Each `SimpleTableProto` carries `name`, the canonical "_"-joined
+//! SQLite table name the resolved AST reports back, and `nameInCatalog`, the name it resolves
+//! under.
 //!
-//! Function specs (`kind = 'function'`) follow the same pattern: persisted
-//! rows are Go-compatible JSON, and the in-memory side renders
-//! SimpleCatalogProto `customFunction` entries (FunctionProto: namePath /
-//! mode / signature with argument kinds+types) instead of Go's live
-//! SimpleCatalog registration. Go's MISSING_FUNCTIONS seeding is mirrored
-//! for the entries that are NOT already builtins in the shim's newer
-//! GoogleSQL (contains_substr, min_by, max_by; array_slice / array_first /
-//! array_last are builtins now — Go pre-filters those the same way).
+//! Rendering is incremental. The shim holds a persistent catalog handle and this catalog keeps an
+//! append-only change log; `renderDelta` hands a consumer's `Cursor` the entries it has not seen,
+//! so a statement analyzed against an unchanged catalog renders nothing. `catalogJson`, the whole
+//! tree in one proto, seeds a fresh handle and serves the stateless fallback path.
 //!
-//! Deferred (vs Go):
-//! - Wildcard tables (Gap G): not ported.
+//! Function specs render as `customFunction` entries (FunctionProto: namePath, mode, and a
+//! signature with argument kinds and types). The catalog also seeds memory-only, bodyless
+//! signatures for `contains_substr`, `min_by` and `max_by`, which the shim's GoogleSQL has no
+//! builtins for; the extractor and runtime UDFs lower them.
+//!
+//! Wildcard tables are unsupported.
 
 const std = @import("std");
 const sqlite = @import("../sqlite.zig");
@@ -49,32 +40,33 @@ pub const Error = error{
     SQLite,
     /// A catalog row's spec JSON failed to decode.
     InvalidSpec,
-    /// DeleteTableSpec on a name that is not in the catalog (Go: "failed to
-    /// find table spec from map by %s").
+    /// Delete/Update on a table name that is not in the catalog.
     TableNotFound,
     /// deleteDatasetSpec on a dataset the catalog does not hold, or only
     /// inferred from a table's path.
     DatasetNotFound,
-    /// An update aimed at a spec that is never persisted: a TEMP overlay entry
-    /// or a synthetic registration.
+    /// An update aimed at a spec that is never persisted: a TEMP entry or a synthetic registration.
     NotPersistent,
 };
 
-// Exact SQL from Go catalog.go (multi-line shape preserved).
+const CatalogSpecKind = enum {
+    table,
+    view,
+    function,
+    dataset,
+};
+
+// The key is a rowid table's PRIMARY KEY, so `load_query`'s unordered scan walks insertion order.
 pub const create_catalog_table_query =
     \\
     \\CREATE TABLE IF NOT EXISTS zigquery_catalog(
-    \\  name STRING NOT NULL PRIMARY KEY,
+    \\  name STRING NOT NULL,
     \\  kind STRING NOT NULL,
     \\  spec STRING NOT NULL,
     \\  updatedAt TIMESTAMP NOT NULL,
-    \\  createdAt TIMESTAMP NOT NULL
+    \\  createdAt TIMESTAMP NOT NULL,
+    \\  PRIMARY KEY (name, kind)
     \\)
-    \\
-;
-pub const index_catalog_table_query =
-    \\
-    \\CREATE INDEX IF NOT EXISTS catalog_last_updated_index ON zigquery_catalog(updatedAt DESC);
     \\
 ;
 const upsert_catalog_query =
@@ -91,28 +83,18 @@ const upsert_catalog_query =
     \\  @spec,
     \\  @updatedAt,
     \\  @createdAt
-    \\) ON CONFLICT(name) DO UPDATE SET
+    \\) ON CONFLICT(name, kind) DO UPDATE SET
     \\  spec = @spec,
     \\  updatedAt = @updatedAt
     \\
 ;
 const delete_catalog_query =
     \\
-    \\DELETE FROM zigquery_catalog WHERE name = @name
+    \\DELETE FROM zigquery_catalog WHERE name = @name AND kind = @kind
     \\
 ;
 const load_query = "SELECT name, kind, spec FROM zigquery_catalog";
 
-/// Go CatalogSpecKind values.
-pub const table_spec_kind = "table";
-pub const view_spec_kind = "view";
-pub const function_spec_kind = "function";
-/// Not a Go kind: Go keeps datasets in the emulator's metadata store. Here
-/// they persist beside tables so the catalog is their only store. The row
-/// key is the "_"-joined path, shared with every other kind — a dataset
-/// `p.ds` and a one-part table literally named `p_ds` would collide, the same
-/// non-injectivity `Db.catalogTable` guards against by re-checking the path.
-pub const dataset_spec_kind = "dataset";
 const catalog_name = "zigquery";
 
 /// One table change, in the order it happened. Names are canonical
@@ -156,7 +138,7 @@ pub const Catalog = struct {
     gpa: std.mem.Allocator,
     /// Owns every stored TableSpec and all derived strings.
     arena_state: std.heap.ArenaAllocator,
-    /// Insertion-ordered specs (Go: c.tables). catalogJson renders from this.
+    /// Insertion-ordered specs. catalogJson renders from this.
     ///
     /// A deleted table leaves a null tombstone rather than compacting the
     /// list: removing an element would shift every later index and force a
@@ -165,19 +147,17 @@ pub const Catalog = struct {
     /// never reused, so a `*spec.TableSpec` handed to a caller stays valid for
     /// the catalog's lifetime.
     tables: std.ArrayList(?*spec.TableSpec),
-    /// Canonical table name -> index into `tables` (Go: c.tableMap). Only
-    /// live (non-tombstoned) slots are referenced.
+    /// Canonical table name -> index into `tables`. Only live (non-tombstoned) slots are
+    /// referenced.
     table_map: std.StringHashMap(usize),
-    /// Insertion-ordered function specs (Go: c.functions).
+    /// Insertion-ordered function specs.
     functions: std.ArrayList(*spec.FunctionSpec),
-    /// Canonical function name -> index into `functions` (Go: c.funcMap).
+    /// Canonical function name -> index into `functions`.
     func_map: std.StringHashMap(usize),
-    /// Insertion-ordered datasets (Go has no analogue): every dataset the
-    /// catalog has been told exists or has inferred from a table's path. A
-    /// deleted dataset leaves a null tombstone, for the same reason `tables`
-    /// does, and slots are never reused, so a `*spec.DatasetSpec` handed out
-    /// stays valid for the catalog's lifetime. See `addNewDatasetSpec` and
-    /// `ensureDataset`.
+    /// Insertion-ordered datasets: every dataset the catalog has been told exists or has inferred
+    /// from a table's path. A deleted dataset leaves a null tombstone, for the same reason
+    /// `tables` does, and slots are never reused, so a `*spec.DatasetSpec` handed out stays valid
+    /// for the catalog's lifetime. See `addNewDatasetSpec` and `ensureDataset`.
     datasets: std.ArrayList(?*spec.DatasetSpec),
     /// `project_dataset` -> index into `datasets`.
     dataset_map: std.StringHashMap(usize),
@@ -341,8 +321,7 @@ pub const Catalog = struct {
             .changes = .empty,
         };
         errdefer c.deinit();
-        // Go NewCatalog: seed MISSING_FUNCTIONS (memory only, never
-        // persisted; Go's addFunctionSpec skips saveFunctionSpec here).
+        // Signatures the shim's GoogleSQL has no builtin for: memory only, never persisted.
         for (try missingFunctions(c.arena_state.allocator())) |fs| {
             c.addFunctionSpecToMemory(fs) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
@@ -364,42 +343,37 @@ pub const Catalog = struct {
         c.gpa.destroy(c);
     }
 
-    /// Go createCatalogTablesIfNotExists.
+    /// Creates `zigquery_catalog` when the database lacks it.
     pub fn createCatalogTablesIfNotExist(c: *Catalog, db: *sqlite.Db) Error!void {
         _ = c;
         try db.exec(create_catalog_table_query);
-        try db.exec(index_catalog_table_query);
     }
 
-    /// Loads every persisted spec into memory. Go's Catalog.Sync equivalent,
-    /// but a one-shot load rather than a per-statement incremental re-read.
-    ///
-    /// Go re-syncs before every statement, filtered by `updatedAt >= cursor`,
-    /// where the cursor is wall-clock time stamped *before* the read. That
-    /// permanently skips a commit stamped before the cursor but made visible
-    /// after it — narrow with one connection, the common case with several,
-    /// and it cost a connection-pool experiment 530 of 594 view creations.
-    /// Coherence between connections is the shared catalog's job now, not a
-    /// timestamp's, so this runs once at open and never again.
+    /// Loads every persisted spec into memory, once, at open. Coherence between connections is
+    /// the shared catalog's job, so nothing re-reads storage afterwards.
     pub fn loadFromStorage(c: *Catalog, db: *sqlite.Db) Error!void {
         try c.createCatalogTablesIfNotExist(db);
 
         var stmt = try db.prepare(load_query);
         defer stmt.finalize();
         while (try stmt.step()) {
-            const kind = stmt.columnText(1);
-            if (std.mem.eql(u8, kind, table_spec_kind) or std.mem.eql(u8, kind, view_spec_kind)) {
-                // Copy out of sqlite's row buffer before the next step().
-                const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
-                try c.loadTableSpec(spec_json);
-            } else if (std.mem.eql(u8, kind, function_spec_kind)) {
-                const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
-                try c.loadFunctionSpec(spec_json);
-            } else if (std.mem.eql(u8, kind, dataset_spec_kind)) {
-                const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
-                try c.loadDatasetSpec(spec_json);
-            } else {
-                return error.InvalidSpec; // Go: "unknown catalog spec kind %s"
+            const kind = std.meta.stringToEnum(CatalogSpecKind, stmt.columnText(1)) orelse
+                return error.InvalidSpec;
+
+            // Copy out of sqlite's row buffer before the next step().
+            switch (kind) {
+                .table, .view => {
+                    const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
+                    try c.loadTableSpec(spec_json);
+                },
+                .function => {
+                    const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
+                    try c.loadFunctionSpec(spec_json);
+                },
+                .dataset => {
+                    const spec_json = try c.arena_state.allocator().dupe(u8, stmt.columnText(2));
+                    try c.loadDatasetSpec(spec_json);
+                },
             }
         }
     }
@@ -414,9 +388,9 @@ pub const Catalog = struct {
         try c.addTableSpecToMemory(table_spec);
     }
 
-    /// Go AddNewTableSpec: in-memory registration plus (unless temporary)
-    /// the persisted upsert. The spec is deep-copied into the catalog arena
-    /// (via its canonical JSON), so callers may pass short-lived memory.
+    /// In-memory registration plus (unless temporary) the persisted upsert. The spec is
+    /// deep-copied into the catalog arena (via its canonical JSON), so callers may pass
+    /// short-lived memory.
     pub fn addNewTableSpec(
         c: *Catalog,
         db: *sqlite.Db,
@@ -484,7 +458,7 @@ pub const Catalog = struct {
         try c.addTableSpecToMemory(owned);
     }
 
-    /// Go saveTableSpec: the upsert. `encoded` is the spec's JSON.
+    /// The persisted upsert. `encoded` is the spec's JSON.
     fn saveTableSpec(
         c: *Catalog,
         db: *sqlite.Db,
@@ -495,42 +469,56 @@ pub const Catalog = struct {
         defer scope.end();
         const arena = c.arena_state.allocator();
         const now = try nowTimestamps(arena);
-        const kind: []const u8 = if (table_spec.is_view) view_spec_kind else table_spec_kind;
 
         var stmt = try db.prepare(upsert_catalog_query);
         defer stmt.finalize();
         // Named-parameter indices in first-occurrence order: @name, @kind,
         // @spec, @updatedAt, @createdAt (the DO UPDATE reuses 3 and 4).
         try stmt.bindText(1, try table_spec.tableName(arena));
-        try stmt.bindText(2, kind);
+        try stmt.bindText(2, @tagName(tableSpecKind(table_spec)));
         try stmt.bindText(3, encoded);
         try stmt.bindText(4, now.sql);
         try stmt.bindText(5, now.sql);
         _ = try stmt.step();
     }
 
+    /// The `kind` a table spec's row is stored under, and so half its key.
+    ///
+    /// Fixed for a name's lifetime, which the `(name, kind)` key relies on: a spec replacing one
+    /// of the other kind would add a second row. CREATE OR REPLACE drops with its own kind's
+    /// `DROP TABLE` or `DROP VIEW`, which SQLite refuses on the other; CREATE TABLE IF NOT EXISTS
+    /// of a held name registers nothing; any other CREATE of a held name fails in SQLite.
+    fn tableSpecKind(table_spec: *const spec.TableSpec) CatalogSpecKind {
+        return if (table_spec.is_view) .view else .table;
+    }
+
     /// Overlay counterpart of `deleteTableSpec`: an overlay spec was never
     /// persisted, so there is no row to delete.
     pub fn deleteOverlayTableSpec(c: *Catalog, name: []const u8) Error!void {
-        return c.forgetTableSpec(name);
+        _ = try c.forgetTableSpec(name);
     }
 
-    fn forgetTableSpec(c: *Catalog, name: []const u8) Error!void {
+    /// Unregisters `name` and returns the spec it held.
+    fn forgetTableSpec(c: *Catalog, name: []const u8) Error!*spec.TableSpec {
         const entry = c.table_map.fetchRemove(name) orelse return error.TableNotFound;
+        // A mapped slot is never a tombstone.
+        const removed = c.tables.items[entry.value].?;
         try c.changes.append(c.gpa, .{ .table_removed = entry.key });
         // Tombstone rather than compact: no index shifts, so no reindex.
         c.tables.items[entry.value] = null;
+        return removed;
     }
 
-    /// Go DeleteTableSpec: remove from memory and from the persisted table.
+    /// Removes a table spec from memory and from storage.
     pub fn deleteTableSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
-        try c.forgetTableSpec(name);
+        const removed = try c.forgetTableSpec(name);
 
         var scope = phase.SourceScope.begin(.catalog);
         defer scope.end();
         var stmt = try db.prepare(delete_catalog_query);
         defer stmt.finalize();
         try stmt.bindText(1, name);
+        try stmt.bindText(2, @tagName(tableSpecKind(removed)));
         _ = try stmt.step();
     }
 
@@ -546,8 +534,7 @@ pub const Catalog = struct {
     }
 
     // ------------------------------------------------------------------
-    // Function specs (Go loadFunctionSpec / AddNewFunctionSpec /
-    // DeleteFunctionSpec / saveFunctionSpec)
+    // Function specs
     // ------------------------------------------------------------------
 
     fn loadFunctionSpec(c: *Catalog, spec_json: []const u8) Error!void {
@@ -559,9 +546,8 @@ pub const Catalog = struct {
         try c.addFunctionSpecToMemory(fs);
     }
 
-    /// Go AddNewFunctionSpec: in-memory registration plus (unless
-    /// temporary) the persisted upsert. Deep-copies via canonical JSON so
-    /// callers may pass short-lived memory.
+    /// In-memory registration plus (unless temporary) the persisted upsert. Deep-copies via
+    /// canonical JSON so callers may pass short-lived memory.
     pub fn addNewFunctionSpec(
         c: *Catalog,
         db: *sqlite.Db,
@@ -582,7 +568,7 @@ pub const Catalog = struct {
         }
     }
 
-    /// Go saveFunctionSpec: the shared catalog upsert with kind='function'.
+    /// The shared catalog upsert with kind='function'.
     fn saveFunctionSpec(
         c: *Catalog,
         db: *sqlite.Db,
@@ -596,7 +582,7 @@ pub const Catalog = struct {
         var stmt = try db.prepare(upsert_catalog_query);
         defer stmt.finalize();
         try stmt.bindText(1, try fs.funcName(arena));
-        try stmt.bindText(2, function_spec_kind);
+        try stmt.bindText(2, @tagName(CatalogSpecKind.function));
         try stmt.bindText(3, encoded);
         try stmt.bindText(4, now.sql);
         try stmt.bindText(5, now.sql);
@@ -618,8 +604,7 @@ pub const Catalog = struct {
         }
     }
 
-    /// Go DeleteFunctionSpec: remove from memory and the persisted table.
-    /// (Go: "failed to find function spec from map by %s".)
+    /// Removes a function spec from memory and from storage.
     pub fn deleteFunctionSpec(c: *Catalog, db: *sqlite.Db, name: []const u8) Error!void {
         try c.forgetFunctionSpec(name);
 
@@ -628,6 +613,7 @@ pub const Catalog = struct {
         var stmt = try db.prepare(delete_catalog_query);
         defer stmt.finalize();
         try stmt.bindText(1, name);
+        try stmt.bindText(2, @tagName(CatalogSpecKind.function));
         _ = try stmt.step();
     }
 
@@ -636,14 +622,12 @@ pub const Catalog = struct {
         return c.functions.items[idx];
     }
 
-    /// Go analyzer.go's per-statement funcMap build (catalog.getFunctions
-    /// keyed by FuncName). The seeded MISSING_FUNCTIONS (contains_substr,
-    /// min_by, max_by) are excluded: they carry no body and are lowered by
-    /// the extractor / runtime UDFs instead, so routing them through
-    /// CallSQL would shadow those paths. Every user-created spec is
-    /// included — including "js" ones, whose bodyless CallSQL raises a
-    /// clear Unimplemented rather than emitting a call to a function
-    /// SQLite never defined. Allocated from `alloc` (per-statement arena).
+    /// The per-statement function map, keyed by FuncName. The seeded signatures (contains_substr,
+    /// min_by, max_by) are excluded: they carry no body and are lowered by the extractor /
+    /// runtime UDFs instead, so routing them through CallSQL would shadow those paths. Every
+    /// user-created spec is included — including "js" ones, whose bodyless CallSQL raises a clear
+    /// Unimplemented rather than emitting a call to a function SQLite never defined. Allocated
+    /// from `alloc` (per-statement arena).
     pub fn funcMap(c: *const Catalog, alloc: std.mem.Allocator) error{OutOfMemory}!*spec.FuncMap {
         const map = try alloc.create(spec.FuncMap);
         map.* = spec.FuncMap.init(alloc);
@@ -689,8 +673,7 @@ pub const Catalog = struct {
         return c.functions.items.len;
     }
 
-    /// Go addFunctionSpec's in-memory half (duplicate name replaces the
-    /// stored spec, same deliberate deviation as addTableSpecToMemory).
+    /// In-memory registration. A duplicate name replaces the stored spec.
     fn addFunctionSpecToMemory(c: *Catalog, fs: *spec.FunctionSpec) Error!void {
         const arena = c.arena_state.allocator();
         const name = try fs.funcName(arena);
@@ -702,11 +685,6 @@ pub const Catalog = struct {
         try c.func_map.put(name, c.functions.items.len - 1);
     }
 
-    /// Go addTableSpec's in-memory half. On a duplicate canonical name the
-    /// stored spec is replaced (Go only swaps the map entry and leaves the
-    /// engine catalog with the first registration; here the change log carries
-    /// the replacement through as a remove followed by an add, so it becomes
-    /// visible immediately — a deliberate, strictly-more-correct deviation).
     /// Registers a spec the analyzer should resolve but nothing should persist.
     ///
     /// `addNewTableSpec` writes a `zigquery_catalog` row, which is right for a
@@ -722,6 +700,8 @@ pub const Catalog = struct {
         return c.addTableSpecToMemory(table_spec);
     }
 
+    /// In-memory registration. A duplicate canonical name replaces the stored spec, and the change
+    /// log carries the replacement as a remove followed by an add, so it is visible at once.
     fn addTableSpecToMemory(c: *Catalog, table_spec: *spec.TableSpec) Error!void {
         const arena = c.arena_state.allocator();
         const table_name = try table_spec.tableName(arena);
@@ -818,13 +798,10 @@ pub const Catalog = struct {
     /// said so yet. Idempotent: a dataset already known — declared or
     /// inferred — is left alone.
     ///
-    /// Go has no analogue — the reference emulator tracks datasets only in its
-    /// metadata store — but INFORMATION_SCHEMA is served from the catalog, so
-    /// it has to know about every dataset a table lands in even when nobody
-    /// declared it (the engine library and the spec corpus create
-    /// `ds.t` freely). The entry is synthetic: memory-only, and invisible to
-    /// the metadata API, which only reports datasets someone declared through
-    /// `addNewDatasetSpec`.
+    /// INFORMATION_SCHEMA is served from the catalog, so it has to know about every dataset a
+    /// table lands in even when nobody declared it (the engine library and the spec corpus create
+    /// `ds.t` freely). The entry is synthetic: memory-only, and invisible to the metadata API,
+    /// which only reports datasets someone declared through `addNewDatasetSpec`.
     ///
     /// Reached via `ensureInfoSchema`, so `loadTableSpec` takes it too. A
     /// project-less dataset (`name_path.len != 2`, e.g. a bare `CREATE TABLE
@@ -887,12 +864,11 @@ pub const Catalog = struct {
         try c.addDatasetToMemory(ds, try ds.datasetName(arena));
     }
 
-    /// Declares a dataset: in-memory registration plus the persisted upsert,
-    /// the dataset counterpart of `addNewTableSpec`. Both a fresh dataset and
-    /// a patched one come through here — Go's UpdateDataset is the same
-    /// upsert. The spec is deep-copied into the catalog arena via its JSON,
-    /// so callers may pass short-lived memory. A synthetic spec is refused:
-    /// inferred datasets are `ensureDataset`'s business and never persist.
+    /// Declares a dataset: in-memory registration plus the persisted upsert, the dataset
+    /// counterpart of `addNewTableSpec`. Both a fresh dataset and a patched one come through here.
+    /// The spec is deep-copied into the catalog arena via its JSON, so callers may pass
+    /// short-lived memory. A synthetic spec is refused: inferred datasets are `ensureDataset`'s
+    /// business and never persist.
     pub fn addNewDatasetSpec(
         c: *Catalog,
         db: *sqlite.Db,
@@ -918,7 +894,7 @@ pub const Catalog = struct {
         var stmt = try db.prepare(upsert_catalog_query);
         defer stmt.finalize();
         try stmt.bindText(1, canonical);
-        try stmt.bindText(2, dataset_spec_kind);
+        try stmt.bindText(2, @tagName(CatalogSpecKind.dataset));
         try stmt.bindText(3, encoded);
         try stmt.bindText(4, now.sql);
         try stmt.bindText(5, now.sql);
@@ -945,6 +921,7 @@ pub const Catalog = struct {
         var stmt = try db.prepare(delete_catalog_query);
         defer stmt.finalize();
         try stmt.bindText(1, name);
+        try stmt.bindText(2, @tagName(CatalogSpecKind.dataset));
         _ = try stmt.step();
     }
 
@@ -973,7 +950,7 @@ pub const Catalog = struct {
     }
 
     // ------------------------------------------------------------------
-    // SimpleCatalogProto JSON rendering (replaces Go's live SimpleCatalog)
+    // SimpleCatalogProto JSON rendering
     // ------------------------------------------------------------------
 
     /// Renders the catalog as SimpleCatalogProto protobuf-JSON for the
@@ -1009,8 +986,8 @@ pub const Catalog = struct {
             if (overlay) |o| if (o.table_map.contains(canonical)) continue;
             try addTableToNode(alloc, &root, table_spec.name_path, table_spec, canonical);
         }
-        // Go addFunctionSpecRecursive: functions register under their LEAF
-        // name at the root and inside every sub-catalog along the path.
+        // Functions register under their leaf name at the root and inside every sub-catalog along
+        // the path.
         for (c.functions.items) |fs| {
             if (overlay) |o| if (o.func_map.contains(try fs.funcName(alloc))) continue;
             try addFunctionToNode(alloc, &root, fs.name_path, fs);
@@ -1055,8 +1032,8 @@ fn renderNode(alloc: std.mem.Allocator, root: *Node) error{ OutOfMemory, Invalid
     return bytes[0 .. bytes.len - 1 :0];
 }
 
-/// One registration point: the table resolves under `registered` and
-/// reports `canonical` as its Name() (Go createSimpleTable's canonicalName).
+/// One registration point: the table resolves under `registered` and reports `canonical` as its
+/// Name().
 const TableEntry = struct {
     registered: []const u8,
     canonical: []const u8,
@@ -1128,9 +1105,8 @@ const Node = struct {
     }
 };
 
-/// Go addTableSpecRecursive: for a path [a, b, c] register "a.b.c", "b.c"
-/// and "c" at the current level, plus sub-catalogs a -> {"b.c", "c",
-/// b -> {"c"}} — with AddOwnedTableIfNotPresent duplicate-name semantics.
+/// For a path [a, b, c], registers "a.b.c", "b.c" and "c" at the current level, plus
+/// sub-catalogs a -> {"b.c", "c", b -> {"c"}}. The first registration of a name wins.
 fn addTableToNode(
     alloc: std.mem.Allocator,
     node: *Node,
@@ -1138,7 +1114,7 @@ fn addTableToNode(
     table_spec: *const spec.TableSpec,
     canonical: []const u8,
 ) error{ OutOfMemory, InvalidSpec }!void {
-    if (path.len == 0) return error.InvalidSpec; // Go: "table name is not found"
+    if (path.len == 0) return error.InvalidSpec;
     if (path.len == 1) {
         if (!node.hasEntry(path[0])) {
             try node.addEntry(alloc, .{
@@ -1167,17 +1143,15 @@ fn addTableToNode(
     try addTableToNode(alloc, sub, path[1..], table_spec, canonical);
 }
 
-/// Go addFunctionSpecRecursive: for a path [a, b, c] the function is
-/// registered under its leaf name "c" at the current level AND inside the
-/// sub-catalog chain a -> b (each level also re-registers at the root,
-/// exactly like Go's double recursion).
+/// For a path [a, b, c], registers the function under its leaf name "c" at the current level and
+/// inside the sub-catalog chain a -> b; each level also re-registers at the root.
 fn addFunctionToNode(
     alloc: std.mem.Allocator,
     node: *Node,
     path: []const []const u8,
     fn_spec: *const spec.FunctionSpec,
 ) error{ OutOfMemory, InvalidSpec }!void {
-    if (path.len == 0) return error.InvalidSpec; // Go: "function name is not found"
+    if (path.len == 0) return error.InvalidSpec;
     if (path.len == 1) {
         if (!node.hasFnEntry(path[0])) {
             try node.addFnEntry(alloc, .{ .registered = path[0], .fn_spec = fn_spec });
@@ -1228,12 +1202,10 @@ fn appendNodeJson(
     try out.append(alloc, '}');
 }
 
-/// FunctionProto protobuf-JSON (googlesql/proto/function.proto): namePath,
-/// group "", mode SCALAR/AGGREGATE, one FunctionSignatureProto whose
-/// argument/returnType are FunctionArgumentTypeProto entries — templated
-/// arguments carry `kind` (SignatureArgumentKind name), fixed arguments
-/// carry `type` (TypeProto). Mirrors Go createFunction's
-/// NewFunctionArgumentType3/4 + NewFunctionSignature3 + NewFunction.
+/// FunctionProto protobuf-JSON (googlesql/proto/function.proto): namePath, group "", mode
+/// SCALAR/AGGREGATE, one FunctionSignatureProto whose argument/returnType are
+/// FunctionArgumentTypeProto entries — templated arguments carry `kind` (SignatureArgumentKind
+/// name), fixed arguments carry `type` (TypeProto).
 fn appendFunctionJson(
     out: *std.ArrayList(u8),
     alloc: std.mem.Allocator,
@@ -1256,9 +1228,8 @@ fn appendFunctionJson(
     try out.appendSlice(alloc, ",\"contextId\":\"-1\"}]}");
 }
 
-/// FunctionArgumentTypeProto JSON: Go NewFunctionArgumentType4(kind, 1) for
-/// templated kinds, NewFunctionArgumentType3(type, 1) for fixed types
-/// (numOccurrences 1 in both).
+/// FunctionArgumentTypeProto JSON: `kind` for a templated argument, `ARG_TYPE_FIXED` and `type`
+/// for a fixed one, numOccurrences 1 in both.
 fn appendFunctionArgumentTypeJson(
     out: *std.ArrayList(u8),
     alloc: std.mem.Allocator,
@@ -1278,9 +1249,7 @@ fn appendFunctionArgumentTypeJson(
     try out.appendSlice(alloc, ",\"numOccurrences\":1}");
 }
 
-/// Go catalog.go MISSING_FUNCTIONS, minus the entries that are engine
-/// builtins in the shim's GoogleSQL revision (array_slice, array_first,
-/// array_last) — Go pre-filters those against `builtins` at registration.
+/// Signatures for the functions the shim's GoogleSQL has no builtin for.
 fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.FunctionSpec {
     const arg_arbitrary: i32 = @backingInt(pb.SignatureArgumentKind.ARG_KIND_EXPR_ARBITRARY);
     const arg_any_1: i32 = @backingInt(pb.SignatureArgumentKind.ARG_KIND_EXPR_ANY_1);
@@ -1427,11 +1396,10 @@ fn appendTypeProtoJson(
 // ----------------------------------------------------------------------
 
 const Timestamps = struct {
-    /// SQL column form, comparable lexicographically with other rows this
-    /// port writes: "YYYY-MM-DD HH:MM:SS.micros+00:00" (UTC rendering of
-    /// go-sqlite3's timestamp layout).
+    /// SQL column form, comparable lexicographically with the catalog's other rows:
+    /// "YYYY-MM-DD HH:MM:SS.micros+00:00", in UTC.
     sql: []const u8,
-    /// RFC3339 for spec JSON updatedAt/createdAt (Go time.Time layout).
+    /// RFC3339 for spec JSON updatedAt/createdAt.
     rfc3339: []const u8,
 };
 
@@ -1444,8 +1412,7 @@ pub fn nowTimestamps(alloc: std.mem.Allocator) error{OutOfMemory}!Timestamps {
     return timestampsFromMicros(alloc, micros);
 }
 
-/// Unix microseconds for an RFC3339 timestamp of the shape `nowTimestamps`
-/// and Go's time.Time write: `YYYY-MM-DDTHH:MM:SS[.frac]Z`, or with a
+/// Unix microseconds for an RFC3339 timestamp, `YYYY-MM-DDTHH:MM:SS[.frac]Z` or with a
 /// `+HH:MM` / `-HH:MM` offset. Null for anything else.
 pub fn epochMicrosFromRfc3339(text: []const u8) ?i64 {
     if (text.len < 20) return null;
@@ -1563,7 +1530,7 @@ test "RFC3339 timestamps parse back to the micros they were formatted from" {
         3 * 3600 + 4 * 60 + 5) * std.time.us_per_s + 123456;
     const t = try timestampsFromMicros(arena_state.allocator(), micros);
     try testing.expectEqual(micros, epochMicrosFromRfc3339(t.rfc3339).?);
-    // Go writes no fraction for a whole second, and a zone offset when not UTC.
+    // A whole second with no fraction, and a zone given as an offset.
     try testing.expectEqual(micros - 123456, epochMicrosFromRfc3339("2024-01-02T03:04:05Z").?);
     try testing.expectEqual(
         micros - 123456,
@@ -1639,7 +1606,7 @@ test "addNewTableSpec persists a row and a fresh catalog syncs it" {
     try c1.addNewTableSpec(&db, try testTableSpec(alloc, &.{"t1"}));
     try testing.expectEqual(@as(usize, 1), c1.tableCount());
 
-    // The persisted row exists with the Go schema/kind and decodable spec.
+    // The persisted row exists with its kind and a decodable spec.
     {
         var stmt = try db.prepare("SELECT name, kind, spec FROM zigquery_catalog");
         defer stmt.finalize();
@@ -1731,7 +1698,7 @@ test "catalogJson: analyzer resolves bare and dotted table names" {
         const analyzed = try analyzer_ffi.analyzeNextStatement(alloc, "SELECT a FROM `proj.ds.t2`", 0, catalog_json);
         try testing.expectEqualStrings("proj_ds_t2", try resolvedTableName(analyzed.node));
     }
-    // Path suffix, like Go's recursive registration allows.
+    // A path suffix resolves too.
     {
         const analyzed = try analyzer_ffi.analyzeNextStatement(alloc, "SELECT a FROM ds.t2", 0, catalog_json);
         try testing.expectEqualStrings("proj_ds_t2", try resolvedTableName(analyzed.node));
@@ -1973,7 +1940,7 @@ test "a declared dataset persists as a dataset row, reloads with its resource, a
         defer stmt.finalize();
         try testing.expect(try stmt.step());
         try testing.expectEqualStrings("p_ds", stmt.columnText(0));
-        try testing.expectEqualStrings(dataset_spec_kind, stmt.columnText(1));
+        try testing.expectEqualStrings(@tagName(CatalogSpecKind.dataset), stmt.columnText(1));
         try testing.expect(!(try stmt.step()));
     }
 
@@ -2051,4 +2018,90 @@ test "a table's dataset is inferred as synthetic and a declaration replaces it i
     try testing.expect(!reloaded.is_synthetic);
     try testing.expectEqualStrings("{\"id\":\"ds\"}", reloaded.metadata);
     try testing.expectEqual(@as(usize, 1), (try c2.liveDatasets(alloc)).len);
+}
+
+/// Every `zigquery_catalog` row as "name:kind", comma-separated, in key order.
+fn catalogRows(alloc: std.mem.Allocator, db: *sqlite.Db) ![]const u8 {
+    var stmt = try db.prepare("SELECT name, kind FROM zigquery_catalog ORDER BY name, kind");
+    defer stmt.finalize();
+    var out: std.ArrayList(u8) = .empty;
+    while (try stmt.step()) {
+        if (out.items.len > 0) try out.append(alloc, ',');
+        try out.print(alloc, "{s}:{s}", .{ stmt.columnText(0), stmt.columnText(1) });
+    }
+    return out.items;
+}
+
+test "a dataset and a table sharing a canonical name keep separate rows" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // Dataset `p.a_b` and table `p.a.b` are both `p_a_b`, as are dataset `p.x_y` and table
+    // `p.x.y`. One pair is declared dataset-first and the other table-first, so neither upsert
+    // may land on the other's row.
+    var c1 = try Catalog.init(testing.allocator);
+    defer c1.deinit();
+    try c1.createCatalogTablesIfNotExist(&db);
+    try c1.addNewDatasetSpec(&db, &.{ .name_path = &.{ "p", "a_b" } });
+    try c1.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "p", "a", "b" }));
+    try c1.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "p", "x", "y" }));
+    try c1.addNewDatasetSpec(&db, &.{ .name_path = &.{ "p", "x_y" } });
+    try testing.expectEqualStrings(
+        "p_a_b:dataset,p_a_b:table,p_x_y:dataset,p_x_y:table",
+        try catalogRows(alloc, &db),
+    );
+
+    // Each comes back as itself.
+    var c2 = try Catalog.init(testing.allocator);
+    defer c2.deinit();
+    try c2.loadFromStorage(&db);
+    for ([_][]const u8{ "p_a_b", "p_x_y" }, [_][]const u8{ "a_b", "x_y" }) |name, dataset_id| {
+        const ds = c2.datasetSpecByName(name) orelse return error.TestUnexpectedResult;
+        try testing.expect(!ds.is_synthetic);
+        try testing.expectEqualStrings(dataset_id, ds.name_path[1]);
+        const table = c2.findTableSpec(name) orelse return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(usize, 3), table.name_path.len);
+    }
+
+    // A delete takes its own kind's row and leaves the other.
+    try c1.deleteDatasetSpec(&db, "p_a_b");
+    try c1.deleteTableSpec(&db, "p_x_y");
+    try testing.expectEqualStrings("p_a_b:table,p_x_y:dataset", try catalogRows(alloc, &db));
+}
+
+test "a function and a table sharing a canonical name keep separate rows" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // BigQuery keeps routines and tables apart, so `p.ds.f` can name both.
+    var c1 = try Catalog.init(testing.allocator);
+    defer c1.deinit();
+    try c1.createCatalogTablesIfNotExist(&db);
+    try c1.addNewTableSpec(&db, try testTableSpec(alloc, &.{ "p", "ds", "f" }));
+    const fs = try alloc.create(spec.FunctionSpec);
+    fs.* = .{
+        .name_path = &.{ "p", "ds", "f" },
+        .language = "SQL",
+        .return_type = try spec.newSimpleType(alloc, .TYPE_INT64),
+        .body = "1",
+        .updated_at = "2024-01-02T03:04:05Z",
+        .created_at = "2024-01-02T03:04:05Z",
+    };
+    try c1.addNewFunctionSpec(&db, fs);
+    try testing.expectEqualStrings("p_ds_f:function,p_ds_f:table", try catalogRows(alloc, &db));
+
+    var c2 = try Catalog.init(testing.allocator);
+    defer c2.deinit();
+    try c2.loadFromStorage(&db);
+    try testing.expect(c2.findTableSpec("p_ds_f") != null);
+    try testing.expect(c2.findFunctionSpec("p_ds_f") != null);
+
+    try c1.deleteFunctionSpec(&db, "p_ds_f");
+    try testing.expectEqualStrings("p_ds_f:table", try catalogRows(alloc, &db));
 }
