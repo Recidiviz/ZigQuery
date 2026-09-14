@@ -1619,7 +1619,11 @@ pub const Db = struct {
         opts: QueryOptions,
     ) Error!void {
         const fn_spec = try db.newFunctionSpec(arena, cf, opts);
-        if (!fn_spec.is_temp) try db.requireDataset(arena, fn_spec.name_path);
+        // The spec keeps the path as written, which is what calls resolve; the check needs the
+        // project a `dataset.function` name lands in.
+        if (!fn_spec.is_temp) {
+            try db.requireDataset(arena, try db.qualifyPath(arena, fn_spec.name_path));
+        }
         if (fn_spec.is_temp)
             db.temps.addNewFunctionSpec(&db.sqlite_db, fn_spec) catch |err|
                 return db.failCatalog(err)
@@ -3917,13 +3921,30 @@ test "require_dataset refuses a CREATE into an undeclared dataset with BigQuery'
         error.DatasetNotFound,
         db.exec("CREATE FUNCTION p.d.f(x INT64) AS (x + 1)", &.{}, .{}),
     );
+    // A `dataset.function` name lands in the default project, as a table's does.
+    try testing.expectError(
+        error.DatasetNotFound,
+        db.exec("CREATE FUNCTION d.g(x INT64) AS (x + 1)", &.{}, .{}),
+    );
+    try testing.expectEqualStrings(
+        "Not found: Dataset p:d was not found in location US",
+        db.lastError(),
+    );
 
     // Declared, the same statements go through.
     try db.insertDataset(arena, "p", "d", "{\"id\":\"d\"}");
     try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
     try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
     try db.exec("CREATE FUNCTION p.d.f(x INT64) AS (x + 1)", &.{}, .{});
+    try db.exec("CREATE FUNCTION d.g(x INT64) AS (x + 1)", &.{}, .{});
     try testing.expect((try db.catalogTable(arena, "p", "d", "t")) != null);
+    {
+        // Called by the path it was written with.
+        var rows = try db.query("SELECT d.g(1)", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(i64, 2), row[0].int);
+    }
 
     // The engine's own datasets are exempt: TEMP objects have none, and the
     // anonymous results dataset is never declared by anyone.
