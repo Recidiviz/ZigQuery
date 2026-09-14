@@ -403,7 +403,7 @@ pub const DatasetSpec = struct {
     /// same name replaces it.
     is_synthetic: bool = false,
 
-    /// The canonical "_"-joined name, which is the `zigquery_catalog` key.
+    /// The canonical "_"-joined name, which the `dataset` kind keys to the`zigquery_catalog` row.
     pub fn datasetName(self: *const DatasetSpec, alloc: std.mem.Allocator) error{OutOfMemory}![]u8 {
         return formatPath(alloc, self.name_path);
     }
