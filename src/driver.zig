@@ -736,13 +736,38 @@ pub const Db = struct {
         try g.catalog.updateTableSpec(&db.sqlite_db, &updated);
     }
 
-    /// Declares that `project.dataset` exists, carrying the metadata API's
-    /// resource text. The catalog is a dataset's only store: datasets.get and
-    /// datasets.list read the resource back from here, `require_dataset`
-    /// consults it, and `<project>.INFORMATION_SCHEMA.SCHEMATA` reports the
-    /// dataset even before it holds a table. Declaring a dataset again
-    /// replaces its resource (datasets.patch) and keeps its creation time.
-    pub fn addDataset(
+    /// Declares that `project.dataset` exists, carrying the metadata API's resource text.
+    /// `DatasetAlreadyExists`, with nothing written, when a declared dataset holds the path; an
+    /// inferred entry is replaced. The catalog is a dataset's only store: datasets.get and
+    /// datasets.list read the resource back from here, `require_dataset` consults it, and
+    /// `<project>.INFORMATION_SCHEMA.SCHEMATA` reports the dataset even before it holds a table.
+    pub fn insertDataset(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        metadata_json: []const u8,
+    ) (catalog_mod.Error || error{DatasetAlreadyExists})!void {
+        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        if (g.catalog.datasetSpecByName(canonical)) |current| {
+            if (!current.is_synthetic and pathIs2(current.name_path, project_id, dataset_id)) {
+                return error.DatasetAlreadyExists;
+            }
+        }
+        try g.catalog.addNewDatasetSpec(&db.sqlite_db, &.{
+            .name_path = &.{ project_id, dataset_id },
+            .metadata = metadata_json,
+            .updated_at = now.rfc3339,
+            .created_at = now.rfc3339,
+        });
+    }
+
+    /// Replaces a declared dataset's resource (datasets.patch) and keeps its creation time.
+    /// `DatasetNotFound` when `project.dataset` is not declared.
+    pub fn updateDataset(
         db: *Db,
         arena: std.mem.Allocator,
         project_id: []const u8,
@@ -751,20 +776,18 @@ pub const Db = struct {
     ) catalog_mod.Error!void {
         const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
         const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
-        var ds = spec.DatasetSpec{
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const current = g.catalog.datasetSpecByName(canonical) orelse return error.DatasetNotFound;
+        if (current.is_synthetic or !pathIs2(current.name_path, project_id, dataset_id)) {
+            return error.DatasetNotFound;
+        }
+        try g.catalog.addNewDatasetSpec(&db.sqlite_db, &.{
             .name_path = &.{ project_id, dataset_id },
             .metadata = metadata_json,
             .updated_at = now.rfc3339,
-            .created_at = now.rfc3339,
-        };
-        var g = db.lockCatalog();
-        defer g.unlock();
-        if (g.catalog.datasetSpecByName(canonical)) |current| {
-            if (!current.is_synthetic and pathIs2(current.name_path, project_id, dataset_id)) {
-                ds.created_at = current.created_at;
-            }
-        }
-        try g.catalog.addNewDatasetSpec(&db.sqlite_db, &ds);
+            .created_at = current.created_at,
+        });
     }
 
     /// Forgets a declared dataset. Its tables are the caller's business
@@ -3896,7 +3919,7 @@ test "require_dataset refuses a CREATE into an undeclared dataset with BigQuery'
     );
 
     // Declared, the same statements go through.
-    try db.addDataset(arena, "p", "d", "{\"id\":\"d\"}");
+    try db.insertDataset(arena, "p", "d", "{\"id\":\"d\"}");
     try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
     try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
     try db.exec("CREATE FUNCTION p.d.f(x INT64) AS (x + 1)", &.{}, .{});
@@ -3932,12 +3955,20 @@ test "declared datasets persist across connections, keep their creation time, an
     {
         var db = try Db.open(testing.allocator, db_path);
         defer db.close();
-        try db.addDataset(arena, "p", "ds", "{\"id\":\"ds\"}");
+        try db.insertDataset(arena, "p", "ds", "{\"id\":\"ds\"}");
         const first = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
         created_at = try arena.dupe(u8, first.created_at);
         try testing.expect(created_at.len > 0);
-        // Declaring again (datasets.patch) replaces the resource only.
-        try db.addDataset(arena, "p", "ds", "{\"id\":\"ds\",\"description\":\"kept\"}");
+        // A second declaration is refused and writes nothing.
+        try testing.expectError(
+            error.DatasetAlreadyExists,
+            db.insertDataset(arena, "p", "ds", "{\"id\":\"other\"}"),
+        );
+        const kept = (try db.catalogDataset(arena, "p", "ds")) orelse
+            return error.TestUnexpectedResult;
+        try testing.expectEqualStrings("{\"id\":\"ds\"}", kept.metadata);
+        // An update (datasets.patch) replaces the resource only.
+        try db.updateDataset(arena, "p", "ds", "{\"id\":\"ds\",\"description\":\"kept\"}");
         const second = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
         try testing.expectEqualStrings(created_at, second.created_at);
         try testing.expectEqualStrings("{\"id\":\"ds\",\"description\":\"kept\"}", second.metadata);
@@ -3962,6 +3993,25 @@ test "declared datasets persist across connections, keep their creation time, an
     }
 }
 
+test "insertDataset declares over an inferred dataset, and updateDataset needs a declared one" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The table's path makes `p.other` an inferred dataset, which nobody declared.
+    try db.exec("CREATE TABLE p.other.t (a INT64)", &.{}, .{});
+    try testing.expect(try db.datasetExists(arena, "p", "other"));
+    try testing.expectError(error.DatasetNotFound, db.updateDataset(arena, "p", "other", "{}"));
+
+    try db.insertDataset(arena, "p", "other", "{\"id\":\"other\"}");
+    const declared = (try db.catalogDataset(arena, "p", "other")) orelse
+        return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("{\"id\":\"other\"}", declared.metadata);
+    try testing.expect(declared.created_at.len > 0);
+}
+
 test "a dataset and a table sharing a canonical name both survive a reopen" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3979,8 +4029,8 @@ test "a dataset and a table sharing a canonical name both survive a reopen" {
     {
         var db = try Db.open(testing.allocator, db_path);
         defer db.close();
-        try db.addDataset(arena, "p", "a", "");
-        try db.addDataset(arena, "p", "a_b", "");
+        try db.insertDataset(arena, "p", "a", "");
+        try db.insertDataset(arena, "p", "a_b", "");
         try db.exec("CREATE TABLE p.a.b (x INT64)", &.{}, .{});
         try db.exec("INSERT INTO p.a.b (x) VALUES (7)", &.{}, .{});
     }

@@ -144,7 +144,11 @@ pub const Server = struct {
         if (opts.dataset) |dataset_id| {
             var meta: std.ArrayList(u8) = .empty;
             try datasets_handler.writeDataset(arena, &meta, s.project, dataset_id);
-            try s.db.addDataset(arena, s.project, dataset_id, meta.items);
+            // A file-backed database that already declares it keeps the stored resource.
+            s.db.insertDataset(arena, s.project, dataset_id, meta.items) catch |err| switch (err) {
+                error.DatasetAlreadyExists => {},
+                else => |e| return e,
+            };
         }
 
         for (opts.data_from_json) |path| {
@@ -529,11 +533,27 @@ pub const Server = struct {
             return badRequest(arena, "datasetReference.datasetId is required");
         };
 
-        var meta: std.ArrayList(u8) = .empty;
-        try datasets_handler.writeDataset(arena, &meta, project_id, dataset_id);
-        try s.db.addDataset(arena, project_id, dataset_id, meta.items);
-
-        return .{ .body = meta.items };
+        // `datasetIdFromBody` only finds an id in an object.
+        var resource: std.ArrayList(u8) = .empty;
+        try datasets_handler.writeDatasetResource(
+            arena,
+            &resource,
+            project_id,
+            dataset_id,
+            parsed.object,
+        );
+        s.db.insertDataset(arena, project_id, dataset_id, resource.items) catch |err| switch (err) {
+            error.DatasetAlreadyExists => return .{
+                .status = .conflict,
+                .body = try errors.body(arena, .duplicate, try std.fmt.allocPrint(
+                    arena,
+                    "Already Exists: Dataset {s}:{s}",
+                    .{ project_id, dataset_id },
+                )),
+            },
+            else => |e| return e,
+        };
+        return .{ .body = resource.items };
     }
 
     fn handleDatasetsList(
@@ -582,13 +602,10 @@ pub const Server = struct {
         return .{ .body = try datasetResource(arena, ds) };
     }
 
-    /// server/handler.go datasetsPatchHandler.
-    ///
-    /// Clients patch datasets to set things like defaultTableExpirationMs.
-    /// The posted body is stored and echoed back with the reference filled
-    /// in, so a field the emulator does not otherwise model still round-trips
-    /// — through datasets.get and datasets.list as well, which report the
-    /// stored resource.
+    /// Merges the posted fields over the stored resource key by key, as tables.patch does: a field
+    /// the patch names is replaced whole and the rest are kept
+    /// (https://cloud.google.com/bigquery/docs/reference/rest/v2/datasets/patch). The reference
+    /// stays the request path's. datasets.get and datasets.list report the result.
     fn handleDatasetsPatch(
         s: *Server,
         req: *const http_server.Request,
@@ -596,33 +613,32 @@ pub const Server = struct {
         dataset_id: []const u8,
     ) !http_server.Response {
         const arena = req.arena;
-        if (try s.db.catalogDataset(arena, project_id, dataset_id) == null) {
+        const current = (try s.db.catalogDataset(arena, project_id, dataset_id)) orelse
             return datasetNotFound(arena, project_id, dataset_id);
-        }
+        const patch = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch {
+            return badRequest(arena, "failed to decode request body");
+        };
+        const stored = std.json.parseFromSliceLeaky(
+            std.json.Value,
+            arena,
+            try datasetResource(arena, current),
+            .{},
+        ) catch return internalError(arena, "stored dataset resource is not JSON");
 
-        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, req.body, .{}) catch
-            std.json.Value{ .null = {} };
-
-        var out: std.ArrayList(u8) = .empty;
-        if (parsed == .object and parsed.object.count() > 0) {
-            // Re-emit the patch with datasetReference/id guaranteed present.
-            var merged = try std.json.ObjectMap.init(arena, &.{}, &.{});
-            var it = parsed.object.iterator();
+        var merged: std.json.ObjectMap = .empty;
+        if (stored == .object) {
+            var it = stored.object.iterator();
             while (it.next()) |kv| try merged.put(arena, kv.key_ptr.*, kv.value_ptr.*);
-
-            var ref = try std.json.ObjectMap.init(arena, &.{}, &.{});
-            try ref.put(arena, "datasetId", .{ .string = dataset_id });
-            try ref.put(arena, "projectId", .{ .string = project_id });
-            try merged.put(arena, "datasetReference", .{ .object = ref });
-            try merged.put(arena, "id", .{ .string = dataset_id });
-
-            try tables_handler.writeJsonValue(arena, &out, .{ .object = merged });
-        } else {
-            try datasets_handler.writeDataset(arena, &out, project_id, dataset_id);
+        }
+        if (patch == .object) {
+            var it = patch.object.iterator();
+            while (it.next()) |kv| try merged.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
 
-        try s.db.addDataset(arena, project_id, dataset_id, out.items);
-        return .{ .body = out.items };
+        var resource: std.ArrayList(u8) = .empty;
+        try datasets_handler.writeDatasetResource(arena, &resource, project_id, dataset_id, merged);
+        try s.db.updateDataset(arena, project_id, dataset_id, resource.items);
+        return .{ .body = resource.items };
     }
 
     fn handleDatasetsDelete(
@@ -2291,9 +2307,11 @@ test "declared datasets survive a restart on a file-backed database" {
         try testing.expectEqual(std.http.Status.ok, patched.status);
     }
     {
+        // Restarted with the same flag, the dataset keeps its patched resource.
         var s = try Server.init(testing.allocator, testing_io, .{
             .project = "test",
             .database = db_path,
+            .dataset = "ds1",
         });
         defer s.deinit();
         const got = try request(s, arena, .GET, "/projects/test/datasets/ds1", "");
@@ -2312,6 +2330,86 @@ test "declared datasets survive a restart on a file-backed database" {
         const row = (try rows.next()) orelse return error.TestUnexpectedResult;
         try testing.expectEqualStrings("dataset", row[0].text);
     }
+}
+
+test "inserting a declared dataset is 409 and leaves it as it was" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    const body =
+        \\{"datasetReference":{"projectId":"test","datasetId":"ds1"}}
+    ;
+    const first = try request(s, arena, .POST, "/projects/test/datasets", body);
+    try testing.expectEqual(std.http.Status.ok, first.status);
+    _ = try request(s, arena, .PATCH, "/projects/test/datasets/ds1",
+        \\{"description":"kept"}
+    );
+
+    const again = try request(s, arena, .POST, "/projects/test/datasets", body);
+    try testing.expectEqual(std.http.Status.conflict, again.status);
+    try testing.expectEqualStrings(
+        \\{"error":{"errors":[{"reason":"duplicate","location":"","debugInfo":"","message":"Already Exists: Dataset test:ds1"}],"code":409,"message":"Already Exists: Dataset test:ds1"}}
+    , again.body);
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1", "");
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"description\":\"kept\"") != null);
+}
+
+test "fields posted to datasets.insert round-trip through get and list" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    const inserted = try request(s, arena, .POST, "/projects/test/datasets",
+        \\{"datasetReference":{"projectId":"test","datasetId":"ds1"},"description":"posted","labels":{"team":"data"}}
+    );
+    try testing.expectEqual(std.http.Status.ok, inserted.status);
+    try testing.expectEqualStrings(
+        \\{"datasetReference":{"datasetId":"ds1","projectId":"test"},"description":"posted","id":"ds1","labels":{"team":"data"}}
+    , inserted.body);
+
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1", "");
+    try testing.expectEqualStrings(inserted.body, got.body);
+    const listed = try request(s, arena, .GET, "/projects/test/datasets", "");
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"team\":\"data\"") != null);
+}
+
+test "datasets.patch merges into the stored resource key by key" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    _ = try request(s, arena, .POST, "/projects/test/datasets",
+        \\{"datasetReference":{"projectId":"test","datasetId":"ds1"},"description":"posted"}
+    );
+    _ = try request(s, arena, .PATCH, "/projects/test/datasets/ds1",
+        \\{"labels":{"team":"data"}}
+    );
+    const last = try request(s, arena, .PATCH, "/projects/test/datasets/ds1",
+        \\{"friendlyName":"One","labels":{"tier":"gold"},"datasetReference":{"projectId":"test","datasetId":"moved"}}
+    );
+    try testing.expectEqual(std.http.Status.ok, last.status);
+    // A patch keeps the fields it does not name and replaces whole the ones it does, `labels`
+    // included; the reference stays the request path's.
+    try testing.expectEqualStrings(
+        \\{"datasetReference":{"datasetId":"ds1","projectId":"test"},"description":"posted","friendlyName":"One","id":"ds1","labels":{"tier":"gold"}}
+    , last.body);
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1", "");
+    try testing.expectEqualStrings(last.body, got.body);
+
+    // An empty patch changes nothing, and a body that is not JSON is refused.
+    const empty = try request(s, arena, .PATCH, "/projects/test/datasets/ds1", "{}");
+    try testing.expectEqualStrings(last.body, empty.body);
+    const bad = try request(s, arena, .PATCH, "/projects/test/datasets/ds1", "{not json");
+    try testing.expectEqual(std.http.Status.bad_request, bad.status);
+    const after = try request(s, arena, .GET, "/projects/test/datasets/ds1", "");
+    try testing.expectEqualStrings(last.body, after.body);
 }
 
 // ---- tabledata.insertAll ----
@@ -2412,9 +2510,6 @@ test "a table made by a CTAS job is listed, streams rows, and a replace shows th
 
     var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
-    _ = try request(s, arena, .POST, "/projects/test/datasets",
-        \\{"datasetReference":{"projectId":"test","datasetId":"ds1"}}
-    );
     const ctas = try request(s, arena, .POST, "/projects/test/jobs",
         \\{"configuration":{"query":{"query":"CREATE TABLE `test.ds1.made` AS SELECT 1 AS n, 'x' AS s"}}}
     );
@@ -3165,9 +3260,6 @@ test "a WRITE_APPEND into a DDL-created NOT NULL table records it as REQUIRED" {
 
     var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
-    _ = try request(s, arena, .POST, "/projects/test/datasets",
-        \\{"datasetReference":{"projectId":"test","datasetId":"ds1"}}
-    );
     const ddl = try request(s, arena, .POST, "/projects/test/jobs",
         \\{"configuration":{"query":{"query":"CREATE TABLE `test.ds1.ddl` (a STRING NOT NULL, b STRING)"}}}
     );
