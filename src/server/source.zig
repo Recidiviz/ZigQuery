@@ -77,7 +77,12 @@ pub fn loadJson(
 
             var ds_meta: std.ArrayList(u8) = .empty;
             try datasets_handler.writeDataset(arena, &ds_meta, project_id, dataset_id);
-            try db.addDataset(arena, project_id, dataset_id, ds_meta.items);
+            // A database that already declares it keeps its stored resource, as its tables do.
+            const declared = db.insertDataset(arena, project_id, dataset_id, ds_meta.items);
+            declared catch |err| switch (err) {
+                error.DatasetAlreadyExists => {},
+                else => |e| return e,
+            };
             stats.datasets += 1;
 
             const tables = arrayField(ds, "tables") orelse continue;
@@ -517,6 +522,26 @@ test "loading over a table that already exists leaves it alone" {
     var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
     defer rows.deinit();
     try testing.expectEqualStrings("kept", (try rows.next()).?[0].string);
+}
+
+test "loading over a dataset that is already declared keeps its resource" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var db = try driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const resource = "{\"description\":\"kept\",\"id\":\"d\"}";
+    try db.insertDataset(arena, "p", "d", resource);
+    const stats = try loadInto(arena, db,
+        \\[{"id":"p","datasets":[{"id":"d","tables":[
+        \\  {"id":"t","columns":[{"name":"a","type":"STRING"}]}]}]}]
+    );
+    try testing.expectEqual(@as(usize, 1), stats.datasets);
+    try testing.expectEqual(@as(usize, 1), stats.tables);
+    const ds = (try db.catalogDataset(arena, "p", "d")) orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings(resource, ds.metadata);
 }
 
 test "a single project object is accepted, not just a list" {

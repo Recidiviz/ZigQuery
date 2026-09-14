@@ -1,13 +1,13 @@
 //! Port of bigquery-emulator server/handler.go datasets{Insert,Get,List,Delete}.
 //!
-//! Response shapes captured from a running Go emulator. A dataset's resource
-//! is whatever was posted or patched, stored on its catalog spec and reported
-//! back verbatim by get and list; `writeDataset` builds the minimal resource
-//! for a dataset declared without one (a bare insert body, the `--dataset`
-//! flag, a loader fixture).
+//! Response shapes captured from a running Go emulator. A dataset's resource is what was posted
+//! to insert with patches merged over it (`writeDatasetResource`), stored on its catalog spec and
+//! reported back verbatim by get and list; `writeDataset` builds the minimal resource for a
+//! dataset declared without one (the `--dataset` flag, a loader fixture).
 
 const std = @import("std");
 const errors = @import("../error.zig");
+const tables = @import("tables.zig");
 
 /// `{"datasetReference":{"datasetId":..,"projectId":..},"id":..}`
 pub fn writeDataset(
@@ -23,6 +23,24 @@ pub fn writeDataset(
     try out.appendSlice(arena, "},\"id\":");
     try errors.writeJsonString(arena, out, dataset_id);
     try out.append(arena, '}');
+}
+
+/// The resource `fields` describe, with `datasetReference` and `id` set from the request path
+/// whatever `fields` says. Keys come out sorted, as `tables.writeJsonValue` writes them.
+pub fn writeDatasetResource(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    project_id: []const u8,
+    dataset_id: []const u8,
+    fields: std.json.ObjectMap,
+) std.mem.Allocator.Error!void {
+    var resource = try fields.clone(arena);
+    var ref: std.json.ObjectMap = .empty;
+    try ref.put(arena, "datasetId", .{ .string = dataset_id });
+    try ref.put(arena, "projectId", .{ .string = project_id });
+    try resource.put(arena, "datasetReference", .{ .object = ref });
+    try resource.put(arena, "id", .{ .string = dataset_id });
+    try tables.writeJsonValue(arena, out, .{ .object = resource });
 }
 
 /// `{"datasets":[<resource>,...]}`, each resource appended as stored.
