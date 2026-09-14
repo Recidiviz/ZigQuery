@@ -71,6 +71,7 @@ testdata/rest/
   jobs/query.zon              jobs.query: parameters, errors, state across requests
   jobs/insert.zon             jobs.insert: destination tables, WRITE_APPEND/WRITE_TRUNCATE, DDL
   jobs/get_query_results.zon  paging, pageToken, formatOptions, the maxResults=0 probe
+  jobs/get.zon                jobs.get and jobs.list, which no server test requests today
   datasets.zon
   tables.zon                  insert/get/list/patch/delete, views, nested modes
   tabledata/insert_all.zon
@@ -188,6 +189,69 @@ A restart (`declared datasets survive a restart on a file-backed database`):
 },
 ```
 
+### Chaining requests
+
+A case is one `Server`, so every step sees what the steps before it did. A value one response
+mints and a later request needs, such as a job id, travels by name: `.capture` binds it and
+`${name}` spends it.
+
+```zig
+.{
+    .desc = "jobs.get answers with the resource jobs.insert returned",
+    .steps = .{
+        .{
+            .POST = "/projects/test/jobs",
+            .json = .{ .configuration = .{ .query = .{
+                .query = "SELECT 1 AS n",
+                .useLegacySql = false,
+            } } },
+            .name = "inserted",
+            .capture = .{ .job = "jobReference.jobId" },
+            .expect = .{ .json_subset = .{
+                .selfLink = "http://0.0.0.0:9050/bigquery/v2/projects/test/jobs/${job}",
+                .configuration = .{ .query = .{ .destinationTable = .{
+                    .projectId = "test",
+                    .datasetId = "_anon",
+                    .tableId = "${job}",
+                } } },
+                .status = .{ .state = "DONE" },
+            } },
+        },
+        // Stored and served back unchanged, wall-clock statistics included.
+        .{ .GET = "/projects/test/jobs/${job}", .expect = .{ .same_as = "inserted" } },
+        .{ .GET = "/projects/test/queries/${job}", .expect = .{ .rows = .{.{"1"}} } },
+        .{
+            .POST = "/projects/test/queries",
+            .json = .{ .query = "SELECT n FROM `test._anon.${job}`" },
+            .expect = .{ .rows = .{.{"1"}} },
+        },
+    },
+},
+```
+
+The flow was run against a built emulator (the 2026-09-11 binary) before it was written down:
+jobs.get's body was byte-identical to jobs.insert's, getQueryResults and the `_anon` read each
+returned `[["1"]]`, and `/projects/test/jobs/nosuchjob` answered the 404 envelope
+`job nosuchjob is not found`.
+
+- A step runs as: interpolate its request, dispatch, bind its captures, check its expectations.
+  Binding comes before checking, so the step that mints an id can already assert
+  `.tableId = "${job}"`.
+- A capture is a dotted path to a string leaf. One `.capture` may bind several names. A path
+  that is absent or not a string fails the step, prints the body, and ends the case.
+- Names are case-local. Captures made in file `.setup` are visible to every case, since setup
+  runs inside each case's server.
+- `${name}` expands in the target (path and query string), `.body`, string leaves of `.json`, and
+  every expected string. It does not expand in `.name` or `.same_as`, which name steps.
+- The job resource carries wall-clock `creationTime`/`startTime`/`endTime`, so no literal body
+  can match it. `.same_as` makes the exact claim against the earlier response; `.json_subset`
+  makes the claims that can be written down. `selfLink` can be, because the runner's server is
+  built with `Options`' default host and port.
+
+jobs.get ignores its project segment (`_ = project_id;` in `handleJobsGet`): the same binary
+answered `/projects/other/jobs/<id>` with 200. BigQuery scopes a job id to its project; probe it
+before a case pins a 404 there.
+
 ### The typed envelope
 
 ```zig
@@ -247,10 +311,7 @@ const SpecFile = struct {
   index, its request line, and both sides.
 - `.expect` defaults to `.{ .status = .ok }`, so setup-shaped steps (today's
   `_ = try request(...)`) are checked too. A broken setup fails where it breaks.
-- `${name}` interpolates into the target, `.body`, string leaves of `.json`, and every expected
-  string. Names come from `.capture`; an undefined name fails the case.
-- `.capture` reads a dotted path to a string leaf, and binds before the step's own expectations
-  are checked, so the step that mints a job id can assert a body containing `${job}`.
+- `.capture` and `${name}` are described under *Chaining requests*.
 - `.json`/`.json_subset` on the expect side also accept a string, parsed as JSON text before the
   comparison. It is the escape hatch for `[]` and for the nested REST row shape, which is
   shorter as `"[{\"f\":[{\"v\":{\"f\":[{\"v\":\"1768003200.0\"}]}}]}]"` than as ZON.
@@ -271,8 +332,10 @@ envelopes).
 
 Rejected at load, as a `(load)` failure carrying line:col: unknown fields and enum tags (by
 `std.zon.parse`); no method field or two; `.json` together with `.body`; a float, char or enum
-literal inside a payload; `.same_as` naming no earlier step; `.restart` without
-`.database = .temp`; a `desc` repeated within a file.
+literal inside a payload; `.same_as` naming no earlier step; a `${name}` that no earlier step or
+`.setup` captures; a name captured twice in one case; `.restart` without `.database = .temp`; a
+`desc` repeated within a file. Captures are declared, so a misspelled `${jbo}` is caught at its
+line and column before anything runs.
 
 ---
 
@@ -290,10 +353,12 @@ All 66 tests, sorted by what they need:
 | 1 | `rawExec("DROP TABLE ...")` to build the broken state | stays in Zig whole |
 
 About the `_anon` row: `server.zig:1239` makes a finished job's result readable as
-`<project>._anon.<job_id>`, and `jobs.query` runs the same `db.query` the tests call. If the
-undeclared-dataset check refuses `_anon` over REST, those four stay in Zig. Settle that first in
-stage 2. `two jobs' destination tables do not collide` also asserts the ids differ; reading 1
-through `${a}` and 2 through `${b}` already proves it.
+`<project>._anon.<job_id>`, and `jobs.query` runs the same `db.query` the tests call. A
+`jobs.query` on `test._anon.<id>` returned the job's rows on the 2026-09-11 binary (see
+*Chaining requests*). On the branch tip, the undeclared-dataset check (`Db.requireDataset`) runs
+only when creating a table, view or function, and skips `_anon` by name, so reads are unaffected.
+`two jobs' destination tables do not collide` also asserts the ids differ; reading 1 through
+`${a}` and 2 through `${b}` already proves it.
 
 End state: about 67 cases in ZON; `server.zig` keeps four small tests and the `request` helper
 they use, and drops `requestQuery`, `jobIdOf`, `onlyCell`, `cellsOf`, `pageTokenOf` and
@@ -351,8 +416,8 @@ Each is a commit. The gate is `zig build test-server` and `zig build spec-rest`,
    `tabledata/insert_all.zon`, `jobs/query.zon`, `jobs/insert.zon`,
    `jobs/get_query_results.zon`. Each commit deletes the tests it ports. A case's `desc` is its
    test's name, so grepping for a test name still lands, and the test's comments move onto the
-   case. Settle `_anon` over REST at `jobs/insert.zon`. Split the three engine-state assertions
-   into small Zig tests.
+   case. `jobs/get.zon` is new coverage rather than a port. Split the three engine-state
+   assertions into small Zig tests.
 3. **Goldens.** `capture_golden.py` emits ZON, `go_golden.zon` lands, `golden.json` goes, the
    citations follow, and the first-replay differences are triaged.
 4. **CI.** `zig build spec-rest` in the `test` job after `test-server`, on the same shim dylib.
@@ -372,7 +437,6 @@ Later, if wanted:
 
 ## 7. Risks
 
-- `_anon` over REST, settled in stage 2; the fallback keeps four Zig tests.
 - A breakpoint inside a test body is gone. `install-spec-rest` with `--case` replaces it, as
   `.run/Debug spec case.run.xml` does for the SQL runner.
 - A fresh `Server` for each of about 67 cases. Measure in stage 1; if it shows, add a file-level
