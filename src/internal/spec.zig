@@ -379,6 +379,32 @@ pub const OptionSpec = struct {
     value: []const u8 = "",
 };
 
+/// A CREATE TABLE's PARTITION BY, reduced to what the metadata API reports for it:
+/// BigQuery's `timePartitioning` or `rangePartitioning` resource.
+/// The engine does not partition anything; this is table metadata only.
+pub const Partitioning = union(enum) {
+    /// `PARTITION BY d`, `DATE(ts)`, `TIMESTAMP_TRUNC(ts, HOUR)`,
+    /// `DATE_TRUNC(d, MONTH)`, `DATETIME_TRUNC(dt, YEAR)`.
+    time: TimePartitioning,
+    /// `PARTITION BY RANGE_BUCKET(n, GENERATE_ARRAY(start, end, interval))`.
+    range: RangePartitioning,
+
+    pub const TimePartitioning = struct {
+        field: []const u8,
+        unit: TimeUnit,
+    };
+
+    /// `timePartitioning.type`; the tag names are BigQuery's spellings.
+    pub const TimeUnit = enum { HOUR, DAY, MONTH, YEAR };
+
+    pub const RangePartitioning = struct {
+        field: []const u8,
+        start: i64,
+        end: i64,
+        interval: i64,
+    };
+};
+
 /// A dataset the catalog has been told exists, independent of any table it
 /// may or may not hold.
 ///
@@ -462,6 +488,11 @@ pub const TableSpec = struct {
     /// only when non-empty — see toJson — keeping the JSON byte-identical to
     /// Go's for every spec that has none.
     options: []const *OptionSpec = &.{},
+    /// DDL PARTITION BY, for the metadata API to report when no client posted
+    /// a partitioning of its own. Serialised only when set, like `options`.
+    partitioning: ?Partitioning = null,
+    /// DDL CLUSTER BY column names, in order. Serialised only when non-empty.
+    clustering: []const []const u8 = &.{},
     /// The metadata API's view of the table: the resource keys a client
     /// posted (schema with nested modes and descriptions, clustering,
     /// partitioning, labels, description, view, ...), as one JSON object's
@@ -616,6 +647,28 @@ pub const TableSpec = struct {
                 try out.append(alloc, '}');
             }
             try out.append(alloc, ']');
+        }
+        if (self.partitioning) |p| {
+            try out.appendSlice(alloc, ",\"partitioning\":{\"type\":");
+            switch (p) {
+                .time => |t| {
+                    try appendJsonString(&out, alloc, @tagName(t.unit));
+                    try out.appendSlice(alloc, ",\"field\":");
+                    try appendJsonString(&out, alloc, t.field);
+                },
+                .range => |r| {
+                    try out.appendSlice(alloc, "\"RANGE\",\"field\":");
+                    try appendJsonString(&out, alloc, r.field);
+                    try out.print(alloc, ",\"start\":{d},\"end\":{d},\"interval\":{d}", .{
+                        r.start, r.end, r.interval,
+                    });
+                },
+            }
+            try out.append(alloc, '}');
+        }
+        if (self.clustering.len > 0) {
+            try out.appendSlice(alloc, ",\"clustering\":");
+            try appendJsonStringArray(&out, alloc, self.clustering);
         }
         try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
         try appendStringFieldIfSet(&out, alloc, "sourceSql", self.source_sql);
@@ -790,6 +843,11 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
             table_spec.options = opts;
         }
     }
+    // Same reason as options: toJson writes these, so they must be read back.
+    if (obj.get("partitioning")) |v| {
+        if (v == .object) table_spec.partitioning = try partitioningFromJson(alloc, v.object);
+    }
+    table_spec.clustering = try stringSliceField(alloc, obj, "clustering");
     if (obj.get("metadata")) |v| {
         if (v == .string) table_spec.metadata = try alloc.dupe(u8, v.string);
     }
@@ -797,6 +855,31 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
         if (v == .string) table_spec.source_sql = try alloc.dupe(u8, v.string);
     }
     return table_spec;
+}
+
+/// The `partitioning` object `TableSpec.toJson` writes: `type` is a
+/// `TimeUnit` name, or `RANGE` with integer `start`, `end` and `interval`.
+fn partitioningFromJson(alloc: std.mem.Allocator, obj: std.json.ObjectMap) Error!Partitioning {
+    const type_v = obj.get("type") orelse return error.InvalidType;
+    const field_v = obj.get("field") orelse return error.InvalidType;
+    if (type_v != .string or field_v != .string) return error.InvalidType;
+    const field = try alloc.dupe(u8, field_v.string);
+    if (std.mem.eql(u8, type_v.string, "RANGE")) {
+        return .{ .range = .{
+            .field = field,
+            .start = try intField(obj, "start"),
+            .end = try intField(obj, "end"),
+            .interval = try intField(obj, "interval"),
+        } };
+    }
+    const unit = std.meta.stringToEnum(Partitioning.TimeUnit, type_v.string) orelse
+        return error.InvalidType;
+    return .{ .time = .{ .field = field, .unit = unit } };
+}
+
+fn intField(obj: std.json.ObjectMap, key: []const u8) Error!i64 {
+    const v = obj.get(key) orelse return error.InvalidType;
+    return if (v == .integer) v.integer else error.InvalidType;
 }
 
 fn getBool(obj: std.json.ObjectMap, key: []const u8) ?bool {
@@ -1412,6 +1495,53 @@ test "a dataset spec round-trips through JSON, metadata only when set" {
     try testing.expectEqualStrings(with.created_at, decoded.created_at);
     try testing.expect(!decoded.is_synthetic);
     try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+}
+
+test "partitioning and clustering round-trip through JSON and stay out of it when unset" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare = try makeGoShapeSpec(alloc);
+    const bare_json = try bare.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"partitioning\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"clustering\"") == null);
+
+    const timed = try makeGoShapeSpec(alloc);
+    timed.partitioning = .{ .time = .{ .field = "ts", .unit = .HOUR } };
+    timed.clustering = try alloc.dupe([]const u8, &.{ "a", "n" });
+    const timed_json = try timed.toJson(alloc);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        timed_json,
+        ",\"partitioning\":{\"type\":\"HOUR\",\"field\":\"ts\"},\"clustering\":[\"a\",\"n\"]",
+    ) != null);
+    // addNewTableSpec stores the re-parsed spec, so the round trip is what
+    // the catalog actually keeps.
+    const timed_back = try tableSpecFromJson(alloc, timed_json);
+    try testing.expectEqualStrings("ts", timed_back.partitioning.?.time.field);
+    try testing.expectEqual(Partitioning.TimeUnit.HOUR, timed_back.partitioning.?.time.unit);
+    try testing.expectEqual(@as(usize, 2), timed_back.clustering.len);
+    try testing.expectEqualStrings("n", timed_back.clustering[1]);
+    try testing.expectEqualStrings(timed_json, try timed_back.toJson(alloc));
+
+    const ranged = try makeGoShapeSpec(alloc);
+    ranged.partitioning = .{ .range = .{ .field = "n", .start = -10, .end = 100, .interval = 10 } };
+    const ranged_json = try ranged.toJson(alloc);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        ranged_json,
+        ",\"partitioning\":{\"type\":\"RANGE\",\"field\":\"n\",\"start\":-10,\"end\":100,\"interval\":10}",
+    ) != null);
+    const ranged_back = try tableSpecFromJson(alloc, ranged_json);
+    try testing.expectEqual(@as(i64, -10), ranged_back.partitioning.?.range.start);
+    try testing.expectEqual(@as(i64, 10), ranged_back.partitioning.?.range.interval);
+    try testing.expectEqualStrings(ranged_json, try ranged_back.toJson(alloc));
+
+    try testing.expectError(error.InvalidType, tableSpecFromJson(
+        alloc,
+        \\{"namePath":["p","d","t"],"columns":[],"partitioning":{"type":"WEEK","field":"d"}}
+    ));
 }
 
 test "options round-trip through JSON and stay out of it when empty" {

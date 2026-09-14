@@ -1759,7 +1759,11 @@ pub const Db = struct {
     ) Error!usize {
         const base = ct.parent orelse return error.TransformFailed;
         const create = base.parent orelse return error.TransformFailed;
-        const table_spec = try newTableSpecFromCreate(arena, create, base, "");
+        const table_spec = try newTableSpecFromCreate(arena, create, base, "", .{
+            .partition_by = ct.partition_by_list,
+            .cluster_by = ct.cluster_by_list,
+            .columns = try columnNamesFromDefinitions(arena, base.column_definition_list),
+        });
         return db.execCreateTableAction(arena, table_spec, args);
     }
 
@@ -1785,7 +1789,11 @@ pub const Db = struct {
 
         const base = ctas.parent orelse return error.TransformFailed;
         const create = base.parent orelse return error.TransformFailed;
-        const table_spec = try newTableSpecFromCreate(arena, create, base, query_str);
+        const table_spec = try newTableSpecFromCreate(arena, create, base, query_str, .{
+            .partition_by = ctas.partition_by_list,
+            .cluster_by = ctas.cluster_by_list,
+            .columns = try columnNamesFromOutputs(arena, ctas.output_column_list),
+        });
         return db.execCreateTableAction(arena, table_spec, args);
     }
 
@@ -2673,15 +2681,171 @@ fn optionSpecsFrom(
     return out.toOwnedSlice(arena);
 }
 
+/// A CREATE TABLE's PARTITION BY and CLUSTER BY, and the names their column
+/// references resolve to. Both lists live on the concrete statement rather
+/// than on the shared base, so each caller hands them over.
+const TableLayout = struct {
+    partition_by: []const *pb.AnyResolvedExprProto = &.{},
+    cluster_by: []const *pb.AnyResolvedExprProto = &.{},
+    /// The new table's columns by analyzer column id.
+    columns: []const NamedColumn = &.{},
+};
+
+/// A column id and the name the new table gives that column.
+const NamedColumn = struct { id: i64, name: []const u8 };
+
+/// A plain CREATE TABLE's columns: its references point at the definitions.
+fn columnNamesFromDefinitions(
+    arena: std.mem.Allocator,
+    defs: []const *pb.ResolvedColumnDefinitionProto,
+) Error![]const NamedColumn {
+    var out: std.ArrayList(NamedColumn) = .empty;
+    for (defs) |def| {
+        const col = def.column orelse continue;
+        try out.append(arena, .{ .id = col.column_id orelse continue, .name = def.name orelse continue });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// A CTAS's columns. Its references point at the query's columns, whose own
+/// names are the ones they had in the query (`x` in `SELECT x AS y`), so the
+/// name comes from the output column, not from the reference.
+fn columnNamesFromOutputs(
+    arena: std.mem.Allocator,
+    outs: []const *pb.ResolvedOutputColumnProto,
+) Error![]const NamedColumn {
+    var out: std.ArrayList(NamedColumn) = .empty;
+    for (outs) |oc| {
+        const col = oc.column orelse continue;
+        try out.append(arena, .{ .id = col.column_id orelse continue, .name = oc.name orelse continue });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// The new table's name for the column `expr` references, or null when
+/// `expr` is not a plain column reference.
+fn referencedColumn(expr: *const pb.AnyResolvedExprProto, columns: []const NamedColumn) ?[]const u8 {
+    const node = expr.node orelse return null;
+    const ref = switch (node) {
+        .resolved_column_ref_node => |n| n,
+        else => return null,
+    };
+    const col = ref.column orelse return null;
+    const id = col.column_id orelse return col.name;
+    for (columns) |c| {
+        if (c.id == id) return c.name;
+    }
+    return col.name;
+}
+
+/// A builtin function call: its name without the `<group>:` prefix
+/// (`timestamp_trunc`, not `GoogleSQL:timestamp_trunc`) and its arguments.
+const BuiltinCall = struct { name: []const u8, args: []const *pb.AnyResolvedExprProto };
+
+fn builtinCallOf(expr: *const pb.AnyResolvedExprProto) ?BuiltinCall {
+    const node = expr.node orelse return null;
+    const base_any = switch (node) {
+        .resolved_function_call_base_node => |n| n,
+        else => return null,
+    };
+    const call = switch (base_any.node orelse return null) {
+        .resolved_function_call_node => |n| n,
+        else => return null,
+    };
+    const fcb = call.parent orelse return null;
+    const raw = (fcb.function orelse return null).name orelse return null;
+    const name = if (std.mem.indexOfScalar(u8, raw, ':')) |i| raw[i + 1 ..] else raw;
+    return .{ .name = name, .args = fcb.argument_list };
+}
+
+/// A literal argument's value; null when `expr` is not a literal. A date-part
+/// argument (`HOUR` in TIMESTAMP_TRUNC) comes back as its name.
+fn literalValueOf(arena: std.mem.Allocator, expr: *const pb.AnyResolvedExprProto) Error!?value_mod.Value {
+    const node = expr.node orelse return null;
+    const lit = switch (node) {
+        .resolved_literal_node => |n| n,
+        else => return null,
+    };
+    const vwt = lit.value orelse return null;
+    return encoder.valueFromProto(arena, vwt.value orelse return null, vwt.type orelse return null) catch |err|
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return null,
+        };
+}
+
+/// PARTITION BY in the terms of BigQuery's `timePartitioning` / `rangePartitioning` resource,
+/// the shapes a real table reports (verified against BigQuery 2026-09-14).
+/// Null otherwise: the analyzer accepted the DDL, so the table is made without partitioning.
+fn partitioningFrom(arena: std.mem.Allocator, layout: TableLayout) Error!?spec.Partitioning {
+    if (layout.partition_by.len != 1) return null;
+    const expr = layout.partition_by[0];
+    // `PARTITION BY d` on a DATE column.
+    if (referencedColumn(expr, layout.columns)) |field| {
+        return .{ .time = .{ .field = field, .unit = .DAY } };
+    }
+    const call = builtinCallOf(expr) orelse return null;
+    if (call.args.len == 0) return null;
+    const field = referencedColumn(call.args[0], layout.columns) orelse return null;
+
+    // `DATE(ts)` over a TIMESTAMP or DATETIME column.
+    if (std.mem.eql(u8, call.name, "date")) return .{ .time = .{ .field = field, .unit = .DAY } };
+
+    // `TIMESTAMP_TRUNC(ts, HOUR)` and its DATE / DATETIME counterparts.
+    const truncs = [_][]const u8{ "timestamp_trunc", "date_trunc", "datetime_trunc" };
+    for (truncs) |trunc| {
+        if (!std.mem.eql(u8, call.name, trunc)) continue;
+        if (call.args.len != 2) return null;
+        const part = (try literalValueOf(arena, call.args[1])) orelse return null;
+        if (part != .string) return null;
+        const unit = std.meta.stringToEnum(spec.Partitioning.TimeUnit, part.string) orelse return null;
+        return .{ .time = .{ .field = field, .unit = unit } };
+    }
+
+    // `RANGE_BUCKET(n, GENERATE_ARRAY(start, end[, interval]))`.
+    if (std.mem.eql(u8, call.name, "range_bucket")) {
+        if (call.args.len != 2) return null;
+        const gen = builtinCallOf(call.args[1]) orelse return null;
+        if (!std.mem.eql(u8, gen.name, "generate_array")) return null;
+        if (gen.args.len != 2 and gen.args.len != 3) return null;
+        var bounds = [3]i64{ 0, 0, 1 };
+        for (gen.args, 0..) |arg, i| {
+            const v = (try literalValueOf(arena, arg)) orelse return null;
+            if (v != .int) return null;
+            bounds[i] = v.int;
+        }
+        return .{ .range = .{
+            .field = field,
+            .start = bounds[0],
+            .end = bounds[1],
+            .interval = bounds[2],
+        } };
+    }
+    return null;
+}
+
+/// CLUSTER BY column names, in order; empty if any entry is not a plain
+/// column reference, which BigQuery does not accept anyway.
+fn clusteringFrom(arena: std.mem.Allocator, layout: TableLayout) Error![]const []const u8 {
+    if (layout.cluster_by.len == 0) return &.{};
+    const out = try arena.alloc([]const u8, layout.cluster_by.len);
+    for (layout.cluster_by, 0..) |expr, i| {
+        out[i] = referencedColumn(expr, layout.columns) orelse return &.{};
+    }
+    return out;
+}
+
 /// Go spec.go newTableSpec / newTableAsSelectSpec (shared body): scope,
 /// merged name path, column definitions, primary key, create mode and
 /// timestamps; `query_str` is empty for plain CREATE TABLE and holds the
-/// formatted AS SELECT text for CTAS.
+/// formatted AS SELECT text for CTAS. `layout` adds the PARTITION BY and
+/// CLUSTER BY that Go drops.
 fn newTableSpecFromCreate(
     arena: std.mem.Allocator,
     create: *const pb.ResolvedCreateStatementProto,
     base: *const pb.ResolvedCreateTableStmtBaseProto,
     query_str: []const u8,
+    layout: TableLayout,
 ) Error!*spec.TableSpec {
     const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
     const table_spec = try arena.create(spec.TableSpec);
@@ -2695,6 +2859,8 @@ fn newTableSpecFromCreate(
         .updated_at = now.rfc3339,
         .created_at = now.rfc3339,
         .options = try optionSpecsFrom(arena, base.option_list),
+        .partitioning = try partitioningFrom(arena, layout),
+        .clustering = try clusteringFrom(arena, layout),
     };
     return table_spec;
 }

@@ -812,6 +812,104 @@ pub const Server = struct {
         return if (v == .object) v else null;
     }
 
+    /// The resource keys a spec carries beyond the ones the server computes:
+    /// what the DDL that made the table implies — a view's query, PARTITION BY,
+    /// CLUSTER BY — with what a client posted (`TableSpec.metadata`) over it.
+    /// A posted key always wins: it is what the client said, and a later patch
+    /// may have changed it. Null when there is neither.
+    fn resourceKeys(
+        arena: std.mem.Allocator,
+        table_spec: *const zigquery.spec.TableSpec,
+    ) !?std.json.Value {
+        var obj: std.json.ObjectMap = .empty;
+        // A view made by DDL has no posted `view`; the resource still reports
+        // the query, as BigQuery does.
+        if (table_spec.is_view and table_spec.source_sql.len > 0) {
+            var view: std.json.ObjectMap = .empty;
+            try view.put(arena, "query", .{ .string = table_spec.source_sql });
+            try view.put(arena, "useLegacySql", .{ .bool = false });
+            try obj.put(arena, "view", .{ .object = view });
+        }
+        try putPartitioningKeys(arena, &obj, table_spec);
+        if (table_spec.clustering.len > 0) {
+            var fields: std.json.Array = .init(arena);
+            for (table_spec.clustering) |name| try fields.append(.{ .string = name });
+            var clustering: std.json.ObjectMap = .empty;
+            try clustering.put(arena, "fields", .{ .array = fields });
+            try obj.put(arena, "clustering", .{ .object = clustering });
+        }
+        if (try postedOf(arena, table_spec)) |p| {
+            var it = p.object.iterator();
+            while (it.next()) |kv| try obj.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+        }
+        if (obj.count() == 0) return null;
+        return .{ .object = obj };
+    }
+
+    /// DDL PARTITION BY as BigQuery reports it for a table made by DDL
+    /// (verified 2026-09-14): `timePartitioning` with `type` and `field`, or
+    /// `rangePartitioning` with its bounds as strings. The partitioning
+    /// OPTIONS ride along: `partition_expiration_days` becomes
+    /// `timePartitioning.expirationMs`, and `require_partition_filter=true`
+    /// shows up both inside `timePartitioning` and on the table.
+    fn putPartitioningKeys(
+        arena: std.mem.Allocator,
+        obj: *std.json.ObjectMap,
+        table_spec: *const zigquery.spec.TableSpec,
+    ) !void {
+        const partitioning = table_spec.partitioning orelse return;
+        const require_filter = if (optionValue(table_spec, "require_partition_filter")) |v|
+            std.mem.eql(u8, v, "true")
+        else
+            false;
+        switch (partitioning) {
+            .time => |t| {
+                var tp: std.json.ObjectMap = .empty;
+                try tp.put(arena, "type", .{ .string = @tagName(t.unit) });
+                try tp.put(arena, "field", .{ .string = t.field });
+                if (try partitionExpirationMs(arena, table_spec)) |ms| {
+                    try tp.put(arena, "expirationMs", .{ .string = ms });
+                }
+                if (require_filter) try tp.put(arena, "requirePartitionFilter", .{ .bool = true });
+                try obj.put(arena, "timePartitioning", .{ .object = tp });
+            },
+            .range => |r| {
+                var range: std.json.ObjectMap = .empty;
+                try range.put(arena, "start", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.start}) });
+                try range.put(arena, "end", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.end}) });
+                try range.put(arena, "interval", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.interval}) });
+                var rp: std.json.ObjectMap = .empty;
+                try rp.put(arena, "field", .{ .string = r.field });
+                try rp.put(arena, "range", .{ .object = range });
+                try obj.put(arena, "rangePartitioning", .{ .object = rp });
+            },
+        }
+        if (require_filter) try obj.put(arena, "requirePartitionFilter", .{ .bool = true });
+    }
+
+    /// The rendered value of a DDL option, or null when it was not set.
+    fn optionValue(table_spec: *const zigquery.spec.TableSpec, name: []const u8) ?[]const u8 {
+        for (table_spec.options) |opt| {
+            if (std.ascii.eqlIgnoreCase(opt.name, name)) return opt.value;
+        }
+        return null;
+    }
+
+    /// `partition_expiration_days` in milliseconds, as the decimal string the
+    /// REST resource carries INT64s as. Null when unset or not a usable
+    /// number of days.
+    fn partitionExpirationMs(
+        arena: std.mem.Allocator,
+        table_spec: *const zigquery.spec.TableSpec,
+    ) !?[]const u8 {
+        const text = optionValue(table_spec, "partition_expiration_days") orelse return null;
+        const days = std.fmt.parseFloat(f64, text) catch return null;
+        // Guards the float-to-int conversion; BigQuery rejects negative days.
+        if (!(days >= 0 and days < 1e9)) return null;
+        const ms: i64 = @intFromFloat(@round(days * std.time.ms_per_day));
+        return try std.fmt.allocPrint(arena, "{d}", .{ms});
+    }
+
     /// The `schema` node a resource for this spec carries: the posted one
     /// when there is one, since only it knows nested modes and field
     /// descriptions, else the columns.
@@ -831,23 +929,7 @@ pub const Server = struct {
         table_spec: *const zigquery.spec.TableSpec,
     ) !tables_handler.TableMeta {
         const path = table_spec.name_path;
-        var posted = try postedOf(arena, table_spec);
-        // A view made by DDL has no posted `view`; the resource still reports
-        // the query, as BigQuery does.
-        if (table_spec.is_view and table_spec.source_sql.len > 0 and
-            (posted == null or !posted.?.object.contains("view")))
-        {
-            var view: std.json.ObjectMap = .empty;
-            try view.put(arena, "query", .{ .string = table_spec.source_sql });
-            try view.put(arena, "useLegacySql", .{ .bool = false });
-            var obj: std.json.ObjectMap = .empty;
-            if (posted) |p| {
-                var it = p.object.iterator();
-                while (it.next()) |kv| try obj.put(arena, kv.key_ptr.*, kv.value_ptr.*);
-            }
-            try obj.put(arena, "view", .{ .object = view });
-            posted = .{ .object = obj };
-        }
+        const posted = try resourceKeys(arena, table_spec);
         // A synthetic spec (a job's result table) carries no creation time.
         const created_micros = zigquery.catalog.epochMicrosFromRfc3339(table_spec.created_at);
         const created_millis: i64 = if (created_micros) |us|
@@ -1146,7 +1228,13 @@ pub const Server = struct {
                 },
                 else => return err,
             };
-            try s.recordMaterializedTable(arena, dst, materialization_method, prior_metadata);
+            try s.recordMaterializedTable(
+                arena,
+                dst,
+                materialization_method,
+                prior_metadata,
+                try jobs_handler.destinationTableKeys(arena, req.body),
+            );
             // The job's own result mirrors the query's SELECT output, the same
             // rows just written to the destination table — not the table's
             // full contents, which for WRITE_APPEND can hold more than this
@@ -1346,41 +1434,26 @@ pub const Server = struct {
         return .replaced;
     }
 
-    /// After a materialization job: the destination's dataset exists in the
-    /// metadata store, and a rebuilt destination keeps the resource keys it
-    /// had before the job, schema aside — BigQuery keeps a truncated table's
-    /// description, labels and clustering. An append changed nothing the
-    /// catalog does not already hold.
+    /// After a materialization job. A rebuilt destination keeps the resource
+    /// keys it had before the job, schema aside — BigQuery keeps a truncated
+    /// table's description, labels and clustering — and takes the layout the
+    /// job itself asked for (`layout_keys`, from
+    /// jobs_handler.destinationTableKeys) over them. That is how a table a
+    /// query job creates gets its partitioning and clustering, and recidiviz
+    /// materializes by deleting the table and letting the job create it. An
+    /// append changed nothing the catalog does not already hold.
     fn recordMaterializedTable(
         s: *Server,
         arena: std.mem.Allocator,
         dst: jobs_handler.Destination,
         materialization_method: MaterializationMethod,
         prior_metadata: []const u8,
+        layout_keys: std.json.ObjectMap,
     ) !void {
-        if (materialization_method == .replaced) {
-            try s.carryMetadataOverRebuild(arena, dst, prior_metadata);
-        }
-    }
-
-    /// Re-attaches a rebuilt destination's posted keys, minus `schema`, which
-    /// the query now defines.
-    fn carryMetadataOverRebuild(
-        s: *Server,
-        arena: std.mem.Allocator,
-        dst: jobs_handler.Destination,
-        prior_metadata: []const u8,
-    ) !void {
-        if (prior_metadata.len == 0) return;
-        const prior = std.json.parseFromSliceLeaky(std.json.Value, arena, prior_metadata, .{}) catch
-            return;
-        if (prior != .object) return;
-        var kept: std.json.ObjectMap = .empty;
-        var it = prior.object.iterator();
-        while (it.next()) |kv| {
-            if (std.mem.eql(u8, kv.key_ptr.*, "schema")) continue;
-            try kept.put(arena, kv.key_ptr.*, kv.value_ptr.*);
-        }
+        if (materialization_method != .replaced) return;
+        var kept = try keysKeptOverRebuild(arena, prior_metadata);
+        var it = layout_keys.iterator();
+        while (it.next()) |kv| try kept.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         if (kept.count() == 0) return;
         var metadata_json: std.ArrayList(u8) = .empty;
         try tables_handler.writeMetadata(arena, &metadata_json, .{ .object = kept });
@@ -1391,9 +1464,28 @@ pub const Server = struct {
             dst.table_id,
             metadata_json.items,
         ) catch |err| std.log.warn(
-            "metadata for {s}.{s}.{s} not carried over the rebuild: {t}",
+            "metadata for {s}.{s}.{s} not recorded over the rebuild: {t}",
             .{ dst.project_id, dst.dataset_id, dst.table_id, err },
         );
+    }
+
+    /// A rebuilt destination's posted keys, minus `schema`, which the query
+    /// now defines.
+    fn keysKeptOverRebuild(
+        arena: std.mem.Allocator,
+        prior_metadata: []const u8,
+    ) !std.json.ObjectMap {
+        var kept: std.json.ObjectMap = .empty;
+        if (prior_metadata.len == 0) return kept;
+        const prior = std.json.parseFromSliceLeaky(std.json.Value, arena, prior_metadata, .{}) catch
+            return kept;
+        if (prior != .object) return kept;
+        var it = prior.object.iterator();
+        while (it.next()) |kv| {
+            if (std.mem.eql(u8, kv.key_ptr.*, "schema")) continue;
+            try kept.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+        }
+        return kept;
     }
 
     /// server/handler.go jobsGetHandler.
@@ -2545,6 +2637,223 @@ test "a table made by a CTAS job is listed, streams rows, and a replace shows th
     const after = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/made", "");
     try testing.expect(std.mem.indexOf(u8, after.body, "\"name\":\"d\",\"type\":\"DATE\"") != null);
     try testing.expect(std.mem.indexOf(u8, after.body, "\"name\":\"s\"") == null);
+}
+
+/// Runs `sql` as a query job and expects it to succeed. `sql` must not hold a
+/// double quote or backslash: it is spliced into the JSON body as is.
+fn runQueryJob(s: *Server, arena: std.mem.Allocator, sql: []const u8) !void {
+    const body = try std.fmt.allocPrint(arena, "{{\"configuration\":{{\"query\":{{\"query\":\"{s}\"}}}}}}", .{sql});
+    const res = try request(s, arena, .POST, "/projects/test/jobs", body);
+    if (res.status != .ok) {
+        std.debug.print("job failed ({t}): {s}\n  sql: {s}\n", .{ res.status, res.body, sql });
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "DDL PARTITION BY and CLUSTER BY are what tables.get reports, in BigQuery's shapes" {
+    // OBT-19799. Each expected fragment is what BigQuery itself reports for the
+    // same DDL (captured 2026-09-14). The python client compares a table's
+    // time_partitioning key for key with what it would post, so an extra or a
+    // missing key reads as a change and recidiviz refuses to write.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try runQueryJob(s, arena, "CREATE TABLE `ds1.src` (x TIMESTAMP, dt DATETIME)");
+
+    const cases = [_]struct { table: []const u8, ddl: []const u8, want: []const u8 }{
+        .{
+            .table = "col",
+            .ddl = "CREATE TABLE `ds1.col` (d DATE, a STRING, n INT64) PARTITION BY d CLUSTER BY a, n",
+            .want = "\"clustering\":{\"fields\":[\"a\",\"n\"]},",
+        },
+        .{
+            .table = "col",
+            .ddl = "",
+            .want = "\"timePartitioning\":{\"field\":\"d\",\"type\":\"DAY\"},",
+        },
+        .{
+            .table = "day_of_datetime",
+            .ddl = "CREATE TABLE `ds1.day_of_datetime` (dt DATETIME) PARTITION BY DATE(dt)",
+            .want = "\"timePartitioning\":{\"field\":\"dt\",\"type\":\"DAY\"},",
+        },
+        .{
+            // The CTAS reference points at the query's column `x`; the table
+            // calls it `ts`, and that is the field BigQuery reports.
+            .table = "hourly",
+            .ddl = "CREATE TABLE `ds1.hourly` PARTITION BY TIMESTAMP_TRUNC(ts, HOUR) AS SELECT x AS ts FROM `ds1.src`",
+            .want = "\"timePartitioning\":{\"field\":\"ts\",\"type\":\"HOUR\"},",
+        },
+        .{
+            .table = "monthly",
+            .ddl = "CREATE TABLE `ds1.monthly` (d DATE) PARTITION BY DATE_TRUNC(d, MONTH)",
+            .want = "\"timePartitioning\":{\"field\":\"d\",\"type\":\"MONTH\"},",
+        },
+        .{
+            .table = "yearly",
+            .ddl = "CREATE TABLE `ds1.yearly` PARTITION BY DATETIME_TRUNC(dt, YEAR) AS SELECT dt FROM `ds1.src`",
+            .want = "\"timePartitioning\":{\"field\":\"dt\",\"type\":\"YEAR\"},",
+        },
+        .{
+            .table = "ranged",
+            .ddl = "CREATE TABLE `ds1.ranged` (n INT64) PARTITION BY RANGE_BUCKET(n, GENERATE_ARRAY(0, 100, 10))",
+            .want = "\"rangePartitioning\":{\"field\":\"n\",\"range\":{\"end\":\"100\",\"interval\":\"10\",\"start\":\"0\"}},",
+        },
+        .{
+            .table = "opts",
+            .ddl = "CREATE TABLE `ds1.opts` (d DATE) PARTITION BY d OPTIONS(partition_expiration_days=3, require_partition_filter=true)",
+            .want = "\"requirePartitionFilter\":true,",
+        },
+        .{
+            .table = "opts",
+            .ddl = "",
+            .want = "\"timePartitioning\":{\"expirationMs\":\"259200000\",\"field\":\"d\",\"requirePartitionFilter\":true,\"type\":\"DAY\"},",
+        },
+    };
+    for (cases) |c| {
+        if (c.ddl.len > 0) try runQueryJob(s, arena, c.ddl);
+        const path = try std.fmt.allocPrint(arena, "/projects/test/datasets/ds1/tables/{s}", .{c.table});
+        const got = try request(s, arena, .GET, path, "");
+        try testing.expectEqual(std.http.Status.ok, got.status);
+        if (std.mem.indexOf(u8, got.body, c.want) == null) {
+            std.debug.print("{s}: want {s}\n  in {s}\n", .{ c.table, c.want, got.body });
+            return error.TestUnexpectedResult;
+        }
+    }
+
+    // An unpartitioned table reports neither.
+    const plain = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/src", "");
+    try testing.expect(std.mem.indexOf(u8, plain.body, "Partitioning") == null);
+    try testing.expect(std.mem.indexOf(u8, plain.body, "\"clustering\"") == null);
+
+    // tables.list carries both, as it does for posted tables.
+    const listed = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables", "");
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"clustering\":{\"fields\":[\"a\",\"n\"]}") != null);
+    try testing.expect(std.mem.indexOf(u8, listed.body, "\"timePartitioning\":{\"field\":\"ts\",\"type\":\"HOUR\"}") != null);
+}
+
+test "a patch wins over DDL partitioning, and CREATE OR REPLACE without it clears it" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try runQueryJob(s, arena, "CREATE TABLE `ds1.t` (d DATE, a STRING) PARTITION BY d CLUSTER BY a");
+
+    // A patched key is what the client said last; the DDL's other key stays.
+    const patched = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/t",
+        \\{"clustering":{"fields":["d"]}}
+    );
+    try testing.expectEqual(std.http.Status.ok, patched.status);
+    try testing.expect(std.mem.indexOf(u8, patched.body, "\"clustering\":{\"fields\":[\"d\"]}") != null);
+    try testing.expect(std.mem.indexOf(u8, patched.body, "\"timePartitioning\":{\"field\":\"d\",\"type\":\"DAY\"}") != null);
+
+    // A replace is a new table: nothing of the old one's layout survives.
+    try runQueryJob(s, arena, "CREATE OR REPLACE TABLE `ds1.t` (d DATE, a STRING)");
+    const replaced = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "");
+    try testing.expect(std.mem.indexOf(u8, replaced.body, "\"timePartitioning\"") == null);
+    try testing.expect(std.mem.indexOf(u8, replaced.body, "\"clustering\"") == null);
+}
+
+test "DDL partitioning survives a restart on a file-backed database" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const db_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/partitioned.db", .{tmp.sub_path});
+
+    var before: []const u8 = "";
+    {
+        var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .database = db_path, .dataset = "ds1" });
+        defer s.deinit();
+        try runQueryJob(s, arena, "CREATE TABLE `ds1.t` (d DATE, a STRING) PARTITION BY d CLUSTER BY a");
+        before = (try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "")).body;
+        try testing.expect(std.mem.indexOf(u8, before, "\"timePartitioning\"") != null);
+    }
+    {
+        var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .database = db_path, .dataset = "ds1" });
+        defer s.deinit();
+        const after = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "");
+        try testing.expectEqualStrings(before, after.body);
+    }
+}
+
+test "a query job's destination reports the partitioning and clustering it asked for, key for key" {
+    // OBT-19799, the materialization path: recidiviz deletes the table, lets
+    // a WRITE_TRUNCATE job carrying timePartitioning and clustering create
+    // it, and later compares tables.get with what it would post. BigQuery
+    // echoes the job's keys unchanged (captured 2026-09-14), including
+    // `requirePartitionFilter`, which pb.TimePartitioning has no field for.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+
+    const tp = "\"timePartitioning\":{\"expirationMs\":\"259200000\",\"field\":\"d\",\"requirePartitionFilter\":false,\"type\":\"DAY\"}";
+    const cl = "\"clustering\":{\"fields\":[\"a\"]}";
+
+    const created = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT DATE '2026-01-01' AS d, 'x' AS a",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"m"},
+        \\  "writeDisposition":"WRITE_TRUNCATE",
+        \\  "timePartitioning":{"type":"DAY","field":"d","expirationMs":"259200000","requirePartitionFilter":false},
+        \\  "clustering":{"fields":["a"]}}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, created.status);
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/m", "");
+    try testing.expect(std.mem.indexOf(u8, got.body, tp) != null);
+    try testing.expect(std.mem.indexOf(u8, got.body, cl) != null);
+
+    // A description patched on meanwhile, then a truncate that asks for no
+    // layout — the python client posts `"timePartitioning": null` whenever it
+    // sets clustering alone. The table keeps all three, as BigQuery keeps a
+    // truncated table's metadata.
+    const patched = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/m",
+        \\{"description":"kept"}
+    );
+    try testing.expectEqual(std.http.Status.ok, patched.status);
+    const truncated = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT DATE '2026-01-02' AS d, 'y' AS a",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"m"},
+        \\  "writeDisposition":"WRITE_TRUNCATE",
+        \\  "timePartitioning":null}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, truncated.status);
+    const after_truncate = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/m", "");
+    try testing.expect(std.mem.indexOf(u8, after_truncate.body, tp) != null);
+    try testing.expect(std.mem.indexOf(u8, after_truncate.body, cl) != null);
+    try testing.expect(std.mem.indexOf(u8, after_truncate.body, "\"description\":\"kept\"") != null);
+
+    // An append leaves the resource alone, whatever layout it names.
+    const appended = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT DATE '2026-01-03' AS d, 'z' AS a",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"m"},
+        \\  "writeDisposition":"WRITE_APPEND",
+        \\  "clustering":{"fields":["d"]}}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, appended.status);
+    const after_append = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/m", "");
+    try testing.expectEqualStrings(after_truncate.body, after_append.body);
+
+    // rangePartitioning, on a table the job creates.
+    const ranged = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 5 AS n",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"ranged"},
+        \\  "rangePartitioning":{"field":"n","range":{"start":"0","end":"100","interval":"10"}}}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ranged.status);
+    const got_ranged = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/ranged", "");
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got_ranged.body,
+        "\"rangePartitioning\":{\"field\":\"n\",\"range\":{\"end\":\"100\",\"interval\":\"10\",\"start\":\"0\"}}",
+    ) != null);
 }
 
 test "DDL that omits the project lands in the server's project" {
