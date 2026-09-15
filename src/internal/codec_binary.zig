@@ -150,7 +150,7 @@ pub fn appendBinaryValue(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, v: V
         // tag, element kind, presence flags, then only the bounds present.
         .range => |r| {
             try buf.append(alloc, bin_tag_range);
-            try buf.append(alloc, @intFromEnum(r.elem));
+            try buf.append(alloc, @backingInt(r.elem));
             var flags: u8 = 0;
             if (r.has_start) flags |= range_flag_start;
             if (r.has_end) flags |= range_flag_end;

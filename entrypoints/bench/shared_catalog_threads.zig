@@ -188,7 +188,12 @@ fn run(
     // shared run left behind.
     dsn_counter += 1;
     var dsn_buf: [64]u8 = undefined;
-    const dsn = try std.fmt.bufPrintZ(&dsn_buf, "file:/sc_threads_{d}?vfs=memdb", .{dsn_counter});
+    const dsn = try std.fmt.bufPrintSentinel(
+        &dsn_buf,
+        "file:/sc_threads_{d}?vfs=memdb",
+        .{dsn_counter},
+        0,
+    );
 
     const sc: ?*shared_catalog.SharedCatalog =
         if (use_shared) try shared_catalog.SharedCatalog.init(gpa, io) else null;

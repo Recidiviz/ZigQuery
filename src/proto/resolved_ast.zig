@@ -1918,7 +1918,8 @@ pub const ExtensionRangeOptions = struct {
                 msg.features = v;
             },
             3 => {
-                const v: ExtensionRangeOptions_VerificationState = @enumFromInt(try r.readInt32());
+                const v: ExtensionRangeOptions_VerificationState =
+                    @fromBackingInt(try r.readInt32());
                 msg.verification = v;
             },
             else => try r.skip(tag.wire),
@@ -1958,7 +1959,7 @@ pub const ExtensionRangeOptions = struct {
             try w.endLen(mark);
         }
         if (self.verification) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
     }
 };
@@ -2061,27 +2062,27 @@ pub const FeatureSet = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: FeatureSet_FieldPresence = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_FieldPresence = @fromBackingInt(try r.readInt32());
                 msg.field_presence = v;
             },
             2 => {
-                const v: FeatureSet_EnumType = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_EnumType = @fromBackingInt(try r.readInt32());
                 msg.enum_type = v;
             },
             3 => {
-                const v: FeatureSet_RepeatedFieldEncoding = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_RepeatedFieldEncoding = @fromBackingInt(try r.readInt32());
                 msg.repeated_field_encoding = v;
             },
             4 => {
-                const v: FeatureSet_Utf8Validation = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_Utf8Validation = @fromBackingInt(try r.readInt32());
                 msg.utf8_validation = v;
             },
             5 => {
-                const v: FeatureSet_MessageEncoding = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_MessageEncoding = @fromBackingInt(try r.readInt32());
                 msg.message_encoding = v;
             },
             6 => {
-                const v: FeatureSet_JsonFormat = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_JsonFormat = @fromBackingInt(try r.readInt32());
                 msg.json_format = v;
             },
             else => try r.skip(tag.wire),
@@ -2104,22 +2105,22 @@ pub const FeatureSet = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.field_presence) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.enum_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.repeated_field_encoding) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.utf8_validation) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         if (self.message_encoding) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.json_format) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
     }
 };
@@ -2151,11 +2152,11 @@ pub const FeatureSetDefaults = struct {
                 try list_defaults.append(a, v);
             },
             4 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.minimum_edition = v;
             },
             5 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.maximum_edition = v;
             },
             else => try r.skip(tag.wire),
@@ -2184,10 +2185,10 @@ pub const FeatureSetDefaults = struct {
             try w.endLen(mark);
         }
         if (self.minimum_edition) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         if (self.maximum_edition) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
     }
 };
@@ -2213,7 +2214,7 @@ pub const FeatureSetDefaults_FeatureSetEditionDefault = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             3 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition = v;
             },
             4 => {
@@ -2246,7 +2247,7 @@ pub const FeatureSetDefaults_FeatureSetEditionDefault = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.edition) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.overridable_features) |v| {
             const mark = try w.beginLen(4);
@@ -2296,11 +2297,11 @@ pub const FieldDescriptorProto = struct {
                 msg.number = try r.readInt32();
             },
             4 => {
-                const v: FieldDescriptorProto_Label = @enumFromInt(try r.readInt32());
+                const v: FieldDescriptorProto_Label = @fromBackingInt(try r.readInt32());
                 msg.label = v;
             },
             5 => {
-                const v: FieldDescriptorProto_Type = @enumFromInt(try r.readInt32());
+                const v: FieldDescriptorProto_Type = @fromBackingInt(try r.readInt32());
                 msg.type = v;
             },
             6 => {
@@ -2352,10 +2353,10 @@ pub const FieldDescriptorProto = struct {
             try w.writeInt32(3, v);
         }
         if (self.label) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         if (self.type) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.type_name) |v| {
             try w.writeBytes(6, v);
@@ -2418,14 +2419,14 @@ pub const FieldOptions = struct {
         var list_uninterpreted_option: std.ArrayList(*UninterpretedOption) = .empty;
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: FieldOptions_CType = @enumFromInt(try r.readInt32());
+                const v: FieldOptions_CType = @fromBackingInt(try r.readInt32());
                 msg.ctype = v;
             },
             2 => {
                 msg.@"packed" = (try r.readVarint()) != 0;
             },
             6 => {
-                const v: FieldOptions_JSType = @enumFromInt(try r.readInt32());
+                const v: FieldOptions_JSType = @fromBackingInt(try r.readInt32());
                 msg.jstype = v;
             },
             5 => {
@@ -2444,11 +2445,11 @@ pub const FieldOptions = struct {
                 msg.debug_redact = (try r.readVarint()) != 0;
             },
             17 => {
-                const v: FieldOptions_OptionRetention = @enumFromInt(try r.readInt32());
+                const v: FieldOptions_OptionRetention = @fromBackingInt(try r.readInt32());
                 msg.retention = v;
             },
             19 => {
-                const v: FieldOptions_OptionTargetType = @enumFromInt(try r.readInt32());
+                const v: FieldOptions_OptionTargetType = @fromBackingInt(try r.readInt32());
                 try list_targets.append(a, v);
             },
             20 => {
@@ -2494,13 +2495,13 @@ pub const FieldOptions = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.ctype) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.@"packed") |v| {
             try w.writeBool(2, v);
         }
         if (self.jstype) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
         if (self.lazy) |v| {
             try w.writeBool(5, v);
@@ -2518,10 +2519,10 @@ pub const FieldOptions = struct {
             try w.writeBool(16, v);
         }
         if (self.retention) |v| {
-            try w.writeInt32(17, @intFromEnum(v));
+            try w.writeInt32(17, @backingInt(v));
         }
         for (self.targets) |v| {
-            try w.writeInt32(19, @intFromEnum(v));
+            try w.writeInt32(19, @backingInt(v));
         }
         for (self.edition_defaults) |v| {
             const mark = try w.beginLen(20);
@@ -2566,7 +2567,7 @@ pub const FieldOptions_EditionDefault = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             3 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition = v;
             },
             2 => {
@@ -2592,7 +2593,7 @@ pub const FieldOptions_EditionDefault = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.edition) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.value) |v| {
             try w.writeBytes(2, v);
@@ -2622,18 +2623,18 @@ pub const FieldOptions_FeatureSupport = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition_introduced = v;
             },
             2 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition_deprecated = v;
             },
             3 => {
                 msg.deprecation_warning = try r.readBytes();
             },
             4 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition_removed = v;
             },
             else => try r.skip(tag.wire),
@@ -2656,16 +2657,16 @@ pub const FieldOptions_FeatureSupport = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.edition_introduced) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.edition_deprecated) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.deprecation_warning) |v| {
             try w.writeBytes(3, v);
         }
         if (self.edition_removed) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
     }
 };
@@ -2770,7 +2771,7 @@ pub const FileDescriptorProto = struct {
                 msg.syntax = try r.readBytes();
             },
             14 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition = v;
             },
             else => try r.skip(tag.wire),
@@ -2852,7 +2853,7 @@ pub const FileDescriptorProto = struct {
             try w.writeBytes(12, v);
         }
         if (self.edition) |v| {
-            try w.writeInt32(14, @intFromEnum(v));
+            try w.writeInt32(14, @backingInt(v));
         }
     }
 };
@@ -2964,7 +2965,7 @@ pub const FileOptions = struct {
                 msg.java_string_check_utf8 = (try r.readVarint()) != 0;
             },
             9 => {
-                const v: FileOptions_OptimizeMode = @enumFromInt(try r.readInt32());
+                const v: FileOptions_OptimizeMode = @fromBackingInt(try r.readInt32());
                 msg.optimize_for = v;
             },
             11 => {
@@ -3052,7 +3053,7 @@ pub const FileOptions = struct {
             try w.writeBool(27, v);
         }
         if (self.optimize_for) |v| {
-            try w.writeInt32(9, @intFromEnum(v));
+            try w.writeInt32(9, @backingInt(v));
         }
         if (self.go_package) |v| {
             try w.writeBytes(11, v);
@@ -3201,7 +3202,7 @@ pub const GeneratedCodeInfo_Annotation = struct {
                 msg.end = try r.readInt32();
             },
             5 => {
-                const v: GeneratedCodeInfo_Annotation_Semantic = @enumFromInt(try r.readInt32());
+                const v: GeneratedCodeInfo_Annotation_Semantic = @fromBackingInt(try r.readInt32());
                 msg.semantic = v;
             },
             else => try r.skip(tag.wire),
@@ -3239,7 +3240,7 @@ pub const GeneratedCodeInfo_Annotation = struct {
             try w.writeInt32(4, v);
         }
         if (self.semantic) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
     }
 };
@@ -3453,7 +3454,7 @@ pub const MethodOptions = struct {
                 msg.deprecated = (try r.readVarint()) != 0;
             },
             34 => {
-                const v: MethodOptions_IdempotencyLevel = @enumFromInt(try r.readInt32());
+                const v: MethodOptions_IdempotencyLevel = @fromBackingInt(try r.readInt32());
                 msg.idempotency_level = v;
             },
             35 => {
@@ -3490,7 +3491,7 @@ pub const MethodOptions = struct {
             try w.writeBool(33, v);
         }
         if (self.idempotency_level) |v| {
-            try w.writeInt32(34, @intFromEnum(v));
+            try w.writeInt32(34, @backingInt(v));
         }
         if (self.features) |v| {
             const mark = try w.beginLen(35);
@@ -9302,19 +9303,22 @@ pub const DeclarativeTypeProto = struct {
                 }
             },
             5 => {
-                const v: DeclarativeTypeProto_AllowCoercionMode = @enumFromInt(try r.readInt32());
+                const v: DeclarativeTypeProto_AllowCoercionMode =
+                    @fromBackingInt(try r.readInt32());
                 msg.coercion_from_backing_type = v;
             },
             6 => {
-                const v: DeclarativeTypeProto_AllowCoercionMode = @enumFromInt(try r.readInt32());
+                const v: DeclarativeTypeProto_AllowCoercionMode =
+                    @fromBackingInt(try r.readInt32());
                 msg.coercion_to_backing_type = v;
             },
             7 => {
-                const v: DeclarativeTypeProto_ReturningStrategy = @enumFromInt(try r.readInt32());
+                const v: DeclarativeTypeProto_ReturningStrategy =
+                    @fromBackingInt(try r.readInt32());
                 msg.returning_strategy = v;
             },
             8 => {
-                const v: DeclarativeTypeProto_EqualityStrategy = @enumFromInt(try r.readInt32());
+                const v: DeclarativeTypeProto_EqualityStrategy = @fromBackingInt(try r.readInt32());
                 msg.equality_strategy = v;
             },
             else => try r.skip(tag.wire),
@@ -9357,16 +9361,16 @@ pub const DeclarativeTypeProto = struct {
             try w.endLen(mark);
         }
         if (self.coercion_from_backing_type) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.coercion_to_backing_type) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
         if (self.returning_strategy) |v| {
-            try w.writeInt32(7, @intFromEnum(v));
+            try w.writeInt32(7, @backingInt(v));
         }
         if (self.equality_strategy) |v| {
-            try w.writeInt32(8, @intFromEnum(v));
+            try w.writeInt32(8, @backingInt(v));
         }
     }
 };
@@ -9490,7 +9494,7 @@ pub const DeprecationWarning = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: DeprecationWarning_Kind = @enumFromInt(try r.readInt32());
+                const v: DeprecationWarning_Kind = @fromBackingInt(try r.readInt32());
                 msg.kind = v;
             },
             else => try r.skip(tag.wire),
@@ -9513,7 +9517,7 @@ pub const DeprecationWarning = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.kind) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
     }
 };
@@ -9700,7 +9704,7 @@ pub const ErrorMessageModeForPayload = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: ErrorMessageMode = @enumFromInt(try r.readInt32());
+                const v: ErrorMessageMode = @fromBackingInt(try r.readInt32());
                 msg.mode = v;
             },
             else => try r.skip(tag.wire),
@@ -9723,7 +9727,7 @@ pub const ErrorMessageModeForPayload = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.mode) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
     }
 };
@@ -9817,7 +9821,8 @@ pub const ExpressionAttributeProto = struct {
                 msg.expression_string = try r.readBytes();
             },
             9 => {
-                const v: ExpressionAttributeProto_ExpressionKind = @enumFromInt(try r.readInt32());
+                const v: ExpressionAttributeProto_ExpressionKind =
+                    @fromBackingInt(try r.readInt32());
                 msg.expression_kind = v;
             },
             10 => {
@@ -9854,7 +9859,7 @@ pub const ExpressionAttributeProto = struct {
             try w.writeBytes(8, v);
         }
         if (self.expression_kind) |v| {
-            try w.writeInt32(9, @intFromEnum(v));
+            try w.writeInt32(9, @backingInt(v));
         }
         if (self.row_identity_column_index.len != 0) {
             const mark = try w.beginLen(10);
@@ -10134,7 +10139,7 @@ pub const FunctionArgumentTypeOptionsProto = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: FunctionEnums_ArgumentCardinality = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_ArgumentCardinality = @fromBackingInt(try r.readInt32());
                 msg.cardinality = v;
             },
             2 => {
@@ -10180,7 +10185,7 @@ pub const FunctionArgumentTypeOptionsProto = struct {
                 msg.argument_type_parse_location = v;
             },
             14 => {
-                const v: FunctionEnums_ProcedureArgumentMode = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_ProcedureArgumentMode = @fromBackingInt(try r.readInt32());
                 msg.procedure_argument_mode = v;
             },
             15 => {
@@ -10200,7 +10205,7 @@ pub const FunctionArgumentTypeOptionsProto = struct {
                 msg.default_value_type = v;
             },
             19 => {
-                const v: FunctionEnums_ArgumentCollationMode = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_ArgumentCollationMode = @fromBackingInt(try r.readInt32());
                 msg.argument_collation_mode = v;
             },
             20 => {
@@ -10219,18 +10224,18 @@ pub const FunctionArgumentTypeOptionsProto = struct {
                 msg.array_element_must_support_grouping = (try r.readVarint()) != 0;
             },
             25 => {
-                const v: FunctionEnums_NamedArgumentKind = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_NamedArgumentKind = @fromBackingInt(try r.readInt32());
                 msg.named_argument_kind = v;
             },
             26 => {
-                const v: FunctionEnums_ArgumentAliasKind = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_ArgumentAliasKind = @fromBackingInt(try r.readInt32());
                 msg.argument_alias_kind = v;
             },
             27 => {
                 msg.must_be_constant_expression = (try r.readVarint()) != 0;
             },
             28 => {
-                const v: ConstnessLevelProto_Level = @enumFromInt(try r.readInt32());
+                const v: ConstnessLevelProto_Level = @fromBackingInt(try r.readInt32());
                 msg.constness_level = v;
             },
             else => try r.skip(tag.wire),
@@ -10253,7 +10258,7 @@ pub const FunctionArgumentTypeOptionsProto = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.cardinality) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.must_be_constant) |v| {
             try w.writeBool(2, v);
@@ -10298,7 +10303,7 @@ pub const FunctionArgumentTypeOptionsProto = struct {
             try w.endLen(mark);
         }
         if (self.procedure_argument_mode) |v| {
-            try w.writeInt32(14, @intFromEnum(v));
+            try w.writeInt32(14, @backingInt(v));
         }
         if (self.argument_name_is_mandatory) |v| {
             try w.writeBool(15, v);
@@ -10317,7 +10322,7 @@ pub const FunctionArgumentTypeOptionsProto = struct {
             try w.endLen(mark);
         }
         if (self.argument_collation_mode) |v| {
-            try w.writeInt32(19, @intFromEnum(v));
+            try w.writeInt32(19, @backingInt(v));
         }
         if (self.uses_array_element_for_collation) |v| {
             try w.writeBool(20, v);
@@ -10335,16 +10340,16 @@ pub const FunctionArgumentTypeOptionsProto = struct {
             try w.writeBool(24, v);
         }
         if (self.named_argument_kind) |v| {
-            try w.writeInt32(25, @intFromEnum(v));
+            try w.writeInt32(25, @backingInt(v));
         }
         if (self.argument_alias_kind) |v| {
-            try w.writeInt32(26, @intFromEnum(v));
+            try w.writeInt32(26, @backingInt(v));
         }
         if (self.must_be_constant_expression) |v| {
             try w.writeBool(27, v);
         }
         if (self.constness_level) |v| {
-            try w.writeInt32(28, @intFromEnum(v));
+            try w.writeInt32(28, @backingInt(v));
         }
     }
 };
@@ -10373,7 +10378,7 @@ pub const FunctionArgumentTypeProto = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: SignatureArgumentKind = @enumFromInt(try r.readInt32());
+                const v: SignatureArgumentKind = @fromBackingInt(try r.readInt32());
                 msg.kind = v;
             },
             2 => {
@@ -10419,7 +10424,7 @@ pub const FunctionArgumentTypeProto = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.kind) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.type) |v| {
             const mark = try w.beginLen(2);
@@ -10529,7 +10534,7 @@ pub const FunctionOptionsProto = struct {
                 msg.supports_over_clause = (try r.readVarint()) != 0;
             },
             2 => {
-                const v: FunctionEnums_WindowOrderSupport = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_WindowOrderSupport = @fromBackingInt(try r.readInt32());
                 msg.window_ordering_support = v;
             },
             3 => {
@@ -10551,14 +10556,14 @@ pub const FunctionOptionsProto = struct {
                 msg.allow_external_usage = (try r.readVarint()) != 0;
             },
             9 => {
-                const v: FunctionEnums_Volatility = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_Volatility = @fromBackingInt(try r.readInt32());
                 msg.volatility = v;
             },
             10 => {
                 msg.supports_order_by = (try r.readVarint()) != 0;
             },
             11 => {
-                const v: LanguageFeature = @enumFromInt(try r.readInt32());
+                const v: LanguageFeature = @fromBackingInt(try r.readInt32());
                 try list_required_language_feature.append(a, v);
             },
             12 => {
@@ -10610,7 +10615,7 @@ pub const FunctionOptionsProto = struct {
             try w.writeBool(1, v);
         }
         if (self.window_ordering_support) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.supports_window_framing) |v| {
             try w.writeBool(3, v);
@@ -10631,13 +10636,13 @@ pub const FunctionOptionsProto = struct {
             try w.writeBool(8, v);
         }
         if (self.volatility) |v| {
-            try w.writeInt32(9, @intFromEnum(v));
+            try w.writeInt32(9, @backingInt(v));
         }
         if (self.supports_order_by) |v| {
             try w.writeBool(10, v);
         }
         for (self.required_language_feature) |v| {
-            try w.writeInt32(11, @intFromEnum(v));
+            try w.writeInt32(11, @backingInt(v));
         }
         if (self.supports_limit) |v| {
             try w.writeBool(12, v);
@@ -10702,7 +10707,7 @@ pub const FunctionProto = struct {
                 msg.group = try r.readBytes();
             },
             3 => {
-                const v: FunctionEnums_Mode = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_Mode = @fromBackingInt(try r.readInt32());
                 msg.mode = v;
             },
             4 => {
@@ -10724,11 +10729,12 @@ pub const FunctionProto = struct {
                 try list_templated_sql_function_argument_name.append(a, try r.readBytes());
             },
             9 => {
-                const v: ResolvedCreateStatementEnums_SqlSecurity = @enumFromInt(try r.readInt32());
+                const v: ResolvedCreateStatementEnums_SqlSecurity =
+                    @fromBackingInt(try r.readInt32());
                 msg.sql_security = v;
             },
             10 => {
-                const v: StatementContext = @enumFromInt(try r.readInt32());
+                const v: StatementContext = @fromBackingInt(try r.readInt32());
                 msg.statement_context = v;
             },
             else => try r.skip(tag.wire),
@@ -10761,7 +10767,7 @@ pub const FunctionProto = struct {
             try w.writeBytes(2, v);
         }
         if (self.mode) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         for (self.signature) |v| {
             const mark = try w.beginLen(4);
@@ -10782,10 +10788,10 @@ pub const FunctionProto = struct {
             try w.writeBytes(7, v);
         }
         if (self.sql_security) |v| {
-            try w.writeInt32(9, @intFromEnum(v));
+            try w.writeInt32(9, @backingInt(v));
         }
         if (self.statement_context) |v| {
-            try w.writeInt32(10, @intFromEnum(v));
+            try w.writeInt32(10, @backingInt(v));
         }
     }
 };
@@ -10874,7 +10880,7 @@ pub const FunctionSignatureOptionsProto = struct {
                 try list_additional_deprecation_warning.append(a, v);
             },
             4 => {
-                const v: LanguageFeature = @enumFromInt(try r.readInt32());
+                const v: LanguageFeature = @fromBackingInt(try r.readInt32());
                 try list_required_language_feature.append(a, v);
             },
             5 => {
@@ -10925,7 +10931,7 @@ pub const FunctionSignatureOptionsProto = struct {
             try w.endLen(mark);
         }
         for (self.required_language_feature) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         if (self.is_aliased_signature) |v| {
             try w.writeBool(5, v);
@@ -11055,7 +11061,7 @@ pub const FunctionSignatureRewriteOptionsProto = struct {
                 msg.enabled = (try r.readVarint()) != 0;
             },
             2 => {
-                const v: ResolvedASTRewrite = @enumFromInt(try r.readInt32());
+                const v: ResolvedASTRewrite = @fromBackingInt(try r.readInt32());
                 msg.rewriter = v;
             },
             3 => {
@@ -11091,7 +11097,7 @@ pub const FunctionSignatureRewriteOptionsProto = struct {
             try w.writeBool(1, v);
         }
         if (self.rewriter) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.sql) |v| {
             try w.writeBytes(3, v);
@@ -11243,7 +11249,7 @@ pub const GraphElementTypeProto = struct {
         var list_graph_reference: std.ArrayList([]const u8) = .empty;
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: GraphElementTypeProto_ElementKind = @enumFromInt(try r.readInt32());
+                const v: GraphElementTypeProto_ElementKind = @fromBackingInt(try r.readInt32());
                 msg.kind = v;
             },
             2 => {
@@ -11279,7 +11285,7 @@ pub const GraphElementTypeProto = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.kind) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         for (self.property_type) |v| {
             const mark = try w.beginLen(2);
@@ -11550,7 +11556,7 @@ pub const LanguageFeatureOptions = struct {
                 msg.in_development = (try r.readVarint()) != 0;
             },
             3 => {
-                const v: LanguageVersion = @enumFromInt(try r.readInt32());
+                const v: LanguageVersion = @fromBackingInt(try r.readInt32());
                 msg.language_version = v;
             },
             else => try r.skip(tag.wire),
@@ -11579,7 +11585,7 @@ pub const LanguageFeatureOptions = struct {
             try w.writeBool(2, v);
         }
         if (self.language_version) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
     }
 };
@@ -13062,7 +13068,7 @@ pub const ResolvedAggregateHavingModifierProto = struct {
             },
             2 => {
                 const v: ResolvedAggregateHavingModifierEnums_HavingModifierKind =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.kind = v;
             },
             3 => {
@@ -13095,7 +13101,7 @@ pub const ResolvedAggregateHavingModifierProto = struct {
             try w.endLen(mark);
         }
         if (self.kind) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.having_expr) |v| {
             const mark = try w.beginLen(3);
@@ -14408,7 +14414,7 @@ pub const ResolvedAlterIndexStmtProto = struct {
             },
             3 => {
                 const v: ResolvedAlterIndexStmtEnums_AlterIndexType =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.index_type = v;
             },
             4 => {
@@ -14445,7 +14451,7 @@ pub const ResolvedAlterIndexStmtProto = struct {
             try w.writeBytes(2, v);
         }
         if (self.index_type) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.table_scan) |v| {
             const mark = try w.beginLen(4);
@@ -15593,7 +15599,7 @@ pub const ResolvedArgumentDefProto = struct {
                 msg.type = v;
             },
             4 => {
-                const v: ResolvedArgumentDefEnums_ArgumentKind = @enumFromInt(try r.readInt32());
+                const v: ResolvedArgumentDefEnums_ArgumentKind = @fromBackingInt(try r.readInt32());
                 msg.argument_kind = v;
             },
             else => try r.skip(tag.wire),
@@ -15629,7 +15635,7 @@ pub const ResolvedArgumentDefProto = struct {
             try w.endLen(mark);
         }
         if (self.argument_kind) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
     }
 };
@@ -15776,7 +15782,7 @@ pub const ResolvedArgumentRefProto = struct {
                 msg.name = try r.readBytes();
             },
             3 => {
-                const v: ResolvedArgumentDefEnums_ArgumentKind = @enumFromInt(try r.readInt32());
+                const v: ResolvedArgumentDefEnums_ArgumentKind = @fromBackingInt(try r.readInt32());
                 msg.argument_kind = v;
             },
             else => try r.skip(tag.wire),
@@ -15807,7 +15813,7 @@ pub const ResolvedArgumentRefProto = struct {
             try w.writeBytes(2, v);
         }
         if (self.argument_kind) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
     }
 };
@@ -16481,7 +16487,7 @@ pub const ResolvedAuxLoadDataStmtProto = struct {
             },
             2 => {
                 const v: ResolvedAuxLoadDataStmtEnums_InsertionMode =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.insertion_mode = v;
             },
             17 => {
@@ -16590,7 +16596,7 @@ pub const ResolvedAuxLoadDataStmtProto = struct {
             try w.endLen(mark);
         }
         if (self.insertion_mode) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.is_temp_table) |v| {
             try w.writeBool(17, v);
@@ -16794,7 +16800,7 @@ pub const ResolvedBeginStmtProto = struct {
                 msg.parent = v;
             },
             3 => {
-                const v: ResolvedBeginStmtEnums_ReadWriteMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedBeginStmtEnums_ReadWriteMode = @fromBackingInt(try r.readInt32());
                 msg.read_write_mode = v;
             },
             2 => {
@@ -16826,7 +16832,7 @@ pub const ResolvedBeginStmtProto = struct {
             try w.endLen(mark);
         }
         if (self.read_write_mode) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         for (self.isolation_level_list) |v| {
             try w.writeBytes(2, v);
@@ -18748,12 +18754,13 @@ pub const ResolvedCreateFunctionStmtProto = struct {
                 try list_option_list.append(a, v);
             },
             12 => {
-                const v: ResolvedCreateStatementEnums_SqlSecurity = @enumFromInt(try r.readInt32());
+                const v: ResolvedCreateStatementEnums_SqlSecurity =
+                    @fromBackingInt(try r.readInt32());
                 msg.sql_security = v;
             },
             14 => {
                 const v: ResolvedCreateStatementEnums_DeterminismLevel =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.determinism_level = v;
             },
             15 => {
@@ -18832,10 +18839,10 @@ pub const ResolvedCreateFunctionStmtProto = struct {
             try w.endLen(mark);
         }
         if (self.sql_security) |v| {
-            try w.writeInt32(12, @intFromEnum(v));
+            try w.writeInt32(12, @backingInt(v));
         }
         if (self.determinism_level) |v| {
-            try w.writeInt32(14, @intFromEnum(v));
+            try w.writeInt32(14, @backingInt(v));
         }
         if (self.is_remote) |v| {
             try w.writeBool(15, v);
@@ -19666,7 +19673,8 @@ pub const ResolvedCreateProcedureStmtProto = struct {
                 msg.code = try r.readBytes();
             },
             9 => {
-                const v: ResolvedCreateStatementEnums_SqlSecurity = @enumFromInt(try r.readInt32());
+                const v: ResolvedCreateStatementEnums_SqlSecurity =
+                    @fromBackingInt(try r.readInt32());
                 msg.external_security = v;
             },
             else => try r.skip(tag.wire),
@@ -19723,7 +19731,7 @@ pub const ResolvedCreateProcedureStmtProto = struct {
             try w.writeBytes(8, v);
         }
         if (self.external_security) |v| {
-            try w.writeInt32(9, @intFromEnum(v));
+            try w.writeInt32(9, @backingInt(v));
         }
     }
 };
@@ -19880,7 +19888,8 @@ pub const ResolvedCreateRowAccessPolicyStmtProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedCreateStatementEnums_CreateMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedCreateStatementEnums_CreateMode =
+                    @fromBackingInt(try r.readInt32());
                 msg.create_mode = v;
             },
             3 => {
@@ -19938,7 +19947,7 @@ pub const ResolvedCreateRowAccessPolicyStmtProto = struct {
             try w.endLen(mark);
         }
         if (self.create_mode) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.name) |v| {
             try w.writeBytes(3, v);
@@ -20302,11 +20311,13 @@ pub const ResolvedCreateStatementProto = struct {
                 try list_name_path.append(a, try r.readBytes());
             },
             5 => {
-                const v: ResolvedCreateStatementEnums_CreateScope = @enumFromInt(try r.readInt32());
+                const v: ResolvedCreateStatementEnums_CreateScope =
+                    @fromBackingInt(try r.readInt32());
                 msg.create_scope = v;
             },
             4 => {
-                const v: ResolvedCreateStatementEnums_CreateMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedCreateStatementEnums_CreateMode =
+                    @fromBackingInt(try r.readInt32());
                 msg.create_mode = v;
             },
             else => try r.skip(tag.wire),
@@ -20338,10 +20349,10 @@ pub const ResolvedCreateStatementProto = struct {
             try w.writeBytes(2, v);
         }
         if (self.create_scope) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.create_mode) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
     }
 };
@@ -20518,7 +20529,8 @@ pub const ResolvedCreateTableFunctionStmtProto = struct {
                 msg.is_value_table = (try r.readVarint()) != 0;
             },
             10 => {
-                const v: ResolvedCreateStatementEnums_SqlSecurity = @enumFromInt(try r.readInt32());
+                const v: ResolvedCreateStatementEnums_SqlSecurity =
+                    @fromBackingInt(try r.readInt32());
                 msg.sql_security = v;
             },
             else => try r.skip(tag.wire),
@@ -20584,7 +20596,7 @@ pub const ResolvedCreateTableFunctionStmtProto = struct {
             try w.writeBool(9, v);
         }
         if (self.sql_security) |v| {
-            try w.writeInt32(10, @intFromEnum(v));
+            try w.writeInt32(10, @backingInt(v));
         }
     }
 };
@@ -20910,7 +20922,8 @@ pub const ResolvedCreateViewBaseProto = struct {
                 msg.sql = try r.readBytes();
             },
             7 => {
-                const v: ResolvedCreateStatementEnums_SqlSecurity = @enumFromInt(try r.readInt32());
+                const v: ResolvedCreateStatementEnums_SqlSecurity =
+                    @fromBackingInt(try r.readInt32());
                 msg.sql_security = v;
             },
             4 => {
@@ -20973,7 +20986,7 @@ pub const ResolvedCreateViewBaseProto = struct {
             try w.writeBytes(6, v);
         }
         if (self.sql_security) |v| {
-            try w.writeInt32(7, @intFromEnum(v));
+            try w.writeInt32(7, @backingInt(v));
         }
         if (self.is_value_table) |v| {
             try w.writeBool(4, v);
@@ -21475,7 +21488,7 @@ pub const ResolvedDeleteStmtProto = struct {
                 msg.returning = v;
             },
             7 => {
-                const v: ResolvedStatementEnums_ObjectAccess = @enumFromInt(try r.readInt32());
+                const v: ResolvedStatementEnums_ObjectAccess = @fromBackingInt(try r.readInt32());
                 try list_column_access_list.append(a, v);
             },
             5 => {
@@ -21529,7 +21542,7 @@ pub const ResolvedDeleteStmtProto = struct {
             try w.endLen(mark);
         }
         for (self.column_access_list) |v| {
-            try w.writeInt32(7, @intFromEnum(v));
+            try w.writeInt32(7, @backingInt(v));
         }
         if (self.array_offset_column) |v| {
             const mark = try w.beginLen(5);
@@ -22131,7 +22144,7 @@ pub const ResolvedDropIndexStmtProto = struct {
                 try list_table_name_path.append(a, try r.readBytes());
             },
             5 => {
-                const v: ResolvedDropIndexStmtEnums_IndexType = @enumFromInt(try r.readInt32());
+                const v: ResolvedDropIndexStmtEnums_IndexType = @fromBackingInt(try r.readInt32());
                 msg.index_type = v;
             },
             else => try r.skip(tag.wire),
@@ -22169,7 +22182,7 @@ pub const ResolvedDropIndexStmtProto = struct {
             try w.writeBytes(4, v);
         }
         if (self.index_type) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
     }
 };
@@ -22607,7 +22620,7 @@ pub const ResolvedDropStmtProto = struct {
                 try list_name_path.append(a, try r.readBytes());
             },
             5 => {
-                const v: ResolvedDropStmtEnums_DropMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedDropStmtEnums_DropMode = @fromBackingInt(try r.readInt32());
                 msg.drop_mode = v;
             },
             else => try r.skip(tag.wire),
@@ -22645,7 +22658,7 @@ pub const ResolvedDropStmtProto = struct {
             try w.writeBytes(4, v);
         }
         if (self.drop_mode) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
     }
 };
@@ -24230,15 +24243,17 @@ pub const ResolvedForeignKeyProto = struct {
                 }
             },
             6 => {
-                const v: ResolvedForeignKeyEnums_MatchMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedForeignKeyEnums_MatchMode = @fromBackingInt(try r.readInt32());
                 msg.match_mode = v;
             },
             7 => {
-                const v: ResolvedForeignKeyEnums_ActionOperation = @enumFromInt(try r.readInt32());
+                const v: ResolvedForeignKeyEnums_ActionOperation =
+                    @fromBackingInt(try r.readInt32());
                 msg.update_action = v;
             },
             8 => {
-                const v: ResolvedForeignKeyEnums_ActionOperation = @enumFromInt(try r.readInt32());
+                const v: ResolvedForeignKeyEnums_ActionOperation =
+                    @fromBackingInt(try r.readInt32());
                 msg.delete_action = v;
             },
             9 => {
@@ -24300,13 +24315,13 @@ pub const ResolvedForeignKeyProto = struct {
             try w.endLen(mark);
         }
         if (self.match_mode) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
         if (self.update_action) |v| {
-            try w.writeInt32(7, @intFromEnum(v));
+            try w.writeInt32(7, @backingInt(v));
         }
         if (self.delete_action) |v| {
-            try w.writeInt32(8, @intFromEnum(v));
+            try w.writeInt32(8, @backingInt(v));
         }
         if (self.enforced) |v| {
             try w.writeBool(9, v);
@@ -24586,7 +24601,8 @@ pub const ResolvedFunctionCallBaseProto = struct {
                 try list_generic_argument_list.append(a, v);
             },
             5 => {
-                const v: ResolvedFunctionCallBaseEnums_ErrorMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedFunctionCallBaseEnums_ErrorMode =
+                    @fromBackingInt(try r.readInt32());
                 msg.error_mode = v;
             },
             7 => {
@@ -24648,7 +24664,7 @@ pub const ResolvedFunctionCallBaseProto = struct {
             try w.endLen(mark);
         }
         if (self.error_mode) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         for (self.hint_list) |v| {
             const mark = try w.beginLen(7);
@@ -25115,12 +25131,12 @@ pub const ResolvedGeneratedColumnInfoProto = struct {
             },
             5 => {
                 const v: ResolvedGeneratedColumnInfoEnums_StoredMode =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.stored_mode = v;
             },
             6 => {
                 const v: ResolvedGeneratedColumnInfoEnums_GeneratedMode =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.generated_mode = v;
             },
             7 => {
@@ -25158,10 +25174,10 @@ pub const ResolvedGeneratedColumnInfoProto = struct {
             try w.endLen(mark);
         }
         if (self.stored_mode) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.generated_mode) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
         if (self.identity_column_info) |v| {
             const mark = try w.beginLen(7);
@@ -25287,7 +25303,7 @@ pub const ResolvedGetProtoFieldProto = struct {
                 msg.get_has_bit = (try r.readVarint()) != 0;
             },
             6 => {
-                const v: FieldFormat_Format = @enumFromInt(try r.readInt32());
+                const v: FieldFormat_Format = @fromBackingInt(try r.readInt32());
                 msg.format = v;
             },
             7 => {
@@ -25336,7 +25352,7 @@ pub const ResolvedGetProtoFieldProto = struct {
             try w.writeBool(5, v);
         }
         if (self.format) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
         if (self.return_default_value_when_unset) |v| {
             try w.writeBool(7, v);
@@ -26143,7 +26159,7 @@ pub const ResolvedGraphEdgeScanProto = struct {
             },
             2 => {
                 const v: ResolvedGraphEdgeScanEnums_EdgeOrientation =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.orientation = v;
             },
             3 => {
@@ -26188,7 +26204,7 @@ pub const ResolvedGraphEdgeScanProto = struct {
             try w.endLen(mark);
         }
         if (self.orientation) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         for (self.lhs_hint_list) |v| {
             const mark = try w.beginLen(3);
@@ -27182,7 +27198,7 @@ pub const ResolvedGraphLabelNaryExprProto = struct {
             },
             2 => {
                 const v: ResolvedGraphLabelNaryExprEnums_GraphLogicalOpType =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.op = v;
             },
             3 => {
@@ -27216,7 +27232,7 @@ pub const ResolvedGraphLabelNaryExprProto = struct {
             try w.endLen(mark);
         }
         if (self.op) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         for (self.operand_list) |v| {
             const mark = try w.beginLen(3);
@@ -27801,7 +27817,7 @@ pub const ResolvedGraphPathModeProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedGraphPathModeEnums_PathMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedGraphPathModeEnums_PathMode = @fromBackingInt(try r.readInt32());
                 msg.path_mode = v;
             },
             else => try r.skip(tag.wire),
@@ -27829,7 +27845,7 @@ pub const ResolvedGraphPathModeProto = struct {
             try w.endLen(mark);
         }
         if (self.path_mode) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
     }
 };
@@ -28200,7 +28216,7 @@ pub const ResolvedGraphPathSearchPrefixProto = struct {
             },
             2 => {
                 const v: ResolvedGraphPathSearchPrefixEnums_PathSearchPrefixType =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.type = v;
             },
             3 => {
@@ -28233,7 +28249,7 @@ pub const ResolvedGraphPathSearchPrefixProto = struct {
             try w.endLen(mark);
         }
         if (self.type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.path_count) |v| {
             const mark = try w.beginLen(3);
@@ -29356,7 +29372,7 @@ pub const ResolvedImportStmtProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedImportStmtEnums_ImportKind = @enumFromInt(try r.readInt32());
+                const v: ResolvedImportStmtEnums_ImportKind = @fromBackingInt(try r.readInt32());
                 msg.import_kind = v;
             },
             3 => {
@@ -29405,7 +29421,7 @@ pub const ResolvedImportStmtProto = struct {
             try w.endLen(mark);
         }
         if (self.import_kind) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         for (self.name_path) |v| {
             try w.writeBytes(3, v);
@@ -29747,7 +29763,7 @@ pub const ResolvedInsertStmtProto = struct {
                 msg.table_scan = v;
             },
             3 => {
-                const v: ResolvedInsertStmtEnums_InsertMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedInsertStmtEnums_InsertMode = @fromBackingInt(try r.readInt32());
                 msg.insert_mode = v;
             },
             4 => {
@@ -29786,7 +29802,7 @@ pub const ResolvedInsertStmtProto = struct {
                 try list_row_list.append(a, v);
             },
             11 => {
-                const v: ResolvedStatementEnums_ObjectAccess = @enumFromInt(try r.readInt32());
+                const v: ResolvedStatementEnums_ObjectAccess = @fromBackingInt(try r.readInt32());
                 try list_column_access_list.append(a, v);
             },
             16 => {
@@ -29853,7 +29869,7 @@ pub const ResolvedInsertStmtProto = struct {
             try w.endLen(mark);
         }
         if (self.insert_mode) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.assert_rows_modified) |v| {
             const mark = try w.beginLen(4);
@@ -29891,7 +29907,7 @@ pub const ResolvedInsertStmtProto = struct {
             try w.endLen(mark);
         }
         for (self.column_access_list) |v| {
-            try w.writeInt32(11, @intFromEnum(v));
+            try w.writeInt32(11, @backingInt(v));
         }
         if (self.on_conflict_clause) |v| {
             const mark = try w.beginLen(16);
@@ -29983,7 +29999,7 @@ pub const ResolvedJoinScanProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedJoinScanEnums_JoinType = @enumFromInt(try r.readInt32());
+                const v: ResolvedJoinScanEnums_JoinType = @fromBackingInt(try r.readInt32());
                 msg.join_type = v;
             },
             3 => {
@@ -30038,7 +30054,7 @@ pub const ResolvedJoinScanProto = struct {
             try w.endLen(mark);
         }
         if (self.join_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.left_scan) |v| {
             const mark = try w.beginLen(3);
@@ -30299,7 +30315,8 @@ pub const ResolvedLockModeProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedLockModeEnums_LockStrengthType = @enumFromInt(try r.readInt32());
+                const v: ResolvedLockModeEnums_LockStrengthType =
+                    @fromBackingInt(try r.readInt32());
                 msg.strength = v;
             },
             else => try r.skip(tag.wire),
@@ -30327,7 +30344,7 @@ pub const ResolvedLockModeProto = struct {
             try w.endLen(mark);
         }
         if (self.strength) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
     }
 };
@@ -30582,7 +30599,7 @@ pub const ResolvedMakeProtoFieldProto = struct {
                 msg.field_descriptor = v;
             },
             3 => {
-                const v: FieldFormat_Format = @enumFromInt(try r.readInt32());
+                const v: FieldFormat_Format = @fromBackingInt(try r.readInt32());
                 msg.format = v;
             },
             4 => {
@@ -30620,7 +30637,7 @@ pub const ResolvedMakeProtoFieldProto = struct {
             try w.endLen(mark);
         }
         if (self.format) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.expr) |v| {
             const mark = try w.beginLen(4);
@@ -30822,7 +30839,7 @@ pub const ResolvedMatchRecognizePatternAnchorProto = struct {
             },
             2 => {
                 const v: ResolvedMatchRecognizePatternAnchorEnums_Mode =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.mode = v;
             },
             else => try r.skip(tag.wire),
@@ -30850,7 +30867,7 @@ pub const ResolvedMatchRecognizePatternAnchorProto = struct {
             try w.endLen(mark);
         }
         if (self.mode) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
     }
 };
@@ -31024,7 +31041,7 @@ pub const ResolvedMatchRecognizePatternOperationProto = struct {
             2 => {
                 const v = @as(
                     ResolvedMatchRecognizePatternOperationEnums_MatchRecognizePatternOperationType,
-                    @enumFromInt(try r.readInt32()),
+                    @fromBackingInt(try r.readInt32()),
                 );
                 msg.op_type = v;
             },
@@ -31059,7 +31076,7 @@ pub const ResolvedMatchRecognizePatternOperationProto = struct {
             try w.endLen(mark);
         }
         if (self.op_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         for (self.operand_list) |v| {
             const mark = try w.beginLen(3);
@@ -31324,7 +31341,7 @@ pub const ResolvedMatchRecognizeScanProto = struct {
             },
             8 => {
                 const v: ResolvedMatchRecognizeScanEnums_AfterMatchSkipMode =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.after_match_skip_mode = v;
             },
             7 => {
@@ -31402,7 +31419,7 @@ pub const ResolvedMatchRecognizeScanProto = struct {
             try w.endLen(mark);
         }
         if (self.after_match_skip_mode) |v| {
-            try w.writeInt32(8, @intFromEnum(v));
+            try w.writeInt32(8, @backingInt(v));
         }
         for (self.measure_group_list) |v| {
             const mark = try w.beginLen(7);
@@ -31605,7 +31622,7 @@ pub const ResolvedMergeStmtProto = struct {
                 msg.table_scan = v;
             },
             6 => {
-                const v: ResolvedStatementEnums_ObjectAccess = @enumFromInt(try r.readInt32());
+                const v: ResolvedStatementEnums_ObjectAccess = @fromBackingInt(try r.readInt32());
                 try list_column_access_list.append(a, v);
             },
             3 => {
@@ -31655,7 +31672,7 @@ pub const ResolvedMergeStmtProto = struct {
             try w.endLen(mark);
         }
         for (self.column_access_list) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
         if (self.from_scan) |v| {
             const mark = try w.beginLen(3);
@@ -31747,7 +31764,7 @@ pub const ResolvedMergeWhenProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedMergeWhenEnums_MatchType = @enumFromInt(try r.readInt32());
+                const v: ResolvedMergeWhenEnums_MatchType = @fromBackingInt(try r.readInt32());
                 msg.match_type = v;
             },
             3 => {
@@ -31756,7 +31773,7 @@ pub const ResolvedMergeWhenProto = struct {
                 msg.match_expr = v;
             },
             4 => {
-                const v: ResolvedMergeWhenEnums_ActionType = @enumFromInt(try r.readInt32());
+                const v: ResolvedMergeWhenEnums_ActionType = @fromBackingInt(try r.readInt32());
                 msg.action_type = v;
             },
             5 => {
@@ -31801,7 +31818,7 @@ pub const ResolvedMergeWhenProto = struct {
             try w.endLen(mark);
         }
         if (self.match_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.match_expr) |v| {
             const mark = try w.beginLen(3);
@@ -31809,7 +31826,7 @@ pub const ResolvedMergeWhenProto = struct {
             try w.endLen(mark);
         }
         if (self.action_type) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         for (self.insert_column_list) |v| {
             const mark = try w.beginLen(5);
@@ -32146,7 +32163,7 @@ pub const ResolvedNonScalarFunctionCallBaseProto = struct {
             },
             3 => {
                 const v: ResolvedNonScalarFunctionCallBaseEnums_NullHandlingModifier =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.null_handling_modifier = v;
             },
             6 => {
@@ -32182,7 +32199,7 @@ pub const ResolvedNonScalarFunctionCallBaseProto = struct {
             try w.writeBool(2, v);
         }
         if (self.null_handling_modifier) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.where_expr) |v| {
             const mark = try w.beginLen(6);
@@ -32324,7 +32341,7 @@ pub const ResolvedOnConflictClauseProto = struct {
             },
             2 => {
                 const v: ResolvedOnConflictClauseEnums_ConflictAction =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.conflict_action = v;
             },
             3 => {
@@ -32377,7 +32394,7 @@ pub const ResolvedOnConflictClauseProto = struct {
             try w.endLen(mark);
         }
         if (self.conflict_action) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         for (self.conflict_target_column_list) |v| {
             const mark = try w.beginLen(3);
@@ -32484,7 +32501,7 @@ pub const ResolvedOptionProto = struct {
                 msg.value = v;
             },
             5 => {
-                const v: ResolvedOptionEnums_AssignmentOp = @enumFromInt(try r.readInt32());
+                const v: ResolvedOptionEnums_AssignmentOp = @fromBackingInt(try r.readInt32());
                 msg.assignment_op = v;
             },
             else => try r.skip(tag.wire),
@@ -32523,7 +32540,7 @@ pub const ResolvedOptionProto = struct {
             try w.endLen(mark);
         }
         if (self.assignment_op) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
     }
 };
@@ -32610,7 +32627,8 @@ pub const ResolvedOrderByItemProto = struct {
                 msg.is_descending = (try r.readVarint()) != 0;
             },
             5 => {
-                const v: ResolvedOrderByItemEnums_NullOrderMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedOrderByItemEnums_NullOrderMode =
+                    @fromBackingInt(try r.readInt32());
                 msg.null_order = v;
             },
             6 => {
@@ -32656,7 +32674,7 @@ pub const ResolvedOrderByItemProto = struct {
             try w.writeBool(4, v);
         }
         if (self.null_order) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.collation) |v| {
             const mark = try w.beginLen(6);
@@ -34235,7 +34253,7 @@ pub const ResolvedRecursiveScanProto = struct {
             },
             2 => {
                 const v: ResolvedRecursiveScanEnums_RecursiveSetOperationType =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.op_type = v;
             },
             3 => {
@@ -34278,7 +34296,7 @@ pub const ResolvedRecursiveScanProto = struct {
             try w.endLen(mark);
         }
         if (self.op_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.non_recursive_term) |v| {
             const mark = try w.beginLen(3);
@@ -35321,7 +35339,7 @@ pub const ResolvedSampleScanProto = struct {
                 msg.size = v;
             },
             5 => {
-                const v: ResolvedSampleScanEnums_SampleUnit = @enumFromInt(try r.readInt32());
+                const v: ResolvedSampleScanEnums_SampleUnit = @fromBackingInt(try r.readInt32());
                 msg.unit = v;
             },
             6 => {
@@ -35378,7 +35396,7 @@ pub const ResolvedSampleScanProto = struct {
             try w.endLen(mark);
         }
         if (self.unit) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.repeatable_argument) |v| {
             const mark = try w.beginLen(6);
@@ -35818,7 +35836,7 @@ pub const ResolvedSetOperationScanProto = struct {
             },
             2 => {
                 const v: ResolvedSetOperationScanEnums_SetOperationType =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.op_type = v;
             },
             4 => {
@@ -35828,12 +35846,12 @@ pub const ResolvedSetOperationScanProto = struct {
             },
             5 => {
                 const v: ResolvedSetOperationScanEnums_SetOperationColumnMatchMode =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.column_match_mode = v;
             },
             6 => {
                 const v: ResolvedSetOperationScanEnums_SetOperationColumnPropagationMode =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.column_propagation_mode = v;
             },
             else => try r.skip(tag.wire),
@@ -35862,7 +35880,7 @@ pub const ResolvedSetOperationScanProto = struct {
             try w.endLen(mark);
         }
         if (self.op_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         for (self.input_item_list) |v| {
             const mark = try w.beginLen(4);
@@ -35870,10 +35888,10 @@ pub const ResolvedSetOperationScanProto = struct {
             try w.endLen(mark);
         }
         if (self.column_match_mode) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.column_propagation_mode) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
     }
 };
@@ -35968,7 +35986,7 @@ pub const ResolvedSetTransactionStmtProto = struct {
                 msg.parent = v;
             },
             3 => {
-                const v: ResolvedBeginStmtEnums_ReadWriteMode = @enumFromInt(try r.readInt32());
+                const v: ResolvedBeginStmtEnums_ReadWriteMode = @fromBackingInt(try r.readInt32());
                 msg.read_write_mode = v;
             },
             2 => {
@@ -36000,7 +36018,7 @@ pub const ResolvedSetTransactionStmtProto = struct {
             try w.endLen(mark);
         }
         if (self.read_write_mode) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         for (self.isolation_level_list) |v| {
             try w.writeBytes(2, v);
@@ -36758,7 +36776,8 @@ pub const ResolvedSubqueryExprProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedSubqueryExprEnums_SubqueryType = @enumFromInt(try r.readInt32());
+                const v: ResolvedSubqueryExprEnums_SubqueryType =
+                    @fromBackingInt(try r.readInt32());
                 msg.subquery_type = v;
             },
             3 => {
@@ -36813,7 +36832,7 @@ pub const ResolvedSubqueryExprProto = struct {
             try w.endLen(mark);
         }
         if (self.subquery_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         for (self.parameter_list) |v| {
             const mark = try w.beginLen(3);
@@ -37946,7 +37965,8 @@ pub const ResolvedUpdateFieldItemProto = struct {
                 try list_proto_field_path.append(a, v);
             },
             4 => {
-                const v: ResolvedUpdateFieldItemEnums_Operation = @enumFromInt(try r.readInt32());
+                const v: ResolvedUpdateFieldItemEnums_Operation =
+                    @fromBackingInt(try r.readInt32());
                 msg.operation = v;
             },
             else => try r.skip(tag.wire),
@@ -37985,7 +38005,7 @@ pub const ResolvedUpdateFieldItemProto = struct {
             try w.endLen(mark);
         }
         if (self.operation) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
     }
 };
@@ -38068,7 +38088,7 @@ pub const ResolvedUpdateItemElementProto = struct {
             },
             4 => {
                 const v: ResolvedUpdateItemElementEnums_UpdateItemMode =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.update_item_mode = v;
             },
             else => try r.skip(tag.wire),
@@ -38106,7 +38126,7 @@ pub const ResolvedUpdateItemElementProto = struct {
             try w.endLen(mark);
         }
         if (self.update_item_mode) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
     }
 };
@@ -38289,7 +38309,7 @@ pub const ResolvedUpdateStmtProto = struct {
                 msg.table_scan = v;
             },
             8 => {
-                const v: ResolvedStatementEnums_ObjectAccess = @enumFromInt(try r.readInt32());
+                const v: ResolvedStatementEnums_ObjectAccess = @fromBackingInt(try r.readInt32());
                 try list_column_access_list.append(a, v);
             },
             3 => {
@@ -38378,7 +38398,7 @@ pub const ResolvedUpdateStmtProto = struct {
             try w.endLen(mark);
         }
         for (self.column_access_list) |v| {
-            try w.writeInt32(8, @intFromEnum(v));
+            try w.writeInt32(8, @backingInt(v));
         }
         if (self.assert_rows_modified) |v| {
             const mark = try w.beginLen(3);
@@ -38530,7 +38550,7 @@ pub const ResolvedWindowFrameExprProto = struct {
             },
             2 => {
                 const v: ResolvedWindowFrameExprEnums_BoundaryType =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.boundary_type = v;
             },
             3 => {
@@ -38563,7 +38583,7 @@ pub const ResolvedWindowFrameExprProto = struct {
             try w.endLen(mark);
         }
         if (self.boundary_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.expression) |v| {
             const mark = try w.beginLen(3);
@@ -38600,7 +38620,7 @@ pub const ResolvedWindowFrameProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedWindowFrameEnums_FrameUnit = @enumFromInt(try r.readInt32());
+                const v: ResolvedWindowFrameEnums_FrameUnit = @fromBackingInt(try r.readInt32());
                 msg.frame_unit = v;
             },
             3 => {
@@ -38638,7 +38658,7 @@ pub const ResolvedWindowFrameProto = struct {
             try w.endLen(mark);
         }
         if (self.frame_unit) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.start_expr) |v| {
             const mark = try w.beginLen(3);
@@ -39227,7 +39247,8 @@ pub const ResolvedWithinBoundExprProto = struct {
                 msg.parent = v;
             },
             2 => {
-                const v: ResolvedWithinBoundExprEnums_BoundKind = @enumFromInt(try r.readInt32());
+                const v: ResolvedWithinBoundExprEnums_BoundKind =
+                    @fromBackingInt(try r.readInt32());
                 msg.bound_kind = v;
             },
             3 => {
@@ -39260,7 +39281,7 @@ pub const ResolvedWithinBoundExprProto = struct {
             try w.endLen(mark);
         }
         if (self.bound_kind) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.expr) |v| {
             const mark = try w.beginLen(3);
@@ -40718,7 +40739,7 @@ pub const TableValuedFunctionOptionsProto = struct {
                 msg.uses_upper_case_sql_name = (try r.readVarint()) != 0;
             },
             2 => {
-                const v: LanguageFeature = @enumFromInt(try r.readInt32());
+                const v: LanguageFeature = @fromBackingInt(try r.readInt32());
                 try list_required_language_feature.append(a, v);
             },
             else => try r.skip(tag.wire),
@@ -40745,7 +40766,7 @@ pub const TableValuedFunctionOptionsProto = struct {
             try w.writeBool(1, v);
         }
         for (self.required_language_feature) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
     }
 };
@@ -40801,11 +40822,11 @@ pub const TableValuedFunctionProto = struct {
                 msg.options = v;
             },
             3 => {
-                const v: FunctionEnums_TableValuedFunctionType = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_TableValuedFunctionType = @fromBackingInt(try r.readInt32());
                 msg.type = v;
             },
             8 => {
-                const v: FunctionEnums_Volatility = @enumFromInt(try r.readInt32());
+                const v: FunctionEnums_Volatility = @fromBackingInt(try r.readInt32());
                 msg.volatility = v;
             },
             6 => {
@@ -40825,7 +40846,7 @@ pub const TableValuedFunctionProto = struct {
                 msg.anonymization_info = v;
             },
             11 => {
-                const v: StatementContext = @enumFromInt(try r.readInt32());
+                const v: StatementContext = @fromBackingInt(try r.readInt32());
                 msg.statement_context = v;
             },
             13 => {
@@ -40872,10 +40893,10 @@ pub const TableValuedFunctionProto = struct {
             try w.endLen(mark);
         }
         if (self.type) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.volatility) |v| {
-            try w.writeInt32(8, @intFromEnum(v));
+            try w.writeInt32(8, @backingInt(v));
         }
         if (self.parse_resume_location) |v| {
             const mark = try w.beginLen(6);
@@ -40894,7 +40915,7 @@ pub const TableValuedFunctionProto = struct {
             try w.endLen(mark);
         }
         if (self.statement_context) |v| {
-            try w.writeInt32(11, @intFromEnum(v));
+            try w.writeInt32(11, @backingInt(v));
         }
         if (self.group) |v| {
             try w.writeBytes(13, v);
@@ -41199,7 +41220,7 @@ pub const TypeProto = struct {
         var list_file_descriptor_set: std.ArrayList(*FileDescriptorSet) = .empty;
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: TypeKind = @enumFromInt(try r.readInt32());
+                const v: TypeKind = @fromBackingInt(try r.readInt32());
                 msg.type_kind = v;
             },
             2 => {
@@ -41281,7 +41302,7 @@ pub const TypeProto = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.type_kind) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.array_type) |v| {
             const mark = try w.beginLen(2);

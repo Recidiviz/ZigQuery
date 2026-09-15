@@ -60,7 +60,7 @@ const golden = struct {
 /// A `spec.Type` for a leaf kind. `kind` is the raw `pb.TypeKind` int, which is
 /// what `typeKind()` reads back.
 fn leaf(kind: zigquery.pb.TypeKind) spec.Type {
-    return .{ .kind = @intFromEnum(kind) };
+    return .{ .kind = @backingInt(kind) };
 }
 
 /// Encodes one value and compares against the reference bytes.
@@ -184,7 +184,10 @@ test "arrays are a counted block and a terminator" {
     const a = arena_state.allocator();
 
     var elem = leaf(.TYPE_INT64);
-    var arr: spec.Type = .{ .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY), .element_type = &elem };
+    var arr: spec.Type = .{
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_ARRAY),
+        .element_type = &elem,
+    };
 
     // An empty array is the terminator alone -- no zero-count block first.
     try expectDatum(golden.array_empty, &arr, try value_mod.arrayValue(a, &.{}), false);
@@ -213,7 +216,10 @@ test "a top-level BOOL arrives as .int, one inside an array as .bool" {
     try expectDatum(golden.bool_true, &b, .{ .bool = true }, false);
 
     var elem = leaf(.TYPE_BOOL);
-    var arr: spec.Type = .{ .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY), .element_type = &elem };
+    var arr: spec.Type = .{
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_ARRAY),
+        .element_type = &elem,
+    };
     try expectDatum(
         golden.array_bool,
         &arr,
@@ -233,7 +239,7 @@ test "a struct is its fields concatenated, each with its own branch" {
     var fb: spec.NameWithType = .{ .name = "b", .type = &tb };
     var fields = [_]*spec.NameWithType{ &fa, &fb };
     var st: spec.Type = .{
-        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRUCT),
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_STRUCT),
         .field_types = &fields,
     };
 
@@ -261,7 +267,7 @@ test "INTERVAL is a record, not Avro's duration" {
 test "RANGE is a record whose UNBOUNDED bounds are nulls" {
     var elem = leaf(.TYPE_DATE);
     var rng: spec.Type = .{
-        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_RANGE),
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_RANGE),
         .element_type = &elem,
     };
 
@@ -369,7 +375,7 @@ test "a REPEATED field is a bare array, and so are its items" {
 
     var elem = leaf(.TYPE_INT64);
     var arr: spec.Type = .{
-        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY),
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_ARRAY),
         .element_type = &elem,
     };
     try testing.expectEqualStrings(
@@ -389,11 +395,11 @@ test "structs are numbered records and field names are escaped" {
     var fa: spec.NameWithType = .{ .name = "a\"b", .type = &ta };
     var fields = [_]*spec.NameWithType{&fa};
     var st: spec.Type = .{
-        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRUCT),
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_STRUCT),
         .field_types = &fields,
     };
     var st2: spec.Type = .{
-        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRUCT),
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_STRUCT),
         .field_types = &fields,
     };
 
@@ -415,7 +421,7 @@ test "RANGE names its record after the element type" {
 
     var elem = leaf(.TYPE_DATE);
     var rng: spec.Type = .{
-        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_RANGE),
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_RANGE),
         .element_type = &elem,
     };
     const got = try schemaOf(a, &.{.{ .name = "r", .type = &rng }});
@@ -477,15 +483,15 @@ const FullRow = struct {
         f.fb = .{ .name = "b", .type = &f.str };
         f.sfields = .{ &f.fa, &f.fb };
         f.rng = .{
-            .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_RANGE),
+            .kind = @backingInt(zigquery.pb.TypeKind.TYPE_RANGE),
             .element_type = &f.elem_date,
         };
         f.arr = .{
-            .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY),
+            .kind = @backingInt(zigquery.pb.TypeKind.TYPE_ARRAY),
             .element_type = &f.elem_int,
         };
         f.st = .{
-            .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRUCT),
+            .kind = @backingInt(zigquery.pb.TypeKind.TYPE_STRUCT),
             .field_types = &f.sfields,
         };
         f.cols = .{
@@ -561,7 +567,7 @@ test "a nullable ARRAY has no union, and a null one is an empty array" {
 
     var elem = leaf(.TYPE_INT64);
     var arr: spec.Type = .{
-        .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_ARRAY),
+        .kind = @backingInt(zigquery.pb.TypeKind.TYPE_ARRAY),
         .element_type = &elem,
     };
 

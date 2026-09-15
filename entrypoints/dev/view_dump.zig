@@ -77,7 +77,7 @@ pub fn main(init: std.process.Init) !void {
     for (translated) |s| final_bytes += s.len;
 
     // Prepare only: rawQuery compiles and hands back rows without stepping.
-    const zsql = try arena.dupeZ(u8, translated[translated.len - 1]);
+    const zsql = try arena.dupeSentinel(u8, translated[translated.len - 1], 0);
     const t_prep = std.Io.Clock.awake.now(init.io);
     var pr = db.rawQuery(zsql, &.{}) catch |err| {
         try e.print("prepare failed: {s}: {s}\n", .{ @errorName(err), db.lastError() });

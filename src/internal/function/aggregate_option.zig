@@ -83,7 +83,7 @@ fn marker(alloc: std.mem.Allocator, kind: Kind, extra: []const u8, value: ?Value
     var out: std.ArrayList(u8) = .empty;
     try out.ensureTotalCapacity(alloc, magic.len + 1 + extra.len + encoded.len);
     out.appendSliceAssumeCapacity(magic);
-    out.appendAssumeCapacity(@intFromEnum(kind));
+    out.appendAssumeCapacity(@backingInt(kind));
     out.appendSliceAssumeCapacity(extra);
     out.appendSliceAssumeCapacity(encoded);
     return out.toOwnedSlice(alloc);

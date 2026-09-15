@@ -238,7 +238,7 @@ pub const Catalog = struct {
             },
             .table_removed => |name| {
                 try flushAdditions(c, alloc, &ops, &pending);
-                try ops.append(alloc, .{ .remove = try alloc.dupeZ(u8, name) });
+                try ops.append(alloc, .{ .remove = try alloc.dupeSentinel(u8, name, 0) });
             },
         };
         try flushAdditions(c, alloc, &ops, &pending);
@@ -300,7 +300,7 @@ pub const Catalog = struct {
         specs: []const *spec.TableSpec,
     ) error{ OutOfMemory, InvalidSpec }![:0]u8 {
         _ = c;
-        if (specs.len == 0) return alloc.dupeZ(u8, "{}");
+        if (specs.len == 0) return alloc.dupeSentinel(u8, "{}", 0);
         var root = Node{ .name = catalog_name };
         for (specs) |table_spec| {
             const canonical = try table_spec.tableName(alloc);
@@ -853,7 +853,7 @@ pub const Catalog = struct {
         const ov_funcs = if (overlay) |o| o.functions.items.len else 0;
         if (c.table_map.count() == 0 and c.functions.items.len == 0 and
             ov_tables == 0 and ov_funcs == 0)
-            return alloc.dupeZ(u8, "{}");
+            return alloc.dupeSentinel(u8, "{}", 0);
 
         var root = Node{ .name = catalog_name };
         for (c.tables.items) |maybe| {
@@ -891,7 +891,7 @@ pub const Catalog = struct {
         alloc: std.mem.Allocator,
         fn_start: usize,
     ) error{ OutOfMemory, InvalidSpec }![:0]u8 {
-        if (fn_start >= c.functions.items.len) return alloc.dupeZ(u8, "{}");
+        if (fn_start >= c.functions.items.len) return alloc.dupeSentinel(u8, "{}", 0);
         var root = Node{ .name = catalog_name };
         for (c.functions.items[fn_start..]) |fs| {
             try addFunctionToNode(alloc, &root, fs.name_path, fs);
@@ -1119,7 +1119,7 @@ fn appendFunctionArgumentTypeJson(
     t: *const spec.Type,
 ) error{ OutOfMemory, InvalidSpec }!void {
     if (spec.isTemplatedSignatureKind(t.signature_kind)) {
-        const kind: pb.SignatureArgumentKind = @enumFromInt(t.signature_kind);
+        const kind: pb.SignatureArgumentKind = @fromBackingInt(@intCast(t.signature_kind));
         const kind_name = std.enums.tagName(pb.SignatureArgumentKind, kind) orelse
             return error.InvalidSpec;
         try out.appendSlice(alloc, "{\"kind\":\"");
@@ -1136,9 +1136,9 @@ fn appendFunctionArgumentTypeJson(
 /// builtins in the shim's GoogleSQL revision (array_slice, array_first,
 /// array_last) — Go pre-filters those against `builtins` at registration.
 fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.FunctionSpec {
-    const arg_arbitrary: i32 = @intFromEnum(pb.SignatureArgumentKind.ARG_KIND_EXPR_ARBITRARY);
-    const arg_any_1: i32 = @intFromEnum(pb.SignatureArgumentKind.ARG_KIND_EXPR_ANY_1);
-    const arg_any_2: i32 = @intFromEnum(pb.SignatureArgumentKind.ARG_KIND_EXPR_ANY_2);
+    const arg_arbitrary: i32 = @backingInt(pb.SignatureArgumentKind.ARG_KIND_EXPR_ARBITRARY);
+    const arg_any_1: i32 = @backingInt(pb.SignatureArgumentKind.ARG_KIND_EXPR_ANY_1);
+    const arg_any_2: i32 = @backingInt(pb.SignatureArgumentKind.ARG_KIND_EXPR_ANY_2);
 
     const out = try alloc.alloc(*spec.FunctionSpec, 3);
 
@@ -1147,13 +1147,16 @@ fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.Functio
         const expr_t = try alloc.create(spec.Type);
         expr_t.* = .{
             .name = "expression",
-            .kind = @intFromEnum(pb.TypeKind.TYPE_STRING),
+            .kind = @backingInt(pb.TypeKind.TYPE_STRING),
             .signature_kind = arg_arbitrary,
         };
         const search_t = try alloc.create(spec.Type);
-        search_t.* = .{ .name = "search_value_literal", .kind = @intFromEnum(pb.TypeKind.TYPE_STRING) };
+        search_t.* = .{
+            .name = "search_value_literal",
+            .kind = @backingInt(pb.TypeKind.TYPE_STRING),
+        };
         const ret_t = try alloc.create(spec.Type);
-        ret_t.* = .{ .name = "BOOL", .kind = @intFromEnum(pb.TypeKind.TYPE_BOOL) };
+        ret_t.* = .{ .name = "BOOL", .kind = @backingInt(pb.TypeKind.TYPE_BOOL) };
         const args = try alloc.alloc(*spec.NameWithType, 2);
         const a0 = try alloc.create(spec.NameWithType);
         a0.* = .{ .name = "expression", .type = expr_t };

@@ -424,7 +424,7 @@ fn unscaledFromTwosComplement(
 ) ValueError!Wide {
     if (bytes.len == 0) return 0;
     if (bytes.len > 64) return error.FailedConversion;
-    var mag: std.meta.Int(.unsigned, @bitSizeOf(Wide)) = 0;
+    var mag: @Int(.unsigned, @bitSizeOf(Wide)) = 0;
     var i: usize = bytes.len;
     while (i > 0) {
         i -= 1;
@@ -450,7 +450,7 @@ fn renderDecimal(
 ) ValueError![]u8 {
     const at_prec: Wide = rescale(unscaled, scale, prec);
     const negative = at_prec < 0;
-    const Mag = std.meta.Int(.unsigned, @bitSizeOf(Wide));
+    const Mag = @Int(.unsigned, @bitSizeOf(Wide));
     const mag: Mag = @intCast(if (negative) -at_prec else at_prec);
 
     var digits_buf: [160]u8 = undefined;
@@ -1887,8 +1887,8 @@ fn writeRangeBound(buf: []u8, elem: Range.ElemKind, bound: ?i64) usize {
 /// not something GoogleSQL permits, so the arm this feeds rejects it; the
 /// tie-break exists for the byte encoding's benefit, which has no such gate.
 pub fn rangeOrder(a: Range, b: Range) std.math.Order {
-    const ka = @intFromEnum(a.elem);
-    const kb = @intFromEnum(b.elem);
+    const ka = @backingInt(a.elem);
+    const kb = @backingInt(b.elem);
     if (ka != kb) return std.math.order(ka, kb);
     const s = orderBound(a.startBound(), b.startBound(), .low);
     if (s != .eq) return s;

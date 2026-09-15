@@ -459,7 +459,7 @@ const testing = std.testing;
 /// Parses a ZON value and matches it against `got`, the way the runner will.
 fn checkOpts(src: [:0]const u8, got: driver.Cell, opts: Options) !bool {
     const gpa = testing.allocator;
-    var ast = try std.zig.Ast.parse(gpa, src, .zon);
+    var ast = try std.zig.Ast.parse(gpa, src, .{ .mode = .zon });
     defer ast.deinit(gpa);
     var zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
     defer zoir.deinit(gpa);

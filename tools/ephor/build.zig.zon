@@ -1,0 +1,17 @@
+.{
+    .name = .zigquery_ephor,
+    .version = "0.0.0",
+    .fingerprint = 0x4f6d5e5ae65e7fba, // Changing this has security and trust implications.
+    // ephor 0.14.2's build script and sources use language and std features Zig 0.17 removed.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .ephor = .{
+            .url = "https://codeberg.org/RhyosLabs/ephor/archive/v0.14.2.tar.gz",
+            .hash = "ephor-0.14.2-p-Eoi3CRFQAKLECH5wnEI78GscKz2AUYXXf0qlr-sOfX",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+}

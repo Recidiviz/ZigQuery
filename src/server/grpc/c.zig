@@ -118,9 +118,9 @@ test "sliceBytes reads a zeroed slice as empty" {
 test "the wrapped enums carry gRPC's own values" {
     // Guards against a translate-c or gRPC version change silently renumbering
     // the wire-visible constants. The numbers are gRPC's, not ours.
-    try testing.expectEqual(@as(c.grpc_op_type, 3), @intFromEnum(OpType.send_status_from_server));
-    try testing.expectEqual(@as(c.grpc_op_type, 7), @intFromEnum(OpType.recv_close_on_server));
-    try testing.expectEqual(@as(c.grpc_status_code, 12), @intFromEnum(Status.unimplemented));
+    try testing.expectEqual(@as(c.grpc_op_type, 3), @backingInt(OpType.send_status_from_server));
+    try testing.expectEqual(@as(c.grpc_op_type, 7), @backingInt(OpType.recv_close_on_server));
+    try testing.expectEqual(@as(c.grpc_status_code, 12), @backingInt(Status.unimplemented));
 }
 
 test "completion maps all three event types" {

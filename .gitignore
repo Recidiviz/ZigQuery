@@ -1,6 +1,9 @@
 /.zig-cache/
 /zig-out/
 /zig-pkg/
+/tools/ephor/.zig-cache/
+/tools/ephor/zig-out/
+/tools/ephor/zig-pkg/
 
 # Release staging: where .github/actions/shim caches the built shim and where
 # `zig build dist --prefix` output is assembled for packaging.

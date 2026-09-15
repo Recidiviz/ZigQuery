@@ -138,7 +138,7 @@ pub fn dateDiff(a: BrokenTime, b: BrokenTime, part: []const u8) Error!i64 {
         const days = @divTrunc(end.unixSeconds() - start.unixSeconds(), 24 * 60 * 60);
         const full_weeks = @divTrunc(days, 7);
         var remainder = @rem(days, 7);
-        var counts = [_]i64{full_weeks} ** 7;
+        var counts: [7]i64 = @splat(full_weeks);
         const starting_day = start.weekday();
         while (remainder > 0) : (remainder -= 1) {
             const idx: usize = @intCast(@mod(starting_day + remainder, 7));
@@ -213,7 +213,7 @@ pub fn extractPart(bt: BrokenTime, part: []const u8) Error!Value {
     // Weeks counted from the year's first `start`, with the days before it week 00.
     // Tested after ISOWEEK, which the same table carries. (date_functions.md#extract)
     if (weekPartOffset(part)) |start| {
-        return .{ .int = bt.weekOfYear(@enumFromInt(start)) };
+        return .{ .int = bt.weekOfYear(@fromBackingInt(@intCast(start))) };
     }
     if (std.mem.eql(u8, part, "DAY")) return .{ .int = c.day };
     if (std.mem.eql(u8, part, "DAYOFYEAR")) return .{ .int = bt.yearDay() };

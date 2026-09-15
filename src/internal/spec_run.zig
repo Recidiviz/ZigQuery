@@ -198,7 +198,7 @@ fn boolField(zoir: Zoir, node: Zoir.Node.Index, name: []const u8) bool {
 fn elements(zoir: Zoir, node: Zoir.Node.Index) Zoir.Node.Index.Range {
     return switch (node.get(zoir)) {
         .array_literal => |r| r,
-        else => .{ .start = @enumFromInt(0), .len = 0 },
+        else => .{ .start = @fromBackingInt(0), .len = 0 },
     };
 }
 
@@ -297,7 +297,7 @@ fn runSpecFile(
         return;
     };
 
-    var ast = try std.zig.Ast.parse(gpa, src, .zon);
+    var ast = try std.zig.Ast.parse(gpa, src, .{ .mode = .zon });
     defer ast.deinit(gpa);
     var zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
     defer zoir.deinit(gpa);

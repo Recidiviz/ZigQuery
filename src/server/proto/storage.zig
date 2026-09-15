@@ -509,7 +509,7 @@ pub const BatchingSettingsProto = struct {
                 msg.flow_control_byte_limit = try r.readInt32();
             },
             8 => {
-                const v: FlowControlLimitExceededBehaviorProto = @enumFromInt(try r.readInt32());
+                const v: FlowControlLimitExceededBehaviorProto = @fromBackingInt(try r.readInt32());
                 msg.flow_control_limit_exceeded_behavior = v;
             },
             else => try r.skip(tag.wire),
@@ -555,7 +555,7 @@ pub const BatchingSettingsProto = struct {
             try w.writeInt32(7, v);
         }
         if (self.flow_control_limit_exceeded_behavior) |v| {
-            try w.writeInt32(8, @intFromEnum(v));
+            try w.writeInt32(8, @backingInt(v));
         }
     }
 };
@@ -592,7 +592,7 @@ pub const ClientLibrarySettings = struct {
                 msg.version = try r.readBytes();
             },
             2 => {
-                const v: LaunchStage = @enumFromInt(try r.readInt32());
+                const v: LaunchStage = @fromBackingInt(try r.readInt32());
                 msg.launch_stage = v;
             },
             3 => {
@@ -661,7 +661,7 @@ pub const ClientLibrarySettings = struct {
             try w.writeBytes(1, v);
         }
         if (self.launch_stage) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.rest_numeric_enums) |v| {
             try w.writeBool(3, v);
@@ -734,7 +734,7 @@ pub const CommonLanguageSettings = struct {
                 msg.reference_docs_uri = try r.readBytes();
             },
             2 => {
-                const v: ClientLibraryDestination = @enumFromInt(try r.readInt32());
+                const v: ClientLibraryDestination = @fromBackingInt(try r.readInt32());
                 try list_destinations.append(a, v);
             },
             3 => {
@@ -766,7 +766,7 @@ pub const CommonLanguageSettings = struct {
             try w.writeBytes(1, v);
         }
         for (self.destinations) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.selective_gapic_generation) |v| {
             const mark = try w.beginLen(3);
@@ -1828,7 +1828,7 @@ pub const Publishing = struct {
                 msg.doc_tag_prefix = try r.readBytes();
             },
             107 => {
-                const v: ClientLibraryOrganization = @enumFromInt(try r.readInt32());
+                const v: ClientLibraryOrganization = @fromBackingInt(try r.readInt32());
                 msg.organization = v;
             },
             109 => {
@@ -1888,7 +1888,7 @@ pub const Publishing = struct {
             try w.writeBytes(106, v);
         }
         if (self.organization) |v| {
-            try w.writeInt32(107, @intFromEnum(v));
+            try w.writeInt32(107, @backingInt(v));
         }
         for (self.library_settings) |v| {
             const mark = try w.beginLen(109);
@@ -2061,7 +2061,7 @@ pub const ResourceDescriptor = struct {
                 msg.name_field = try r.readBytes();
             },
             4 => {
-                const v: ResourceDescriptor_History = @enumFromInt(try r.readInt32());
+                const v: ResourceDescriptor_History = @fromBackingInt(try r.readInt32());
                 msg.history = v;
             },
             5 => {
@@ -2071,7 +2071,7 @@ pub const ResourceDescriptor = struct {
                 msg.singular = try r.readBytes();
             },
             10 => {
-                const v: ResourceDescriptor_Style = @enumFromInt(try r.readInt32());
+                const v: ResourceDescriptor_Style = @fromBackingInt(try r.readInt32());
                 try list_style.append(a, v);
             },
             else => try r.skip(tag.wire),
@@ -2105,7 +2105,7 @@ pub const ResourceDescriptor = struct {
             try w.writeBytes(3, v);
         }
         if (self.history) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         if (self.plural) |v| {
             try w.writeBytes(5, v);
@@ -2114,7 +2114,7 @@ pub const ResourceDescriptor = struct {
             try w.writeBytes(6, v);
         }
         for (self.style) |v| {
-            try w.writeInt32(10, @intFromEnum(v));
+            try w.writeInt32(10, @backingInt(v));
         }
     }
 };
@@ -2338,7 +2338,7 @@ pub const AppendRowsRequest = struct {
             },
             8 => {
                 const v: AppendRowsRequest_MissingValueInterpretation =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.default_missing_value_interpretation = v;
             },
             else => try r.skip(tag.wire),
@@ -2378,7 +2378,7 @@ pub const AppendRowsRequest = struct {
             try w.endLen(mark);
         }
         if (self.default_missing_value_interpretation) |v| {
-            try w.writeInt32(8, @intFromEnum(v));
+            try w.writeInt32(8, @backingInt(v));
         }
         if (self.rows) |u| switch (u) {
             .proto_rows => |v| {
@@ -2480,7 +2480,7 @@ pub const AppendRowsRequest_MissingValueInterpretationsEntry = struct {
             },
             2 => {
                 const v: AppendRowsRequest_MissingValueInterpretation =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.value = v;
             },
             else => try r.skip(tag.wire),
@@ -2506,7 +2506,7 @@ pub const AppendRowsRequest_MissingValueInterpretationsEntry = struct {
             try w.writeBytes(1, v);
         }
         if (self.value) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
     }
 };
@@ -2839,12 +2839,12 @@ pub const ArrowSerializationOptions = struct {
         while (try r.next()) |tag| switch (tag.field) {
             2 => {
                 const v: ArrowSerializationOptions_CompressionCodec =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.buffer_compression = v;
             },
             3 => {
                 const v: ArrowSerializationOptions_PicosTimestampPrecision =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.picos_timestamp_precision = v;
             },
             else => try r.skip(tag.wire),
@@ -2867,10 +2867,10 @@ pub const ArrowSerializationOptions = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.buffer_compression) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.picos_timestamp_precision) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
     }
 };
@@ -2998,7 +2998,7 @@ pub const AvroSerializationOptions = struct {
             },
             2 => {
                 const v: AvroSerializationOptions_PicosTimestampPrecision =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg.picos_timestamp_precision = v;
             },
             else => try r.skip(tag.wire),
@@ -3024,7 +3024,7 @@ pub const AvroSerializationOptions = struct {
             try w.writeBool(1, v);
         }
         if (self.picos_timestamp_precision) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
     }
 };
@@ -3493,7 +3493,7 @@ pub const GetWriteStreamRequest = struct {
                 msg.name = try r.readBytes();
             },
             3 => {
-                const v: WriteStreamView = @enumFromInt(try r.readInt32());
+                const v: WriteStreamView = @fromBackingInt(try r.readInt32());
                 msg.view = v;
             },
             else => try r.skip(tag.wire),
@@ -3519,7 +3519,7 @@ pub const GetWriteStreamRequest = struct {
             try w.writeBytes(1, v);
         }
         if (self.view) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
     }
 };
@@ -3852,7 +3852,7 @@ pub const ReadSession = struct {
                 msg.expire_time = v;
             },
             3 => {
-                const v: DataFormat = @enumFromInt(try r.readInt32());
+                const v: DataFormat = @fromBackingInt(try r.readInt32());
                 msg.data_format = v;
             },
             4 => {
@@ -3924,7 +3924,7 @@ pub const ReadSession = struct {
             try w.endLen(mark);
         }
         if (self.data_format) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.table) |v| {
             try w.writeBytes(6, v);
@@ -4075,7 +4075,7 @@ pub const ReadSession_TableReadOptions = struct {
             },
             6 => {
                 const v: ReadSession_TableReadOptions_ResponseCompressionCodec =
-                    @enumFromInt(try r.readInt32());
+                    @fromBackingInt(try r.readInt32());
                 msg._response_compression_codec = .{ .response_compression_codec = v };
             },
             else => try r.skip(tag.wire),
@@ -4123,7 +4123,7 @@ pub const ReadSession_TableReadOptions = struct {
         };
         if (self._response_compression_codec) |u| switch (u) {
             .response_compression_codec => |v| {
-                try w.writeInt32(6, @intFromEnum(v));
+                try w.writeInt32(6, @backingInt(v));
             },
         };
     }
@@ -4199,7 +4199,7 @@ pub const RowError = struct {
                 msg.index = try r.readInt64();
             },
             2 => {
-                const v: RowError_RowErrorCode = @enumFromInt(try r.readInt32());
+                const v: RowError_RowErrorCode = @fromBackingInt(try r.readInt32());
                 msg.code = v;
             },
             3 => {
@@ -4228,7 +4228,7 @@ pub const RowError = struct {
             try w.writeInt64(1, v);
         }
         if (self.code) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.message) |v| {
             try w.writeBytes(3, v);
@@ -4371,7 +4371,7 @@ pub const StorageError = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: StorageError_StorageErrorCode = @enumFromInt(try r.readInt32());
+                const v: StorageError_StorageErrorCode = @fromBackingInt(try r.readInt32());
                 msg.code = v;
             },
             2 => {
@@ -4400,7 +4400,7 @@ pub const StorageError = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.code) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.entity) |v| {
             try w.writeBytes(2, v);
@@ -4547,11 +4547,11 @@ pub const TableFieldSchema = struct {
                 msg.name = try r.readBytes();
             },
             2 => {
-                const v: TableFieldSchema_Type = @enumFromInt(try r.readInt32());
+                const v: TableFieldSchema_Type = @fromBackingInt(try r.readInt32());
                 msg.type = v;
             },
             3 => {
-                const v: TableFieldSchema_Mode = @enumFromInt(try r.readInt32());
+                const v: TableFieldSchema_Mode = @fromBackingInt(try r.readInt32());
                 msg.mode = v;
             },
             4 => {
@@ -4608,10 +4608,10 @@ pub const TableFieldSchema = struct {
             try w.writeBytes(1, v);
         }
         if (self.type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.mode) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         for (self.fields) |v| {
             const mark = try w.beginLen(4);
@@ -4665,7 +4665,7 @@ pub const TableFieldSchema_FieldElementType = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: TableFieldSchema_Type = @enumFromInt(try r.readInt32());
+                const v: TableFieldSchema_Type = @fromBackingInt(try r.readInt32());
                 msg.type = v;
             },
             else => try r.skip(tag.wire),
@@ -4688,7 +4688,7 @@ pub const TableFieldSchema_FieldElementType = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.type) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
     }
 };
@@ -4819,7 +4819,7 @@ pub const WriteStream = struct {
                 msg.name = try r.readBytes();
             },
             2 => {
-                const v: WriteStream_Type = @enumFromInt(try r.readInt32());
+                const v: WriteStream_Type = @fromBackingInt(try r.readInt32());
                 msg.type = v;
             },
             3 => {
@@ -4838,7 +4838,7 @@ pub const WriteStream = struct {
                 msg.table_schema = v;
             },
             7 => {
-                const v: WriteStream_WriteMode = @enumFromInt(try r.readInt32());
+                const v: WriteStream_WriteMode = @fromBackingInt(try r.readInt32());
                 msg.write_mode = v;
             },
             8 => {
@@ -4867,7 +4867,7 @@ pub const WriteStream = struct {
             try w.writeBytes(1, v);
         }
         if (self.type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.create_time) |v| {
             const mark = try w.beginLen(3);
@@ -4885,7 +4885,7 @@ pub const WriteStream = struct {
             try w.endLen(mark);
         }
         if (self.write_mode) |v| {
-            try w.writeInt32(7, @intFromEnum(v));
+            try w.writeInt32(7, @backingInt(v));
         }
         if (self.location) |v| {
             try w.writeBytes(8, v);
@@ -5831,7 +5831,8 @@ pub const ExtensionRangeOptions = struct {
                 msg.features = v;
             },
             3 => {
-                const v: ExtensionRangeOptions_VerificationState = @enumFromInt(try r.readInt32());
+                const v: ExtensionRangeOptions_VerificationState =
+                    @fromBackingInt(try r.readInt32());
                 msg.verification = v;
             },
             else => try r.skip(tag.wire),
@@ -5871,7 +5872,7 @@ pub const ExtensionRangeOptions = struct {
             try w.endLen(mark);
         }
         if (self.verification) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
     }
 };
@@ -5974,27 +5975,27 @@ pub const FeatureSet = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: FeatureSet_FieldPresence = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_FieldPresence = @fromBackingInt(try r.readInt32());
                 msg.field_presence = v;
             },
             2 => {
-                const v: FeatureSet_EnumType = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_EnumType = @fromBackingInt(try r.readInt32());
                 msg.enum_type = v;
             },
             3 => {
-                const v: FeatureSet_RepeatedFieldEncoding = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_RepeatedFieldEncoding = @fromBackingInt(try r.readInt32());
                 msg.repeated_field_encoding = v;
             },
             4 => {
-                const v: FeatureSet_Utf8Validation = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_Utf8Validation = @fromBackingInt(try r.readInt32());
                 msg.utf8_validation = v;
             },
             5 => {
-                const v: FeatureSet_MessageEncoding = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_MessageEncoding = @fromBackingInt(try r.readInt32());
                 msg.message_encoding = v;
             },
             6 => {
-                const v: FeatureSet_JsonFormat = @enumFromInt(try r.readInt32());
+                const v: FeatureSet_JsonFormat = @fromBackingInt(try r.readInt32());
                 msg.json_format = v;
             },
             else => try r.skip(tag.wire),
@@ -6017,22 +6018,22 @@ pub const FeatureSet = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.field_presence) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.enum_type) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.repeated_field_encoding) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.utf8_validation) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         if (self.message_encoding) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.json_format) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
     }
 };
@@ -6064,11 +6065,11 @@ pub const FeatureSetDefaults = struct {
                 try list_defaults.append(a, v);
             },
             4 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.minimum_edition = v;
             },
             5 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.maximum_edition = v;
             },
             else => try r.skip(tag.wire),
@@ -6097,10 +6098,10 @@ pub const FeatureSetDefaults = struct {
             try w.endLen(mark);
         }
         if (self.minimum_edition) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         if (self.maximum_edition) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
     }
 };
@@ -6126,7 +6127,7 @@ pub const FeatureSetDefaults_FeatureSetEditionDefault = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             3 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition = v;
             },
             4 => {
@@ -6159,7 +6160,7 @@ pub const FeatureSetDefaults_FeatureSetEditionDefault = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.edition) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.overridable_features) |v| {
             const mark = try w.beginLen(4);
@@ -6209,11 +6210,11 @@ pub const FieldDescriptorProto = struct {
                 msg.number = try r.readInt32();
             },
             4 => {
-                const v: FieldDescriptorProto_Label = @enumFromInt(try r.readInt32());
+                const v: FieldDescriptorProto_Label = @fromBackingInt(try r.readInt32());
                 msg.label = v;
             },
             5 => {
-                const v: FieldDescriptorProto_Type = @enumFromInt(try r.readInt32());
+                const v: FieldDescriptorProto_Type = @fromBackingInt(try r.readInt32());
                 msg.type = v;
             },
             6 => {
@@ -6265,10 +6266,10 @@ pub const FieldDescriptorProto = struct {
             try w.writeInt32(3, v);
         }
         if (self.label) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
         if (self.type) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
         if (self.type_name) |v| {
             try w.writeBytes(6, v);
@@ -6331,14 +6332,14 @@ pub const FieldOptions = struct {
         var list_uninterpreted_option: std.ArrayList(*UninterpretedOption) = .empty;
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: FieldOptions_CType = @enumFromInt(try r.readInt32());
+                const v: FieldOptions_CType = @fromBackingInt(try r.readInt32());
                 msg.ctype = v;
             },
             2 => {
                 msg.@"packed" = (try r.readVarint()) != 0;
             },
             6 => {
-                const v: FieldOptions_JSType = @enumFromInt(try r.readInt32());
+                const v: FieldOptions_JSType = @fromBackingInt(try r.readInt32());
                 msg.jstype = v;
             },
             5 => {
@@ -6357,11 +6358,11 @@ pub const FieldOptions = struct {
                 msg.debug_redact = (try r.readVarint()) != 0;
             },
             17 => {
-                const v: FieldOptions_OptionRetention = @enumFromInt(try r.readInt32());
+                const v: FieldOptions_OptionRetention = @fromBackingInt(try r.readInt32());
                 msg.retention = v;
             },
             19 => {
-                const v: FieldOptions_OptionTargetType = @enumFromInt(try r.readInt32());
+                const v: FieldOptions_OptionTargetType = @fromBackingInt(try r.readInt32());
                 try list_targets.append(a, v);
             },
             20 => {
@@ -6407,13 +6408,13 @@ pub const FieldOptions = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.ctype) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.@"packed") |v| {
             try w.writeBool(2, v);
         }
         if (self.jstype) |v| {
-            try w.writeInt32(6, @intFromEnum(v));
+            try w.writeInt32(6, @backingInt(v));
         }
         if (self.lazy) |v| {
             try w.writeBool(5, v);
@@ -6431,10 +6432,10 @@ pub const FieldOptions = struct {
             try w.writeBool(16, v);
         }
         if (self.retention) |v| {
-            try w.writeInt32(17, @intFromEnum(v));
+            try w.writeInt32(17, @backingInt(v));
         }
         for (self.targets) |v| {
-            try w.writeInt32(19, @intFromEnum(v));
+            try w.writeInt32(19, @backingInt(v));
         }
         for (self.edition_defaults) |v| {
             const mark = try w.beginLen(20);
@@ -6479,7 +6480,7 @@ pub const FieldOptions_EditionDefault = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             3 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition = v;
             },
             2 => {
@@ -6505,7 +6506,7 @@ pub const FieldOptions_EditionDefault = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.edition) |v| {
-            try w.writeInt32(3, @intFromEnum(v));
+            try w.writeInt32(3, @backingInt(v));
         }
         if (self.value) |v| {
             try w.writeBytes(2, v);
@@ -6535,18 +6536,18 @@ pub const FieldOptions_FeatureSupport = struct {
         msg.* = .{};
         while (try r.next()) |tag| switch (tag.field) {
             1 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition_introduced = v;
             },
             2 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition_deprecated = v;
             },
             3 => {
                 msg.deprecation_warning = try r.readBytes();
             },
             4 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition_removed = v;
             },
             else => try r.skip(tag.wire),
@@ -6569,16 +6570,16 @@ pub const FieldOptions_FeatureSupport = struct {
         w: *wire.Writer,
     ) wire.EncodeError!void {
         if (self.edition_introduced) |v| {
-            try w.writeInt32(1, @intFromEnum(v));
+            try w.writeInt32(1, @backingInt(v));
         }
         if (self.edition_deprecated) |v| {
-            try w.writeInt32(2, @intFromEnum(v));
+            try w.writeInt32(2, @backingInt(v));
         }
         if (self.deprecation_warning) |v| {
             try w.writeBytes(3, v);
         }
         if (self.edition_removed) |v| {
-            try w.writeInt32(4, @intFromEnum(v));
+            try w.writeInt32(4, @backingInt(v));
         }
     }
 };
@@ -6683,7 +6684,7 @@ pub const FileDescriptorProto = struct {
                 msg.syntax = try r.readBytes();
             },
             14 => {
-                const v: Edition = @enumFromInt(try r.readInt32());
+                const v: Edition = @fromBackingInt(try r.readInt32());
                 msg.edition = v;
             },
             else => try r.skip(tag.wire),
@@ -6765,7 +6766,7 @@ pub const FileDescriptorProto = struct {
             try w.writeBytes(12, v);
         }
         if (self.edition) |v| {
-            try w.writeInt32(14, @intFromEnum(v));
+            try w.writeInt32(14, @backingInt(v));
         }
     }
 };
@@ -6877,7 +6878,7 @@ pub const FileOptions = struct {
                 msg.java_string_check_utf8 = (try r.readVarint()) != 0;
             },
             9 => {
-                const v: FileOptions_OptimizeMode = @enumFromInt(try r.readInt32());
+                const v: FileOptions_OptimizeMode = @fromBackingInt(try r.readInt32());
                 msg.optimize_for = v;
             },
             11 => {
@@ -6965,7 +6966,7 @@ pub const FileOptions = struct {
             try w.writeBool(27, v);
         }
         if (self.optimize_for) |v| {
-            try w.writeInt32(9, @intFromEnum(v));
+            try w.writeInt32(9, @backingInt(v));
         }
         if (self.go_package) |v| {
             try w.writeBytes(11, v);
@@ -7160,7 +7161,7 @@ pub const GeneratedCodeInfo_Annotation = struct {
                 msg.end = try r.readInt32();
             },
             5 => {
-                const v: GeneratedCodeInfo_Annotation_Semantic = @enumFromInt(try r.readInt32());
+                const v: GeneratedCodeInfo_Annotation_Semantic = @fromBackingInt(try r.readInt32());
                 msg.semantic = v;
             },
             else => try r.skip(tag.wire),
@@ -7198,7 +7199,7 @@ pub const GeneratedCodeInfo_Annotation = struct {
             try w.writeInt32(4, v);
         }
         if (self.semantic) |v| {
-            try w.writeInt32(5, @intFromEnum(v));
+            try w.writeInt32(5, @backingInt(v));
         }
     }
 };
@@ -7504,7 +7505,7 @@ pub const MethodOptions = struct {
                 msg.deprecated = (try r.readVarint()) != 0;
             },
             34 => {
-                const v: MethodOptions_IdempotencyLevel = @enumFromInt(try r.readInt32());
+                const v: MethodOptions_IdempotencyLevel = @fromBackingInt(try r.readInt32());
                 msg.idempotency_level = v;
             },
             35 => {
@@ -7541,7 +7542,7 @@ pub const MethodOptions = struct {
             try w.writeBool(33, v);
         }
         if (self.idempotency_level) |v| {
-            try w.writeInt32(34, @intFromEnum(v));
+            try w.writeInt32(34, @backingInt(v));
         }
         if (self.features) |v| {
             const mark = try w.beginLen(35);

@@ -170,7 +170,7 @@ pub fn encodeAppend(
         .range => |r| {
             const out = try buf.addManyAsArray(alloc, 1 + range_bytes);
             out[0] = tag_range;
-            out[1] = @intFromEnum(r.elem);
+            out[1] = @backingInt(r.elem);
             out[2] = if (r.has_start) range_start_bounded else range_start_unbounded;
             std.mem.writeInt(u64, out[3..11], if (r.has_start) orderable(r.start) else 0, .big);
             out[11] = if (r.has_end) range_end_bounded else range_end_unbounded;
@@ -301,6 +301,16 @@ test "round trips every eligible kind" {
     }
 }
 
+/// `n` copies of one hex-encoded byte.
+fn hexBytes(comptime byte: *const [2]u8, comptime n: u8) *const [2 * @as(usize, n)]u8 {
+    return comptime blk: {
+        var out: [2 * @as(usize, n)]u8 = undefined;
+        for (0..n) |i| out[2 * i ..][0..2].* = byte.*;
+        const result = out;
+        break :blk &result;
+    };
+}
+
 test "BIGNUMERIC encodes to the biased big-endian test vectors" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -311,12 +321,15 @@ test "BIGNUMERIC encodes to the biased big-endian test vectors" {
     // bias is a bijection onto u256 with nothing left over.
     const ten38: i256 = 100000000000000000000000000000000000000;
     const cases = [_]struct { unscaled: i256, hex: []const u8 }{
-        .{ .unscaled = std.math.minInt(i256), .hex = "00" ++ "00" ** 31 },
-        .{ .unscaled = -1, .hex = "7f" ++ "ff" ** 31 },
-        .{ .unscaled = 0, .hex = "80" ++ "00" ** 31 },
-        .{ .unscaled = 1, .hex = "80" ++ "00" ** 30 ++ "01" },
-        .{ .unscaled = ten38, .hex = "80" ++ "00" ** 15 ++ "4b3b4ca85a86c47a098a224000000000" },
-        .{ .unscaled = std.math.maxInt(i256), .hex = "ff" ** 32 },
+        .{ .unscaled = std.math.minInt(i256), .hex = "00" ++ hexBytes("00", 31) },
+        .{ .unscaled = -1, .hex = "7f" ++ hexBytes("ff", 31) },
+        .{ .unscaled = 0, .hex = "80" ++ hexBytes("00", 31) },
+        .{ .unscaled = 1, .hex = "80" ++ hexBytes("00", 30) ++ "01" },
+        .{
+            .unscaled = ten38,
+            .hex = "80" ++ hexBytes("00", 15) ++ "4b3b4ca85a86c47a098a224000000000",
+        },
+        .{ .unscaled = std.math.maxInt(i256), .hex = hexBytes("ff", 32) },
     };
     for (cases) |tc| {
         const v = try value_mod.numericFromUnscaled(alloc, tc.unscaled, true);

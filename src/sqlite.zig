@@ -7,9 +7,7 @@
 const std = @import("std");
 const phase = @import("internal/phase.zig");
 
-pub const c = @cImport({
-    @cInclude("sqlite3.h");
-});
+pub const c = @import("sqlite_c");
 
 // SQLITE_TRANSIENT is (sqlite3_destructor_type)-1, which Zig rejects as an
 // unaligned function pointer. Redeclare the destructor-taking functions with
@@ -283,7 +281,7 @@ pub const Db = struct {
     pub fn dbStatus(db: *Db, op: DbStatus) Counter {
         var cur: c_int = 0;
         var hi: c_int = 0;
-        const rc = c.sqlite3_db_status(db.handle, @intFromEnum(op), &cur, &hi, 0);
+        const rc = c.sqlite3_db_status(db.handle, @backingInt(op), &cur, &hi, 0);
         // The only documented failure is an unrecognized op, and every op is a
         // constant lifted from sqlite3.h — so a failure means `DbStatus` has
         // drifted from the header, not that the call was misused.
@@ -389,7 +387,7 @@ pub const DbStatus = enum(c_int) {
 pub fn status(op: Status) Counter {
     var cur: c.sqlite3_int64 = 0;
     var hi: c.sqlite3_int64 = 0;
-    const rc = c.sqlite3_status64(@intFromEnum(op), &cur, &hi, 0);
+    const rc = c.sqlite3_status64(@backingInt(op), &cur, &hi, 0);
     std.debug.assert(rc == c.SQLITE_OK);
     std.debug.assert(cur >= 0);
     std.debug.assert(hi >= 0);

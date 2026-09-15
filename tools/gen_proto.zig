@@ -538,7 +538,7 @@ const Gen = struct {
             ),
             .TYPE_ENUM => std.fmt.allocPrint(
                 g.a,
-                "@as({s}, @enumFromInt(try r.readInt32()))",
+                "@as({s}, @fromBackingInt(try r.readInt32()))",
                 .{try g.typeName(f)},
             ),
             else => scalarRead(g.a, t, "r"),
@@ -1234,7 +1234,7 @@ const Gen = struct {
                 try g.line("{s}try {s}.encodeInto(w);", .{ pad, val });
                 try g.line("{s}try w.endLen(mark);", .{pad});
             },
-            .TYPE_ENUM => try g.line("{s}try w.writeInt32({d}, @intFromEnum({s}));", .{
+            .TYPE_ENUM => try g.line("{s}try w.writeInt32({d}, @backingInt({s}));", .{
                 pad,
                 number,
                 val,
@@ -1345,26 +1345,26 @@ const Gen = struct {
         }
     }
 
-    /// `const v: <Enum> = @enumFromInt(try <recv>.readInt32());`, broken after
+    /// `const v: <Enum> = @fromBackingInt(try <recv>.readInt32());`, broken after
     /// the `=` when the enum name is too long to fit beside it.
     fn genEnumRead(g: *Gen, f: *pb.FieldDescriptorProto, recv: []const u8) Error!void {
         const tname = try g.typeName(f);
-        const flat = "                const v:  = @enumFromInt(try .readInt32());".len +
+        const flat = "                const v:  = @fromBackingInt(try .readInt32());".len +
             tname.len + recv.len;
         if (flat <= max_cols) {
-            try g.line("                const v: {s} = @enumFromInt(try {s}.readInt32());", .{
+            try g.line("                const v: {s} = @fromBackingInt(try {s}.readInt32());", .{
                 tname,
                 recv,
             });
         } else if ("                const v:  =".len + tname.len <= max_cols) {
             try g.line("                const v: {s} =", .{tname});
-            try g.line("                    @enumFromInt(try {s}.readInt32());", .{recv});
+            try g.line("                    @fromBackingInt(try {s}.readInt32());", .{recv});
         } else {
             // Enum names run to 71 characters, past what even a bare `const
             // v: <Enum> =` fits; only @as puts the name on a line of its own.
             try g.line("                const v = @as(", .{});
             try g.line("                    {s},", .{tname});
-            try g.line("                    @enumFromInt(try {s}.readInt32()),", .{recv});
+            try g.line("                    @fromBackingInt(try {s}.readInt32()),", .{recv});
             try g.line("                );", .{});
         }
     }

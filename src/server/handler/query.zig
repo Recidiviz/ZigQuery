@@ -677,7 +677,7 @@ test "job store round-trips and replaces on duplicate id" {
     var store = JobStore{ .gpa = testing.allocator };
     defer store.deinit();
 
-    var int_t: spec.Type = .{ .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_INT64) };
+    var int_t: spec.Type = .{ .kind = @backingInt(zigquery.pb.TypeKind.TYPE_INT64) };
     var types = [_]*spec.Type{&int_t};
     var names = [_][]const u8{"n"};
 
@@ -707,7 +707,7 @@ test "the job-rows lookup hands the virtual table what the job holds" {
     var store = JobStore{ .gpa = testing.allocator };
     defer store.deinit();
 
-    var str_t: spec.Type = .{ .kind = @intFromEnum(zigquery.pb.TypeKind.TYPE_STRING) };
+    var str_t: spec.Type = .{ .kind = @backingInt(zigquery.pb.TypeKind.TYPE_STRING) };
     var types = [_]*spec.Type{&str_t};
     var names = [_][]const u8{"s"};
     try store.put("test", "job2", .{

@@ -80,8 +80,9 @@ fn field(
                 return;
             }
             try w.writeByte('\n');
-            inline for (@typeInfo(T).@"struct".fields) |f| {
-                try field(w, f.name, null, f.type, @field(v, f.name), depth + 1, opts);
+            const s = @typeInfo(T).@"struct";
+            inline for (s.field_names, s.field_types) |field_name, field_type| {
+                try field(w, field_name, null, field_type, @field(v, field_name), depth + 1, opts);
             }
         },
 
@@ -107,7 +108,7 @@ fn field(
             if (std.enums.tagName(T, v)) |n| {
                 try w.print(" {s}\n", .{n});
             } else {
-                try w.print(" {d}\n", .{@intFromEnum(v)});
+                try w.print(" {d}\n", .{@backingInt(v)});
             }
         },
 

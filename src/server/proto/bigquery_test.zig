@@ -181,15 +181,16 @@ fn populate(
             },
             else => @compileError("unsupported pointer " ++ @typeName(T)),
         },
-        .@"enum" => |i| return @field(T, i.fields[i.fields.len - 1].name),
+        .@"enum" => |i| return @field(T, i.field_names[i.field_names.len - 1]),
         .@"union" => |i| {
             // One branch is all a oneof can carry.
-            return @unionInit(T, i.fields[0].name, try populate(i.fields[0].type, a, depth, seed));
+            return @unionInit(T, i.field_names[0], try populate(i.field_types[0], a, depth, seed));
         },
         .@"struct" => |i| {
             var v: T = .{};
-            inline for (i.fields, 0..) |f, k| {
-                @field(v, f.name) = try populate(f.type, a, depth, seed +% @as(u8, @intCast(k)) +% 1);
+            inline for (i.field_names, i.field_types, 0..) |field_name, field_type, k| {
+                @field(v, field_name) =
+                    try populate(field_type, a, depth, seed +% @as(u8, @intCast(k)) +% 1);
             }
             return v;
         },
@@ -225,7 +226,7 @@ fn roundTrip(comptime T: type, a: std.mem.Allocator) !void {
 
     // Wrappers render as a bare value, so there is no object to count.
     if (parsed != .object) return;
-    const want = @typeInfo(T).@"struct".fields.len;
+    const want = @typeInfo(T).@"struct".field_names.len;
     if (parsed.object.count() != want) {
         std.debug.print("{s}: {d} keys for {d} fields — {s}\n", .{
             @typeName(T),
@@ -243,8 +244,8 @@ test "every message in the closure round-trips under strict mode" {
     const a = arena_state.allocator();
 
     var checked: usize = 0;
-    inline for (@typeInfo(pb).@"struct".decls) |decl| {
-        const T = @field(pb, decl.name);
+    inline for (@typeInfo(pb).@"struct".decl_names) |decl_name| {
+        const T = @field(pb, decl_name);
         if (@TypeOf(T) == type and @typeInfo(T) == .@"struct" and @hasDecl(T, "jsonDecode")) {
             try roundTrip(T, a);
             checked += 1;

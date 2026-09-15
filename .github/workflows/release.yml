@@ -14,7 +14,7 @@ permissions:
   packages: write
 
 env:
-  ZIG_VERSION: "0.16.0"
+  ZIG_VERSION: "0.17.0-dev.2131+d08989840"
   REGISTRY: ghcr.io
 
 jobs:

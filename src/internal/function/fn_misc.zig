@@ -138,7 +138,7 @@ fn typeKindOf(t: std.json.Value) Error!pb.TypeKind {
     if (t != .object) return error.CorruptData;
     const kind = t.object.get("kind") orelse return error.CorruptData;
     if (kind != .integer) return error.CorruptData;
-    return @enumFromInt(@as(i32, @intCast(kind.integer)));
+    return @fromBackingInt(@intCast(kind.integer));
 }
 
 /// CAST(STRING AS BOOL): only 'true'/'false', case-insensitively; every other
@@ -239,7 +239,7 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
         .TYPE_STRUCT => return castToStruct(alloc, t, v),
         else => return bind.fail(
             "CAST: unimplemented cast to type kind {d}",
-            .{@intFromEnum(kind)},
+            .{@backingInt(kind)},
             error.Unimplemented,
         ),
     }

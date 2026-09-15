@@ -32,10 +32,10 @@ pub fn main(init: std.process.Init) !void {
     const opts = try parseArgs(init.minimal.args, out);
 
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer if (builtin.mode == .Debug) {
+    defer if (builtin.mode == .debug) {
         _ = gpa_state.deinit();
     };
-    const gpa = if (builtin.mode == .Debug) gpa_state.allocator() else std.heap.smp_allocator;
+    const gpa = if (builtin.mode == .debug) gpa_state.allocator() else std.heap.smp_allocator;
 
     var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();

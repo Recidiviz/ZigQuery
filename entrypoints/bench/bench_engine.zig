@@ -41,10 +41,10 @@ const default_sizes = [_]usize{ 1, 50, 500 };
 
 pub fn main(init: std.process.Init) !void {
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer if (builtin.mode == .Debug) {
+    defer if (builtin.mode == .debug) {
         _ = gpa_state.deinit();
     };
-    const gpa = if (builtin.mode == .Debug) gpa_state.allocator() else std.heap.smp_allocator;
+    const gpa = if (builtin.mode == .debug) gpa_state.allocator() else std.heap.smp_allocator;
 
     var stdout_buf: [8192]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);
@@ -59,7 +59,7 @@ pub fn main(init: std.process.Init) !void {
     while (args.next()) |a| try sizes.append(gpa, try std.fmt.parseInt(usize, a, 10));
     if (sizes.items.len == 0) try sizes.appendSlice(gpa, &default_sizes);
 
-    if (builtin.mode == .Debug) {
+    if (builtin.mode == .debug) {
         try out.print("WARNING: Debug build; numbers are not comparable to release.\n", .{});
     }
     try out.print(

@@ -140,13 +140,13 @@ const Call = struct {
     /// what a C-core client posting RECV_INITIAL_METADATA is waiting for.
     fn recvRequest(self: *Call) void {
         self.ops = std.mem.zeroes([3]c.c.grpc_op);
-        self.ops[0].op = @intFromEnum(c.OpType.send_initial_metadata);
+        self.ops[0].op = @backingInt(c.OpType.send_initial_metadata);
         self.ops[0].data.send_initial_metadata = .{
             .count = 0,
             .metadata = null,
             .maybe_compression_level = .{ .is_set = 0, .level = 0 },
         };
-        self.ops[1].op = @intFromEnum(c.OpType.recv_message);
+        self.ops[1].op = @backingInt(c.OpType.recv_message);
         self.ops[1].data.recv_message = .{ .recv_message = &self.request };
 
         self.phase = .awaiting_request;
@@ -199,7 +199,7 @@ const Call = struct {
         self.ops = std.mem.zeroes([3]c.c.grpc_op);
         // No SEND_INITIAL_METADATA: recvRequest already sent it, and sending it
         // twice is a use-after-send error inside core.
-        self.ops[0].op = @intFromEnum(c.OpType.send_message);
+        self.ops[0].op = @backingInt(c.OpType.send_message);
         self.ops[0].data.send_message = .{ .send_message = self.response };
 
         self.phase = .awaiting_send;
@@ -213,16 +213,16 @@ const Call = struct {
     /// Closes a successful call once every message has been acknowledged.
     fn finish(self: *Call) void {
         self.ops = std.mem.zeroes([3]c.c.grpc_op);
-        self.ops[0].op = @intFromEnum(c.OpType.send_status_from_server);
+        self.ops[0].op = @backingInt(c.OpType.send_status_from_server);
         self.ops[0].data.send_status_from_server = .{
             .trailing_metadata_count = 0,
             .trailing_metadata = null,
-            .status = @intFromEnum(c.Status.ok),
+            .status = @backingInt(c.Status.ok),
             .status_details = null,
         };
         // What turns "the status is queued" into "the call is over", giving
         // exactly one point at which this allocation may be freed.
-        self.ops[1].op = @intFromEnum(c.OpType.recv_close_on_server);
+        self.ops[1].op = @backingInt(c.OpType.recv_close_on_server);
         self.ops[1].data.recv_close_on_server = .{ .cancelled = &self.cancelled };
 
         self.phase = .awaiting_close;
@@ -239,14 +239,14 @@ const Call = struct {
         self.status_details = c.c.grpc_slice_from_copied_buffer(message.ptr, message.len);
 
         self.ops = std.mem.zeroes([3]c.c.grpc_op);
-        self.ops[0].op = @intFromEnum(c.OpType.send_status_from_server);
+        self.ops[0].op = @backingInt(c.OpType.send_status_from_server);
         self.ops[0].data.send_status_from_server = .{
             .trailing_metadata_count = 0,
             .trailing_metadata = null,
-            .status = @intFromEnum(status),
+            .status = @backingInt(status),
             .status_details = &self.status_details,
         };
-        self.ops[1].op = @intFromEnum(c.OpType.recv_close_on_server);
+        self.ops[1].op = @backingInt(c.OpType.recv_close_on_server);
         self.ops[1].data.recv_close_on_server = .{ .cancelled = &self.cancelled };
 
         self.phase = .awaiting_close;
@@ -274,23 +274,23 @@ const Call = struct {
         self.status_details = c.c.grpc_slice_from_copied_buffer(msg.ptr, msg.len);
 
         self.ops = std.mem.zeroes([3]c.c.grpc_op);
-        self.ops[0].op = @intFromEnum(c.OpType.send_initial_metadata);
+        self.ops[0].op = @backingInt(c.OpType.send_initial_metadata);
         self.ops[0].data.send_initial_metadata = .{
             .count = 0,
             .metadata = null,
             .maybe_compression_level = .{ .is_set = 0, .level = 0 },
         };
-        self.ops[1].op = @intFromEnum(c.OpType.send_status_from_server);
+        self.ops[1].op = @backingInt(c.OpType.send_status_from_server);
         self.ops[1].data.send_status_from_server = .{
             .trailing_metadata_count = 0,
             .trailing_metadata = null,
-            .status = @intFromEnum(c.Status.unimplemented),
+            .status = @backingInt(c.Status.unimplemented),
             .status_details = &self.status_details,
         };
         // Not needed to answer the call, but it is what turns "the status is
         // queued" into "the call is over", giving exactly one point at which
         // this allocation may be freed.
-        self.ops[2].op = @intFromEnum(c.OpType.recv_close_on_server);
+        self.ops[2].op = @backingInt(c.OpType.recv_close_on_server);
         self.ops[2].data.recv_close_on_server = .{ .cancelled = &self.cancelled };
 
         self.phase = .awaiting_close;

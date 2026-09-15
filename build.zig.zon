@@ -25,7 +25,7 @@
     .fingerprint = 0x3a8ad61ae4373f75, // Changing this has security and trust implications.
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.2131+d08989840",
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
     // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
@@ -35,10 +35,6 @@
         .sqlite = .{
             .url = "https://sqlite.org/2026/sqlite-amalgamation-3530300.zip",
             .hash = "N-V-__8AAE9krgByKNN5S4cuFUqn5FS8FvM4S3K1qQ-3sEHC",
-        },
-        .ephor = .{
-            .url = "https://codeberg.org/RhyosLabs/ephor/archive/v0.14.2.tar.gz",
-            .hash = "ephor-0.14.2-p-Eoi3CRFQAKLECH5wnEI78GscKz2AUYXXf0qlr-sOfX",
         },
         .grpc = .{
             .url = "git+https://github.com/allyourcodebase/grpc?ref=1.82.1#7fb4fc84440ef7a2a2f1ac3b019f39e19f0993c5",

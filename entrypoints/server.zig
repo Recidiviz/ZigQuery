@@ -34,10 +34,10 @@ pub fn main(init: std.process.Init) !void {
     // analyzer shim. Debug builds keep the checked allocator, where leak
     // detection is the point.
     var debug_state: std.heap.DebugAllocator(.{}) = .init;
-    defer if (builtin.mode == .Debug) {
+    defer if (builtin.mode == .debug) {
         _ = debug_state.deinit();
     };
-    const gpa = if (builtin.mode == .Debug)
+    const gpa = if (builtin.mode == .debug)
         debug_state.allocator()
     else
         std.heap.c_allocator;
