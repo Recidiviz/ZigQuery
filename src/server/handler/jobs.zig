@@ -252,15 +252,15 @@ pub fn destinationFromJobConfig(job: *const pb.Job) ?Destination {
     };
 }
 
-/// The keys of `configuration.query` that shape a table the job creates:
+/// The fields of `configuration.query` that shape a table the job creates:
 /// `timePartitioning`, `rangePartitioning` and `clustering`, exactly as the
 /// client posted them. BigQuery reports them back on the table the same way
 /// (verified 2026-09-14), and a client comparing its request with tables.get
-/// compares every key, so they stay raw JSON rather than round-tripping
+/// compares every field, so they stay raw JSON rather than round-tripping
 /// through pb.JobConfigurationQuery, whose TimePartitioning has no
 /// `requirePartitionFilter`. A null — the python client posts
 /// `"timePartitioning": null` beside `clustering` — asks for nothing.
-pub fn destinationTableKeys(
+pub fn destinationLayoutFields(
     arena: std.mem.Allocator,
     body: []const u8,
 ) std.mem.Allocator.Error!std.json.ObjectMap {
@@ -339,29 +339,29 @@ test "reads a destination table and write disposition" {
     try testing.expectEqualStrings("WRITE_TRUNCATE", dst.write_disposition);
 }
 
-test "a destination job's table layout keys come back as posted, nulls dropped" {
+test "a destination job's table layout fields come back as posted, nulls dropped" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const keys = try destinationTableKeys(arena,
+    const layout = try destinationLayoutFields(arena,
         \\{"configuration":{"query":{"query":"SELECT 1",
         \\  "destinationTable":{"projectId":"p","datasetId":"d","tableId":"t"},
         \\  "clustering":{"fields":["a"]},
         \\  "timePartitioning":null,
         \\  "rangePartitioning":{"field":"n","range":{"start":"0","end":"100","interval":"10"}}}}}
     );
-    try testing.expectEqual(@as(usize, 2), keys.count());
-    try testing.expect(keys.get("timePartitioning") == null);
-    try testing.expect(keys.get("destinationTable") == null);
-    const fields = keys.get("clustering").?.object.get("fields").?.array.items;
+    try testing.expectEqual(@as(usize, 2), layout.count());
+    try testing.expect(layout.get("timePartitioning") == null);
+    try testing.expect(layout.get("destinationTable") == null);
+    const fields = layout.get("clustering").?.object.get("fields").?.array.items;
     try testing.expectEqual(@as(usize, 1), fields.len);
     try testing.expectEqualStrings("a", fields[0].string);
-    const range = keys.get("rangePartitioning").?.object.get("range").?.object;
+    const range = layout.get("rangePartitioning").?.object.get("range").?.object;
     try testing.expectEqualStrings("100", range.get("end").?.string);
 
     // Not a job body at all: nothing, rather than an error.
-    try testing.expectEqual(@as(usize, 0), (try destinationTableKeys(arena, "not json")).count());
+    try testing.expectEqual(@as(usize, 0), (try destinationLayoutFields(arena, "not json")).count());
 }
 
 test "a query job without a destination has none" {

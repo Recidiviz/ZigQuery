@@ -812,12 +812,12 @@ pub const Server = struct {
         return if (v == .object) v else null;
     }
 
-    /// The resource keys a spec carries beyond the ones the server computes:
+    /// The resource fields a spec carries beyond the ones the server computes:
     /// what the DDL that made the table implies — a view's query, PARTITION BY,
     /// CLUSTER BY — with what a client posted (`TableSpec.metadata`) over it.
-    /// A posted key always wins: it is what the client said, and a later patch
+    /// A posted field always wins: it is what the client said, and a later patch
     /// may have changed it. Null when there is neither.
-    fn resourceKeys(
+    fn resourceFields(
         arena: std.mem.Allocator,
         table_spec: *const zigquery.spec.TableSpec,
     ) !?std.json.Value {
@@ -830,7 +830,7 @@ pub const Server = struct {
             try view.put(arena, "useLegacySql", .{ .bool = false });
             try obj.put(arena, "view", .{ .object = view });
         }
-        try putPartitioningKeys(arena, &obj, table_spec);
+        try putPartitioningFields(arena, &obj, table_spec);
         if (table_spec.clustering.len > 0) {
             var fields: std.json.Array = .init(arena);
             for (table_spec.clustering) |name| try fields.append(.{ .string = name });
@@ -852,7 +852,7 @@ pub const Server = struct {
     /// OPTIONS ride along: `partition_expiration_days` becomes
     /// `timePartitioning.expirationMs`, and `require_partition_filter=true`
     /// shows up both inside `timePartitioning` and on the table.
-    fn putPartitioningKeys(
+    fn putPartitioningFields(
         arena: std.mem.Allocator,
         obj: *std.json.ObjectMap,
         table_spec: *const zigquery.spec.TableSpec,
@@ -929,7 +929,7 @@ pub const Server = struct {
         table_spec: *const zigquery.spec.TableSpec,
     ) !tables_handler.TableMeta {
         const path = table_spec.name_path;
-        const posted = try resourceKeys(arena, table_spec);
+        const posted = try resourceFields(arena, table_spec);
         // A synthetic spec (a job's result table) carries no creation time.
         const created_micros = zigquery.catalog.epochMicrosFromRfc3339(table_spec.created_at);
         const created_millis: i64 = if (created_micros) |us|
@@ -1233,7 +1233,7 @@ pub const Server = struct {
                 dst,
                 materialization_method,
                 prior_metadata,
-                try jobs_handler.destinationTableKeys(arena, req.body),
+                try jobs_handler.destinationLayoutFields(arena, req.body),
             );
             // The job's own result mirrors the query's SELECT output, the same
             // rows just written to the destination table — not the table's
@@ -1435,10 +1435,10 @@ pub const Server = struct {
     }
 
     /// After a materialization job. A rebuilt destination keeps the resource
-    /// keys it had before the job, schema aside — BigQuery keeps a truncated
+    /// fields it had before the job, schema aside — BigQuery keeps a truncated
     /// table's description, labels and clustering — and takes the layout the
-    /// job itself asked for (`layout_keys`, from
-    /// jobs_handler.destinationTableKeys) over them. That is how a table a
+    /// job itself asked for (`layout_fields`, from
+    /// jobs_handler.destinationLayoutFields) over them. That is how a table a
     /// query job creates gets its partitioning and clustering, and recidiviz
     /// materializes by deleting the table and letting the job create it. An
     /// append changed nothing the catalog does not already hold.
@@ -1448,11 +1448,11 @@ pub const Server = struct {
         dst: jobs_handler.Destination,
         materialization_method: MaterializationMethod,
         prior_metadata: []const u8,
-        layout_keys: std.json.ObjectMap,
+        layout_fields: std.json.ObjectMap,
     ) !void {
         if (materialization_method != .replaced) return;
-        var kept = try keysKeptOverRebuild(arena, prior_metadata);
-        var it = layout_keys.iterator();
+        var kept = try fieldsKeptOverRebuild(arena, prior_metadata);
+        var it = layout_fields.iterator();
         while (it.next()) |kv| try kept.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         if (kept.count() == 0) return;
         var metadata_json: std.ArrayList(u8) = .empty;
@@ -1469,9 +1469,9 @@ pub const Server = struct {
         );
     }
 
-    /// A rebuilt destination's posted keys, minus `schema`, which the query
+    /// A rebuilt destination's posted fields, minus `schema`, which the query
     /// now defines.
-    fn keysKeptOverRebuild(
+    fn fieldsKeptOverRebuild(
         arena: std.mem.Allocator,
         prior_metadata: []const u8,
     ) !std.json.ObjectMap {
@@ -2653,8 +2653,8 @@ fn runQueryJob(s: *Server, arena: std.mem.Allocator, sql: []const u8) !void {
 test "DDL PARTITION BY and CLUSTER BY are what tables.get reports, in BigQuery's shapes" {
     // OBT-19799. Each expected fragment is what BigQuery itself reports for the
     // same DDL (captured 2026-09-14). The python client compares a table's
-    // time_partitioning key for key with what it would post, so an extra or a
-    // missing key reads as a change and recidiviz refuses to write.
+    // time_partitioning field for field with what it would post, so an extra or
+    // a missing field reads as a change and recidiviz refuses to write.
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -2743,7 +2743,7 @@ test "a patch wins over DDL partitioning, and CREATE OR REPLACE without it clear
     defer s.deinit();
     try runQueryJob(s, arena, "CREATE TABLE `ds1.t` (d DATE, a STRING) PARTITION BY d CLUSTER BY a");
 
-    // A patched key is what the client said last; the DDL's other key stays.
+    // A patched field is what the client said last; the DDL's other field stays.
     const patched = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/t",
         \\{"clustering":{"fields":["d"]}}
     );
@@ -2782,11 +2782,11 @@ test "DDL partitioning survives a restart on a file-backed database" {
     }
 }
 
-test "a query job's destination reports the partitioning and clustering it asked for, key for key" {
+test "a query job's destination reports the partitioning and clustering it asked for, field for field" {
     // OBT-19799, the materialization path: recidiviz deletes the table, lets
     // a WRITE_TRUNCATE job carrying timePartitioning and clustering create
     // it, and later compares tables.get with what it would post. BigQuery
-    // echoes the job's keys unchanged (captured 2026-09-14), including
+    // echoes the job's fields unchanged (captured 2026-09-14), including
     // `requirePartitionFilter`, which pb.TimePartitioning has no field for.
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
