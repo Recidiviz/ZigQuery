@@ -51,7 +51,9 @@ Two parts deliberately diverge:
 
 ## Prerequisites
 
-- Zig 0.16
+- Zig 0.17: the dev build named by `minimum_zig_version` in `build.zig.zon`
+  - `zig build ephor` also needs Zig 0.16, reached through a `zig` on PATH that
+    honours `tools/ephor/build.zig.zon`, such as [anyzig](https://github.com/marler8997/anyzig)
 - Bazel 7.6 + the [googlesql](https://github.com/google/googlesql) submodule
 - `googlesql` analyzer shim built
   - macOS: `bazel build -c opt //shim:libgooglesql_shim.dylib`

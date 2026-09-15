@@ -71,7 +71,7 @@ pub fn body(arena: std.mem.Allocator, reason: Reason, message: []const u8) ![]co
     }};
     return std.json.Stringify.valueAlloc(arena, Envelope{ .@"error" = .{
         .errors = &errors,
-        .code = @intFromEnum(reason.status()),
+        .code = @backingInt(reason.status()),
         .message = message,
     } }, .{});
 }

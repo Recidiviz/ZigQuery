@@ -86,10 +86,10 @@ const Shared = struct {
 
 pub fn main(init: std.process.Init) !void {
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer if (builtin.mode == .Debug) {
+    defer if (builtin.mode == .debug) {
         _ = gpa_state.deinit();
     };
-    const gpa = if (builtin.mode == .Debug) gpa_state.allocator() else std.heap.smp_allocator;
+    const gpa = if (builtin.mode == .debug) gpa_state.allocator() else std.heap.smp_allocator;
 
     var stdout_buf: [8192]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);

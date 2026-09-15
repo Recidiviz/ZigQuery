@@ -314,7 +314,8 @@ fn header(o: anytype) !void {
         "{s:<26} {s:>8} {s:>10} {s:>7} {s:>11} {s:>9}\n",
         .{ "stage", "total", "codec adj", "%", "codec spans", "alloc/row" },
     );
-    try o.print("{s}\n", .{"-" ** 74});
+    try o.splatByteAll('-', 74);
+    try o.writeByte('\n');
 }
 
 fn report(o: anytype, s: Stage, overhead_ns: f64) !void {

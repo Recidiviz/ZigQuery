@@ -1,8 +1,8 @@
 // A narrow C surface over nanoarrow, for the Storage Read API's ARROW format.
 //
-// Why this exists: `@cImport` cannot read nanoarrow's headers. Two of its
+// Why this exists: translate-c cannot read nanoarrow's headers. Two of its
 // `static inline` helpers translate to invalid Zig — an assignment to a cast in
-// one, a `[3]c_uint` where a `c_uint` is expected in the other — and `@cImport`
+// one, a `[3]c_uint` where a `c_uint` is expected in the other — and translate-c
 // fails whole-header, so one bad inline declaration takes the entire API with
 // it. Worse, the functions this encoder actually needs (`ArrowArrayAppend*`)
 // are themselves `static inline`, so suppressing that header would remove the

@@ -1934,7 +1934,7 @@ pub const NodeExtractor = struct {
                 } else {
                     // Templated argument: carry the SignatureArgumentKind.
                     const t = try alloc.create(spec.Type);
-                    t.* = .{ .signature_kind = @intFromEnum(arg.kind orelse .ARG_KIND_EXPR_FIXED) };
+                    t.* = .{ .signature_kind = @backingInt(arg.kind orelse .ARG_KIND_EXPR_FIXED) };
                     info.type = t;
                 }
                 if (arg.options) |opts| {

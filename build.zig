@@ -55,7 +55,7 @@ const sqlite_cflags = [_][]const u8{
 // only build inputs from outside this repo are Zig and Bazel.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const opts: std.Build.StandardOptimizeOptionOptions = .{ .preferred_optimize_mode = std.builtin.OptimizeMode.ReleaseFast };
+    const opts: std.Build.StandardOptimizeOptionOptions = .{ .preferred_optimize_mode = .fast };
     const optimize = b.standardOptimizeOption(opts);
 
     // The shim (//shim) and the googlesql submodule (//third_party/googlesql)
@@ -82,7 +82,7 @@ pub fn build(b: *std.Build) void {
         "Run `bazel build -c opt //shim:<platform shim>` first",
     ) orelse false;
 
-    const repo_root = b.build_root.path orelse ".";
+    const repo_root = b.fmt("{f}", .{b.root});
     const shim_dylib = b.pathJoin(&.{ repo_root, shim_rel });
     const shim_dir = std.fs.path.dirname(shim_dylib) orelse repo_root;
 
@@ -146,7 +146,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .root_module = b.createModule(.{
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
             .link_libc = true,
         }),
     });
@@ -155,6 +155,12 @@ pub fn build(b: *std.Build) void {
         .flags = &sqlite_cflags,
     });
     sqlite.root_module.addIncludePath(sqlite_headers);
+    // Zig bindings for sqlite3.h, shared with the coverage tree like the library.
+    const sqlite_c = b.addTranslateC(.{
+        .root_source_file = sqlite_dep.path("sqlite3.h"),
+        .target = target,
+        .optimize = .fast,
+    }).createModule();
 
     // gRPC core, for the Storage API transport
     // Built once and shared by every consumer of serverModule, always at
@@ -179,7 +185,7 @@ pub fn build(b: *std.Build) void {
     // the vendored C/C++ too — see the arm64 SIGILL note in release.yml.
     const grpc_dep = b.dependency("grpc", .{
         .target = target,
-        .optimize = .ReleaseFast,
+        .optimize = .fast,
         .link_mode = .static,
         .pic = true,
     });
@@ -218,7 +224,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .root_module = b.createModule(.{
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
             .link_libc = true,
         }),
     });
@@ -240,13 +246,18 @@ pub fn build(b: *std.Build) void {
         .flags = &.{"-std=c11"},
     });
     nanoarrow.root_module.addIncludePath(b.path("src/server/grpc"));
+    // Only the shim header: Zig never sees nanoarrow's own.
+    const nanoarrow_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/server/grpc/nanoarrow_shim.h"),
+        .target = target,
+        .optimize = .fast,
+    }).createModule();
 
     const server_deps: ServerDeps = .{
         .target = target,
         .cgrpc = grpc_dep.module("cgrpc"),
         .nanoarrow = nanoarrow,
-        // Only the shim header: Zig never sees nanoarrow's own.
-        .nanoarrow_headers = &.{b.path("src/server/grpc")},
+        .nanoarrow_c = nanoarrow_c,
     };
 
     // The `coverage` step builds a second copy of the module tree at -ODebug,
@@ -259,7 +270,7 @@ pub fn build(b: *std.Build) void {
         .shim_portable_rpath = shim_portable_rpath,
         .shim_static_obj = shim_static_obj,
         .sqlite = sqlite,
-        .sqlite_headers = sqlite_headers,
+        .sqlite_c = sqlite_c,
     };
     const mod = engineModule(b, deps, optimize, false);
 
@@ -306,7 +317,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     b.step("run", "Run the CLI").dependOn(&run_cmd.step);
 
     // Unit tests over the library module.
@@ -332,8 +343,8 @@ pub fn build(b: *std.Build) void {
     b.step("install-spec", "Install zig-out/bin/spec-runner for debugging")
         .dependOn(&b.addInstallArtifact(spec_exe, .{}).step);
     const run_spec = b.addRunArtifact(spec_exe);
-    run_spec.setCwd(.{ .cwd_relative = b.build_root.path.? });
-    if (b.args) |args| run_spec.addArgs(args);
+    run_spec.setCwd(.{ .cwd_relative = repo_root });
+    run_spec.addPassthruArgs();
     b.step("spec", "Run the conformance spec corpus").dependOn(&run_spec.step);
 
     // Regenerates src/proto/resolved_ast.zig from the committed
@@ -352,20 +363,20 @@ pub fn build(b: *std.Build) void {
             // -Dtarget. -ODebug because it is a second of work on a 190 KB
             // input, and optimizing it would cost more than it saves.
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{
                 .name = "pb",
                 .module = b.createModule(.{
                     .root_source_file = b.path("src/proto/resolved_ast.zig"),
                     .target = b.graph.host,
-                    .optimize = .Debug,
+                    .optimize = .debug,
                 }),
             }},
         }),
     });
     const run_gen_ast_pb = b.addRunArtifact(gen_proto);
     run_gen_ast_pb.addFileArg(b.path("proto/googlesql.fdset"));
-    run_gen_ast_pb.addArg(b.pathFromRoot("src/proto/resolved_ast.zig"));
+    run_gen_ast_pb.addArg(b.pathJoin(&.{ repo_root, "src/proto/resolved_ast.zig" }));
     // addFileArg resolves to an absolute path, which would put this machine's
     // checkout directory in the generated header and fail gen-proto-drift on
     // every other machine. The header gets the repo-relative label instead.
@@ -375,7 +386,7 @@ pub fn build(b: *std.Build) void {
     // The generator emits structurally correct Zig and leaves layout to `zig
     // fmt`, so the committed file stays canonical and future diffs stay small.
     const fmt_gen_proto = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
-    fmt_gen_proto.addArg(b.pathFromRoot("src/proto/resolved_ast.zig"));
+    fmt_gen_proto.addArg(b.pathJoin(&.{ repo_root, "src/proto/resolved_ast.zig" }));
     fmt_gen_proto.has_side_effects = true;
     fmt_gen_proto.step.dependOn(&run_gen_ast_pb.step);
 
@@ -392,7 +403,7 @@ pub fn build(b: *std.Build) void {
     // joins the importing module, and wire.zig already belongs to the engine's.
     const run_gen_storage_pb = b.addRunArtifact(gen_proto);
     run_gen_storage_pb.addFileArg(b.path("proto/bigquery_storage.fdset"));
-    run_gen_storage_pb.addArg(b.pathFromRoot("src/server/proto/storage.zig"));
+    run_gen_storage_pb.addArg(b.pathJoin(&.{ repo_root, "src/server/proto/storage.zig" }));
     run_gen_storage_pb.addArg("--source=proto/bigquery_storage.fdset");
     run_gen_storage_pb.addArg("--wire-import=@import(\"zigquery\").wire");
     run_gen_storage_pb.addArg(
@@ -401,7 +412,7 @@ pub fn build(b: *std.Build) void {
     run_gen_storage_pb.has_side_effects = true;
 
     const fmt_gen_storage = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
-    fmt_gen_storage.addArg(b.pathFromRoot("src/server/proto/storage.zig"));
+    fmt_gen_storage.addArg(b.pathJoin(&.{ repo_root, "src/server/proto/storage.zig" }));
     fmt_gen_storage.has_side_effects = true;
     fmt_gen_storage.step.dependOn(&run_gen_storage_pb.step);
 
@@ -410,7 +421,7 @@ pub fn build(b: *std.Build) void {
     // leaves out the option definitions --include_imports drags along.
     const run_gen_bq_pb = b.addRunArtifact(gen_proto);
     run_gen_bq_pb.addFileArg(b.path("proto/bigquery_v2.fdset"));
-    run_gen_bq_pb.addArg(b.pathFromRoot("src/server/proto/bigquery.zig"));
+    run_gen_bq_pb.addArg(b.pathJoin(&.{ repo_root, "src/server/proto/bigquery.zig" }));
     run_gen_bq_pb.addArg("--source=proto/bigquery_v2.fdset");
     run_gen_bq_pb.addArg("--json-only");
     // Roots, not the whole .fdset: the closure is what the implemented RPCs
@@ -424,7 +435,7 @@ pub fn build(b: *std.Build) void {
     run_gen_bq_pb.has_side_effects = true;
 
     const fmt_gen_bq = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
-    fmt_gen_bq.addArg(b.pathFromRoot("src/server/proto/bigquery.zig"));
+    fmt_gen_bq.addArg(b.pathJoin(&.{ repo_root, "src/server/proto/bigquery.zig" }));
     fmt_gen_bq.has_side_effects = true;
     fmt_gen_bq.step.dependOn(&run_gen_bq_pb.step);
 
@@ -458,7 +469,7 @@ pub fn build(b: *std.Build) void {
     if (maybe_bazel) |bz| threads_exe.step.dependOn(&bz.step);
     b.installArtifact(threads_exe);
     const run_threads = b.addRunArtifact(threads_exe);
-    if (b.args) |args| run_threads.addArgs(args);
+    run_threads.addPassthruArgs();
     b.step("analyzer-threads", "Run the concurrency gating experiment").dependOn(&run_threads.step);
 
     // Does a SharedCatalog actually make a connection pool coherent? Paired
@@ -477,7 +488,7 @@ pub fn build(b: *std.Build) void {
     if (maybe_bazel) |bz| sc_threads_exe.step.dependOn(&bz.step);
     b.installArtifact(sc_threads_exe);
     const run_sc_threads = b.addRunArtifact(sc_threads_exe);
-    if (b.args) |args| run_sc_threads.addArgs(args);
+    run_sc_threads.addPassthruArgs();
     b.step("shared-catalog-threads", "Shared-catalog coherence under a pool")
         .dependOn(&run_sc_threads.step);
 
@@ -493,7 +504,7 @@ pub fn build(b: *std.Build) void {
     if (maybe_bazel) |bz| codec_exe.step.dependOn(&bz.step);
     b.installArtifact(codec_exe);
     const run_codec = b.addRunArtifact(codec_exe);
-    if (b.args) |args| run_codec.addArgs(args);
+    run_codec.addPassthruArgs();
     b.step("codec-bench", "Value codec cost with real rows").dependOn(&run_codec.step);
 
     // Per-row cost of named-timezone resolution (zoneOffsetSeconds): the
@@ -510,7 +521,7 @@ pub fn build(b: *std.Build) void {
     if (maybe_bazel) |bz| tzbench_exe.step.dependOn(&bz.step);
     b.installArtifact(tzbench_exe);
     const run_tzbench = b.addRunArtifact(tzbench_exe);
-    if (b.args) |args| run_tzbench.addArgs(args);
+    run_tzbench.addPassthruArgs();
     b.step("tz-bench", "Per-row cost of named-timezone resolution").dependOn(&run_tzbench.step);
 
     // Per-query cost vs catalog size: the baseline the server's caching work
@@ -527,7 +538,7 @@ pub fn build(b: *std.Build) void {
     if (maybe_bazel) |bz| bench_exe.step.dependOn(&bz.step);
     b.installArtifact(bench_exe);
     const run_bench = b.addRunArtifact(bench_exe);
-    if (b.args) |args| run_bench.addArgs(args);
+    run_bench.addPassthruArgs();
     b.step("bench", "Benchmark per-query cost vs catalog size").dependOn(&run_bench.step);
 
     // The goccy/googlesqlite bench corpus (testdata/bench_corpus), so this
@@ -544,8 +555,8 @@ pub fn build(b: *std.Build) void {
     if (maybe_bazel) |bz| gsqlbench_exe.step.dependOn(&bz.step);
     b.installArtifact(gsqlbench_exe);
     const run_gsqlbench = b.addRunArtifact(gsqlbench_exe);
-    run_gsqlbench.setCwd(.{ .cwd_relative = b.build_root.path.? });
-    if (b.args) |args| run_gsqlbench.addArgs(args);
+    run_gsqlbench.setCwd(.{ .cwd_relative = repo_root });
+    run_gsqlbench.addPassthruArgs();
     b.step("gsql-bench", "Run the goccy/googlesqlite bench corpus")
         .dependOn(&run_gsqlbench.step);
 
@@ -589,7 +600,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(server_exe);
 
     const run_server = b.addRunArtifact(server_exe);
-    if (b.args) |args| run_server.addArgs(args);
+    run_server.addPassthruArgs();
     b.step("server", "Run the emulator").dependOn(&run_server.step);
 
     const server_tests = b.addTest(.{ .root_module = server_mod });
@@ -612,7 +623,7 @@ pub fn build(b: *std.Build) void {
     });
     if (maybe_bazel) |bz| insertbench_exe.step.dependOn(&bz.step);
     const run_insertbench = b.addRunArtifact(insertbench_exe);
-    if (b.args) |args| run_insertbench.addArgs(args);
+    run_insertbench.addPassthruArgs();
     b.step("insert-bench", "Profile a tabledata.insertAll request body")
         .dependOn(&run_insertbench.step);
 
@@ -637,7 +648,7 @@ pub fn build(b: *std.Build) void {
     });
     if (maybe_bazel) |bz| grpcsmoke_exe.step.dependOn(&bz.step);
     const run_grpcsmoke = b.addRunArtifact(grpcsmoke_exe);
-    if (b.args) |args| run_grpcsmoke.addArgs(args);
+    run_grpcsmoke.addPassthruArgs();
     b.step("grpc-smoke", "Round-trip a gRPC call against the transport skeleton")
         .dependOn(&run_grpcsmoke.step);
 
@@ -663,8 +674,8 @@ pub fn build(b: *std.Build) void {
     if (maybe_bazel) |bz| spec_ui_exe.step.dependOn(&bz.step);
     b.installArtifact(spec_ui_exe);
     const run_spec_ui = b.addRunArtifact(spec_ui_exe);
-    run_spec_ui.setCwd(.{ .cwd_relative = b.build_root.path.? }); // reads testdata/specs
-    if (b.args) |args| run_spec_ui.addArgs(args);
+    run_spec_ui.setCwd(.{ .cwd_relative = repo_root }); // reads testdata/specs
+    run_spec_ui.addPassthruArgs();
     b.step("spec-ui", "Browse the spec corpus results in a local web UI")
         .dependOn(&run_spec_ui.step);
 
@@ -690,8 +701,8 @@ pub fn build(b: *std.Build) void {
     //
     // --include-path keeps the report to this repo's own sources; without it
     // the Zig std lib dominates and the percentage means nothing.
-    const cov_mod = engineModule(b, deps, .Debug, false);
-    const cov_server_mod = serverModule(b, server_deps, .Debug, cov_mod);
+    const cov_mod = engineModule(b, deps, .debug, false);
+    const cov_server_mod = serverModule(b, server_deps, .debug, cov_mod);
     const cov_tests = b.addTest(.{ .name = "engine-tests", .root_module = cov_mod });
     const cov_server_tests = b.addTest(.{ .name = "server-tests", .root_module = cov_server_mod });
     if (maybe_bazel) |bz| {
@@ -699,10 +710,12 @@ pub fn build(b: *std.Build) void {
         cov_server_tests.step.dependOn(&bz.step);
     }
 
-    const cov_root = b.pathJoin(&.{ b.install_path, "coverage" });
+    // The install prefix is only resolved at make time, and kcov and the step description need a
+    // path now, so the report lives under the default prefix.
+    const cov_root = b.pathJoin(&.{ repo_root, "zig-out", "coverage" });
     const cov_runs = b.pathJoin(&.{ cov_root, "runs" });
     const cov_report = b.pathJoin(&.{ cov_root, "report" });
-    const cov_include = b.fmt("--include-path={s}", .{b.pathFromRoot("src")});
+    const cov_include = b.fmt("--include-path={s}", .{b.pathJoin(&.{ repo_root, "src" })});
 
     // kcov's mkdir of the output directory is not recursive, and it does not
     // notice until the first periodic flush — mid-run, after minutes of tests.
@@ -747,7 +760,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("entrypoints/spec/spec_runner.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zigquery", .module = cov_mod }},
         }),
     });
@@ -759,9 +772,9 @@ pub fn build(b: *std.Build) void {
 
     const kcov_spec = b.addSystemCommand(&.{ "kcov", "--clean", cov_include, cov_spec_runs });
     kcov_spec.addArtifactArg(cov_spec_exe);
-    if (b.args) |args| kcov_spec.addArgs(args);
+    kcov_spec.addPassthruArgs();
     // The runner resolves testdata/specs against the cwd, and kcov inherits it.
-    kcov_spec.setCwd(.{ .cwd_relative = b.build_root.path.? });
+    kcov_spec.setCwd(.{ .cwd_relative = repo_root });
     kcov_spec.has_side_effects = true;
     kcov_spec.step.dependOn(&cov_spec_mkdir.step);
 
@@ -777,24 +790,17 @@ pub fn build(b: *std.Build) void {
         b.fmt("Line coverage for the spec corpus -> {s}/index.html", .{cov_spec_report}),
     ).dependOn(&kcov_spec_merge.step);
 
-    // Ephor static analysis
-    // A build tool: it runs here, so it follows the host and not `-Dtarget`.
-    // Built for `target` it would be a foreign binary that addRunArtifact then
-    // tries to execute.
-    const ephor_dep = b.dependency("ephor", .{ .target = b.graph.host, .optimize = .ReleaseSafe });
-    const ephor_artifact = ephor_dep.artifact("ephor");
-    const ephor_cmd = b.addRunArtifact(ephor_artifact);
-    if (b.args) |args| {
-        ephor_cmd.addArgs(args);
-    }
-    const ephor_step = b.step("ephor", "Run ephor static analysis");
-    ephor_step.dependOn(&ephor_cmd.step);
+    // Ephor static analysis. ephor builds with an older Zig than this package, so it is its own
+    // package, tools/ephor, run through the `zig` on PATH. That `zig` has to honour the package's
+    // minimum_zig_version, as anyzig does.
+    const ephor_cmd = b.addSystemCommand(&.{ "zig", "build", "run", "--" });
+    ephor_cmd.setCwd(b.path("tools/ephor"));
+    ephor_cmd.addPassthruArgs();
+    b.step("ephor", "Run ephor static analysis").dependOn(&ephor_cmd.step);
 
-    // Ephor upgrade
-    const ephor_upgrade_cmd = b.addRunArtifact(ephor_artifact);
-    ephor_upgrade_cmd.addArgs(&.{"upgrade"});
-    const ephor_upgrade_step = b.step("ephor-upgrade", "Upgrade ephor to latest version");
-    ephor_upgrade_step.dependOn(&ephor_upgrade_cmd.step);
+    const ephor_upgrade_cmd = b.addSystemCommand(&.{ "zig", "build", "upgrade" });
+    ephor_upgrade_cmd.setCwd(b.path("tools/ephor"));
+    b.step("ephor-upgrade", "Upgrade ephor to latest version").dependOn(&ephor_upgrade_cmd.step);
 
     // Debuggable test binaries (ZigBrains: FalsePattern/ZigBrains#82).
     //
@@ -846,8 +852,8 @@ const EngineDeps = struct {
     /// Static libsqlite3, shared by every module (see the note at its
     /// construction: always ReleaseFast, even under -ODebug).
     sqlite: *std.Build.Step.Compile,
-    /// The amalgamation directory, for `sqlite.zig`'s @cInclude.
-    sqlite_headers: std.Build.LazyPath,
+    /// translate-c bindings for sqlite3.h, imported by `sqlite.zig`.
+    sqlite_c: *std.Build.Module,
 };
 
 /// `static_shim` selects which of //shim's two build outputs this instance
@@ -868,7 +874,7 @@ fn engineModule(
         .link_libc = true,
     });
     mod.addImport("build_options", deps.build_options);
-    mod.addIncludePath(deps.sqlite_headers);
+    mod.addImport("sqlite_c", deps.sqlite_c);
     mod.linkLibrary(deps.sqlite);
     if (static_shim) {
         mod.addObjectFile(.{ .cwd_relative = deps.shim_static_obj });
@@ -909,8 +915,8 @@ const ServerDeps = struct {
     /// Static libnanoarrow, for the ARROW data format. Built once at
     /// ReleaseFast and shared with the coverage tree, like SQLite.
     nanoarrow: *std.Build.Step.Compile,
-    /// Header roots for `arrow.zig`'s @cInclude.
-    nanoarrow_headers: []const std.Build.LazyPath,
+    /// translate-c bindings for nanoarrow_shim.h, imported by `arrow.zig`.
+    nanoarrow_c: *std.Build.Module,
     /// gRPC core's translate-c bindings, for the Storage Read API transport.
     /// See the note at its construction: one instance, always ReleaseFast,
     /// shared with the coverage tree.
@@ -936,9 +942,9 @@ fn serverModule(
         .imports = &.{
             .{ .name = "zigquery", .module = engine },
             .{ .name = "cgrpc", .module = deps.cgrpc },
+            .{ .name = "nanoarrow_c", .module = deps.nanoarrow_c },
         },
     });
-    for (deps.nanoarrow_headers) |h| mod.addIncludePath(h);
     mod.linkLibrary(deps.nanoarrow);
     return mod;
 }

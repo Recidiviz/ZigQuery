@@ -1298,7 +1298,7 @@ fn base32Encode(alloc: std.mem.Allocator, data: []const u8) Error![]u8 {
     var oi: usize = 0;
     var i: usize = 0;
     while (i < data.len) : (i += 5) {
-        var buf = [_]u8{0} ** 5;
+        var buf: [5]u8 = @splat(0);
         const n = @min(@as(usize, 5), data.len - i);
         @memcpy(buf[0..n], data[i .. i + n]);
         // 5 bytes -> 8 groups of 5 bits.

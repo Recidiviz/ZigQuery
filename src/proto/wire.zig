@@ -182,7 +182,7 @@ pub const Writer = struct {
     }
 
     pub fn writeTag(w: *Writer, field: u32, wire: WireType) EncodeError!void {
-        try w.writeVarint((@as(u64, field) << 3) | @intFromEnum(wire));
+        try w.writeVarint((@as(u64, field) << 3) | @backingInt(wire));
     }
 
     pub fn writeVarint(w: *Writer, v: u64) EncodeError!void {

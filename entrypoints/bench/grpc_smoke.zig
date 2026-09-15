@@ -291,7 +291,10 @@ const Client = struct {
     fn call(cl: *Client, gpa: std.mem.Allocator, path: []const u8) Outcome {
         return cl.tryCall(gpa, path) catch |err| {
             std.debug.print("  (client error on {s}: {t})\n", .{ path, err });
-            return .{ .status = @enumFromInt(0xffff), .details = gpa.dupe(u8, "") catch "" };
+            return .{
+                .status = @fromBackingInt(0xffff),
+                .details = gpa.dupe(u8, "") catch "",
+            };
         };
     }
 
@@ -329,9 +332,9 @@ const Client = struct {
 
         var tag: u8 = 0;
         var ops: [3]c.c.grpc_op = std.mem.zeroes([3]c.c.grpc_op);
-        ops[0].op = @intFromEnum(c.OpType.send_initial_metadata);
-        ops[1].op = @intFromEnum(c.OpType.send_close_from_client);
-        ops[2].op = @intFromEnum(c.OpType.recv_initial_metadata);
+        ops[0].op = @backingInt(c.OpType.send_initial_metadata);
+        ops[1].op = @backingInt(c.OpType.send_close_from_client);
+        ops[2].op = @backingInt(c.OpType.recv_initial_metadata);
         ops[2].data.recv_initial_metadata = .{ .recv_initial_metadata = &recv_initial };
         if (!c.callOk(c.c.grpc_call_start_batch(rpc, &ops, 3, &tag, null))) {
             return error.GrpcStartBatch;
@@ -346,7 +349,7 @@ const Client = struct {
         while (true) {
             var payload: ?*c.c.grpc_byte_buffer = null;
             var recv: [1]c.c.grpc_op = std.mem.zeroes([1]c.c.grpc_op);
-            recv[0].op = @intFromEnum(c.OpType.recv_message);
+            recv[0].op = @backingInt(c.OpType.recv_message);
             recv[0].data.recv_message = .{ .recv_message = &payload };
             if (!c.callOk(c.c.grpc_call_start_batch(rpc, &recv, 1, &tag, null))) {
                 return error.GrpcStartBatch;
@@ -367,7 +370,7 @@ const Client = struct {
         var error_string: [*c]const u8 = null;
 
         var last: [1]c.c.grpc_op = std.mem.zeroes([1]c.c.grpc_op);
-        last[0].op = @intFromEnum(c.OpType.recv_status_on_client);
+        last[0].op = @backingInt(c.OpType.recv_status_on_client);
         last[0].data.recv_status_on_client = .{
             .trailing_metadata = &recv_trailing,
             .status = &status,
@@ -380,7 +383,7 @@ const Client = struct {
         if (c.completion(c.c.grpc_completion_queue_next(cl.cq, deadline, null)) != .op_complete) {
             return error.GrpcNoCompletion;
         }
-        if (@as(c.Status, @enumFromInt(status)) != .ok) return error.StreamNotOk;
+        if (@as(c.Status, @fromBackingInt(@intCast(status))) != .ok) return error.StreamNotOk;
         return count;
     }
 
@@ -419,11 +422,11 @@ const Client = struct {
         // No SEND_MESSAGE: the server never reads one, and an UNIMPLEMENTED
         // answer does not depend on the request body.
         var ops: [4]c.c.grpc_op = std.mem.zeroes([4]c.c.grpc_op);
-        ops[0].op = @intFromEnum(c.OpType.send_initial_metadata);
-        ops[1].op = @intFromEnum(c.OpType.send_close_from_client);
-        ops[2].op = @intFromEnum(c.OpType.recv_initial_metadata);
+        ops[0].op = @backingInt(c.OpType.send_initial_metadata);
+        ops[1].op = @backingInt(c.OpType.send_close_from_client);
+        ops[2].op = @backingInt(c.OpType.recv_initial_metadata);
         ops[2].data.recv_initial_metadata = .{ .recv_initial_metadata = &recv_initial };
-        ops[3].op = @intFromEnum(c.OpType.recv_status_on_client);
+        ops[3].op = @backingInt(c.OpType.recv_status_on_client);
         ops[3].data.recv_status_on_client = .{
             .trailing_metadata = &recv_trailing,
             .status = &status,
@@ -454,7 +457,7 @@ const Client = struct {
         }
 
         return .{
-            .status = @enumFromInt(status),
+            .status = @fromBackingInt(@intCast(status)),
             .details = try gpa.dupe(u8, c.sliceBytes(&details)),
         };
     }

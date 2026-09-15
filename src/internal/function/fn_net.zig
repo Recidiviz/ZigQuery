@@ -215,7 +215,7 @@ fn parseDecOctet(s: []const u8) ?u8 {
 }
 
 fn parseIpv6(alloc: std.mem.Allocator, s: []const u8) Error!?[]u8 {
-    var groups: [8]u16 = [_]u16{0} ** 8;
+    var groups: [8]u16 = @splat(0);
     // Split around "::" (at most one).
     const dbl = std.mem.indexOf(u8, s, "::");
     if (dbl) |di| {

@@ -679,7 +679,7 @@ fn columnExprData(
     try ctx.fragmentContext().registerColumnScope(id, "t");
 
     const t = try a.create(spec.Type);
-    t.* = .{ .kind = @intFromEnum(kind) };
+    t.* = .{ .kind = @backingInt(kind) };
     const ref = try a.create(types_data.ColumnRefData);
     ref.* = .{ .column_name = name, .column_id = id, .table_name = "t", .type = t };
     return .{ .type = .column, .column = ref };

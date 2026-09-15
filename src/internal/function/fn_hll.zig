@@ -539,12 +539,12 @@ pub const Hll = struct {
         if (version != 1) {
             return bind.fail("unsupported Hll version: {d}", .{version}, error.CorruptData);
         }
-        if (raw_type < @intFromEnum(StorageType.empty) or
-            raw_type > @intFromEnum(StorageType.dense))
+        if (raw_type < @backingInt(StorageType.empty) or
+            raw_type > @backingInt(StorageType.dense))
         {
             return bind.fail("invalid Hll type: {d}", .{raw_type}, error.CorruptData);
         }
-        const storage_type: StorageType = @enumFromInt(raw_type);
+        const storage_type: StorageType = @fromBackingInt(@intCast(raw_type));
 
         const regwidth = (bytes[1] >> 5) + 1;
         const log2m = bytes[1] & 0x1f;
@@ -814,7 +814,7 @@ pub const Hll = struct {
         const bytes = try alloc.alloc(u8, 3 + bytes_needed);
         @memset(bytes, 0);
 
-        bytes[0] = (1 << 4) | @as(u8, @intFromEnum(storage_type));
+        bytes[0] = (1 << 4) | @as(u8, @backingInt(storage_type));
         bytes[1] = @intCast(((@as(u16, s.regwidth) - 1) << 5) | s.log2m);
         bytes[2] = packCutoffByte(s);
 

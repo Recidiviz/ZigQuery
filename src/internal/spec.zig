@@ -61,7 +61,7 @@ pub const Type = struct {
 
     /// Go Type.kind().
     pub fn typeKind(self: *const Type) pb.TypeKind {
-        return @enumFromInt(self.kind);
+        return @fromBackingInt(@intCast(self.kind));
     }
 
     /// Go Type.IsArray.
@@ -109,7 +109,7 @@ pub const Type = struct {
 /// Like Go newType, `name` is left empty.
 pub fn newTypeFromProto(alloc: std.mem.Allocator, tp: *const pb.TypeProto) Error!*Type {
     const t = try alloc.create(Type);
-    t.* = .{ .kind = @intFromEnum(tp.type_kind orelse .TYPE_UNKNOWN) };
+    t.* = .{ .kind = @backingInt(tp.type_kind orelse .TYPE_UNKNOWN) };
     switch (tp.type_kind orelse .TYPE_UNKNOWN) {
         .TYPE_ARRAY => {
             const at = tp.array_type orelse return error.InvalidType;
@@ -643,7 +643,7 @@ fn typeFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*Type {
 /// Convenience constructor for a scalar Type of the given kind.
 pub fn newSimpleType(alloc: std.mem.Allocator, kind: pb.TypeKind) error{OutOfMemory}!*Type {
     const t = try alloc.create(Type);
-    t.* = .{ .kind = @intFromEnum(kind) };
+    t.* = .{ .kind = @backingInt(kind) };
     return t;
 }
 

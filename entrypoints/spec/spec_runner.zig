@@ -83,10 +83,10 @@ pub fn main(init: std.process.Init) !void {
     const out = &stdout_writer.interface;
 
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer if (builtin.mode == .Debug) {
+    defer if (builtin.mode == .debug) {
         _ = gpa_state.deinit();
     };
-    const gpa = if (builtin.mode == .Debug) gpa_state.allocator() else std.heap.smp_allocator;
+    const gpa = if (builtin.mode == .debug) gpa_state.allocator() else std.heap.smp_allocator;
 
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -203,7 +203,7 @@ fn report(
         return;
     }
 
-    if (builtin.mode == .Debug) {
+    if (builtin.mode == .debug) {
         try out.print("WARNING: Debug build.\n\n", .{});
     }
     try out.print("spec corpus ({d} files)\n", .{manifest.files.len});

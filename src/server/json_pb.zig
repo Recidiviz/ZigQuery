@@ -300,16 +300,16 @@ pub fn asEnum(comptime E: type, src: std.json.Value, o: Options) Error!E {
     const info = @typeInfo(E).@"enum";
     switch (src) {
         .string => |s| {
-            inline for (info.fields) |f| {
-                if (std.mem.eql(u8, f.name, s)) return @field(E, f.name);
+            inline for (info.field_names) |field_name| {
+                if (std.mem.eql(u8, field_name, s)) return @field(E, field_name);
             }
             if (o.mode == .strict) return error.Malformed;
-            inline for (info.fields) |f| {
-                if (std.ascii.eqlIgnoreCase(f.name, s)) return @field(E, f.name);
+            inline for (info.field_names) |field_name| {
+                if (std.ascii.eqlIgnoreCase(field_name, s)) return @field(E, field_name);
             }
-            return @enumFromInt(0);
+            return @fromBackingInt(0);
         },
-        .integer, .number_string => return @enumFromInt(try asInt(i32, src, o)),
+        .integer, .number_string => return @fromBackingInt(@intCast(try asInt(i32, src, o))),
         else => return error.TypeMismatch,
     }
 }
@@ -706,7 +706,7 @@ test "an enum takes its name or its number" {
     }
     // A number this build has no name for still decodes: the enums are
     // non-exhaustive.
-    try testing.expectEqual(@as(i32, 99), @intFromEnum(
+    try testing.expectEqual(@as(i32, 99), @backingInt(
         try asEnum(Projection, try val(a, "99"), .{}),
     ));
     try testing.expectEqual(Projection.full, try asEnum(Projection, try val(a, "\"FULL\""), .{}));

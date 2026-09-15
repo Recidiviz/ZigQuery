@@ -78,7 +78,8 @@ pub fn main(init: std.process.Init) !void {
     try db.exec(sql.items, &.{}, .{});
 
     try o.print("{s:<34} {s:>9} {s:>10}\n", .{ "stage", "total", "ns/row" });
-    try o.print("{s}\n", .{"-" ** 58});
+    try o.splatByteAll('-', 58);
+    try o.writeByte('\n');
 
     for (stages) |s| {
         var q: std.ArrayList(u8) = .empty;

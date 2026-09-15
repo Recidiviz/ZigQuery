@@ -56,11 +56,9 @@ const spec = zigquery.spec;
 const value_mod = zigquery.value;
 const Value = value_mod.Value;
 
-/// The shim, not nanoarrow itself: `@cImport` cannot read nanoarrow's headers.
+/// The shim, not nanoarrow itself: translate-c cannot read nanoarrow's headers.
 /// See nanoarrow_shim.h.
-pub const c = @cImport({
-    @cInclude("nanoarrow_shim.h");
-});
+pub const c = @import("nanoarrow_c");
 
 const avro = @import("avro.zig");
 
@@ -350,7 +348,7 @@ const SchemaBuilder = struct {
     /// Column and struct-field names reach here from a client's CREATE TABLE, so
     /// they are arbitrary bytes with no terminator; C needs one.
     fn setName(b: *SchemaBuilder, name: []const u8) Error!void {
-        const z = try b.arena.dupeZ(u8, name);
+        const z = try b.arena.dupeSentinel(u8, name, 0);
         return check(
             c.zq_arrow_schema_set_name(b.handle, b.path.ptr(), b.path.len(), z.ptr),
             "schema_set_name",

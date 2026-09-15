@@ -183,10 +183,10 @@ pub fn main(init: std.process.Init) !void {
     const out = &stdout_writer.interface;
 
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer if (builtin.mode == .Debug) {
+    defer if (builtin.mode == .debug) {
         _ = gpa_state.deinit();
     };
-    const gpa = if (builtin.mode == .Debug) gpa_state.allocator() else std.heap.smp_allocator;
+    const gpa = if (builtin.mode == .debug) gpa_state.allocator() else std.heap.smp_allocator;
 
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -389,7 +389,7 @@ fn drainQuery(db: *driver.Db, query: []const u8) !usize {
 // ---- reporting ----
 
 fn renderTable(out: *std.Io.Writer, results: []const Result, init_ns: u64, opts: Options) !void {
-    if (builtin.mode == .Debug) {
+    if (builtin.mode == .debug) {
         try out.print("WARNING: Debug build; numbers are not comparable to release.\n\n", .{});
     }
     try out.print(
@@ -402,7 +402,8 @@ fn renderTable(out: *std.Io.Writer, results: []const Result, init_ns: u64, opts:
         "{s:<38} {s:>11} {s:>11} {s:>8} {s:>10} {s:>12}\n",
         .{ "query", "full ms/op", "prep ms/op", "rows", "allocs/op", "B/op" },
     );
-    try out.print("{s}\n", .{"-" ** 94});
+    try out.splatByteAll('-', 94);
+    try out.writeByte('\n');
 
     var current: []const u8 = "";
     var unsupported: usize = 0;

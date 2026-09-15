@@ -158,7 +158,7 @@ pub const BrokenTime = struct {
         const jan1 = value.daysFromCivil(c.year, 1, 1);
         // Days from Jan 1 forward to the year's first `first_day`.
         const jan1_wd = @mod(jan1 + 4, 7); // Sun=0 .. Sat=6
-        const lead = @mod(@intFromEnum(first_day) - jan1_wd + 7, 7);
+        const lead = @mod(@backingInt(first_day) - jan1_wd + 7, 7);
         const day_of_year = self.days() - jan1; // 0-based
         if (day_of_year < lead) return 0;
         return @divFloor(day_of_year - lead, 7) + 1;

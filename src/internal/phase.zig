@@ -66,8 +66,8 @@ pub const Source = enum {
     metadata,
 };
 
-const n_phases = @typeInfo(Phase).@"enum".fields.len;
-const n_sources = @typeInfo(Source).@"enum".fields.len;
+const n_phases = @typeInfo(Phase).@"enum".field_names.len;
+const n_sources = @typeInfo(Source).@"enum".field_names.len;
 
 /// Set for the duration of a raw/metadata call; see `Db.rawQuery`.
 pub threadlocal var source: Source = .engine;
@@ -94,8 +94,8 @@ pub const Timer = struct {
     }
 
     pub fn end(t: Timer) void {
-        const p = @intFromEnum(t.phase);
-        const s = @intFromEnum(source);
+        const p = @backingInt(t.phase);
+        const s = @backingInt(source);
         const now = nowNs();
         // A clock that went backwards (or failed, returning 0) contributes
         // nothing rather than a garbage-large sample.
@@ -139,22 +139,22 @@ pub const SourceScope = struct {
 
 pub fn totalNs(p: Phase) u64 {
     var sum: u64 = 0;
-    for (&total_ns[@intFromEnum(p)]) |*v| sum += v.load(.monotonic);
+    for (&total_ns[@backingInt(p)]) |*v| sum += v.load(.monotonic);
     return sum;
 }
 
 pub fn totalNsFrom(p: Phase, s: Source) u64 {
-    return total_ns[@intFromEnum(p)][@intFromEnum(s)].load(.monotonic);
+    return total_ns[@backingInt(p)][@backingInt(s)].load(.monotonic);
 }
 
 pub fn count(p: Phase) u64 {
     var sum: u64 = 0;
-    for (&call_count[@intFromEnum(p)]) |*v| sum += v.load(.monotonic);
+    for (&call_count[@backingInt(p)]) |*v| sum += v.load(.monotonic);
     return sum;
 }
 
 pub fn countFrom(p: Phase, s: Source) u64 {
-    return call_count[@intFromEnum(p)][@intFromEnum(s)].load(.monotonic);
+    return call_count[@backingInt(p)][@backingInt(s)].load(.monotonic);
 }
 
 /// Every phase that reaches libsqlite3.

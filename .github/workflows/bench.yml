@@ -38,7 +38,7 @@ jobs:
           platform: linux-x64
       - uses: ./.github/actions/zig
         with:
-          version: "0.16.0"
+          version: "0.17.0-dev.2131+d08989840"
 
       # --json must be the only thing on stdout; the harness prints its
       # human table on the other branch of the same switch.

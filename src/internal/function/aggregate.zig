@@ -572,20 +572,20 @@ test "max/min/any_value over ints, strings and dates" {
     try env.expectInt(3, "SELECT zigquery_any_value(x) FROM t");
 
     try env.exec("CREATE TABLE ts(s)");
-    try env.exec(try env.alloc().dupeZ(u8, try env.fmt(
+    try env.exec(try env.alloc().dupeSentinel(u8, try env.fmt(
         "INSERT INTO ts VALUES ({s}),({s}),({s})",
         .{ try env.encStr("pear"), try env.encStr("apple"), try env.encStr("fig") },
-    )));
+    ), 0));
     try env.expectStringResult("pear", "SELECT zigquery_max(s) FROM ts");
     try env.expectStringResult("apple", "SELECT zigquery_min(s) FROM ts");
 
     try env.exec("CREATE TABLE td(d)");
     const d1 = try env.enc(.{ .date = try value_mod.parseDateDays("2021-06-15") });
     const d2 = try env.enc(.{ .date = try value_mod.parseDateDays("2020-01-01") });
-    try env.exec(try env.alloc().dupeZ(u8, try env.fmt(
+    try env.exec(try env.alloc().dupeSentinel(u8, try env.fmt(
         "INSERT INTO td VALUES ({s}),({s})",
         .{ d1, d2 },
-    )));
+    ), 0));
     try value_mod.expectValueEqual(
         .{ .date = try value_mod.parseDateDays("2020-01-01") },
         try env.queryValue("SELECT zigquery_min(d) FROM td"),
@@ -624,10 +624,10 @@ test "distinct dedup including NULL handling" {
 
     // DISTINCT over strings dedups on decoded content.
     try env.exec("CREATE TABLE ts(s)");
-    try env.exec(try env.alloc().dupeZ(u8, try env.fmt(
+    try env.exec(try env.alloc().dupeSentinel(u8, try env.fmt(
         "INSERT INTO ts VALUES ({s}),({s}),({s})",
         .{ try env.encStr("a"), try env.encStr("a"), try env.encStr("b") },
-    )));
+    ), 0));
     try env.expectInt(2, "SELECT zigquery_count(s, zigquery_distinct()) FROM ts");
 }
 
@@ -683,10 +683,10 @@ test "array_concat_agg flattens element arrays" {
         Value{ .int = 3 },
     }));
     try env.exec("CREATE TABLE t(a)");
-    try env.exec(try env.alloc().dupeZ(u8, try env.fmt(
+    try env.exec(try env.alloc().dupeSentinel(u8, try env.fmt(
         "INSERT INTO t VALUES ({s}),(NULL),({s})",
         .{ a1, a2 },
-    )));
+    ), 0));
 
     const v = try env.queryValue("SELECT zigquery_array_concat_agg(a) FROM t");
     try testing.expectEqual(@as(usize, 3), v.array.values.len);
@@ -699,10 +699,10 @@ test "string_agg default and custom delimiters, order and limit" {
     defer env.deinit();
 
     try env.exec("CREATE TABLE t(s)");
-    try env.exec(try env.alloc().dupeZ(u8, try env.fmt(
+    try env.exec(try env.alloc().dupeSentinel(u8, try env.fmt(
         "INSERT INTO t VALUES ({s}),({s}),(NULL),({s})",
         .{ try env.encStr("b"), try env.encStr("a"), try env.encStr("c") },
-    )));
+    ), 0));
 
     try env.expectStringResult("b,a,c", "SELECT zigquery_string_agg(s) FROM t");
     try env.expectStringResult("b-a-c", try env.fmt(
@@ -718,10 +718,10 @@ test "any_value having max/min markers" {
     defer env.deinit();
 
     try env.exec("CREATE TABLE t(name, score)");
-    try env.exec(try env.alloc().dupeZ(u8, try env.fmt(
+    try env.exec(try env.alloc().dupeSentinel(u8, try env.fmt(
         "INSERT INTO t VALUES ({s}, 10),({s}, 30),({s}, 20)",
         .{ try env.encStr("low"), try env.encStr("high"), try env.encStr("mid") },
-    )));
+    ), 0));
 
     try env.expectStringResult(
         "high",

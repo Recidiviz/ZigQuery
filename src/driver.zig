@@ -533,7 +533,7 @@ pub const Db = struct {
         const arena = arena_state.allocator();
 
         const flattened_sql = try flattenBeginEndBlocks(arena, sql);
-        const sqlz = try arena.dupeZ(u8, flattened_sql);
+        const sqlz = try arena.dupeSentinel(u8, flattened_sql, 0);
 
         db.param_mode = parameterMode(arena, sql) catch {
             db.setLastError("named parameter and positional parameter cannot be used together");
@@ -884,7 +884,7 @@ pub const Db = struct {
             return db.newRawStmt(sql, false);
         }
         const entry = try db.newRawStmt(sql, true);
-        // dupe, not dupeZ: the map key type is []const u8, so a sentinel-
+        // dupe, not dupeSentinel: the map key type is []const u8, so a sentinel-
         // terminated allocation would be freed one byte short.
         const key = try db.gpa.dupe(u8, sql);
         errdefer db.gpa.free(key);
@@ -1053,7 +1053,7 @@ pub const Db = struct {
         };
 
         const catalog_json = if (opts.catalog_scope == .none)
-            try arena.dupeZ(u8, "{}")
+            try arena.dupeSentinel(u8, "{}", 0)
         else
             db.statelessCatalogJson(arena) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
@@ -1098,7 +1098,7 @@ pub const Db = struct {
         // blocks, so blank out the block keywords at the text level (lengths
         // preserved so analyzer error positions stay accurate).
         const flattened_sql = try flattenBeginEndBlocks(arena, sql);
-        const sqlz = try arena.dupeZ(u8, flattened_sql);
+        const sqlz = try arena.dupeSentinel(u8, flattened_sql, 0);
         var offset: usize = 0;
 
         // Publish the catalog snapshot the INFORMATION_SCHEMA vtabs read.
@@ -2048,8 +2048,8 @@ fn paramDecls(
             for (args) |arg| {
                 const name = arg.name orelse continue;
                 const text = arg.type_text orelse continue;
-                try names.append(arena, (try arena.dupeZ(u8, name)).ptr);
-                try types.append(arena, (try arena.dupeZ(u8, text)).ptr);
+                try names.append(arena, (try arena.dupeSentinel(u8, name, 0)).ptr);
+                try types.append(arena, (try arena.dupeSentinel(u8, text, 0)).ptr);
             }
             if (types.items.len == 0) return null;
             return .{ .names = names.items, .types = types.items };
@@ -2060,7 +2060,7 @@ fn paramDecls(
             const types = try arena.alloc(?[*:0]const u8, args.len);
             for (args, 0..) |arg, i| {
                 names[i] = null;
-                types[i] = (try arena.dupeZ(u8, arg.type_text.?)).ptr;
+                types[i] = (try arena.dupeSentinel(u8, arg.type_text.?, 0)).ptr;
             }
             return .{ .names = names, .types = types };
         },
@@ -2330,7 +2330,7 @@ fn functionArgumentSpecType(
         };
     }
     const t = try arena.create(spec.Type);
-    t.* = .{ .signature_kind = @intFromEnum(arg.kind orelse .ARG_KIND_EXPR_FIXED) };
+    t.* = .{ .signature_kind = @backingInt(arg.kind orelse .ARG_KIND_EXPR_FIXED) };
     return t;
 }
 
@@ -2441,7 +2441,7 @@ pub fn translateOn(
     sql: []const u8,
     opts: QueryOptions,
 ) Error![]const []const u8 {
-    const sqlz = try arena.dupeZ(u8, sql);
+    const sqlz = try arena.dupeSentinel(u8, sql, 0);
     var out: std.ArrayList([]const u8) = .empty;
     var offset: usize = 0;
     while (true) {
@@ -2500,7 +2500,7 @@ pub fn translate(
     sql: []const u8,
     opts: QueryOptions,
 ) Error![]const []const u8 {
-    const sqlz = try arena.dupeZ(u8, sql);
+    const sqlz = try arena.dupeSentinel(u8, sql, 0);
     var out: std.ArrayList([]const u8) = .empty;
     var offset: usize = 0;
     while (true) {
@@ -3249,7 +3249,7 @@ const catalog_test = struct {
         };
 
         // Raw SQLite DDL from the spec schema.
-        try db.sqlite_db.exec(try arena.dupeZ(u8, try table_spec.sqliteSchema(arena)));
+        try db.sqlite_db.exec(try arena.dupeSentinel(u8, try table_spec.sqliteSchema(arena), 0));
 
         // One row, built by hand through encoder.LiteralFromValue (what the
         // INSERT transformer will emit later).
@@ -3271,7 +3271,7 @@ const catalog_test = struct {
             try insert.appendSlice(arena, try encoder.LiteralFromValue(arena, v));
         }
         try insert.appendSlice(arena, ")");
-        try db.sqlite_db.exec(try arena.dupeZ(u8, insert.items));
+        try db.sqlite_db.exec(try arena.dupeSentinel(u8, insert.items, 0));
 
         {
             var g = db.lockCatalog();
@@ -3371,7 +3371,7 @@ test "dotted table names resolve and scan" {
         .created_at = "2024-01-02T03:04:05Z",
     };
     // SQLite table under the canonical "_"-joined name.
-    try db.sqlite_db.exec(try arena.dupeZ(u8, try table_spec.sqliteSchema(arena)));
+    try db.sqlite_db.exec(try arena.dupeSentinel(u8, try table_spec.sqliteSchema(arena), 0));
     try db.sqlite_db.exec("INSERT INTO `proj_ds_t` VALUES (7)");
     {
         var g = db.lockCatalog();
@@ -4024,8 +4024,8 @@ test "a job's results resolve as a virtual table under GoogleSQL" {
     defer db.udf_state.job_rows = .{};
 
     // The spec the analyzer resolves, memory-only: these rows are not SQLite's.
-    var int_t: spec.Type = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_INT64) };
-    var str_t: spec.Type = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRING) };
+    var int_t: spec.Type = .{ .kind = @backingInt(pb.TypeKind.TYPE_INT64) };
+    var str_t: spec.Type = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRING) };
     var col_a: spec.ColumnSpec = .{ .name = "a", .type = &int_t };
     var col_b: spec.ColumnSpec = .{ .name = "b", .type = &str_t };
     var columns = [_]*spec.ColumnSpec{ &col_a, &col_b };
@@ -4095,7 +4095,7 @@ test "a view can be defined over a job's results table" {
     db.udf_state.job_rows = .{ .ctx = &fixture, .lookup = JobRowsFixture.lookup };
     defer db.udf_state.job_rows = .{};
 
-    var int_t: spec.Type = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_INT64) };
+    var int_t: spec.Type = .{ .kind = @backingInt(pb.TypeKind.TYPE_INT64) };
     var col_a: spec.ColumnSpec = .{ .name = "a", .type = &int_t };
     var columns = [_]*spec.ColumnSpec{&col_a};
     var name_path = [_][]const u8{ "p", function.job_rows_vtab.anon_segment, "viewjob" };
@@ -4129,7 +4129,7 @@ test "a job-rows table whose job is gone reads as empty, not an error" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var int_t: spec.Type = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_INT64) };
+    var int_t: spec.Type = .{ .kind = @backingInt(pb.TypeKind.TYPE_INT64) };
     var col_a: spec.ColumnSpec = .{ .name = "a", .type = &int_t };
     var columns = [_]*spec.ColumnSpec{&col_a};
     var name_path = [_][]const u8{ "p", function.job_rows_vtab.anon_segment, "goneid" };

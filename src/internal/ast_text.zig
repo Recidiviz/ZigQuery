@@ -91,20 +91,20 @@ fn renderValue(w: *Writer, value: anytype, depth: usize, name: []const u8) std.m
             inline else => |payload, tag| try renderValue(w, payload, depth, @tagName(tag)),
         },
         .@"struct" => |s| {
-            if (s.fields.len == 1) {
+            if (s.field_names.len == 1) {
                 // Transparent wrapper (AnyResolvedNodeProto{node: ?Union} and
                 // its siblings) — recurse under the same label rather than
                 // adding a level that names nothing.
-                try renderValue(w, @field(value, s.fields[0].name), depth, name);
+                try renderValue(w, @field(value, s.field_names[0]), depth, name);
                 return;
             }
             try w.line(depth, "{s}:", .{name});
-            inline for (s.fields) |f| {
+            inline for (s.field_names) |field_name| {
                 // Synthetic exhaustiveness placeholders (e.g.
                 // `__ValueProto__switch_must_have_a_default`), never a real
                 // decoded field.
-                if (comptime std.mem.startsWith(u8, f.name, "__")) continue;
-                try renderValue(w, @field(value, f.name), depth + 1, f.name);
+                if (comptime std.mem.startsWith(u8, field_name, "__")) continue;
+                try renderValue(w, @field(value, field_name), depth + 1, field_name);
             }
         },
         .bool => try w.line(depth, "{s}: {}", .{ name, value }),
