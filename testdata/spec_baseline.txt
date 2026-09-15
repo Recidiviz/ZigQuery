@@ -4917,7 +4917,17 @@ zigquery/syntax/ddl/create_function	create temp function
 zigquery/syntax/ddl/create_or_replace_table	OR REPLACE ... AS SELECT swaps the schema and clears prior rows
 zigquery/syntax/ddl/create_or_replace_table	OR REPLACE ... AS SELECT can read the table it replaces
 zigquery/syntax/ddl/create_or_replace_table	OR REPLACE ... AS SELECT on a name that does not exist yet
-zigquery/syntax/ddl/create_or_replace_table	a column definition list cannot appear with AS SELECT
+zigquery/syntax/ddl/create_or_replace_table	a column definition list names and types the columns of AS SELECT
+zigquery/syntax/ddl/create_or_replace_table	a column definition list takes the query's rows under its names and types
+zigquery/syntax/ddl/create_or_replace_table	a column definition list must have as many columns as the query
+zigquery/syntax/ddl/create_or_replace_table	a declared type the query's column cannot coerce to is an error
+zigquery/syntax/ddl/create_or_replace_table	a NULL into a declared NOT NULL column fails AS SELECT
+zigquery/syntax/ddl/create_or_replace_table	the failed AS SELECT left no table behind
+zigquery/syntax/ddl/create_or_replace_table	a NULL into a declared NOT NULL member fails AS SELECT
+zigquery/syntax/ddl/create_or_replace_table	not-null intact: table exists with one row
+zigquery/syntax/ddl/create_or_replace_table	not-null intact: OR REPLACE with a NULL into a NOT NULL column fails
+zigquery/syntax/ddl/create_or_replace_table	not-null intact: the original row is still there
+zigquery/syntax/ddl/create_or_replace_table	a column definition list declares a primary key on AS SELECT
 zigquery/syntax/ddl/create_or_replace_table	intact: table exists with one row
 zigquery/syntax/ddl/create_or_replace_table	intact: OR REPLACE ... AS SELECT fails on an unresolved column
 zigquery/syntax/ddl/create_or_replace_table	intact: the failed replace left the original row in place

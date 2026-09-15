@@ -179,7 +179,7 @@ pub const Repository = struct {
                 const plan = batch.planNamed(found.column) orelse return .engine;
                 return .{ .missing_required = .{ .plan = plan, .path = found.path } };
             }
-            const column = notNullColumn(err_text) orelse return .engine;
+            const column = zigquery.spec.notNullColumnFromMessage(err_text) orelse return .engine;
             const plan = batch.planNamed(column) orelse return .engine;
             return .{ .not_null = plan };
         }
@@ -364,9 +364,6 @@ pub const Repository = struct {
     }
 };
 
-/// The column SQLite names in a NOT NULL constraint failure, or null for any
-/// other error. The text is modernc's errstrForDB shape around SQLite's own:
-/// `constraint failed: NOT NULL constraint failed: <table>.<column> (19)`.
 /// The column, then each member of the dotted `path` below it. The column is
 /// taken whole, since its own name may contain a `.`.
 fn streamingPathSegments(
@@ -384,16 +381,6 @@ fn streamingPathSegments(
     var it = std.mem.splitScalar(u8, below, '.');
     while (it.next()) |segment| try segments.append(arena, segment);
     return segments.toOwnedSlice(arena);
-}
-
-fn notNullColumn(err_text: []const u8) ?[]const u8 {
-    const marker = "NOT NULL constraint failed: ";
-    const start = std.mem.indexOf(u8, err_text, marker) orelse return null;
-    var rest = err_text[start + marker.len ..];
-    if (std.mem.lastIndexOf(u8, rest, " (")) |paren| rest = rest[0..paren];
-    const dot = std.mem.lastIndexOfScalar(u8, rest, '.') orelse return null;
-    const column = rest[dot + 1 ..];
-    return if (column.len == 0) null else column;
 }
 
 /// Go zetasqlite.TimeFromTimestampValue (timestamp.go:12): epoch
@@ -900,17 +887,6 @@ test "streamingPathSegments keeps a dotted column name as one segment" {
     try testing.expectEqual(@as(usize, 2), dotted.len);
     try testing.expectEqualStrings("a.b", dotted[0]);
     try testing.expectEqualStrings("x", dotted[1]);
-}
-
-test "notNullColumn reads the column out of SQLite's message" {
-    try testing.expectEqualStrings("a", notNullColumn(
-        "constraint failed: NOT NULL constraint failed: test_ds1_req.a (19)",
-    ).?);
-    try testing.expectEqualStrings("col_1", notNullColumn(
-        "NOT NULL constraint failed: t.col_1",
-    ).?);
-    try testing.expectEqual(@as(?[]const u8, null), notNullColumn("constraint failed: UNIQUE constraint failed: t.a (19)"));
-    try testing.expectEqual(@as(?[]const u8, null), notNullColumn("NOT NULL constraint failed: nodot (19)"));
 }
 
 test "ignore_unknown_values drops an undeclared RECORD member; without it the row is invalid" {

@@ -812,11 +812,10 @@ pub const Server = struct {
         return if (v == .object) v else null;
     }
 
-    /// The resource fields a spec carries beyond the ones the server computes:
-    /// what the DDL that made the table implies — a view's query, PARTITION BY,
-    /// CLUSTER BY — with what a client posted (`TableSpec.metadata`) over it.
-    /// A posted field always wins: it is what the client said, and a later patch
-    /// may have changed it. Null when there is neither.
+    /// The resource fields a spec carries beyond the ones the server computes: what the DDL that
+    /// made the table implies (a view's query, PARTITION BY, CLUSTER BY, OPTIONS(description)),
+    /// with what a client posted (`TableSpec.metadata`) over it. A posted field always wins: it is
+    /// what the client said, and a later patch may have changed it. Null when there is neither.
     fn resourceFields(
         arena: std.mem.Allocator,
         table_spec: *const zigquery.spec.TableSpec,
@@ -838,6 +837,9 @@ pub const Server = struct {
             try clustering.put(arena, "fields", .{ .array = fields });
             try obj.put(arena, "clustering", .{ .object = clustering });
         }
+        if (table_spec.description.len > 0) {
+            try obj.put(arena, "description", .{ .string = table_spec.description });
+        }
         if (try postedOf(arena, table_spec)) |p| {
             var it = p.object.iterator();
             while (it.next()) |kv| try obj.put(arena, kv.key_ptr.*, kv.value_ptr.*);
@@ -846,12 +848,9 @@ pub const Server = struct {
         return .{ .object = obj };
     }
 
-    /// DDL PARTITION BY as BigQuery reports it for a table made by DDL
-    /// (verified 2026-09-14): `timePartitioning` with `type` and `field`, or
-    /// `rangePartitioning` with its bounds as strings. The partitioning
-    /// OPTIONS ride along: `partition_expiration_days` becomes
-    /// `timePartitioning.expirationMs`, and `require_partition_filter=true`
-    /// shows up both inside `timePartitioning` and on the table.
+    /// DDL PARTITION BY and the OPTIONS that configure it, as the Table resource's
+    /// `timePartitioning`, `rangePartitioning` and `requirePartitionFilter`.
+    /// https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#Table
     fn putPartitioningFields(
         arena: std.mem.Allocator,
         obj: *std.json.ObjectMap,
@@ -2639,11 +2638,19 @@ test "a table made by a CTAS job is listed, streams rows, and a replace shows th
     try testing.expect(std.mem.indexOf(u8, after.body, "\"name\":\"s\"") == null);
 }
 
-/// Runs `sql` as a query job and expects it to succeed. `sql` must not hold a
-/// double quote or backslash: it is spliced into the JSON body as is.
+/// A jobs.insert body running `sql`. `sql` must not hold a double quote or backslash: it is
+/// spliced into the JSON as is.
+fn queryJobBody(arena: std.mem.Allocator, sql: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(
+        arena,
+        "{{\"configuration\":{{\"query\":{{\"query\":\"{s}\"}}}}}}",
+        .{sql},
+    );
+}
+
+/// Runs `sql` as a query job and expects it to succeed.
 fn runQueryJob(s: *Server, arena: std.mem.Allocator, sql: []const u8) !void {
-    const body = try std.fmt.allocPrint(arena, "{{\"configuration\":{{\"query\":{{\"query\":\"{s}\"}}}}}}", .{sql});
-    const res = try request(s, arena, .POST, "/projects/test/jobs", body);
+    const res = try request(s, arena, .POST, "/projects/test/jobs", try queryJobBody(arena, sql));
     if (res.status != .ok) {
         std.debug.print("job failed ({t}): {s}\n  sql: {s}\n", .{ res.status, res.body, sql });
         return error.TestUnexpectedResult;
@@ -2758,7 +2765,7 @@ test "a patch wins over DDL partitioning, and CREATE OR REPLACE without it clear
     try testing.expect(std.mem.indexOf(u8, replaced.body, "\"clustering\"") == null);
 }
 
-test "DDL partitioning survives a restart on a file-backed database" {
+test "DDL partitioning and descriptions survive a restart on a file-backed database" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
@@ -2770,9 +2777,16 @@ test "DDL partitioning survives a restart on a file-backed database" {
     {
         var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .database = db_path, .dataset = "ds1" });
         defer s.deinit();
-        try runQueryJob(s, arena, "CREATE TABLE `ds1.t` (d DATE, a STRING) PARTITION BY d CLUSTER BY a");
+        try runQueryJob(
+            s,
+            arena,
+            "CREATE TABLE `ds1.t` (d DATE, a STRING OPTIONS(description='col a')) " ++
+                "PARTITION BY d CLUSTER BY a OPTIONS(description='kept')",
+        );
         before = (try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "")).body;
         try testing.expect(std.mem.indexOf(u8, before, "\"timePartitioning\"") != null);
+        try testing.expect(std.mem.indexOf(u8, before, "\"description\":\"kept\"") != null);
+        try testing.expect(std.mem.indexOf(u8, before, "\"description\":\"col a\"") != null);
     }
     {
         var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .database = db_path, .dataset = "ds1" });
@@ -2782,7 +2796,7 @@ test "DDL partitioning survives a restart on a file-backed database" {
     }
 }
 
-test "a query job's destination reports the partitioning and clustering it asked for, field for field" {
+test "a query job's destination reports the partitioning and clustering it asked for" {
     // OBT-19799, the materialization path: recidiviz deletes the table, lets
     // a WRITE_TRUNCATE job carrying timePartitioning and clustering create
     // it, and later compares tables.get with what it would post. BigQuery
@@ -2854,6 +2868,132 @@ test "a query job's destination reports the partitioning and clustering it asked
         got_ranged.body,
         "\"rangePartitioning\":{\"field\":\"n\",\"range\":{\"end\":\"100\",\"interval\":\"10\",\"start\":\"0\"}}",
     ) != null);
+}
+
+/// The schema BigQuery reports for `described_columns`, then the `trailing` fields
+/// (recidiviz-bigquery-sandbox, 2026-09-14).
+fn describedSchema(comptime trailing: []const u8) []const u8 {
+    return "\"schema\":{\"fields\":[" ++
+        "{\"description\":\"the id\",\"mode\":\"REQUIRED\"," ++
+        "\"name\":\"id\",\"type\":\"INTEGER\"}," ++
+        "{\"description\":\"a struct\",\"fields\":[" ++
+        "{\"description\":\"nested a\",\"name\":\"a\",\"type\":\"INTEGER\"}," ++
+        "{\"mode\":\"REQUIRED\",\"name\":\"b\",\"type\":\"STRING\"}]," ++
+        "\"name\":\"s\",\"type\":\"RECORD\"}," ++
+        "{\"description\":\"tags\",\"mode\":\"REPEATED\",\"name\":\"tags\",\"type\":\"STRING\"}" ++
+        trailing ++ "]}";
+}
+
+const described_columns =
+    "id INT64 NOT NULL OPTIONS(description='the id'), " ++
+    "s STRUCT<a INT64 OPTIONS(description='nested a'), b STRING NOT NULL> " ++
+    "OPTIONS(description='a struct'), tags ARRAY<STRING> OPTIONS(description='tags')";
+
+test "table and column OPTIONS(description) are what tables.get reports" {
+    // OBT-44683. The schema and description BigQuery reports for the same DDL
+    // (recidiviz-bigquery-sandbox, 2026-09-14).
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try runQueryJob(
+        s,
+        arena,
+        "CREATE TABLE `ds1.described` (" ++ described_columns ++ ") OPTIONS(description='plain')",
+    );
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/described", "");
+    try testing.expect(std.mem.indexOf(u8, got.body, describedSchema("")) != null);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"description\":\"plain\"") != null);
+
+    // A patched description is what the client said last; the columns keep theirs.
+    const patched = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/described",
+        \\{"description":"patched"}
+    );
+    try testing.expectEqual(std.http.Status.ok, patched.status);
+    try testing.expect(std.mem.indexOf(u8, patched.body, "\"description\":\"patched\"") != null);
+    try testing.expect(std.mem.indexOf(u8, patched.body, describedSchema("")) != null);
+
+    try runQueryJob(s, arena, "CREATE VIEW `ds1.v` OPTIONS(description='a view') AS SELECT 1 AS n");
+    const view = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/v", "");
+    try testing.expect(std.mem.indexOf(u8, view.body, "\"description\":\"a view\"") != null);
+}
+
+test "a column list with AS SELECT declares the table's columns and checks their NOT NULL" {
+    // OBT-44683, the statement view materialization replaces a table with. The schema, messages
+    // and surviving original are BigQuery's for the same statements
+    // (recidiviz-bigquery-sandbox, 2026-09-14).
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+
+    const replace_mat = "CREATE OR REPLACE TABLE `ds1.mat` (" ++ described_columns ++
+        ", d DATE) PARTITION BY d CLUSTER BY id OPTIONS(description='materialized') AS SELECT ";
+    const rows_tail = "STRUCT(2 AS a, 'b' AS b) AS z, ['t'] AS w, DATE '2026-01-01' AS y";
+    try runQueryJob(s, arena, replace_mat ++ "1 AS x, " ++ rows_tail);
+
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/mat", "");
+    const d_last = describedSchema(",{\"name\":\"d\",\"type\":\"DATE\"}");
+    try testing.expect(std.mem.indexOf(u8, got.body, d_last) != null);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"description\":\"materialized\"") != null);
+    const partitioned = "\"timePartitioning\":{\"field\":\"d\",\"type\":\"DAY\"}";
+    try testing.expect(std.mem.indexOf(u8, got.body, partitioned) != null);
+    const clustered = "\"clustering\":{\"fields\":[\"id\"]}";
+    try testing.expect(std.mem.indexOf(u8, got.body, clustered) != null);
+
+    const read_body =
+        \\{"query":"SELECT FORMAT('%d:%d:%s', id, s.a, tags[OFFSET(0)]) AS v FROM `ds1.mat`"}
+    ;
+    const read = try request(s, arena, .POST, "/projects/test/queries", read_body);
+    try testing.expectEqualStrings("1:2:t", try onlyCell(arena, read.body));
+
+    // A NULL for the NOT NULL `id` fails the replace, and the table keeps its row.
+    const null_id = try request(
+        s,
+        arena,
+        .POST,
+        "/projects/test/jobs",
+        try queryJobBody(arena, replace_mat ++ "CAST(NULL AS INT64) AS x, " ++ rows_tail),
+    );
+    try testing.expectEqual(std.http.Status.bad_request, null_id.status);
+    try testing.expect(
+        std.mem.indexOf(u8, null_id.body, "Required field id cannot be null") != null,
+    );
+    const reread = try request(s, arena, .POST, "/projects/test/queries", read_body);
+    try testing.expectEqualStrings("1:2:t", try onlyCell(arena, reread.body));
+
+    // A NULL for a NOT NULL member fails, and nothing is created.
+    const null_member = try request(s, arena, .POST, "/projects/test/jobs", try queryJobBody(
+        arena,
+        "CREATE TABLE `ds1.nn` (s STRUCT<a INT64 NOT NULL>) " ++
+            "AS SELECT STRUCT(CAST(NULL AS INT64) AS a) AS s",
+    ));
+    try testing.expectEqual(std.http.Status.bad_request, null_member.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        null_member.body,
+        "Required field s.a cannot be null; error in writing field s",
+    ) != null);
+    const absent = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/nn", "");
+    try testing.expectEqual(std.http.Status.not_found, absent.status);
+
+    // A declared primary key keeps one index, named for the table, across replaces.
+    const replace_pk = "CREATE OR REPLACE TABLE `ds1.pk` " ++
+        "(id INT64, PRIMARY KEY (id) NOT ENFORCED) AS SELECT 1 AS id";
+    try runQueryJob(s, arena, replace_pk);
+    try runQueryJob(s, arena, replace_pk);
+    var rows = try s.db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'test_ds1_pk'",
+        &.{},
+    );
+    defer rows.deinit();
+    const index = (try rows.next()) orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("test_ds1_pk.pk", index[0].text);
+    try testing.expect((try rows.next()) == null);
 }
 
 test "DDL that omits the project lands in the server's project" {

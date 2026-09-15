@@ -70,6 +70,8 @@ pub const Field = struct {
     /// True only for a column the catalog declared NOT NULL. REPEATED wins over
     /// it — an ARRAY is its own mode — which is why it is consulted after.
     required: bool = false,
+    /// The catalog's OPTIONS(description); "" writes none.
+    description: []const u8 = "",
 };
 
 pub fn writeFieldMode(
@@ -87,17 +89,15 @@ pub fn writeFieldMode(
     try out.append(arena, '{');
     var need_comma = false;
 
+    if (field.description.len > 0) {
+        try out.appendSlice(arena, "\"description\":");
+        try errors.writeJsonString(arena, out, field.description);
+        need_comma = true;
+    }
+
     if (elem.isStruct()) {
-        try out.appendSlice(arena, "\"fields\":[");
-        for (elem.field_types, 0..) |f, i| {
-            if (i > 0) try out.append(arena, ',');
-            try writeFieldMode(arena, out, .{
-                .name = f.name,
-                .type = f.type orelse elem,
-                .required = f.is_not_null,
-            });
-        }
-        try out.append(arena, ']');
+        if (need_comma) try out.append(arena, ',');
+        try writeSubFields(arena, out, elem);
         need_comma = true;
     }
 
@@ -121,6 +121,25 @@ pub fn writeFieldMode(
     try out.append(arena, '}');
 }
 
+/// `"fields":[...]`: a STRUCT's members, each with its own mode and description.
+fn writeSubFields(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    elem: *const spec.Type,
+) std.mem.Allocator.Error!void {
+    try out.appendSlice(arena, "\"fields\":[");
+    for (elem.field_types, 0..) |f, i| {
+        if (i > 0) try out.append(arena, ',');
+        try writeFieldMode(arena, out, .{
+            .name = f.name,
+            .type = f.type orelse elem,
+            .required = f.is_not_null,
+            .description = f.description,
+        });
+    }
+    try out.append(arena, ']');
+}
+
 /// The same field as a generated TableFieldSchema.
 ///
 /// `mode` is absent rather than "NULLABLE": a GoogleSQL type carries no
@@ -140,6 +159,11 @@ pub fn pbField(
         .type = legacyTypeName(elem.typeKind()),
         .mode = if (repeated) "REPEATED" else if (field.required) "REQUIRED" else null,
     };
+    if (field.description.len > 0) {
+        const description = try arena.create(bqpb.StringValue);
+        description.* = .{ .value = field.description };
+        out.description = description;
+    }
     if (elem.isStruct()) out.fields = try pbFields(arena, elem);
     return out;
 }
@@ -154,6 +178,7 @@ fn pbFields(
             .name = f.name,
             .type = f.type orelse elem,
             .required = f.is_not_null,
+            .description = f.description,
         });
     }
     return subs;
@@ -606,6 +631,7 @@ pub fn writeSchemaFromSpec(
             .name = col.name,
             .type = col.type,
             .required = col.is_not_null,
+            .description = col.description,
         });
     }
     try out.appendSlice(arena, "]}");

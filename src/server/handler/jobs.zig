@@ -252,14 +252,11 @@ pub fn destinationFromJobConfig(job: *const pb.Job) ?Destination {
     };
 }
 
-/// The fields of `configuration.query` that shape a table the job creates:
-/// `timePartitioning`, `rangePartitioning` and `clustering`, exactly as the
-/// client posted them. BigQuery reports them back on the table the same way
-/// (verified 2026-09-14), and a client comparing its request with tables.get
-/// compares every field, so they stay raw JSON rather than round-tripping
-/// through pb.JobConfigurationQuery, whose TimePartitioning has no
-/// `requirePartitionFilter`. A null — the python client posts
-/// `"timePartitioning": null` beside `clustering` — asks for nothing.
+/// The fields of `configuration.query` that shape a table the job creates: `timePartitioning`,
+/// `rangePartitioning` and `clustering`, as the client posted them. Raw JSON, because a client
+/// compares tables.get with its request field for field and pb.TimePartitioning has no
+/// `requirePartitionFilter`. A null (the python client sends one beside `clustering`) asks for
+/// nothing.
 pub fn destinationLayoutFields(
     arena: std.mem.Allocator,
     body: []const u8,
@@ -361,7 +358,8 @@ test "a destination job's table layout fields come back as posted, nulls dropped
     try testing.expectEqualStrings("100", range.get("end").?.string);
 
     // Not a job body at all: nothing, rather than an error.
-    try testing.expectEqual(@as(usize, 0), (try destinationLayoutFields(arena, "not json")).count());
+    const none = try destinationLayoutFields(arena, "not json");
+    try testing.expectEqual(@as(usize, 0), none.count());
 }
 
 test "a query job without a destination has none" {

@@ -1767,10 +1767,10 @@ pub const Db = struct {
         return db.execCreateTableAction(arena, table_spec, args);
     }
 
-    /// Go CreateTableStmtAction for CREATE TABLE AS SELECT: the transformer
-    /// yields a CreateTableStatement whose AsSelect string is persisted in
-    /// the spec (newTableAsSelectSpec); exec runs spec.SQLiteSchema, which
-    /// renders "CREATE TABLE `t` AS <select>".
+    /// CREATE TABLE AS SELECT: the transformer yields a CreateTableStatement
+    /// whose AsSelect string is persisted in the spec (newTableAsSelectSpec);
+    /// exec runs spec.SQLiteSchema, which renders "CREATE TABLE `t` AS <select>", or, for a column
+    /// list with NOT NULL columns, creates the declared shape and inserts the select.
     fn execCreateTableAsSelect(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1792,9 +1792,47 @@ pub const Db = struct {
         const table_spec = try newTableSpecFromCreate(arena, create, base, query_str, .{
             .partition_by = ctas.partition_by_list,
             .cluster_by = ctas.cluster_by_list,
-            .columns = try columnNamesFromOutputs(arena, ctas.output_column_list),
+            .columns = try columnNamesFromDefinitions(arena, base.column_definition_list),
         });
         return db.execCreateTableAction(arena, table_spec, args);
+    }
+
+    /// A CTAS whose NOT NULL columns or members must check its rows, and the SQLite table the rows
+    /// go into: the destination itself, or the scratch table OR REPLACE swaps in.
+    const DeclaredTarget = struct { table_spec: *const spec.TableSpec, name: []const u8 };
+
+    /// CREATE TABLE `target.name` in the spec's declared shape, then INSERT the spec's query, so
+    /// the NOT NULL columns and members check every row. A failed INSERT drops the table it
+    /// created, and a NULL column reads as BigQuery reports it: `Required field <column> cannot be
+    /// null`.
+    fn createDeclaredThenInsert(
+        db: *Db,
+        arena: std.mem.Allocator,
+        target: DeclaredTarget,
+        args: []const Param,
+    ) Error!usize {
+        const table_spec = target.table_spec;
+        const name = target.name;
+        const create = table_spec.declaredSchemaAs(arena, name) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.TransformFailed,
+        };
+        _ = try db.execSql(arena, create, &.{});
+        const insert = try std.fmt.allocPrint(arena, "INSERT INTO `{s}` {s}", .{
+            name,
+            table_spec.query,
+        });
+        return db.execSql(arena, insert, args) catch |err| {
+            const failure = db.lastError();
+            const message = if (spec.notNullColumnFromMessage(failure)) |column|
+                try std.fmt.allocPrint(arena, "Required field {s} cannot be null", .{column})
+            else
+                try arena.dupe(u8, failure);
+            const drop = try std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name});
+            _ = db.execSql(arena, drop, &.{}) catch {};
+            db.setLastError(message);
+            return err;
+        };
     }
 
     /// Shared CreateTableStmtAction.exec body: OR REPLACE drops first,
@@ -1813,6 +1851,7 @@ pub const Db = struct {
         const table_name = try table_spec.tableName(arena);
         const replacing = table_spec.create_mode == spec.create_mode_create_or_replace;
         const from_query = table_spec.query.len != 0;
+        const through_declared = from_query and table_spec.hasNotNull();
 
         // CREATE OR REPLACE ... AS <query> builds into a scratch table and
         // swaps, rather than dropping first. WRITE_TRUNCATE arrives here, and
@@ -1832,12 +1871,18 @@ pub const Db = struct {
             );
             _ = try db.execSql(arena, drop_scratch, &.{});
 
-            const build = try std.fmt.allocPrint(
-                arena,
-                "CREATE TABLE `{s}` AS {s}",
-                .{ scratch, table_spec.query },
-            );
-            const consumed = db.execSql(arena, build, args) catch |err| {
+            const built = if (through_declared)
+                db.createDeclaredThenInsert(arena, .{
+                    .table_spec = table_spec,
+                    .name = scratch,
+                }, args)
+            else
+                db.execSql(arena, try std.fmt.allocPrint(
+                    arena,
+                    "CREATE TABLE `{s}` AS {s}",
+                    .{ scratch, table_spec.query },
+                ), args);
+            const consumed = built catch |err| {
                 // Leave the destination exactly as it was.
                 _ = db.execSql(arena, drop_scratch, &.{}) catch {};
                 return err;
@@ -1856,14 +1901,9 @@ pub const Db = struct {
             );
             _ = try db.execSql(arena, rename, &.{});
 
-            // No execPkIndex here, deliberately: a CTAS cannot carry a primary
-            // key, because declaring one needs a column definition list and the
-            // analyzer rejects that outright ("CREATE TABLE AS SELECT with
-            // column definition list is unsupported"). If that ever becomes
-            // supported, this branch needs the index — and it must be created
-            // *after* the rename above, since SQLite's ALTER TABLE ... RENAME
-            // leaves index names alone and it would otherwise stay called
-            // `<t>__zigquery_replace.pk`.
+            // After the rename: SQLite's ALTER TABLE ... RENAME leaves index names alone, so an
+            // index made on the scratch table would stay called `<t>__zigquery_replace.pk`.
+            try db.execPkIndex(arena, table_spec);
             db.registerTableSpec(table_spec) catch |err|
                 return db.failCatalog(err);
             return consumed;
@@ -1873,11 +1913,18 @@ pub const Db = struct {
             const drop_sql = try std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{table_name});
             _ = try db.execSql(arena, drop_sql, &.{});
         }
-        const schema = table_spec.sqliteSchema(arena) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.TransformFailed,
+        const consumed = if (through_declared)
+            try db.createDeclaredThenInsert(arena, .{
+                .table_spec = table_spec,
+                .name = table_name,
+            }, args)
+        else blk: {
+            const schema = table_spec.sqliteSchema(arena) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.TransformFailed,
+            };
+            break :blk try db.execSql(arena, schema, args);
         };
-        const consumed = try db.execSql(arena, schema, args);
 
         // Before the IF NOT EXISTS early return below, which would otherwise
         // skip it for an already-registered table. CREATE INDEX IF NOT EXISTS
@@ -1961,6 +2008,7 @@ pub const Db = struct {
             .updated_at = now.rfc3339,
             .created_at = now.rfc3339,
             .options = try optionSpecsFrom(arena, base.option_list),
+            .description = try stringOption(arena, base.option_list, "description"),
             .source_sql = base.sql orelse "",
         };
         if (!is_temp) try db.requireDataset(arena, table_spec.name_path);
@@ -2591,8 +2639,8 @@ fn functionArgumentSpecType(
     return t;
 }
 
-/// Go spec.go newColumnsFromDef: ColumnSpecs from the resolved column
-/// definition list (type + NOT NULL annotation).
+/// Go spec.go newColumnsFromDef: ColumnSpecs from the resolved column definition list (type, NOT
+/// NULL, OPTIONS(description)).
 fn columnSpecsFromDefs(
     arena: std.mem.Allocator,
     defs: []const *pb.ResolvedColumnDefinitionProto,
@@ -2609,31 +2657,53 @@ fn columnSpecsFromDefs(
             },
             .is_not_null = if (def.annotations) |ann| (ann.not_null orelse false) else false,
         };
-        if (def.annotations) |ann| applyNestedNotNull(col.type, ann);
+        if (def.annotations) |ann| {
+            col.description = try stringOption(arena, ann.option_list, "description");
+            try applyNestedAnnotations(arena, col.type, ann);
+        }
         columns[i] = col;
     }
     return columns;
 }
 
-/// `STRUCT<x INT64 NOT NULL>` and deeper:
+/// `STRUCT<x INT64 NOT NULL OPTIONS(description="...")>` and deeper:
 /// the analyzer's `child_list` has one entry per STRUCT field up to the last one annotated,
 ///  and one for an ARRAY's element, so it is walked and the type indexed, never the reverse.
 /// An ARRAY member carries no nullability: BigQuery stores a NULL array as empty, so there is
 /// nothing for NOT NULL to reject.
-fn applyNestedNotNull(t: *spec.Type, ann: *const pb.ResolvedColumnAnnotationsProto) void {
+fn applyNestedAnnotations(
+    arena: std.mem.Allocator,
+    t: *spec.Type,
+    ann: *const pb.ResolvedColumnAnnotationsProto,
+) Error!void {
     if (t.isArray()) {
         if (ann.child_list.len != 1) return;
-        if (t.element_type) |elem| applyNestedNotNull(elem, ann.child_list[0]);
+        if (t.element_type) |elem| try applyNestedAnnotations(arena, elem, ann.child_list[0]);
         return;
     }
     if (!t.isStruct()) return;
     for (ann.child_list, 0..) |child, i| {
         if (i >= t.field_types.len) break;
         const field = t.field_types[i];
+        field.description = try stringOption(arena, child.option_list, "description");
         const ft = field.type orelse continue;
         field.is_not_null = !ft.isArray() and (child.not_null orelse false);
-        applyNestedNotNull(ft, child);
+        try applyNestedAnnotations(arena, ft, child);
     }
+}
+
+/// The STRING value of option `name`, unquoted, or "" when it is absent or not a STRING literal.
+fn stringOption(
+    arena: std.mem.Allocator,
+    opts: []const *pb.ResolvedOptionProto,
+    name: []const u8,
+) Error![]const u8 {
+    for (opts) |opt| {
+        if (!std.ascii.eqlIgnoreCase(opt.name orelse continue, name)) continue;
+        const value = (try literalValueOf(arena, opt.value orelse continue)) orelse continue;
+        if (value == .string) return value.string;
+    }
+    return "";
 }
 
 /// DDL `OPTIONS(name=value)` as INFORMATION_SCHEMA.TABLE_OPTIONS reports them.
@@ -2694,7 +2764,8 @@ const TableLayout = struct {
 /// A column id and the name the new table gives that column.
 const NamedColumn = struct { id: i64, name: []const u8 };
 
-/// A plain CREATE TABLE's columns: its references point at the definitions.
+/// The new table's columns by definition. PARTITION BY and CLUSTER BY resolve against the column
+/// definitions, which the analyzer fills in for a CTAS without a column list too.
 fn columnNamesFromDefinitions(
     arena: std.mem.Allocator,
     defs: []const *pb.ResolvedColumnDefinitionProto,
@@ -2703,21 +2774,6 @@ fn columnNamesFromDefinitions(
     for (defs) |def| {
         const col = def.column orelse continue;
         try out.append(arena, .{ .id = col.column_id orelse continue, .name = def.name orelse continue });
-    }
-    return out.toOwnedSlice(arena);
-}
-
-/// A CTAS's columns. Its references point at the query's columns, whose own
-/// names are the ones they had in the query (`x` in `SELECT x AS y`), so the
-/// name comes from the output column, not from the reference.
-fn columnNamesFromOutputs(
-    arena: std.mem.Allocator,
-    outs: []const *pb.ResolvedOutputColumnProto,
-) Error![]const NamedColumn {
-    var out: std.ArrayList(NamedColumn) = .empty;
-    for (outs) |oc| {
-        const col = oc.column orelse continue;
-        try out.append(arena, .{ .id = col.column_id orelse continue, .name = oc.name orelse continue });
     }
     return out.toOwnedSlice(arena);
 }
@@ -2774,9 +2830,9 @@ fn literalValueOf(arena: std.mem.Allocator, expr: *const pb.AnyResolvedExprProto
         };
 }
 
-/// PARTITION BY in the terms of BigQuery's `timePartitioning` / `rangePartitioning` resource,
-/// the shapes a real table reports (verified against BigQuery 2026-09-14).
-/// Null otherwise: the analyzer accepted the DDL, so the table is made without partitioning.
+/// PARTITION BY as the Table resource's `timePartitioning` / `rangePartitioning`.
+/// Null for any other shape: the analyzer accepted the DDL, so the table is made without
+/// partitioning.
 fn partitioningFrom(arena: std.mem.Allocator, layout: TableLayout) Error!?spec.Partitioning {
     if (layout.partition_by.len != 1) return null;
     const expr = layout.partition_by[0];
@@ -2859,6 +2915,7 @@ fn newTableSpecFromCreate(
         .updated_at = now.rfc3339,
         .created_at = now.rfc3339,
         .options = try optionSpecsFrom(arena, base.option_list),
+        .description = try stringOption(arena, base.option_list, "description"),
         .partitioning = try partitioningFrom(arena, layout),
         .clustering = try clusteringFrom(arena, layout),
     };
@@ -4672,20 +4729,25 @@ test "CREATE OR REPLACE re-creates the primary-key index" {
     try testing.expectEqualStrings("pk_rep.pk", names[0]);
 }
 
-test "CREATE TABLE AS SELECT cannot declare a primary key" {
-    // Pins the assumption the swap branch in execCreateTableAction relies on:
-    // it skips index creation because a CTAS spec can never carry a key. If
-    // this test ever starts failing, that branch needs an execPkIndex call.
+test "CREATE OR REPLACE TABLE AS SELECT keeps one primary-key index, named for the table" {
+    // The swap branch builds into a scratch table and renames it; the index must be named for
+    // the destination, and a second replace must not add another.
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
     try db.exec("CREATE TABLE ctas_src (id INT64)", &.{}, .{});
-    try testing.expectError(error.AnalyzeFailed, db.exec(
-        "CREATE OR REPLACE TABLE ctas_pk (id INT64 PRIMARY KEY NOT ENFORCED) " ++
-            "AS SELECT id FROM ctas_src",
-        &.{},
-        .{},
-    ));
+    const replace = "CREATE OR REPLACE TABLE ctas_pk (id INT64 PRIMARY KEY NOT ENFORCED) " ++
+        "AS SELECT id FROM ctas_src";
+    try db.exec(replace, &.{}, .{});
+    try db.exec(replace, &.{}, .{});
+
+    const names = try indexNamesFor(db, testing.allocator, "ctas_pk");
+    defer {
+        for (names) |n| testing.allocator.free(n);
+        testing.allocator.free(names);
+    }
+    try testing.expectEqual(@as(usize, 1), names.len);
+    try testing.expectEqualStrings("ctas_pk.pk", names[0]);
 }
 
 test "struct field names outlive the step that produced them" {

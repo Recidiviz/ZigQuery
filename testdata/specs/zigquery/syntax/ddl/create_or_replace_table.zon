@@ -51,20 +51,110 @@
                 .{7},
             },
         },
-        // CREATE TABLE AS SELECT takes its schema from the query; a column
-        // definition list, needed to declare a primary key, cannot appear alongside
-        // AS SELECT.
+        // A column definition list names and types the columns AS SELECT fills, by position: the
+        // query's INT64 `x` lands as the declared FLOAT64 `id`, 1.0
+        // (data-definition-language.md#create_table; recidiviz-bigquery-sandbox, 2026-09-14).
         .{
-            .desc = "a column definition list cannot appear with AS SELECT",
+            .desc = "a column definition list names and types the columns of AS SELECT",
             .setup = .{
-                "CREATE TABLE pk_src (id INT64)",
+                "CREATE TABLE cld.cl_src (x INT64, y STRING)",
+                "INSERT INTO cld.cl_src VALUES (1, 'a')",
+                "CREATE OR REPLACE TABLE cld.cl_tbl (id FLOAT64, label STRING) AS SELECT x, y FROM cld.cl_src",
             },
             .sql =
-            \\CREATE OR REPLACE TABLE pk_tbl (id INT64 PRIMARY KEY NOT ENFORCED)
-            \\AS SELECT id FROM pk_src
+            \\SELECT column_name, data_type FROM cld.INFORMATION_SCHEMA.COLUMNS
+            \\WHERE table_name = 'cl_tbl' ORDER BY ordinal_position
             ,
-            .expect_error = "CREATE TABLE AS SELECT with column definition list is unsupported",
+            .rows = .{
+                .{ "id", "FLOAT64" },
+                .{ "label", "STRING" },
+            },
+        },
+        .{
+            .desc = "a column definition list takes the query's rows under its names and types",
+            .setup = .{
+                "CREATE TABLE cld.cl_src (x INT64, y STRING)",
+                "INSERT INTO cld.cl_src VALUES (1, 'a')",
+                "CREATE OR REPLACE TABLE cld.cl_tbl (id FLOAT64, label STRING) AS SELECT x, y FROM cld.cl_src",
+            },
+            .sql = "SELECT id, label FROM cld.cl_tbl",
+            .rows = .{
+                .{ 1.0, "a" },
+            },
+        },
+        // The column count and the implicit coercion of each query column to its declared type
+        // are checked before anything is written; BigQuery's messages
+        // (recidiviz-bigquery-sandbox, 2026-09-14).
+        .{
+            .desc = "a column definition list must have as many columns as the query",
+            .sql = "CREATE TABLE cm_tbl (a INT64, b INT64) AS SELECT 1 AS a",
+            .expect_error = "The number of columns in the column definition list does not match the number of columns produced by the query",
             .rows = .{},
+        },
+        .{
+            .desc = "a declared type the query's column cannot coerce to is an error",
+            .sql = "CREATE TABLE nc_tbl (a INT64) AS SELECT 'x' AS a",
+            .expect_error = "Column 'a' has type INT64 which cannot be coerced from query output type STRING",
+            .rows = .{},
+        },
+        // A NULL into a declared NOT NULL column or member fails the statement and creates no
+        // table; BigQuery's messages (recidiviz-bigquery-sandbox, 2026-09-14). These cases share
+        // one connection (no `.setup`), so the second sees what the first left behind.
+        .{
+            .desc = "a NULL into a declared NOT NULL column fails AS SELECT",
+            .sql = "CREATE TABLE nn_tbl (a INT64 NOT NULL) AS SELECT CAST(NULL AS INT64) AS a",
+            .expect_error = "Required field a cannot be null",
+            .rows = .{},
+        },
+        .{
+            .desc = "the failed AS SELECT left no table behind",
+            .sql = "CREATE TABLE nn_tbl (a INT64); SELECT COUNT(*) FROM nn_tbl",
+            .rows = .{
+                .{0},
+            },
+        },
+        .{
+            .desc = "a NULL into a declared NOT NULL member fails AS SELECT",
+            .sql = "CREATE TABLE nn2_tbl (s STRUCT<a INT64 NOT NULL>) AS SELECT STRUCT(CAST(NULL AS INT64) AS a) AS s",
+            .expect_error = "Required field s.a cannot be null; error in writing field s",
+            .rows = .{},
+        },
+        // OR REPLACE with a NULL into a NOT NULL column fails before the swap, and the original
+        // keeps its row (recidiviz-bigquery-sandbox, 2026-09-14). One shared connection, like the
+        // `intact:` cases below.
+        .{
+            .desc = "not-null intact: table exists with one row",
+            .sql = "CREATE TABLE nn_keep (a INT64); INSERT INTO nn_keep VALUES (7)",
+            .rows = .{},
+        },
+        .{
+            .desc = "not-null intact: OR REPLACE with a NULL into a NOT NULL column fails",
+            .sql = "CREATE OR REPLACE TABLE nn_keep (a INT64 NOT NULL) AS SELECT CAST(NULL AS INT64) AS a",
+            .expect_error = "Required field a cannot be null",
+            .rows = .{},
+        },
+        .{
+            .desc = "not-null intact: the original row is still there",
+            .sql = "SELECT a FROM nn_keep",
+            .rows = .{
+                .{7},
+            },
+        },
+        // A column definition list is where AS SELECT declares a primary key.
+        // data-definition-language.md#defining_table_constraints
+        .{
+            .desc = "a column definition list declares a primary key on AS SELECT",
+            .setup = .{
+                "CREATE TABLE pk_src (id INT64)",
+                "INSERT INTO pk_src VALUES (1)",
+                \\CREATE OR REPLACE TABLE pk_tbl (id INT64 PRIMARY KEY NOT ENFORCED)
+                \\AS SELECT id FROM pk_src
+                ,
+            },
+            .sql = "SELECT id FROM pk_tbl",
+            .rows = .{
+                .{1},
+            },
         },
         // A query error during OR REPLACE ... AS SELECT is raised before the
         // destination table is touched: the replacement is built in a scratch table

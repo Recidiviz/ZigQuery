@@ -12,14 +12,17 @@ const pb = @import("../proto/resolved_ast.zig");
 
 pub const Error = error{ OutOfMemory, Unimplemented, InvalidType };
 
-/// A named entry of a composite type: one field of a STRUCT's `field_types`,
-/// or one argument of a FunctionSpec. `is_not_null` is a STRUCT field declared
-/// `NOT NULL` (BigQuery's nested REQUIRED); the DDL renderer turns it into a
-/// CHECK on the column. Serialised only when set.
+/// A named entry of a composite type:
+/// one field of a STRUCT's `field_types` or one argument of a FunctionSpec.
+/// `is_not_null` is a STRUCT field declared `NOT NULL` (BigQuery's nested REQUIRED);
+/// the DDL renderer turns it into a CHECK on the column.
+///`description` is the field's OPTIONS(description). Both are serialised
+/// only when set.
 pub const NameWithType = struct {
     name: []const u8 = "",
     type: ?*Type = null,
     is_not_null: bool = false,
+    description: []const u8 = "",
 };
 
 /// BigQuery's prefix for a REQUIRED field left NULL, as its streaming API reports it;
@@ -59,6 +62,19 @@ pub fn requiredFieldFromMessage(text: []const u8) ?RequiredField {
     return .{ .path = path, .column = column };
 }
 
+/// The column SQLite names in a NOT NULL constraint failure, or null for any other text.
+/// The text may be embedded in a longer error i.e.:
+/// `constraint failed: NOT NULL constraint failed: <table>.<column> (19)`.
+pub fn notNullColumnFromMessage(text: []const u8) ?[]const u8 {
+    const marker = "NOT NULL constraint failed: ";
+    const start = std.mem.indexOf(u8, text, marker) orelse return null;
+    var rest = text[start + marker.len ..];
+    if (std.mem.lastIndexOf(u8, rest, " (")) |paren| rest = rest[0..paren];
+    const dot = std.mem.lastIndexOfScalar(u8, rest, '.') orelse return null;
+    const column = rest[dot + 1 ..];
+    return if (column.len == 0) null else column;
+}
+
 /// A deep copy of `t` in `arena`, so it can outlive whatever produced it.
 ///
 /// A statement's output column types live in that statement's arena and die
@@ -84,6 +100,7 @@ pub fn cloneType(arena: std.mem.Allocator, t: *const Type) std.mem.Allocator.Err
             .name = try arena.dupe(u8, src.name),
             .type = if (src.type) |ft| try cloneType(arena, ft) else null,
             .is_not_null = src.is_not_null,
+            .description = try arena.dupe(u8, src.description),
         };
         dst.* = f;
     }
@@ -264,6 +281,8 @@ pub const ColumnSpec = struct {
     name: []const u8 = "",
     type: *Type,
     is_not_null: bool = false,
+    /// OPTIONS(description), for the metadata API's schema. Serialised only when set.
+    description: []const u8 = "",
 
     /// Go ColumnSpec.SQLiteSchema: "`name` TYPE[ NOT NULL]".
     pub fn sqliteSchema(self: *const ColumnSpec, alloc: std.mem.Allocator) Error![]u8 {
@@ -319,6 +338,18 @@ fn appendSqlStringLiteral(
         try out.append(alloc, c);
     }
     try out.append(alloc, '\'');
+}
+
+fn hasNotNullMember(t: *const Type) bool {
+    if (t.isArray()) return if (t.element_type) |elem| hasNotNullMember(elem) else false;
+    if (!t.isStruct()) return false;
+    for (t.field_types) |field| {
+        if (field.is_not_null) return true;
+        if (field.type) |ft| {
+            if (hasNotNullMember(ft)) return true;
+        }
+    }
+    return false;
 }
 
 fn collectRequiredMembers(
@@ -493,6 +524,9 @@ pub const TableSpec = struct {
     partitioning: ?Partitioning = null,
     /// DDL CLUSTER BY column names, in order. Serialised only when non-empty.
     clustering: []const []const u8 = &.{},
+    /// DDL OPTIONS(description), for the metadata API to report when no client posted one.
+    /// Serialised only when set.
+    description: []const u8 = "",
     /// The metadata API's view of the table: the resource keys a client
     /// posted (schema with nested modes and descriptions, clustering,
     /// partitioning, labels, description, view, ...), as one JSON object's
@@ -529,13 +563,6 @@ pub const TableSpec = struct {
         if (self.query.len != 0) {
             return std.fmt.allocPrint(alloc, "CREATE TABLE `{s}` AS {s}", .{ table_name, self.query });
         }
-        var columns: std.ArrayList([]const u8) = .empty;
-        for (self.columns) |c| {
-            try columns.append(alloc, try c.sqliteSchema(alloc));
-        }
-        for (self.columns) |c| {
-            if (try requiredCheckConstraintSQL(alloc, c)) |check| try columns.append(alloc, check);
-        }
         // No PRIMARY KEY clause, deliberately. BigQuery only accepts
         // `PRIMARY KEY ... NOT ENFORCED`: the key is optimizer metadata for
         // join elimination, never a uniqueness or non-null guarantee, and
@@ -556,9 +583,44 @@ pub const TableSpec = struct {
         return std.fmt.allocPrint(alloc, "{s} `{s}` ({s}) {s}", .{
             stmt,
             table_name,
-            try std.mem.join(alloc, ",", columns.items),
+            try self.declaredColumnsSql(alloc),
             clustering,
         });
+    }
+
+    /// `CREATE TABLE `name` (<declared columns>)`: the declared shape under `name`, for a CTAS
+    /// whose rows must pass its NOT NULL columns and members, which `CREATE TABLE ... AS` does not
+    /// carry.
+    pub fn declaredSchemaAs(
+        self: *const TableSpec,
+        alloc: std.mem.Allocator,
+        name: []const u8,
+    ) Error![]u8 {
+        return std.fmt.allocPrint(alloc, "CREATE TABLE `{s}` ({s})", .{
+            name,
+            try self.declaredColumnsSql(alloc),
+        });
+    }
+
+    /// The column definitions and the CHECK constraints for their NOT NULL STRUCT members,
+    /// comma-joined for a `CREATE TABLE` column list.
+    fn declaredColumnsSql(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
+        var columns: std.ArrayList([]const u8) = .empty;
+        for (self.columns) |c| {
+            try columns.append(alloc, try c.sqliteSchema(alloc));
+        }
+        for (self.columns) |c| {
+            if (try requiredCheckConstraintSQL(alloc, c)) |check| try columns.append(alloc, check);
+        }
+        return std.mem.join(alloc, ",", columns.items);
+    }
+
+    /// Whether a column, or a STRUCT member anywhere inside one, is NOT NULL.
+    pub fn hasNotNull(self: *const TableSpec) bool {
+        for (self.columns) |c| {
+            if (c.is_not_null or hasNotNullMember(c.type)) return true;
+        }
+        return false;
     }
 
     /// The declared primary key as a **non-unique** index, or null when there
@@ -670,6 +732,7 @@ pub const TableSpec = struct {
             try out.appendSlice(alloc, ",\"clustering\":");
             try appendJsonStringArray(&out, alloc, self.clustering);
         }
+        try appendStringFieldIfSet(&out, alloc, "description", self.description);
         try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
         try appendStringFieldIfSet(&out, alloc, "sourceSql", self.source_sql);
         try out.append(alloc, '}');
@@ -703,6 +766,7 @@ fn appendColumnSpecJson(
     try appendTypeJson(out, alloc, col.type);
     try out.appendSlice(alloc, ",\"isNotNull\":");
     try out.appendSlice(alloc, if (col.is_not_null) "true" else "false");
+    try appendStringFieldIfSet(out, alloc, "description", col.description);
     try out.append(alloc, '}');
 }
 
@@ -733,6 +797,7 @@ fn appendTypeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, t: *const T
                 try out.appendSlice(alloc, "null");
             }
             if (field.is_not_null) try out.appendSlice(alloc, ",\"isNotNull\":true");
+            try appendStringFieldIfSet(out, alloc, "description", field.description);
             try out.append(alloc, '}');
         }
         try out.append(alloc, ']');
@@ -848,6 +913,9 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
         if (v == .object) table_spec.partitioning = try partitioningFromJson(alloc, v.object);
     }
     table_spec.clustering = try stringSliceField(alloc, obj, "clustering");
+    if (obj.get("description")) |v| {
+        if (v == .string) table_spec.description = try alloc.dupe(u8, v.string);
+    }
     if (obj.get("metadata")) |v| {
         if (v == .string) table_spec.metadata = try alloc.dupe(u8, v.string);
     }
@@ -913,6 +981,9 @@ fn columnSpecFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*Colum
         if (name == .string) col.name = try alloc.dupe(u8, name.string);
     }
     if (getBool(obj, "isNotNull")) |b| col.is_not_null = b;
+    if (obj.get("description")) |d| {
+        if (d == .string) col.description = try alloc.dupe(u8, d.string);
+    }
     if (obj.get("type")) |tv| {
         if (tv == .object) col.type = try typeFromValue(alloc, tv);
     }
@@ -951,6 +1022,9 @@ fn typeFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*Type {
                 }
                 if (item.object.get("isNotNull")) |b| {
                     if (b == .bool) nwt.is_not_null = b.bool;
+                }
+                if (item.object.get("description")) |d| {
+                    if (d == .string) nwt.description = try alloc.dupe(u8, d.string);
                 }
                 fields[i] = nwt;
             }
@@ -1538,10 +1612,57 @@ test "partitioning and clustering round-trip through JSON and stay out of it whe
     try testing.expectEqual(@as(i64, 10), ranged_back.partitioning.?.range.interval);
     try testing.expectEqualStrings(ranged_json, try ranged_back.toJson(alloc));
 
-    try testing.expectError(error.InvalidType, tableSpecFromJson(
-        alloc,
+    try testing.expectError(error.InvalidType, tableSpecFromJson(alloc,
         \\{"namePath":["p","d","t"],"columns":[],"partitioning":{"type":"WEEK","field":"d"}}
     ));
+}
+
+test "notNullColumnFromMessage reads the column out of SQLite's message" {
+    try testing.expectEqualStrings("a", notNullColumnFromMessage(
+        "constraint failed: NOT NULL constraint failed: test_ds1_req.a (19)",
+    ).?);
+    try testing.expectEqualStrings("col_1", notNullColumnFromMessage(
+        "NOT NULL constraint failed: t.col_1",
+    ).?);
+    try testing.expectEqual(
+        @as(?[]const u8, null),
+        notNullColumnFromMessage("constraint failed: UNIQUE constraint failed: t.a (19)"),
+    );
+    try testing.expectEqual(
+        @as(?[]const u8, null),
+        notNullColumnFromMessage("NOT NULL constraint failed: nodot (19)"),
+    );
+}
+
+test "descriptions round-trip through JSON and stay out of it when unset" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare = try makeGoShapeSpec(alloc);
+    try testing.expect(std.mem.indexOf(u8, try bare.toJson(alloc), "\"description\"") == null);
+
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .description = "nested" };
+    const record = try alloc.create(Type);
+    record.* = .{
+        .kind = @backingInt(pb.TypeKind.TYPE_STRUCT),
+        .field_types = try alloc.dupe(*NameWithType, &.{x}),
+    };
+    const col = try alloc.create(ColumnSpec);
+    col.* = .{ .name = "r", .type = record, .description = "a \"record\"" };
+    const with = try makeGoShapeSpec(alloc);
+    with.columns = try alloc.dupe(*ColumnSpec, &.{col});
+    with.description = "the table";
+
+    const encoded = try with.toJson(alloc);
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expectEqualStrings("the table", decoded.description);
+    try testing.expectEqualStrings("a \"record\"", decoded.columns[0].description);
+    try testing.expectEqualStrings("nested", decoded.columns[0].type.field_types[0].description);
+    const cloned = try cloneType(alloc, record);
+    try testing.expectEqualStrings("nested", cloned.field_types[0].description);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 
 test "options round-trip through JSON and stay out of it when empty" {
