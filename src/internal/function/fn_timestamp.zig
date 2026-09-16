@@ -36,7 +36,9 @@ fn stringOfJson(alloc: std.mem.Allocator, doc: []const u8) Error!Value {
     };
 }
 
-/// STRING(timestamp[,zone]): local wall clock rendered with a literal "+00".
+/// STRING(timestamp[,zone]): wall clock in `zone` (UTC without one) followed by that zone's offset.
+/// GoogleSQL renders the offset as `%Ez` and drops a whole-hour ":00"
+/// i.e. Amsterdam in winter is "+01" and Kolkata "+05:30" (date_time_util.cc, truncate_tz).
 pub fn string(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args.len != 1 and args.len != 2)
         return bind.fail("STRING: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
@@ -48,16 +50,16 @@ pub fn string(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     var off: i64 = 0;
     if (args.len == 2) off = try tu.zoneOffsetSeconds(try fd.partStr(args[1]), bt.civ);
     var buf: [48]u8 = undefined;
-    const s = value_mod.formatTimestampString(&buf, bt.civ + off * tu.second_micros);
-    return Value{ .string = try alloc.dupe(u8, s) };
-}
-
-fn hasExplicitZone(s: []const u8) bool {
-    if (s.len <= 19) return false;
-    for (s[19..]) |c| {
-        if (c == 'Z' or c == '+' or c == '-' or std.ascii.isAlphabetic(c)) return true;
-    }
-    return false;
+    const wall = value_mod.formatDatetimeString(&buf, bt.civ + off * tu.second_micros);
+    const sign: u8 = if (off < 0) '-' else '+';
+    const off_abs: u64 = @abs(off);
+    const hours = @divTrunc(off_abs, 3600);
+    const minutes = @divTrunc(@rem(off_abs, 3600), 60);
+    const s = if (minutes == 0)
+        try std.fmt.allocPrint(alloc, "{s}{c}{d:0>2}", .{ wall, sign, hours })
+    else
+        try std.fmt.allocPrint(alloc, "{s}{c}{d:0>2}:{d:0>2}", .{ wall, sign, hours, minutes });
+    return Value{ .string = s };
 }
 
 pub fn timestamp(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -70,11 +72,11 @@ pub fn timestamp(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     const inner = if (args[0] == .safe) args[0].safe.* else args[0];
     switch (inner) {
         .string, .bytes => {
-            const s = try fd.partStr(inner);
-            const utc = try value_mod.parseTimestampMicros(s);
-            if (hasExplicitZone(s)) return Value{ .timestamp = utc };
-            const off = try tu.zoneOffsetSeconds(zone, utc);
-            return Value{ .timestamp = utc - off * tu.second_micros };
+            const p = try value_mod.parseTimestampParts(try fd.partStr(inner));
+            // A zone written in the string wins over the argument, which the docs say
+            // not to pass alongside one. (timestamp_functions.md#timestamp)
+            const off = try tu.zoneOffsetSeconds(if (p.zone.len != 0) p.zone else zone, p.civ);
+            return Value{ .timestamp = p.civ - off * tu.second_micros };
         },
         .date, .datetime => {
             const bt = try tu.broken(inner);
@@ -322,6 +324,28 @@ test "STRING refuses a JSON payload that does not parse" {
         arena.allocator(),
         &.{Value{ .json = "{not json" }},
     ));
+}
+
+test "STRING ends with the zone's own offset" {
+    // 2014-02-28 10:20:30 UTC, the instant timezones.test renders in each zone.
+    const ts = Value{ .timestamp = 1393582830_000000 };
+    const cases = [_]struct { zone: []const u8, want: []const u8 }{
+        .{ .zone = "UTC", .want = "2014-02-28 10:20:30+00" },
+        .{ .zone = "Europe/Amsterdam", .want = "2014-02-28 11:20:30+01" },
+        .{ .zone = "Asia/Kolkata", .want = "2014-02-28 15:50:30+05:30" },
+        .{ .zone = "America/Vancouver", .want = "2014-02-28 02:20:30-08" },
+        .{ .zone = "UTC+1234", .want = "2014-02-28 22:54:30+12:34" },
+        .{ .zone = "-03:30", .want = "2014-02-28 06:50:30-03:30" },
+    };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    for (cases) |c| {
+        const got = try string(arena.allocator(), &.{ ts, Value{ .string = c.zone } });
+        try testing.expectEqualStrings(c.want, got.string);
+    }
+    // Without a zone the instant renders in UTC.
+    const no_zone = try string(arena.allocator(), &.{ts});
+    try testing.expectEqualStrings("2014-02-28 10:20:30+00", no_zone.string);
 }
 
 test "the arity guards the analyzer makes unreachable still hold" {
