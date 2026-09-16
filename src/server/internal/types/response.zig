@@ -206,11 +206,13 @@ pub const Envelope = struct {
     jobReference: bqpb.JobReference,
     schema: *const bqpb.TableSchema,
     rows: []const tablerow.TableRow,
-    /// A string on the wire.
-    totalRows: []const u8,
+    /// A string on the wire. Absent for a statement with no result set, such as DML or DDL.
+    totalRows: ?[]const u8,
     /// Absent unless this page is short of the total.
     pageToken: ?[]const u8 = null,
     jobComplete: bool = true,
+    /// A string on the wire. Present only for INSERT, UPDATE, DELETE and MERGE.
+    numDmlAffectedRows: ?[]const u8 = null,
 };
 
 /// `pageToken` is absent when null rather than present and null, which is what

@@ -229,6 +229,62 @@ pub const OutputColumn = struct {
     type: *spec.Type,
 };
 
+/// A query job's `statementType`, for the statement kinds `Db` executes.
+/// https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#JobStatistics2
+pub const StatementType = enum {
+    select,
+    insert,
+    update,
+    delete,
+    merge,
+    truncate_table,
+    create_table,
+    create_table_as_select,
+    create_view,
+    create_function,
+    create_row_access_policy,
+    drop_table,
+    drop_view,
+    drop_function,
+    drop_row_access_policy,
+    begin_transaction,
+    commit_transaction,
+    /// More than one statement in one call.
+    script,
+
+    pub fn bigQueryName(t: StatementType) []const u8 {
+        return bigquery_names.get(t);
+    }
+
+    const bigquery_names = std.enums.EnumArray(StatementType, []const u8).init(.{
+        .select = "SELECT",
+        .insert = "INSERT",
+        .update = "UPDATE",
+        .delete = "DELETE",
+        .merge = "MERGE",
+        .truncate_table = "TRUNCATE_TABLE",
+        .create_table = "CREATE_TABLE",
+        .create_table_as_select = "CREATE_TABLE_AS_SELECT",
+        .create_view = "CREATE_VIEW",
+        .create_function = "CREATE_FUNCTION",
+        .create_row_access_policy = "CREATE_ROW_ACCESS_POLICY",
+        .drop_table = "DROP_TABLE",
+        .drop_view = "DROP_VIEW",
+        .drop_function = "DROP_FUNCTION",
+        .drop_row_access_policy = "DROP_ROW_ACCESS_POLICY",
+        .begin_transaction = "BEGIN_TRANSACTION",
+        .commit_transaction = "COMMIT_TRANSACTION",
+        .script = "SCRIPT",
+    });
+};
+
+/// What a query or exec call reports about the SQL it ran, besides its rows.
+pub const StatementOutcome = struct {
+    statement_type: StatementType = .select,
+    /// Rows changed by an INSERT, UPDATE, DELETE or MERGE; null for every other statement
+    dml_affected_rows: ?i64 = null,
+};
+
 pub const Db = struct {
     gpa: std.mem.Allocator,
     sqlite_db: sqlite.Db,
@@ -511,6 +567,7 @@ pub const Db = struct {
             .cols = prepared.columns,
             .names = names,
             .temp_tables = prepared.temp_tables,
+            .outcome = prepared.outcome,
         };
 
         // modernc.org/sqlite's (*stmt).Query steps once before handing back
@@ -1206,14 +1263,13 @@ pub const Db = struct {
 
     const Mode = enum { query, exec };
 
-    /// Result of running a statement script. A null `stmt` mirrors Go's
-    /// empty &Rows{conn} returned when the last statement is not a query
-    /// (DML/DDL executed to completion; Rows yields no rows).
+    /// Result of running a statement script.
     const Prepared = struct {
         stmt: ?sqlite.Stmt = null,
         columns: []const OutputColumn = &.{},
-        /// Temp tables/views to drop when the returned Rows is deinited.
+        /// Temp tables/views to drop when the returned Rows is deinitialized.
         temp_tables: []const []const u8 = &.{},
+        outcome: StatementOutcome = .{},
     };
 
     /// One analyzer round trip: the catalog-handle path when the delta can be
@@ -1277,13 +1333,13 @@ pub const Db = struct {
         };
     }
 
-    /// The Analyze loop: analyzer -> per-kind statement action, mirroring
-    /// Go's newStmtAction dispatch. QueryStmt transforms and prepares;
-    /// CREATE/DML/DROP/TRUNCATE actions execute inline and mutate the
-    /// catalog; BEGIN/COMMIT and row-access-policy statements are no-ops.
+    /// The Analyze loop: analyzer -> per-kind statement action.
+    /// QueryStmt transforms and prepares;
+    /// CREATE/DML/DROP/TRUNCATE actions execute inline and mutate the catalog;
+    /// BEGIN/COMMIT and ROW ACCESS POLICY statements are no-ops.
     /// In .query mode the LAST statement's prepared query is returned
-    /// (empty Prepared when the last statement is not a query); in .exec
-    /// mode every statement runs to completion and null is returned.
+    /// (empty Prepared when the last statement is not a query);
+    ///  in .exec mode every statement runs to completion and null is returned.
     fn runStatements(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1355,6 +1411,10 @@ pub const Db = struct {
             db.unregisterFunctionSpec(name) catch {};
         };
 
+        // The latest statement's outcome, and how many statements ran: more than one is a script.
+        var outcome: StatementOutcome = .{};
+        var statement_count: u32 = 0;
+
         // No catalog re-read here (Go re-syncs from SQLite before every
         // statement). Every write goes through the in-process catalog, so it
         // is already current; re-reading only reintroduced the timestamp
@@ -1386,6 +1446,10 @@ pub const Db = struct {
             db.stmt_params = &.{};
 
             const stmt_node = statementNodeOf(analyzed.node) orelse return error.Unimplemented;
+            outcome = .{
+                .statement_type = statementTypeOf(stmt_node) orelse return error.Unimplemented,
+            };
+            statement_count += 1;
             switch (stmt_node) {
                 .resolved_query_stmt_node => |query_stmt| {
                     const formatted = try transformStatement(db, arena, analyzed.node, opts);
@@ -1402,13 +1466,11 @@ pub const Db = struct {
                             .stmt = stmt,
                             .columns = try outputColumns(arena, query_stmt),
                             .temp_tables = temp_tables.items,
+                            .outcome = scriptOutcome(outcome, statement_count),
                         };
                     }
 
                     switch (mode) {
-                        // Earlier statements in a query script are never
-                        // iterated (Go's database/sql laziness); prepare
-                        // validated them.
                         .query => stmt.finalize(),
                         .exec => {
                             while (stmt.step() catch {
@@ -1428,13 +1490,14 @@ pub const Db = struct {
                         opts,
                     );
                 },
-                // Go newDMLStmtAction: exec the formatted DML SQL.
                 .resolved_insert_stmt_node,
                 .resolved_update_stmt_node,
                 .resolved_delete_stmt_node,
                 => {
                     const formatted = try transformStatement(db, arena, analyzed.node, opts);
+                    const changes_before = db.sqlite_db.totalChanges();
                     consumed = try db.execSql(arena, formatted, cur_args);
+                    outcome.dml_affected_rows = db.sqlite_db.totalChanges() - changes_before;
                 },
                 .resolved_drop_stmt_node => |drop_stmt| {
                     consumed = try db.execDropStatement(
@@ -1445,39 +1508,34 @@ pub const Db = struct {
                         opts,
                     );
                 },
-                // Go newDropFunctionStmtAction -> DropStmtAction with
-                // objectType "FUNCTION": delete the catalog spec only (no
-                // SQLite object exists for a UDF).
+                // TODO: Investigate sqlite UDF leak for DROP FUNCTION
                 .resolved_drop_function_stmt_node => |drop_fn| {
                     const name = try formatNamePath(arena, drop_fn.name_path);
                     db.unregisterFunctionSpec(name) catch |err| {
-                        // DROP FUNCTION IF EXISTS on a missing function is
-                        // a no-op; otherwise Go errors out.
+                        // DROP FUNCTION IF EXISTS on a missing function is a no-op
                         if (err == error.TableNotFound and (drop_fn.is_if_exists orelse false)) {
                             // no-op
                         } else return db.failCatalog(err);
                     };
                 },
-                // Go MergeStmtAction: the transformer lowers MERGE to a list
-                // of plain statements (create merged temp table, one
-                // INSERT/UPDATE/DELETE per WHEN clause, drop temp table)
-                // executed in order without args.
+                // The transformer lowers MERGE to a list of plain statements executed in order.
+                // (create merged temp table, INSERT/UPDATE/DELETE per WHEN clause, drop temp table)
                 .resolved_merge_stmt_node => {
                     const fragment = try transformStatementFragment(db, arena, analyzed.node, opts);
                     const compound = switch (fragment) {
                         .compound => |c| c,
                         else => return error.TransformFailed,
                     };
+                    const changes_before = db.sqlite_db.totalChanges();
                     for (compound.getStatements()) |stmt_sql| {
                         _ = try db.execSql(arena, stmt_sql, &.{});
                     }
+                    outcome.dml_affected_rows = db.sqlite_db.totalChanges() - changes_before;
                 },
-                // Go newTruncateStmtAction: DELETE FROM `table`.
                 .resolved_truncate_stmt_node => |truncate_stmt| {
                     try db.execTruncateStatement(arena, truncate_stmt);
                 },
-                // Go Begin/CommitStmtAction and NullStmtAction (row access
-                // policies): no-ops.
+                // Unsupported but implemented as no-ops
                 .resolved_begin_stmt_node,
                 .resolved_commit_stmt_node,
                 .resolved_create_row_access_policy_stmt_node,
@@ -1491,12 +1549,11 @@ pub const Db = struct {
 
             if (last) {
                 switch (mode) {
-                    // Query mode: the last statement was not a query (empty
-                    // Prepared). Temp tables are dropped now since no Rows
-                    // will carry them.
+                    // Query mode: the last statement was not a query (empty Prepared).
+                    // Temp tables are dropped now since no Rows will carry them.
                     .query => {
                         db.dropTempTables(arena, temp_tables.items);
-                        return Prepared{};
+                        return .{ .outcome = scriptOutcome(outcome, statement_count) };
                     },
                     // Exec mode: everything ran; drop temp tables and finish.
                     .exec => {
@@ -2589,6 +2646,68 @@ fn statementNodeOf(
     }
 }
 
+/// The statement type of each kind `Db.runStatements` executes; null for every kind it rejects.
+fn statementTypeOf(stmt_node: pb.AnyResolvedStatementProto.NodeUnion) ?StatementType {
+    return switch (stmt_node) {
+        .resolved_create_statement_node => |create_any| createStatementTypeOf(create_any),
+        .resolved_drop_stmt_node => |drop_stmt| dropStatementTypeOf(drop_stmt),
+        else => node_statement_types.get(stmt_node),
+    };
+}
+
+/// The kinds whose statement type follows from the kind alone.
+const node_statement_types = std.enums.EnumMap(
+    std.meta.Tag(pb.AnyResolvedStatementProto.NodeUnion),
+    StatementType,
+).init(.{
+    .resolved_query_stmt_node = .select,
+    .resolved_insert_stmt_node = .insert,
+    .resolved_update_stmt_node = .update,
+    .resolved_delete_stmt_node = .delete,
+    .resolved_merge_stmt_node = .merge,
+    .resolved_truncate_stmt_node = .truncate_table,
+    .resolved_drop_function_stmt_node = .drop_function,
+    .resolved_begin_stmt_node = .begin_transaction,
+    .resolved_commit_stmt_node = .commit_transaction,
+    .resolved_create_row_access_policy_stmt_node = .create_row_access_policy,
+    .resolved_drop_row_access_policy_stmt_node = .drop_row_access_policy,
+});
+
+/// The DROP kinds `Db.execDropStatement` executes.
+fn dropStatementTypeOf(drop_stmt: *const pb.ResolvedDropStmtProto) ?StatementType {
+    const object_type = drop_stmt.object_type orelse return null;
+    if (std.mem.eql(u8, object_type, "TABLE")) return .drop_table;
+    if (std.mem.eql(u8, object_type, "VIEW")) return .drop_view;
+    return null;
+}
+
+/// The CREATE kinds `Db.execCreateStatement` executes.
+fn createStatementTypeOf(create_any: *const pb.AnyResolvedCreateStatementProto) ?StatementType {
+    switch (create_any.node orelse return null) {
+        .resolved_create_table_stmt_base_node => |base_any| {
+            return switch (base_any.node orelse return null) {
+                .resolved_create_table_stmt_node => .create_table,
+                .resolved_create_table_as_select_stmt_node => .create_table_as_select,
+                else => null,
+            };
+        },
+        .resolved_create_view_base_node => |view_any| {
+            return switch (view_any.node orelse return null) {
+                .resolved_create_view_stmt_node => .create_view,
+                else => null,
+            };
+        },
+        .resolved_create_function_stmt_node => return .create_function,
+        else => return null,
+    }
+}
+
+/// One statement reports its own outcome; several are a script, whose parent job carries no row
+/// count.
+fn scriptOutcome(last: StatementOutcome, statement_count: u32) StatementOutcome {
+    return if (statement_count == 1) last else .{ .statement_type = .script };
+}
+
 /// Go NamePath.normalizePath with an empty base path: every segment is
 /// split on "." (backticked identifiers may carry dots).
 fn normalizePath(
@@ -3434,6 +3553,8 @@ pub const Rows = struct {
     names: []const []const u8 = &.{},
     /// Temp tables to drop on deinit (Go StmtAction.Cleanup).
     temp_tables: []const []const u8 = &.{},
+    /// The statement type and DML row count of what query() ran.
+    outcome: StatementOutcome = .{},
     /// query() already took the first step (modernc steps eagerly); the next
     /// next() call consumes its outcome instead of stepping again.
     first_step_done: bool = false,
@@ -4872,6 +4993,124 @@ test "UPDATE with WHERE and DELETE" {
         try testing.expectEqual(Cell{ .int = 1 }, row[0]);
         try testing.expectEqual(Cell{ .int = 1 }, row[1]);
     }
+}
+
+/// What `query` reports for `sql`, its rows drained.
+fn testOutcome(db: *Db, sql: []const u8) !StatementOutcome {
+    var rows = try db.query(sql, &.{}, .{});
+    defer rows.deinit();
+    while (try rows.next()) |_| {}
+    return rows.outcome;
+}
+
+test "a DML statement reports its type and the rows it changed" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE dml_n (file_id INT64, v STRING)", &.{}, .{});
+
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .insert, .dml_affected_rows = 3 },
+        try testOutcome(db, "INSERT INTO dml_n (file_id, v) VALUES (1, 'a'), (1, 'b'), (2, 'c')"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .insert, .dml_affected_rows = 3 },
+        try testOutcome(db, "INSERT INTO dml_n SELECT file_id + 10, v FROM dml_n"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .update, .dml_affected_rows = 1 },
+        try testOutcome(db, "UPDATE dml_n SET v = 'z' WHERE file_id = 2"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .delete, .dml_affected_rows = 2 },
+        try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 1"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .delete, .dml_affected_rows = 0 },
+        try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 1"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .delete, .dml_affected_rows = 1 },
+        try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 2;"),
+    );
+}
+
+test "a MERGE reports the rows all of its WHEN clauses changed" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(
+        \\CREATE TABLE merge_t (id INT64, v STRING);
+        \\CREATE TABLE merge_s (id INT64, v STRING);
+        \\INSERT INTO merge_t (id, v) VALUES (1, 'a'), (2, 'b');
+        \\INSERT INTO merge_s (id, v) VALUES (2, 'B'), (3, 'C'), (4, 'D');
+    , &.{}, .{});
+
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .merge, .dml_affected_rows = 4 },
+        try testOutcome(db,
+            \\MERGE merge_t T USING merge_s S ON T.id = S.id
+            \\WHEN MATCHED THEN UPDATE SET v = S.v
+            \\WHEN NOT MATCHED THEN INSERT (id, v) VALUES (S.id, S.v)
+            \\WHEN NOT MATCHED BY SOURCE THEN DELETE
+        ),
+    );
+}
+
+test "a statement that is not DML reports its type and no row count" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(
+        "CREATE TABLE nd_src (a INT64); INSERT INTO nd_src (a) VALUES (1), (2)",
+        &.{},
+        .{},
+    );
+
+    const cases = [_]struct { sql: []const u8, statement_type: StatementType }{
+        .{ .sql = "SELECT a FROM nd_src", .statement_type = .select },
+        .{ .sql = "CREATE TABLE nd_t (a INT64)", .statement_type = .create_table },
+        .{
+            .sql = "CREATE TABLE nd_ctas AS SELECT a FROM nd_src",
+            .statement_type = .create_table_as_select,
+        },
+        // Rebuilt through a scratch table and a catalog upsert, neither of which is a row count.
+        .{
+            .sql = "CREATE OR REPLACE TABLE nd_ctas AS SELECT a FROM nd_src",
+            .statement_type = .create_table_as_select,
+        },
+        .{ .sql = "CREATE VIEW nd_v AS SELECT a FROM nd_src", .statement_type = .create_view },
+        .{ .sql = "CREATE FUNCTION nd_f(x INT64) AS (x + 1)", .statement_type = .create_function },
+        .{ .sql = "TRUNCATE TABLE nd_ctas", .statement_type = .truncate_table },
+        .{ .sql = "DROP VIEW nd_v", .statement_type = .drop_view },
+        .{ .sql = "DROP TABLE nd_ctas", .statement_type = .drop_table },
+        .{ .sql = "DROP FUNCTION nd_f", .statement_type = .drop_function },
+        .{ .sql = "BEGIN TRANSACTION", .statement_type = .begin_transaction },
+        .{ .sql = "COMMIT TRANSACTION", .statement_type = .commit_transaction },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("sql: {s}\n", .{case.sql});
+        try testing.expectEqual(
+            StatementOutcome{ .statement_type = case.statement_type },
+            try testOutcome(db, case.sql),
+        );
+    }
+}
+
+test "several statements in one call are a SCRIPT with no row count" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const script = StatementOutcome{ .statement_type = .script };
+    try testing.expectEqual(
+        script,
+        try testOutcome(db, "CREATE TABLE sc_t (a INT64); INSERT INTO sc_t (a) VALUES (1), (2)"),
+    );
+    try testing.expectEqual(
+        script,
+        try testOutcome(db, "INSERT INTO sc_t (a) VALUES (3); SELECT a FROM sc_t"),
+    );
+    try testing.expectEqual(
+        script,
+        try testOutcome(db, "BEGIN TRANSACTION; DELETE FROM sc_t WHERE a = 1; COMMIT TRANSACTION"),
+    );
 }
 
 test "INSERT ... SELECT copies rows" {

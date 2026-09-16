@@ -271,6 +271,8 @@ pub const ResultSet = struct {
     cells: []const encoder.SqliteRepr,
     /// Reported in full even when a response carries fewer rows, matching Go.
     total_rows: usize,
+    /// The statement type and DML row count the job reports.
+    outcome: driver.StatementOutcome = .{},
 
     fn cloneInto(set: ResultSet, arena: std.mem.Allocator) !ResultSet {
         const names = try arena.alloc([]const u8, set.names.len);
@@ -287,6 +289,7 @@ pub const ResultSet = struct {
             .types = types,
             .cells = cells,
             .total_rows = set.total_rows,
+            .outcome = set.outcome,
         };
     }
 
@@ -400,10 +403,18 @@ pub fn writeResultSet(
         .jobReference = .{ .project_id = project_id, .job_id = job_id },
         .schema = try schema_mod.pbSchema(arena, render.cols),
         .rows = rows,
-        // The full count even when this page is short, matching Go.
-        .totalRows = try std.fmt.allocPrint(arena, "{d}", .{set.total_rows}),
+        // The full count even when this page is short.
+        // A statement without result columns, DML or DDL, has no result set to count.
+        .totalRows = if (set.names.len != 0)
+            try std.fmt.allocPrint(arena, "{d}", .{set.total_rows})
+        else
+            null,
         .pageToken = if (next < set.total_rows)
             try std.fmt.allocPrint(arena, "{d}", .{next})
+        else
+            null,
+        .numDmlAffectedRows = if (set.outcome.dml_affected_rows) |n|
+            try std.fmt.allocPrint(arena, "{d}", .{n})
         else
             null,
     }, response.envelope_options);
@@ -520,6 +531,7 @@ pub fn runQueryFormatted(
         .types = types,
         .cells = try cells.toOwnedSlice(arena),
         .total_rows = total_rows,
+        .outcome = rows.outcome,
     };
 
     // Go accumulates len() of each rendered cell string as

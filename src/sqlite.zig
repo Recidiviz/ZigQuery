@@ -135,6 +135,14 @@ pub const Db = struct {
         return std.fmt.allocPrint(alloc, "{s}: {s} ({d}){s}", .{ str, msg, rc, busy });
     }
 
+    /// Rows changed by every INSERT, UPDATE and DELETE this connection has completed.
+    ///
+    /// Other statements, CREATE TABLE AS SELECT and DROP TABLE included, leave it unchanged, so
+    /// the difference across a run of statements counts only their DML rows.
+    pub fn totalChanges(db: *Db) i64 {
+        return c.sqlite3_total_changes64(db.handle);
+    }
+
     /// Executes SQL that produces no result rows (DDL, DML).
     pub fn exec(db: *Db, sql: [:0]const u8) Error!void {
         var t = phase.Timer.begin(.sqlite_exec);

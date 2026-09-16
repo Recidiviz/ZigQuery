@@ -62,9 +62,8 @@ pub const JobResource = struct {
     /// Go accumulates len() of each rendered cell string.
     total_bytes: usize,
     unix_seconds: i64,
-    /// Go derives this from the resolved statement kind; SELECT covers the
-    /// M1 surface.
-    statement_type: []const u8 = "SELECT",
+    /// `statistics.query.statementType`, `numDmlAffectedRows` and `dmlStats`.
+    outcome: driver.StatementOutcome,
 };
 
 /// Serializes a bigquery#job resource.
@@ -89,10 +88,21 @@ pub fn writeJobResource(
     var cfg = pb.JobConfiguration{ .job_type = "QUERY", .query = &cfg_query };
     var job_ref = pb.JobReference{ .project_id = j.project_id, .job_id = j.job_id };
     var bytes = pb.Int64Value{ .value = @intCast(j.total_bytes) };
+    var affected = pb.Int64Value{ .value = j.outcome.dml_affected_rows orelse 0 };
+    // A MERGE's total is not split into the kinds of change it made.
+    // TODO: Use actual insert/update/delete counts
+    var dml_stats: ?pb.DmlStats = switch (j.outcome.statement_type) {
+        .insert => .{ .inserted_row_count = &affected },
+        .update => .{ .updated_row_count = &affected },
+        .delete => .{ .deleted_row_count = &affected },
+        else => null,
+    };
     var stats_query = pb.JobStatistics2{
         .total_bytes_processed = &bytes,
         .total_bytes_billed = &bytes,
-        .statement_type = j.statement_type,
+        .num_dml_affected_rows = if (j.outcome.dml_affected_rows != null) &affected else null,
+        .dml_stats = if (dml_stats) |*stats| stats else null,
+        .statement_type = j.outcome.statement_type.bigQueryName(),
     };
     var stats = pb.JobStatistics{
         .creation_time = j.unix_seconds,
@@ -196,6 +206,7 @@ test "job resource matches the Go emulator's shape" {
         .endpoint = "0.0.0.0:19050",
         .total_bytes = 1,
         .unix_seconds = 1785011395,
+        .outcome = .{ .statement_type = .select },
     });
 
     // Captured from the running Go emulator, with the random id replaced.
@@ -219,10 +230,66 @@ test "the job resource parses and reports DONE" {
         .endpoint = "h:1",
         .total_bytes = 0,
         .unix_seconds = 0,
+        .outcome = .{ .statement_type = .select },
     });
     const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.items, .{});
     try testing.expectEqualStrings("DONE", v.object.get("status").?.object.get("state").?.string);
     try testing.expectEqualStrings("bigquery#job", v.object.get("kind").?.string);
+}
+
+test "a DML job reports its statement type, affected rows and DML stats" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const Case = struct { outcome: driver.StatementOutcome, query_stats: []const u8 };
+    for ([_]Case{
+        .{
+            .outcome = .{ .statement_type = .delete, .dml_affected_rows = 2 },
+            .query_stats =
+            \\{"dmlStats":{"deletedRowCount":"2"},"numDmlAffectedRows":"2",
+            \\ "statementType":"DELETE","totalBytesBilled":"0","totalBytesProcessed":"0"}
+            ,
+        },
+        .{
+            .outcome = .{ .statement_type = .update, .dml_affected_rows = 0 },
+            .query_stats =
+            \\{"dmlStats":{"updatedRowCount":"0"},"numDmlAffectedRows":"0",
+            \\ "statementType":"UPDATE","totalBytesBilled":"0","totalBytesProcessed":"0"}
+            ,
+        },
+        .{
+            .outcome = .{ .statement_type = .merge, .dml_affected_rows = 3 },
+            .query_stats =
+            \\{"numDmlAffectedRows":"3",
+            \\ "statementType":"MERGE","totalBytesBilled":"0","totalBytesProcessed":"0"}
+            ,
+        },
+        .{
+            .outcome = .{ .statement_type = .create_table_as_select },
+            .query_stats =
+            \\{"statementType":"CREATE_TABLE_AS_SELECT","totalBytesBilled":"0",
+            \\ "totalBytesProcessed":"0"}
+            ,
+        },
+    }) |case| {
+        var out: std.ArrayList(u8) = .empty;
+        try writeJobResource(arena, &out, .{
+            .project_id = "p",
+            .job_id = "j",
+            .sql = "<statement>",
+            .endpoint = "h:1",
+            .total_bytes = 0,
+            .unix_seconds = 0,
+            .outcome = case.outcome,
+        });
+        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.items, .{});
+        const query_stats = v.object.get("statistics").?.object.get("query").?;
+        try json_pb.expectJsonEqual(
+            case.query_stats,
+            try std.json.Stringify.valueAlloc(arena, query_stats, .{}),
+        );
+    }
 }
 
 // ---- query jobs that write to a destination table ----

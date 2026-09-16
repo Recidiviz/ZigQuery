@@ -1278,6 +1278,7 @@ pub const Server = struct {
             .endpoint = s.endpoint,
             .total_bytes = res.total_bytes,
             .unix_seconds = @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000),
+            .outcome = res.set.?.outcome,
         });
 
         try s.jobs.put(project_id, job_id, res.set.?, resource.items);
@@ -2104,6 +2105,140 @@ test "the destination table and getQueryResults agree, because they share one co
     const row = (try rows.next()).?;
     try testing.expectEqualStrings("1767268800.0", row[0].timestamp);
     try testing.expectEqual(driver.Cell.null, row[1]);
+}
+
+/// A response body's top-level object.
+fn objectOf(arena: std.mem.Allocator, body: []const u8) !std.json.ObjectMap {
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    return v.object;
+}
+
+/// `statistics.query` of a job resource.
+fn queryStatisticsOf(arena: std.mem.Allocator, body: []const u8) !std.json.ObjectMap {
+    const job = try objectOf(arena, body);
+    return job.get("statistics").?.object.get("query").?.object;
+}
+
+// google-cloud-bigquery reads `QueryJob.result().num_dml_affected_rows` from getQueryResults'
+// `numDmlAffectedRows` and `QueryJob.num_dml_affected_rows` from the job's statistics; a body with
+// no `totalRows` makes `result()` an `_EmptyRowIterator` (OBT-19455).
+test "a DML job reports its statement type and affected rows on every surface" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    _ = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"CREATE TABLE dml_t (file_id INT64, v STRING)"}
+    );
+    _ = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"INSERT INTO dml_t (file_id, v) VALUES (1, 'a'), (1, 'b'), (2, 'c')"}
+    );
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"DELETE FROM dml_t WHERE file_id = 1",
+        \\"useLegacySql":false}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, insert.status);
+    const job_id = try jobIdOf(arena, insert.body);
+
+    const got = try request(
+        s,
+        arena,
+        .GET,
+        try std.fmt.allocPrint(arena, "/projects/test/jobs/{s}", .{job_id}),
+        "",
+    );
+    for ([_][]const u8{ insert.body, got.body }) |resource| {
+        const stats = try queryStatisticsOf(arena, resource);
+        try testing.expectEqualStrings("DELETE", stats.get("statementType").?.string);
+        try testing.expectEqualStrings("2", stats.get("numDmlAffectedRows").?.string);
+        const dml_stats = stats.get("dmlStats").?.object;
+        try testing.expectEqualStrings("2", dml_stats.get("deletedRowCount").?.string);
+    }
+
+    // The client's maxResults=0 probe, then a full read.
+    const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+    for ([_][]const u8{ "maxResults=0", "" }) |query| {
+        const results = try requestQuery(s, arena, .GET, path, query, "");
+        try testing.expectEqual(std.http.Status.ok, results.status);
+        const body = try objectOf(arena, results.body);
+        try testing.expectEqualStrings("2", body.get("numDmlAffectedRows").?.string);
+        try testing.expect(body.get("totalRows") == null);
+    }
+
+    const Case = struct { sql: []const u8, affected: []const u8 };
+    for ([_]Case{
+        .{ .sql = "UPDATE dml_t SET v = 'z' WHERE file_id = 2", .affected = "1" },
+        .{ .sql = "DELETE FROM dml_t WHERE file_id = 1", .affected = "0" },
+    }) |case| {
+        const request_body = try std.json.Stringify.valueAlloc(arena, .{ .query = case.sql }, .{});
+        const res = try request(s, arena, .POST, "/projects/test/queries", request_body);
+        try testing.expectEqual(std.http.Status.ok, res.status);
+        const body = try objectOf(arena, res.body);
+        try testing.expectEqualStrings(case.affected, body.get("numDmlAffectedRows").?.string);
+        try testing.expect(body.get("totalRows") == null);
+    }
+}
+
+test "a DDL job reports its statement type, with no row total or affected rows" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE ddl_type_t (a INT64)",
+        \\"useLegacySql":false}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, insert.status);
+    const stats = try queryStatisticsOf(arena, insert.body);
+    try testing.expectEqualStrings("CREATE_TABLE", stats.get("statementType").?.string);
+    try testing.expect(stats.get("numDmlAffectedRows") == null);
+    try testing.expect(stats.get("dmlStats") == null);
+
+    const job_id = try jobIdOf(arena, insert.body);
+    const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+    const results = try request(s, arena, .GET, path, "");
+    const body = try objectOf(arena, results.body);
+    try testing.expect(body.get("totalRows") == null);
+    try testing.expect(body.get("numDmlAffectedRows") == null);
+}
+
+test "a query reports its row total even when it returns no rows or ends a script" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const empty = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT n FROM UNNEST(GENERATE_ARRAY(1, 0)) AS n"}
+    );
+    const empty_body = try objectOf(arena, empty.body);
+    try testing.expectEqualStrings("0", empty_body.get("totalRows").?.string);
+
+    const insert = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\"CREATE TEMP TABLE script_t AS SELECT 1 AS a; SELECT a FROM script_t",
+        \\"useLegacySql":false}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, insert.status);
+    const stats = try queryStatisticsOf(arena, insert.body);
+    try testing.expectEqualStrings("SCRIPT", stats.get("statementType").?.string);
+    try testing.expect(stats.get("numDmlAffectedRows") == null);
+
+    const job_id = try jobIdOf(arena, insert.body);
+    const path = try std.fmt.allocPrint(arena, "/projects/test/queries/{s}", .{job_id});
+    const results = try request(s, arena, .GET, path, "");
+    const body = try objectOf(arena, results.body);
+    try testing.expectEqualStrings("1", body.get("totalRows").?.string);
+    try testing.expectEqualStrings("1", try onlyCell(arena, results.body));
 }
 
 test "a DDL job registers no destination table" {
