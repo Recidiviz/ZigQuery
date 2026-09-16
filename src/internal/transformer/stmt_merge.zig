@@ -128,6 +128,9 @@ pub fn transform(
 
     var statements: std.ArrayList([]const u8) = .empty;
     try statements.append(alloc, try create_table_stmt.toString(alloc));
+    if (try sourceKeyIndex(alloc, merge_data.when_clauses, merged_source_key)) |index| {
+        try statements.append(alloc, index);
+    }
     for (merge_data.when_clauses, 0..) |when_clause, i| {
         const stmt = try transformWhenClause(lowering, @intCast(i), when_clause);
         if (stmt.len > 0) try statements.append(alloc, stmt);
@@ -309,6 +312,24 @@ fn transformWhenClause(
         },
         else => return error.UnsupportedNode,
     }
+}
+
+/// CREATE INDEX on the snapshot's source key, for an INSERT clause's per-source-row lookup of it;
+/// null when no clause inserts.
+fn sourceKeyIndex(
+    alloc: std.mem.Allocator,
+    when_clauses: []const *MergeWhenClauseData,
+    merged_source_key: []const u8,
+) Error!?[]const u8 {
+    for (when_clauses) |when_clause| {
+        if (when_clause.match_type != .NOT_MATCHED_BY_TARGET) continue;
+        return try std.fmt.allocPrint(
+            alloc,
+            "CREATE INDEX {s}_source_key ON {s} (`{s}`)",
+            .{ merged_table, merged_table, merged_source_key },
+        );
+    }
+    return null;
 }
 
 /// SQLite's name for a target row's id: the first of its aliases no target column shadows.
