@@ -1267,6 +1267,7 @@ googlesql/compliance/bytes	function_regexp_extract_1
 googlesql/compliance/bytes	function_regexp_extract_all_correlated
 googlesql/compliance/bytes	function_regex_replace
 googlesql/compliance/bytes	function_regex_replace_1
+googlesql/compliance/bytes	split_nulls
 googlesql/compliance/bytes	split_custom_delimiter
 googlesql/compliance/bytes	split_empty_input
 googlesql/compliance/bytes	split_multibyte_delimiter
@@ -3147,6 +3148,7 @@ googlesql/compliance/strings	format_with_non_const_arg2
 googlesql/compliance/strings	format_with_utf8
 googlesql/compliance/strings	format_utf8
 googlesql/compliance/strings	format_invalid_true1
+googlesql/compliance/strings	split_nulls
 googlesql/compliance/strings	split_default_delimiter
 googlesql/compliance/strings	split_custom_delimiter
 googlesql/compliance/strings	split_empty_input
@@ -4739,6 +4741,7 @@ zigquery/functions/string/safe_convert_bytes_to_string	safe_convert_bytes_to_str
 zigquery/functions/string/soundex	soundex
 zigquery/functions/string/split	split
 zigquery/functions/string/split	split null delimiter
+zigquery/functions/string/split	split null argument is a null array inside the query
 zigquery/functions/string/starts_with	starts_with
 zigquery/functions/string/strpos	strpos
 zigquery/functions/string/substr	substr
