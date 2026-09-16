@@ -2195,6 +2195,58 @@ test "a DML job reports its statement type and affected rows on every surface" {
     }
 }
 
+test "a MERGE reports the rows it inserted, updated and deleted" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+
+    const merge_sql = "MERGE merge_t T USING merge_s S ON T.id = S.id " ++
+        "WHEN MATCHED THEN UPDATE SET v = S.v " ++
+        "WHEN NOT MATCHED THEN INSERT (id, v) VALUES (S.id, S.v) " ++
+        "WHEN NOT MATCHED BY SOURCE THEN DELETE";
+
+    // Row 1 has no source row and is deleted, row 2 is updated, rows 3 and 4 are inserted.
+    for ([_]enum { jobs_insert, jobs_query }{ .jobs_insert, .jobs_query }) |surface| {
+        for ([_][]const u8{
+            "CREATE OR REPLACE TABLE merge_t (id INT64, v STRING)",
+            "CREATE OR REPLACE TABLE merge_s (id INT64, v STRING)",
+            "INSERT INTO merge_t (id, v) VALUES (1, 'a'), (2, 'b')",
+            "INSERT INTO merge_s (id, v) VALUES (2, 'B'), (3, 'C'), (4, 'D')",
+        }) |sql| {
+            const body = try std.json.Stringify.valueAlloc(arena, .{ .query = sql }, .{});
+            const res = try request(s, arena, .POST, "/projects/test/queries", body);
+            try testing.expectEqual(std.http.Status.ok, res.status);
+        }
+
+        const dml_stats = switch (surface) {
+            .jobs_insert => blk: {
+                const body = try std.json.Stringify.valueAlloc(arena, .{
+                    .configuration = .{ .query = .{ .query = merge_sql, .useLegacySql = false } },
+                }, .{});
+                const res = try request(s, arena, .POST, "/projects/test/jobs", body);
+                try testing.expectEqual(std.http.Status.ok, res.status);
+                const stats = try queryStatisticsOf(arena, res.body);
+                try testing.expectEqualStrings("4", stats.get("numDmlAffectedRows").?.string);
+                break :blk stats.get("dmlStats").?.object;
+            },
+            .jobs_query => blk: {
+                const body = try std.json.Stringify.valueAlloc(arena, .{ .query = merge_sql }, .{});
+                const res = try request(s, arena, .POST, "/projects/test/queries", body);
+                try testing.expectEqual(std.http.Status.ok, res.status);
+                const envelope = try objectOf(arena, res.body);
+                try testing.expectEqualStrings("4", envelope.get("numDmlAffectedRows").?.string);
+                break :blk envelope.get("dmlStats").?.object;
+            },
+        };
+        try testing.expectEqualStrings("2", dml_stats.get("insertedRowCount").?.string);
+        try testing.expectEqualStrings("1", dml_stats.get("updatedRowCount").?.string);
+        try testing.expectEqualStrings("1", dml_stats.get("deletedRowCount").?.string);
+    }
+}
+
 test "a DDL job reports its statement type, with no row total or affected rows" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();

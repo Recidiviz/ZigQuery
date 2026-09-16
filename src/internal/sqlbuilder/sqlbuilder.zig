@@ -1219,6 +1219,31 @@ pub const InsertStatement = struct {
     }
 };
 
+pub const CreateIndexStatement = struct {
+    index_name: []const u8 = "",
+    table_name: []const u8 = "",
+    columns: []const []const u8 = &.{},
+
+    pub fn writeSql(self: *const CreateIndexStatement, writer: *SQLWriter) Error!void {
+        try writer.write("CREATE INDEX ");
+        try writeQuoted(writer, self.index_name);
+        try writer.write(" ON ");
+        try writeQuoted(writer, self.table_name);
+        try writer.write(" (");
+        for (self.columns, 0..) |column, i| {
+            if (i > 0) {
+                try writer.write(", ");
+            }
+            try writeQuoted(writer, column);
+        }
+        try writer.write(")");
+    }
+
+    pub fn toString(self: *const CreateIndexStatement, allocator: std.mem.Allocator) Error![]u8 {
+        return render(allocator, self, true, true);
+    }
+};
+
 pub const DropStatement = struct {
     if_exists: bool = false,
     object_type: []const u8 = "",
@@ -1298,17 +1323,16 @@ pub const SetItem = struct {
     }
 };
 
-/// CompoundSQLFragment represents multiple SQL statements that should be
-/// executed in sequence.
+/// CompoundSQLFragment represents multiple SQL statements that should be executed in sequence.
 pub const CompoundSQLFragment = struct {
-    statements: []const []const u8 = &.{},
+    statements: []const SQLFragment = &.{},
 
     pub fn writeSql(self: *const CompoundSQLFragment, writer: *SQLWriter) Error!void {
         for (self.statements, 0..) |stmt, i| {
             if (i > 0) {
                 try writer.write(";\n");
             }
-            try writer.write(stmt);
+            try writer.write(try stmt.toString(writer.allocator));
         }
     }
 
@@ -1319,14 +1343,14 @@ pub const CompoundSQLFragment = struct {
             if (i > 0) {
                 try buf.appendSlice(allocator, ";\n");
             }
-            try buf.appendSlice(allocator, stmt);
+            try buf.appendSlice(allocator, try stmt.toString(allocator));
         }
         try buf.append(allocator, ';');
         return buf.toOwnedSlice(allocator);
     }
 
     /// GetStatements returns the individual statements in the compound fragment.
-    pub fn getStatements(self: *const CompoundSQLFragment) []const []const u8 {
+    pub fn getStatements(self: *const CompoundSQLFragment) []const SQLFragment {
         return self.statements;
     }
 };
@@ -1361,6 +1385,7 @@ pub const SQLFragment = union(enum) {
     with_clause: *const WithClause,
     set_operation: *const SetOperation,
     create_table_statement: *const CreateTableStatement,
+    create_index_statement: *const CreateIndexStatement,
     column_definition: *const ColumnDefinition,
     create_view_statement: *const CreateViewStatement,
     create_function_statement: *const CreateFunctionStatement,
@@ -1589,7 +1614,7 @@ pub fn newInnerJoin(
 /// NewCompoundSQLFragment creates a new compound SQL fragment.
 pub fn newCompoundSQLFragment(
     allocator: std.mem.Allocator,
-    statements: []const []const u8,
+    statements: []const SQLFragment,
 ) Error!*CompoundSQLFragment {
     return create(allocator, CompoundSQLFragment{ .statements = statements });
 }
@@ -2128,9 +2153,22 @@ test "compound SQL fragment" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const compound = try newCompoundSQLFragment(a, &.{ "SELECT 1", "SELECT 2" });
-    try testing.expectEqualStrings("SELECT 1;\nSELECT 2;", try compound.toString(a));
-    try testing.expectEqualStrings("SELECT 1;\nSELECT 2", try render(a, compound, true, false));
+    const compound = try newCompoundSQLFragment(a, &.{
+        .{ .create_index_statement = &.{
+            .index_name = "t_a",
+            .table_name = "t",
+            .columns = &.{"a"},
+        } },
+        .{ .drop_statement = &.{ .object_type = "TABLE", .object_name = "t" } },
+    });
+    try testing.expectEqualStrings(
+        "CREATE INDEX `t_a` ON `t` (`a`);\nDROP TABLE `t`;",
+        try compound.toString(a),
+    );
+    try testing.expectEqualStrings(
+        "CREATE INDEX `t_a` ON `t` (`a`);\nDROP TABLE `t`",
+        try render(a, compound, true, false),
+    );
     try testing.expectEqual(@as(usize, 2), compound.getStatements().len);
 }
 

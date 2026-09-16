@@ -278,11 +278,34 @@ pub const StatementType = enum {
     });
 };
 
+/// Rows an INSERT, UPDATE, DELETE or MERGE changed, by kind of change: a job's `dmlStats`.
+pub const DmlCounts = struct {
+    inserted: i64 = 0,
+    updated: i64 = 0,
+    deleted: i64 = 0,
+
+    /// A job's `numDmlAffectedRows`.
+    pub fn total(c: DmlCounts) i64 {
+        return c.inserted + c.updated + c.deleted;
+    }
+
+    /// Counts `rows` under the kind of change `statement` makes; any statement other than an
+    /// INSERT, UPDATE or DELETE counts nothing.
+    fn add(c: *DmlCounts, statement: sqlbuilder.SQLFragment, rows: i64) void {
+        switch (statement) {
+            .insert_statement => c.inserted += rows,
+            .update_statement => c.updated += rows,
+            .delete_statement => c.deleted += rows,
+            else => {},
+        }
+    }
+};
+
 /// What a query or exec call reports about the SQL it ran, besides its rows.
 pub const StatementOutcome = struct {
     statement_type: StatementType = .select,
-    /// Rows changed by an INSERT, UPDATE, DELETE or MERGE; null for every other statement
-    dml_affected_rows: ?i64 = null,
+    /// Set for an INSERT, UPDATE, DELETE or MERGE; null for every other statement and for a script.
+    dml: ?DmlCounts = null,
 };
 
 pub const Db = struct {
@@ -1494,10 +1517,12 @@ pub const Db = struct {
                 .resolved_update_stmt_node,
                 .resolved_delete_stmt_node,
                 => {
-                    const formatted = try transformStatement(db, arena, analyzed.node, opts);
+                    const fragment = try transformStatementFragment(db, arena, analyzed.node, opts);
                     const changes_before = db.sqlite_db.totalChanges();
-                    consumed = try db.execSql(arena, formatted, cur_args);
-                    outcome.dml_affected_rows = db.sqlite_db.totalChanges() - changes_before;
+                    consumed = try db.execSql(arena, try fragment.toString(arena), cur_args);
+                    var counts: DmlCounts = .{};
+                    counts.add(fragment, db.sqlite_db.totalChanges() - changes_before);
+                    outcome.dml = counts;
                 },
                 .resolved_drop_stmt_node => |drop_stmt| {
                     consumed = try db.execDropStatement(
@@ -1526,11 +1551,7 @@ pub const Db = struct {
                         .compound => |c| c,
                         else => return error.TransformFailed,
                     };
-                    const changes_before = db.sqlite_db.totalChanges();
-                    for (compound.getStatements()) |stmt_sql| {
-                        _ = try db.execSql(arena, stmt_sql, &.{});
-                    }
-                    outcome.dml_affected_rows = db.sqlite_db.totalChanges() - changes_before;
+                    outcome.dml = try db.execCompound(arena, compound);
                 },
                 .resolved_truncate_stmt_node => |truncate_stmt| {
                     try db.execTruncateStatement(arena, truncate_stmt);
@@ -1596,6 +1617,22 @@ pub const Db = struct {
             return error.ExecFailed;
         }) {}
         return consumed;
+    }
+
+    /// Runs a compound fragment's statements in order, without args, counting the rows each one
+    /// changes under the kind of change it makes.
+    fn execCompound(
+        db: *Db,
+        arena: std.mem.Allocator,
+        compound: *const sqlbuilder.CompoundSQLFragment,
+    ) Error!DmlCounts {
+        var counts: DmlCounts = .{};
+        for (compound.getStatements()) |statement| {
+            const changes_before = db.sqlite_db.totalChanges();
+            _ = try db.execSql(arena, try statement.toString(arena), &.{});
+            counts.add(statement, db.sqlite_db.totalChanges() - changes_before);
+        }
+        return counts;
     }
 
     /// Creates the index backing a declared primary key, if the spec has one.
@@ -5009,27 +5046,27 @@ test "a DML statement reports its type and the rows it changed" {
     try db.exec("CREATE TABLE dml_n (file_id INT64, v STRING)", &.{}, .{});
 
     try testing.expectEqual(
-        StatementOutcome{ .statement_type = .insert, .dml_affected_rows = 3 },
+        StatementOutcome{ .statement_type = .insert, .dml = .{ .inserted = 3 } },
         try testOutcome(db, "INSERT INTO dml_n (file_id, v) VALUES (1, 'a'), (1, 'b'), (2, 'c')"),
     );
     try testing.expectEqual(
-        StatementOutcome{ .statement_type = .insert, .dml_affected_rows = 3 },
+        StatementOutcome{ .statement_type = .insert, .dml = .{ .inserted = 3 } },
         try testOutcome(db, "INSERT INTO dml_n SELECT file_id + 10, v FROM dml_n"),
     );
     try testing.expectEqual(
-        StatementOutcome{ .statement_type = .update, .dml_affected_rows = 1 },
+        StatementOutcome{ .statement_type = .update, .dml = .{ .updated = 1 } },
         try testOutcome(db, "UPDATE dml_n SET v = 'z' WHERE file_id = 2"),
     );
     try testing.expectEqual(
-        StatementOutcome{ .statement_type = .delete, .dml_affected_rows = 2 },
+        StatementOutcome{ .statement_type = .delete, .dml = .{ .deleted = 2 } },
         try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 1"),
     );
     try testing.expectEqual(
-        StatementOutcome{ .statement_type = .delete, .dml_affected_rows = 0 },
+        StatementOutcome{ .statement_type = .delete, .dml = .{} },
         try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 1"),
     );
     try testing.expectEqual(
-        StatementOutcome{ .statement_type = .delete, .dml_affected_rows = 1 },
+        StatementOutcome{ .statement_type = .delete, .dml = .{ .deleted = 1 } },
         try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 2;"),
     );
 }
@@ -5045,7 +5082,10 @@ test "a MERGE reports the rows all of its WHEN clauses changed" {
     , &.{}, .{});
 
     try testing.expectEqual(
-        StatementOutcome{ .statement_type = .merge, .dml_affected_rows = 4 },
+        StatementOutcome{
+            .statement_type = .merge,
+            .dml = .{ .inserted = 2, .updated = 1, .deleted = 1 },
+        },
         try testOutcome(db,
             \\MERGE merge_t T USING merge_s S ON T.id = S.id
             \\WHEN MATCHED THEN UPDATE SET v = S.v
@@ -5063,7 +5103,7 @@ test "a MERGE reports the rows all of its WHEN clauses changed" {
         \\INSERT INTO overlap_s (id, n) VALUES (1, 20), (2, 5);
     , &.{}, .{});
     try testing.expectEqual(
-        StatementOutcome{ .statement_type = .merge, .dml_affected_rows = 2 },
+        StatementOutcome{ .statement_type = .merge, .dml = .{ .updated = 1, .deleted = 1 } },
         try testOutcome(db,
             \\MERGE overlap_t T USING overlap_s S ON T.id = S.id
             \\WHEN MATCHED AND S.n > 10 THEN UPDATE SET v = 'updated'

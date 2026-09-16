@@ -237,23 +237,27 @@ test "a DML job reports its statement type, affected rows and DML stats" {
     const Case = struct { outcome: driver.StatementOutcome, query_stats: []const u8 };
     for ([_]Case{
         .{
-            .outcome = .{ .statement_type = .delete, .dml_affected_rows = 2 },
+            .outcome = .{ .statement_type = .delete, .dml = .{ .deleted = 2 } },
             .query_stats =
             \\{"dmlStats":{"deletedRowCount":"2"},"numDmlAffectedRows":"2",
             \\ "statementType":"DELETE","totalBytesBilled":"0","totalBytesProcessed":"0"}
             ,
         },
         .{
-            .outcome = .{ .statement_type = .update, .dml_affected_rows = 0 },
+            .outcome = .{ .statement_type = .update, .dml = .{} },
             .query_stats =
             \\{"dmlStats":{"updatedRowCount":"0"},"numDmlAffectedRows":"0",
             \\ "statementType":"UPDATE","totalBytesBilled":"0","totalBytesProcessed":"0"}
             ,
         },
         .{
-            .outcome = .{ .statement_type = .merge, .dml_affected_rows = 3 },
+            .outcome = .{
+                .statement_type = .merge,
+                .dml = .{ .inserted = 2, .updated = 0, .deleted = 1 },
+            },
             .query_stats =
-            \\{"numDmlAffectedRows":"3",
+            \\{"dmlStats":{"insertedRowCount":"2","updatedRowCount":"0","deletedRowCount":"1"},
+            \\ "numDmlAffectedRows":"3",
             \\ "statementType":"MERGE","totalBytesBilled":"0","totalBytesProcessed":"0"}
             ,
         },

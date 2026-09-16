@@ -126,16 +126,18 @@ pub fn transform(
         clause_column,
     );
 
-    var statements: std.ArrayList([]const u8) = .empty;
-    try statements.append(alloc, try create_table_stmt.toString(alloc));
+    var statements: std.ArrayList(sqlbuilder.SQLFragment) = .empty;
+    try statements.append(alloc, .{ .create_table_statement = create_table_stmt });
     if (try sourceKeyIndex(alloc, merge_data.when_clauses, merged_source_key)) |index| {
-        try statements.append(alloc, index);
+        try statements.append(alloc, .{ .create_index_statement = index });
     }
     for (merge_data.when_clauses, 0..) |when_clause, i| {
-        const stmt = try transformWhenClause(lowering, @intCast(i), when_clause);
-        if (stmt.len > 0) try statements.append(alloc, stmt);
+        try statements.append(alloc, try transformWhenClause(lowering, @intCast(i), when_clause));
     }
-    try statements.append(alloc, "DROP TABLE " ++ merged_table);
+    try statements.append(alloc, .{ .drop_statement = try create(alloc, sqlbuilder.DropStatement{
+        .object_type = "TABLE",
+        .object_name = merged_table,
+    }) });
 
     const compound = try sqlbuilder.newCompoundSQLFragment(
         alloc,
@@ -233,12 +235,15 @@ const ClauseScope = enum { snapshot, source };
 /// A CASE naming the first WHEN clause that qualifies a row, in WHEN order, or NULL when no clause
 /// is evaluated in `scope`. CASE takes the first true branch, and a NULL search condition is not
 /// true (data-manipulation-language.md#merge_statement).
-fn clauseCase(l: Lowering, scope: ClauseScope) Error![]const u8 {
-    const alloc = l.coord.alloc;
+fn clauseCase(lowering: Lowering, scope: ClauseScope) Error![]const u8 {
+    const alloc = lowering.coord.alloc;
     var arms: std.ArrayList(u8) = .empty;
-    for (l.when_clauses, 0..) |when_clause, i| {
-        const match = try matchPredicate(l, when_clause, scope) orelse continue;
-        const condition = if (when_clause.condition) |c| try conditionSql(l, c, scope) else "TRUE";
+    for (lowering.when_clauses, 0..) |when_clause, i| {
+        const match = try matchPredicate(lowering, when_clause, scope) orelse continue;
+        const condition = if (when_clause.condition) |c|
+            try conditionSql(lowering, c, scope)
+        else
+            "TRUE";
         try arms.print(alloc, " WHEN {s} AND ({s}) THEN {d}", .{ match, condition, i });
     }
     if (arms.items.len == 0) return "NULL";
@@ -247,13 +252,19 @@ fn clauseCase(l: Lowering, scope: ClauseScope) Error![]const u8 {
 
 /// A WHEN clause's search condition, over snapshot columns or the source scan's own.
 fn conditionSql(
-    l: Lowering,
+    lowering: Lowering,
     condition: *const ExpressionData,
     scope: ClauseScope,
 ) Error![]const u8 {
-    const sql = try (try l.coord.transformExpression(condition.*, l.ctx)).toString(l.coord.alloc);
+    const expr = try lowering.coord.transformExpression(condition.*, lowering.ctx);
+    const sql = try expr.toString(lowering.coord.alloc);
     return switch (scope) {
-        .snapshot => remapToMergedColumns(l.coord, sql, l.column_mapping, l.ctx),
+        .snapshot => remapToMergedColumns(
+            lowering.coord,
+            sql,
+            lowering.column_mapping,
+            lowering.ctx,
+        ),
         .source => sql,
     };
 }
@@ -261,22 +272,22 @@ fn conditionSql(
 /// The row test for a clause's match type, or null when the clause is not evaluated in `scope`.
 /// A matched pair always has a non-NULL key: `zigquery_equal` is NULL when either side is.
 fn matchPredicate(
-    l: Lowering,
+    lowering: Lowering,
     when_clause: *const MergeWhenClauseData,
     scope: ClauseScope,
 ) Error!?[]const u8 {
-    const alloc = l.coord.alloc;
+    const alloc = lowering.coord.alloc;
     const on_target = scope == .snapshot;
     return switch (when_clause.match_type) {
         .MATCHED => if (on_target) try std.fmt.allocPrint(
             alloc,
             "`{s}` IS NOT NULL AND `{s}` IS NOT NULL",
-            .{ target_rowid_column, l.merged_source_key },
+            .{ target_rowid_column, lowering.merged_source_key },
         ) else null,
         .NOT_MATCHED_BY_SOURCE => if (on_target) try std.fmt.allocPrint(
             alloc,
             "`{s}` IS NOT NULL AND `{s}` IS NULL",
-            .{ target_rowid_column, l.merged_source_key },
+            .{ target_rowid_column, lowering.merged_source_key },
         ) else null,
         .NOT_MATCHED_BY_TARGET => if (on_target) null else "TRUE",
         else => error.UnsupportedNode,
@@ -285,30 +296,23 @@ fn matchPredicate(
 
 /// The statement for WHEN clause `index`, acting only on the rows assigned to it.
 fn transformWhenClause(
-    l: Lowering,
+    lowering: Lowering,
     index: u32,
     when_clause: *const MergeWhenClauseData,
-) Error![]const u8 {
+) Error!sqlbuilder.SQLFragment {
     const inserts = when_clause.match_type == .NOT_MATCHED_BY_TARGET;
     switch (when_clause.action_type) {
         .INSERT => {
             if (!inserts) return error.UnsupportedNode;
-            return transformInsertAction(l, index, when_clause);
+            return .{ .insert_statement = try transformInsertAction(lowering, index, when_clause) };
         },
         .UPDATE => {
             if (inserts) return error.UnsupportedNode;
-            return transformUpdateAction(l, index, when_clause);
+            return .{ .update_statement = try transformUpdateAction(lowering, index, when_clause) };
         },
         .DELETE => {
             if (inserts) return error.UnsupportedNode;
-            return std.fmt.allocPrint(
-                l.coord.alloc,
-                "DELETE FROM `{s}` WHERE {s} IN (SELECT `{s}` FROM {s} WHERE `{s}` = {d})",
-                .{
-                    l.target_table_name, l.target_rowid, target_rowid_column,
-                    merged_table,        clause_column,  index,
-                },
-            );
+            return .{ .delete_statement = try transformDeleteAction(lowering, index) };
         },
         else => return error.UnsupportedNode,
     }
@@ -320,14 +324,16 @@ fn sourceKeyIndex(
     alloc: std.mem.Allocator,
     when_clauses: []const *MergeWhenClauseData,
     merged_source_key: []const u8,
-) Error!?[]const u8 {
+) Error!?*sqlbuilder.CreateIndexStatement {
     for (when_clauses) |when_clause| {
         if (when_clause.match_type != .NOT_MATCHED_BY_TARGET) continue;
-        return try std.fmt.allocPrint(
-            alloc,
-            "CREATE INDEX {s}_source_key ON {s} (`{s}`)",
-            .{ merged_table, merged_table, merged_source_key },
-        );
+        const columns = try alloc.alloc([]const u8, 1);
+        columns[0] = merged_source_key;
+        return try create(alloc, sqlbuilder.CreateIndexStatement{
+            .index_name = merged_table ++ "_source_key",
+            .table_name = merged_table,
+            .columns = columns,
+        });
     }
     return null;
 }
@@ -388,82 +394,178 @@ fn remapToMergedColumns(
 /// INSERT INTO target (cols) SELECT values FROM source, for the source rows assigned to clause
 /// `index`.
 fn transformInsertAction(
-    l: Lowering,
+    lowering: Lowering,
     index: u32,
     when_clause: *const MergeWhenClauseData,
-) Error![]const u8 {
-    const alloc = l.coord.alloc;
+) Error!*sqlbuilder.InsertStatement {
+    const alloc = lowering.coord.alloc;
 
-    var columns: std.ArrayList([]const u8) = .empty;
-    var values: std.ArrayList([]const u8) = .empty;
-    for (when_clause.insert_columns, 0..) |col, i| {
-        try columns.append(alloc, try std.fmt.allocPrint(alloc, "`{s}`", .{col.name}));
+    const columns = try alloc.alloc([]const u8, when_clause.insert_columns.len);
+    const values = try alloc.alloc(*sqlbuilder.SelectListItem, when_clause.insert_columns.len);
+    for (when_clause.insert_columns, columns, values, 0..) |col, *column, *value, i| {
+        column.* = try std.fmt.allocPrint(alloc, "`{s}`", .{col.name});
         if (i >= when_clause.insert_values.len) return error.ValidationFailed;
-        const value_expr = try l.coord.transformExpression(when_clause.insert_values[i], l.ctx);
-        value_expr.alias = col.name;
-        try values.append(alloc, try value_expr.toString(alloc));
+        const value_data = when_clause.insert_values[i];
+        value.* = try create(alloc, sqlbuilder.SelectListItem{
+            .expression = try lowering.coord.transformExpression(value_data, lowering.ctx),
+            .alias = col.name,
+        });
     }
 
-    // A source row with a match in the target is skipped, tested against the snapshot so rows an
-    // earlier clause wrote cannot change the answer. Source rows have no row id, so the clause a
-    // row is assigned is evaluated on the source row itself.
-    return std.fmt.allocPrint(
+    const query = try sqlbuilder.newSelectStatement(alloc);
+    query.select_list = values;
+    query.from_clause = lowering.source_table;
+    query.where_clause = try sqlbuilder.newBinaryExpression(
         alloc,
-        "INSERT INTO `{s}` ({s}) SELECT {s} FROM {s} " ++
-            "WHERE NOT EXISTS (SELECT 1 FROM {s} WHERE `{s}` = {s} AND `{s}` IS NOT NULL) " ++
-            "AND ({s}) = {d}",
-        .{
-            l.target_table_name,
-            try joinStrings(alloc, columns.items, ","),
-            try joinStrings(alloc, values.items, ","),
-            try l.source_table.toString(alloc),
-            merged_table,
-            l.merged_source_key,
-            l.source_key_sql,
-            target_rowid_column,
-            l.insert_clause_case,
-            index,
-        },
+        try sqlbuilder.newNotExpression(alloc, try matchedInTarget(lowering)),
+        "AND",
+        try insertClauseIs(lowering, index),
+    );
+
+    return create(alloc, sqlbuilder.InsertStatement{
+        .table_name = lowering.target_table_name,
+        .columns = columns,
+        .query = query,
+    });
+}
+
+/// Whether the source row has a match in the target, read from the snapshot so rows an earlier
+/// clause wrote cannot change the answer.
+fn matchedInTarget(lowering: Lowering) Error!*sqlbuilder.SQLExpression {
+    const alloc = lowering.coord.alloc;
+    const matched = try sqlbuilder.newSelectStatement(alloc);
+    matched.select_list = try appendSelectItem(
+        alloc,
+        &.{},
+        try sqlbuilder.newLiteralExpression(alloc, "1"),
+        "",
+    );
+    matched.from_clause = try tableItem(alloc, merged_table);
+    matched.where_clause = try sqlbuilder.newBinaryExpression(
+        alloc,
+        try equals(
+            alloc,
+            try sqlbuilder.newColumnExpression(alloc, lowering.merged_source_key, null),
+            try sqlbuilder.newLiteralExpression(alloc, lowering.source_key_sql),
+        ),
+        "AND",
+        try sqlbuilder.newBinaryExpression(
+            alloc,
+            try sqlbuilder.newColumnExpression(alloc, target_rowid_column, null),
+            "IS NOT",
+            try sqlbuilder.newLiteralExpression(alloc, "NULL"),
+        ),
+    );
+    return sqlbuilder.newExistsExpression(alloc, matched);
+}
+
+/// A source row assigned to INSERT clause `index`. Source rows have no row id, so the assignment
+/// is evaluated on the source row itself.
+fn insertClauseIs(lowering: Lowering, index: u32) Error!*sqlbuilder.SQLExpression {
+    const alloc = lowering.coord.alloc;
+    return equals(
+        alloc,
+        try sqlbuilder.newLiteralExpression(
+            alloc,
+            try std.fmt.allocPrint(alloc, "({s})", .{lowering.insert_clause_case}),
+        ),
+        try clauseNumber(alloc, index),
     );
 }
 
 /// UPDATE target SET ... FROM the snapshot, for the target rows assigned to clause `index`. The
 /// merged table has a row id of its own, so the target's is qualified.
 fn transformUpdateAction(
-    l: Lowering,
+    lowering: Lowering,
     index: u32,
     when_clause: *const MergeWhenClauseData,
-) Error![]const u8 {
-    const alloc = l.coord.alloc;
+) Error!*sqlbuilder.UpdateStatement {
+    const alloc = lowering.coord.alloc;
 
-    var set_items: std.ArrayList([]const u8) = .empty;
-    for (when_clause.set_items) |item| {
-        const value_expr = try l.coord.transformExpression(item.value, l.ctx);
-        const value_string = try remapToMergedColumns(
-            l.coord,
+    const set_items = try alloc.alloc(*sqlbuilder.SetItem, when_clause.set_items.len);
+    for (when_clause.set_items, set_items) |item, *set_item| {
+        const value_expr = try lowering.coord.transformExpression(item.value, lowering.ctx);
+        const value_sql = try remapToMergedColumns(
+            lowering.coord,
             try value_expr.toString(alloc),
-            l.column_mapping,
-            l.ctx,
+            lowering.column_mapping,
+            lowering.ctx,
         );
-        try set_items.append(alloc, try std.fmt.allocPrint(alloc, "`{s}`= {s}", .{
-            item.column,
-            value_string,
-        }));
+        set_item.* = try create(alloc, sqlbuilder.SetItem{
+            .column = try sqlbuilder.newColumnExpression(alloc, item.column, null),
+            .value = try sqlbuilder.newLiteralExpression(alloc, value_sql),
+        });
     }
 
-    return std.fmt.allocPrint(
+    return create(alloc, sqlbuilder.UpdateStatement{
+        .table = try tableItem(alloc, lowering.target_table_name),
+        .set_items = set_items,
+        .from_clause = try tableItem(alloc, merged_table),
+        .where_clause = try sqlbuilder.newBinaryExpression(
+            alloc,
+            try equals(
+                alloc,
+                try sqlbuilder.newColumnExpression(
+                    alloc,
+                    lowering.target_rowid,
+                    lowering.target_table_name,
+                ),
+                try sqlbuilder.newColumnExpression(alloc, target_rowid_column, null),
+            ),
+            "AND",
+            try clauseIs(alloc, index),
+        ),
+    });
+}
+
+/// DELETE FROM target, for the target rows assigned to clause `index`.
+fn transformDeleteAction(lowering: Lowering, index: u32) Error!*sqlbuilder.DeleteStatement {
+    const alloc = lowering.coord.alloc;
+
+    const assigned = try sqlbuilder.newSelectStatement(alloc);
+    assigned.select_list = try appendSelectItem(
         alloc,
-        "UPDATE `{s}` SET {s} FROM {s} WHERE `{s}`.{s} = `{s}` AND `{s}` = {d}",
-        .{
-            l.target_table_name,
-            try joinStrings(alloc, set_items.items, ","),
-            merged_table,
-            l.target_table_name,
-            l.target_rowid,
-            target_rowid_column,
-            clause_column,
-            index,
-        },
+        &.{},
+        try sqlbuilder.newColumnExpression(alloc, target_rowid_column, null),
+        "",
+    );
+    assigned.from_clause = try tableItem(alloc, merged_table);
+    assigned.where_clause = try clauseIs(alloc, index);
+
+    const where = try sqlbuilder.newBinaryExpression(
+        alloc,
+        try sqlbuilder.newColumnExpression(alloc, lowering.target_rowid, null),
+        "IN",
+        try create(alloc, sqlbuilder.SQLExpression{ .type = .subquery, .subquery = assigned }),
+    );
+    return create(alloc, sqlbuilder.DeleteStatement{
+        .table = .{ .from_item = try tableItem(alloc, lowering.target_table_name) },
+        .where_expr = .{ .expression = where },
+    });
+}
+
+fn tableItem(alloc: std.mem.Allocator, name: []const u8) Error!*sqlbuilder.FromItem {
+    return create(alloc, sqlbuilder.FromItem{ .type = .table, .table_name = name });
+}
+
+fn equals(
+    alloc: std.mem.Allocator,
+    left: *sqlbuilder.SQLExpression,
+    right: *sqlbuilder.SQLExpression,
+) Error!*sqlbuilder.SQLExpression {
+    return sqlbuilder.newBinaryExpression(alloc, left, "=", right);
+}
+
+fn clauseNumber(alloc: std.mem.Allocator, index: u32) Error!*sqlbuilder.SQLExpression {
+    return sqlbuilder.newLiteralExpression(alloc, try std.fmt.allocPrint(alloc, "{d}", .{index}));
+}
+
+/// A snapshot row assigned to clause `index`.
+fn clauseIs(alloc: std.mem.Allocator, index: u32) Error!*sqlbuilder.SQLExpression {
+    return equals(
+        alloc,
+        try sqlbuilder.newColumnExpression(alloc, clause_column, null),
+        try clauseNumber(alloc, index),
     );
 }
 
@@ -641,19 +743,6 @@ fn create(alloc: std.mem.Allocator, value: anytype) Error!*@TypeOf(value) {
     const ptr = try alloc.create(@TypeOf(value));
     ptr.* = value;
     return ptr;
-}
-
-fn joinStrings(
-    alloc: std.mem.Allocator,
-    items: []const []const u8,
-    sep: []const u8,
-) Error![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    for (items, 0..) |item, i| {
-        if (i > 0) try out.appendSlice(alloc, sep);
-        try out.appendSlice(alloc, item);
-    }
-    return out.toOwnedSlice(alloc);
 }
 
 fn replaceAll(

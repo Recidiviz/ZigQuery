@@ -228,28 +228,38 @@ pub fn numDmlAffectedRows(
     arena: std.mem.Allocator,
     outcome: driver.StatementOutcome,
 ) std.mem.Allocator.Error!?*bqpb.Int64Value {
-    const affected = outcome.dml_affected_rows orelse return null;
-    const count = try arena.create(bqpb.Int64Value);
-    count.* = .{ .value = affected };
-    return count;
+    const dml = outcome.dml orelse return null;
+    return int64Value(arena, dml.total());
 }
 
-/// `dmlStats`: the affected-row count under the kind of change the statement made.
-/// Null for any statement but INSERT, UPDATE and DELETE; a MERGE's total is not split by kind.
+/// `dmlStats`: rows changed by kind.
+/// INSERT, UPDATE or DELETE report only their own kind;
+/// MERGE reports all three.
+/// Null for any other statement.
 pub fn dmlStats(
     arena: std.mem.Allocator,
     outcome: driver.StatementOutcome,
 ) std.mem.Allocator.Error!?*bqpb.DmlStats {
-    const count = try numDmlAffectedRows(arena, outcome) orelse return null;
+    const dml = outcome.dml orelse return null;
     const stats = try arena.create(bqpb.DmlStats);
-    // TODO: Use actual insert/update/delete counts
     stats.* = switch (outcome.statement_type) {
-        .insert => .{ .inserted_row_count = count },
-        .update => .{ .updated_row_count = count },
-        .delete => .{ .deleted_row_count = count },
+        .insert => .{ .inserted_row_count = try int64Value(arena, dml.inserted) },
+        .update => .{ .updated_row_count = try int64Value(arena, dml.updated) },
+        .delete => .{ .deleted_row_count = try int64Value(arena, dml.deleted) },
+        .merge => .{
+            .inserted_row_count = try int64Value(arena, dml.inserted),
+            .updated_row_count = try int64Value(arena, dml.updated),
+            .deleted_row_count = try int64Value(arena, dml.deleted),
+        },
         else => return null,
     };
     return stats;
+}
+
+fn int64Value(arena: std.mem.Allocator, value: i64) std.mem.Allocator.Error!*bqpb.Int64Value {
+    const out = try arena.create(bqpb.Int64Value);
+    out.* = .{ .value = value };
+    return out;
 }
 
 /// Serializes the jobs.query / getQueryResults envelope.
