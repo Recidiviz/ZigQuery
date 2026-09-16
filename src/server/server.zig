@@ -707,8 +707,10 @@ pub const Server = struct {
             };
         }
 
-        // A table only becomes queryable once the DDL runs; Go does the same
-        // through its content repository.
+        const columns = try tables_handler.schemaColumnNames(arena, schema_node);
+        if (try tableLayoutRejection(arena, parsed, columns)) |rejection| return rejection;
+
+        // A table only becomes queryable once the DDL runs
         if (tables_handler.viewQueryFromBody(parsed)) |view_sql| {
             const ddl = try std.fmt.allocPrint(
                 arena,
@@ -967,6 +969,8 @@ pub const Server = struct {
                 "table {s} is not found",
                 .{table_id},
             ));
+        const columns = try specColumnNames(arena, table_spec);
+        if (try tableLayoutRejection(arena, patch, columns)) |rejection| return rejection;
 
         var merged: std.json.ObjectMap = .empty;
         if (try postedOf(arena, table_spec)) |current| {
@@ -995,6 +999,28 @@ pub const Server = struct {
         const updated = (try s.db.catalogTable(arena, project_id, dataset_id, table_id)) orelse
             return internalError(arena, "table vanished while being patched");
         return .{ .body = try s.tableResource(arena, updated) };
+    }
+
+    /// A tables request's 400 when the layout fields of `resource` name none of `columns`.
+    fn tableLayoutRejection(
+        arena: std.mem.Allocator,
+        resource: std.json.Value,
+        columns: []const []const u8,
+    ) !?http_server.Response {
+        if (resource != .object) return null;
+        const layout_error =
+            tables_handler.layoutError(resource.object, columns) orelse return null;
+        return try badRequest(arena, try layout_error.message(arena, .table));
+    }
+
+    /// A catalog spec's top-level column names.
+    fn specColumnNames(
+        arena: std.mem.Allocator,
+        table_spec: *const zigquery.spec.TableSpec,
+    ) ![]const []const u8 {
+        const names = try arena.alloc([]const u8, table_spec.columns.len);
+        for (table_spec.columns, names) |column, *name| name.* = column.name;
+        return names;
     }
 
     /// A catalog spec's columns as the parsed `schema` node of a table
@@ -1210,6 +1236,8 @@ pub const Server = struct {
                     .{ dst.project_id, dst.dataset_id },
                 ));
             }
+            const layout_fields = try jobs_handler.destinationLayoutFields(arena, req.body);
+            if (try s.queryLayoutRejection(arena, sql, layout_fields)) |rejection| return rejection;
             const prior_metadata: []const u8 = if (try s.db.catalogTable(
                 arena,
                 dst.project_id,
@@ -1232,7 +1260,7 @@ pub const Server = struct {
                 dst,
                 materialization_method,
                 prior_metadata,
-                try jobs_handler.destinationLayoutFields(arena, req.body),
+                layout_fields,
             );
             // The job's own result mirrors the query's SELECT output, the same
             // rows just written to the destination table — not the table's
@@ -1372,6 +1400,28 @@ pub const Server = struct {
         const sqlite_name = try table_spec.tableName(arena);
         const create = try job_rows_vtab.createSql(arena, sqlite_name, job_id, job.set.names);
         try s.db.rawExec(create, &.{});
+    }
+
+    /// A query job's 400 when the destination layout it asks for names a column the query does
+    /// not output. Null when every field resolves, and when the query does not prepare, which
+    /// leaves that failure to the run that reports it.
+    fn queryLayoutRejection(
+        s: *Server,
+        arena: std.mem.Allocator,
+        sql: []const u8,
+        layout_fields: std.json.ObjectMap,
+    ) !?http_server.Response {
+        if (layout_fields.count() == 0) return null;
+        var prepared = s.db.prepare(sql, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return null,
+        };
+        defer prepared.deinit();
+        if (prepared.columns.len == 0) return null;
+        const columns = try arena.alloc([]const u8, prepared.columns.len);
+        for (prepared.columns, columns) |column, *name| name.* = column.name;
+        const layout_error = tables_handler.layoutError(layout_fields, columns) orelse return null;
+        return try badRequest(arena, try layout_error.message(arena, .query_job));
     }
 
     /// Writes a query's results into its destination table.
@@ -3067,6 +3117,166 @@ test "a query job's destination reports the partitioning and clustering it asked
         got_ranged.body,
         "\"rangePartitioning\":{\"field\":\"n\",\"range\":{\"end\":\"100\",\"interval\":\"10\",\"start\":\"0\"}}",
     ) != null);
+}
+
+test "a query job fails, writing nothing, when its layout names a column the query lacks" {
+    // OBT-23081. Messages from recidiviz-bigquery-sandbox, 2026-09-16, where the job ends DONE
+    // with this errorResult and getQueryResults answers 400 with it.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{
+        .project = "test",
+        .dataset = "ds1",
+    });
+    defer s.deinit();
+
+    // The first missing clustering field, in posted order.
+    const clustered = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 1 AS person_id, 'US_XX' AS state_code",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"m"},
+        \\  "writeDisposition":"WRITE_TRUNCATE",
+        \\  "clustering":{"fields":["person_id","does_not_exist","also_missing"]}}}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, clustered.status);
+    try testing.expectEqualStrings(
+        \\{"error":{"errors":[{"reason":"invalid","location":"","debugInfo":"","message":"The field specified for clustering cannot be found in the schema. Invalid field: does_not_exist"}],"code":400,"message":"The field specified for clustering cannot be found in the schema. Invalid field: does_not_exist"}}
+    , clustered.body);
+    const absent = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/m", "");
+    try testing.expectEqual(std.http.Status.not_found, absent.status);
+
+    // Any disposition; partitioning is checked before clustering.
+    const partitioned = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 1 AS person_id, DATE '2026-01-01' AS d",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"m"},
+        \\  "writeDisposition":"WRITE_APPEND",
+        \\  "timePartitioning":{"type":"DAY","field":"does_not_exist"},
+        \\  "clustering":{"fields":["also_missing"]}}}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, partitioned.status);
+    try testing.expectEqualStrings(
+        \\{"error":{"errors":[{"reason":"invalid","location":"","debugInfo":"","message":"The field specified for partitioning cannot be found in the schema."}],"code":400,"message":"The field specified for partitioning cannot be found in the schema."}}
+    , partitioned.body);
+
+    // Names match whatever their case, and the table reports them as posted.
+    const cased = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 1 AS person_id, 'US_XX' AS state_code",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"m"},
+        \\  "writeDisposition":"WRITE_TRUNCATE",
+        \\  "clustering":{"fields":["PERSON_ID"]}}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, cased.status);
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/m", "");
+    try testing.expect(
+        std.mem.indexOf(u8, got.body, "\"clustering\":{\"fields\":[\"PERSON_ID\"]}") != null,
+    );
+
+    // A rejected job leaves an existing destination's rows in place.
+    const rejected = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"SELECT 2 AS person_id, 'US_YY' AS state_code",
+        \\  "destinationTable":{"projectId":"test","datasetId":"ds1","tableId":"m"},
+        \\  "writeDisposition":"WRITE_TRUNCATE",
+        \\  "clustering":{"fields":["does_not_exist"]}}}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, rejected.status);
+    const rows = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT STRING_AGG(state_code) FROM ds1.m","useLegacySql":false}
+    );
+    try testing.expectEqual(std.http.Status.ok, rows.status);
+    try testing.expectEqualStrings("US_XX", try onlyCell(arena, rows.body));
+}
+
+test "tables.insert and tables.patch reject a layout that names no column" {
+    // OBT-23081. Messages from recidiviz-bigquery-sandbox, 2026-09-16.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{
+        .project = "test",
+        .dataset = "ds1",
+    });
+    defer s.deinit();
+
+    const clustered = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"t"},
+        \\ "schema":{"fields":[{"name":"person_id","type":"INTEGER"}]},
+        \\ "clustering":{"fields":["does_not_exist"]}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, clustered.status);
+    try testing.expectEqualStrings(
+        \\{"error":{"errors":[{"reason":"invalid","location":"","debugInfo":"","message":"The field specified for clustering cannot be found in the schema. Invalid field: does_not_exist."}],"code":400,"message":"The field specified for clustering cannot be found in the schema. Invalid field: does_not_exist."}}
+    , clustered.body);
+    const absent = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "");
+    try testing.expectEqual(std.http.Status.not_found, absent.status);
+
+    const Rejection = struct { body: []const u8, message: []const u8 };
+    const rejections = [_]Rejection{
+        .{
+            .body =
+            \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"t"},
+            \\ "schema":{"fields":[{"name":"person_id","type":"INTEGER"}]},
+            \\ "timePartitioning":{"type":"DAY","field":"does_not_exist"},
+            \\ "clustering":{"fields":["also_missing"]}}
+            ,
+            .message = "The field specified for partitioning cannot be found in the schema.",
+        },
+        .{
+            .body =
+            \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"t"},
+            \\ "timePartitioning":{"type":"DAY","field":"does_not_exist"}}
+            ,
+            .message = "Table with field based partitioning must have a schema.",
+        },
+        .{
+            .body =
+            \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"v"},
+            \\ "view":{"query":"SELECT 1 AS person_id","useLegacySql":false},
+            \\ "clustering":{"fields":["person_id"]}}
+            ,
+            .message = "Table with clustering must have a schema.",
+        },
+    };
+    for (rejections) |rejection| {
+        const res =
+            try request(s, arena, .POST, "/projects/test/datasets/ds1/tables", rejection.body);
+        try testing.expectEqual(std.http.Status.bad_request, res.status);
+        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, res.body, .{});
+        try testing.expectEqualStrings(
+            rejection.message,
+            v.object.get("error").?.object.get("message").?.string,
+        );
+    }
+
+    const created = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"t"},
+        \\ "schema":{"fields":[{"name":"person_id","type":"INTEGER"},{"name":"d","type":"DATE"}]},
+        \\ "clustering":{"fields":["person_id"]}}
+    );
+    try testing.expectEqual(std.http.Status.ok, created.status);
+
+    const patched = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/t",
+        \\{"clustering":{"fields":["does_not_exist"]}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, patched.status);
+    try testing.expectEqualStrings(
+        \\{"error":{"errors":[{"reason":"invalid","location":"","debugInfo":"","message":"The field specified for clustering cannot be found in the schema. Invalid field: does_not_exist."}],"code":400,"message":"The field specified for clustering cannot be found in the schema. Invalid field: does_not_exist."}}
+    , patched.body);
+    const repartitioned = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/t",
+        \\{"timePartitioning":{"type":"DAY","field":"does_not_exist"}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, repartitioned.status);
+    const kept = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "");
+    try testing.expect(
+        std.mem.indexOf(u8, kept.body, "\"clustering\":{\"fields\":[\"person_id\"]}") != null,
+    );
+    try testing.expect(std.mem.indexOf(u8, kept.body, "timePartitioning") == null);
+
+    const cleared = try request(s, arena, .PATCH, "/projects/test/datasets/ds1/tables/t",
+        \\{"clustering":null,"description":"x"}
+    );
+    try testing.expectEqual(std.http.Status.ok, cleared.status);
 }
 
 /// The schema BigQuery reports for `described_columns`, then the `trailing` fields

@@ -220,6 +220,90 @@ pub fn viewQueryFromBody(root: std.json.Value) ?[]const u8 {
     return q.string;
 }
 
+/// The top-level column names of a posted `schema`.
+pub fn schemaColumnNames(
+    arena: std.mem.Allocator,
+    schema: ?std.json.Value,
+) std.mem.Allocator.Error![]const []const u8 {
+    const node = schema orelse return &.{};
+    if (node != .object) return &.{};
+    const fields = node.object.get("fields") orelse return &.{};
+    if (fields != .array) return &.{};
+    var names: std.ArrayList([]const u8) = .empty;
+    for (fields.array.items) |field| {
+        try names.append(arena, stringField(field, "name") orelse continue);
+    }
+    return names.toOwnedSlice(arena);
+}
+
+pub const LayoutError = union(enum) {
+    partitioning_without_schema,
+    partitioning_field_missing,
+    clustering_without_schema,
+    /// The first clustering field, in posted order, that names no column.
+    clustering_field_missing: []const u8,
+
+    /// The request the error answers; each words the clustering message its own way.
+    pub const Surface = enum { table, query_job };
+
+    pub fn message(
+        e: LayoutError,
+        arena: std.mem.Allocator,
+        surface: Surface,
+    ) std.mem.Allocator.Error![]const u8 {
+        const period = switch (surface) {
+            .table => ".",
+            .query_job => "",
+        };
+        return switch (e) {
+            .partitioning_without_schema,
+            => "Table with field based partitioning must have a schema.",
+            .partitioning_field_missing,
+            => "The field specified for partitioning cannot be found in the schema.",
+            .clustering_without_schema,
+            => "Table with clustering must have a schema.",
+            .clustering_field_missing => |field| std.fmt.allocPrint(
+                arena,
+                "The field specified for clustering cannot be found in the schema. " ++
+                    "Invalid field: {s}{s}",
+                .{ field, period },
+            ),
+        };
+    }
+};
+
+/// Returns the first layout field of `resource` that is invalid
+pub fn layoutError(resource: std.json.ObjectMap, columns: []const []const u8) ?LayoutError {
+    for ([_][]const u8{ "timePartitioning", "rangePartitioning" }) |key| {
+        const field = stringField(resource.get(key) orelse continue, "field") orelse continue;
+        if (columns.len == 0) return .partitioning_without_schema;
+        if (!hasColumn(columns, field)) return .partitioning_field_missing;
+    }
+    const clustering = resource.get("clustering") orelse return null;
+    if (clustering != .object) return null;
+    const fields = clustering.object.get("fields") orelse return null;
+    if (fields != .array) return null;
+    for (fields.array.items) |field| {
+        if (field != .string) continue;
+        if (columns.len == 0) return .clustering_without_schema;
+        if (!hasColumn(columns, field.string)) return .{ .clustering_field_missing = field.string };
+    }
+    return null;
+}
+
+fn hasColumn(columns: []const []const u8, name: []const u8) bool {
+    for (columns) |column| {
+        if (std.ascii.eqlIgnoreCase(column, name)) return true;
+    }
+    return false;
+}
+
+fn stringField(v: std.json.Value, name: []const u8) ?[]const u8 {
+    if (v != .object) return null;
+    const f = v.object.get(name) orelse return null;
+    return if (f == .string) f.string else null;
+}
+
 const testing = std.testing;
 
 test "table resource matches the Go emulator" {
@@ -294,4 +378,108 @@ test "extracts table id and view query from bodies" {
         \\{"tableReference":{"tableId":"v1"},"view":{"query":"SELECT 1","useLegacySql":false}}
     , .{});
     try testing.expectEqualStrings("SELECT 1", viewQueryFromBody(v).?);
+}
+
+test "layout fields resolve against the top-level columns, partitioning first" {
+    // Messages from recidiviz-bigquery-sandbox, 2026-09-16.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const schema = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[{"name":"person_id","type":"INTEGER"},{"name":"d","type":"DATE"},
+        \\  {"name":"rec","type":"RECORD","fields":[{"name":"sub","type":"INTEGER"}]}]}
+    , .{});
+    const columns = try schemaColumnNames(arena, schema);
+    try testing.expectEqual(@as(usize, 3), columns.len);
+    try testing.expectEqualStrings("rec", columns[2]);
+
+    const Case = struct { resource: []const u8, table: ?[]const u8, query_job: ?[]const u8 };
+    const cases = [_]Case{
+        // Names match whatever their case.
+        .{
+            .resource =
+            \\{"timePartitioning":{"type":"DAY","field":"D"},"clustering":{"fields":["PERSON_ID"]}}
+            ,
+            .table = null,
+            .query_job = null,
+        },
+        // A null layout, and ingestion-time partitioning, name no column.
+        .{
+            .resource =
+            \\{"timePartitioning":{"type":"DAY"},"rangePartitioning":null,"clustering":null}
+            ,
+            .table = null,
+            .query_job = null,
+        },
+        .{
+            .resource =
+            \\{"clustering":{"fields":["person_id","does_not_exist","also_missing"]}}
+            ,
+            .table = "The field specified for clustering cannot be found in the schema. " ++
+                "Invalid field: does_not_exist.",
+            .query_job = "The field specified for clustering cannot be found in the schema. " ++
+                "Invalid field: does_not_exist",
+        },
+        // A nested field is not a clustering column.
+        .{
+            .resource =
+            \\{"clustering":{"fields":["sub"]}}
+            ,
+            .table = "The field specified for clustering cannot be found in the schema. " ++
+                "Invalid field: sub.",
+            .query_job = "The field specified for clustering cannot be found in the schema. " ++
+                "Invalid field: sub",
+        },
+        .{
+            .resource =
+            \\{"timePartitioning":{"type":"DAY","field":"does_not_exist"},
+            \\ "clustering":{"fields":["also_missing"]}}
+            ,
+            .table = "The field specified for partitioning cannot be found in the schema.",
+            .query_job = "The field specified for partitioning cannot be found in the schema.",
+        },
+        .{
+            .resource =
+            \\{"rangePartitioning":{"field":"does_not_exist",
+            \\  "range":{"start":"0","end":"100","interval":"10"}}}
+            ,
+            .table = "The field specified for partitioning cannot be found in the schema.",
+            .query_job = "The field specified for partitioning cannot be found in the schema.",
+        },
+    };
+    for (cases) |case| {
+        const resource =
+            try std.json.parseFromSliceLeaky(std.json.Value, arena, case.resource, .{});
+        const found = layoutError(resource.object, columns);
+        const surfaces = [_]struct { LayoutError.Surface, ?[]const u8 }{
+            .{ .table, case.table },
+            .{ .query_job, case.query_job },
+        };
+        for (surfaces) |surface| {
+            const want = surface[1] orelse {
+                try testing.expect(found == null);
+                continue;
+            };
+            const got = found orelse return error.TestExpectedLayoutError;
+            try testing.expectEqualStrings(want, try got.message(arena, surface[0]));
+        }
+    }
+
+    // A table without columns.
+    const no_schema = try schemaColumnNames(arena, null);
+    const clustered = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"clustering":{"fields":["does_not_exist"]}}
+    , .{});
+    try testing.expectEqualStrings(
+        "Table with clustering must have a schema.",
+        try layoutError(clustered.object, no_schema).?.message(arena, .table),
+    );
+    const partitioned = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"timePartitioning":{"type":"DAY","field":"does_not_exist"}}
+    , .{});
+    try testing.expectEqualStrings(
+        "Table with field based partitioning must have a schema.",
+        try layoutError(partitioned.object, no_schema).?.message(arena, .table),
+    );
 }
