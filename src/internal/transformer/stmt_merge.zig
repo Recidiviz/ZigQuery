@@ -1,13 +1,14 @@
-//! Faithful port of go-zetasqlite internal/transformer_stmt_merge.go.
-//!
-//! SQLite has no native MERGE, so the statement is lowered to a sequence of
-//! plain statements executed in order by the driver's MergeStmtAction:
-//!   1. CREATE TABLE zigquery_merged_table AS SELECT DISTINCT * FROM
-//!      (source LEFT JOIN target UNION ALL target LEFT JOIN source) with
-//!      renamed columns (merged_source_*/merged_target_*),
-//!   2. one INSERT / UPDATE ... FROM / DELETE per WHEN clause, filtered via
-//!      EXISTS over the merged table,
+//! MERGE, lowered to plain SQLite statements the driver runs in order:
+//!   1. `CREATE TABLE zigquery_merged_table`, the pre-MERGE snapshot:
+//!      `SELECT DISTINCT over (source LEFT JOIN target UNION ALL target LEFT JOIN source)`,
+//!      with columns renamed merged_source_* / merged_target_*, the target's row id,
+//!      and the WHEN clause each target row is assigned,
+//!   2. one INSERT / UPDATE ... FROM / DELETE per WHEN clause, acting only on its own rows,
 //!   3. DROP TABLE zigquery_merged_table.
+//!
+//! Only the first qualifying WHEN clause runs for a row
+//! (data-manipulation-language.md#merge_statement).
+//! The snapshot decides it once, so a clause's writes never change which rows a later clause acts on.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -18,6 +19,13 @@ const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const Error = types_data.Error;
 const ColumnData = types_data.ColumnData;
 const ExpressionData = types_data.ExpressionData;
+const MergeWhenClauseData = types_data.MergeWhenClauseData;
+
+const merged_table = "zigquery_merged_table";
+/// The target row's SQLite row id; NULL on a source row with no match.
+const target_rowid_column = "zigquery_merge_target_rowid";
+/// Index into the WHEN clauses of the clause that acts on a target row; NULL for none.
+const clause_column = "zigquery_merge_clause";
 
 /// Go ColumnMapping: original column -> merged-table column name. Array maps
 /// keep Go's per-map grouping but with deterministic iteration order.
@@ -60,17 +68,22 @@ pub fn transform(
 
     // Validate merge expression is an equality of two column references.
     try validateMergeExpression(merge_data.merge_expr);
+    const source_column = (try extractMergeColumns(merge_data)).source;
 
-    // Extract source and target column references from the merge expression.
-    const merge_columns = try extractMergeColumns(merge_data);
-    const source_column = merge_columns.source;
-    const target_column = merge_columns.target;
+    // The target subquery carries its row id into the snapshot.
+    const target_rowid = try targetRowidName(target_scan_data.column_list);
+    const target_query = target_table.subquery orelse return error.UnsupportedNode;
+    target_query.select_list = try appendSelectItem(
+        alloc,
+        target_query.select_list,
+        try sqlbuilder.newColumnExpression(alloc, target_rowid, null),
+        target_rowid_column,
+    );
 
-    // Create temporary merged table with the two-way LEFT JOIN union.
     var column_mapping = ColumnMapping{};
     const create_table_stmt = try createMergedTableStatement(
         coord,
-        "zigquery_merged_table",
+        merged_table,
         source_table,
         target_table,
         source_scan_data,
@@ -79,17 +92,12 @@ pub fn transform(
         &column_mapping,
         ctx,
     );
-
-    // Go: "failed to lookup merged source column name"
-    const merged_source_column_name = column_mapping.lookupName(source_column) orelse
-        return error.ValidationFailed;
-    // Go: "failed to lookup merged target column name"
-    const merged_target_column_name = column_mapping.lookupName(target_column) orelse
+    const merged_source_key = column_mapping.lookupName(source_column) orelse
         return error.ValidationFailed;
 
-    // The join key's name in the source scan's own scope. The merged table
-    // aliases exactly this expression as `merged_source_<key>`, so it is what
-    // correlates an INSERT's source row back to the snapshot.
+    // The join key's name in the source scan's own scope. The merged table aliases exactly this
+    // expression as `merged_source_<key>`, so it is what correlates an INSERT's source row back to
+    // the snapshot.
     const source_key_ref = try alloc.create(types_data.ColumnRefData);
     source_key_ref.* = .{ .column_id = source_column.id };
     const source_key_sql = try (try coord.transformExpression(
@@ -97,31 +105,34 @@ pub fn transform(
         ctx,
     )).toString(alloc);
 
-    // Build the list of SQL statements.
+    var lowering = Lowering{
+        .coord = coord,
+        .ctx = ctx,
+        .when_clauses = merge_data.when_clauses,
+        .target_table_name = merge_data.target_table,
+        .target_rowid = target_rowid,
+        .source_table = source_table,
+        .source_key_sql = source_key_sql,
+        .merged_source_key = merged_source_key,
+        .column_mapping = &column_mapping,
+    };
+    lowering.insert_clause_case = try clauseCase(lowering, .source);
+
+    const snapshot = create_table_stmt.as_select orelse return error.UnsupportedNode;
+    snapshot.select_list = try appendSelectItem(
+        alloc,
+        snapshot.select_list,
+        try sqlbuilder.newLiteralExpression(alloc, try clauseCase(lowering, .snapshot)),
+        clause_column,
+    );
+
     var statements: std.ArrayList([]const u8) = .empty;
-
-    // 1. Create temporary merged table.
     try statements.append(alloc, try create_table_stmt.toString(alloc));
-
-    // 2. Conditional statements per WHEN clause.
-    for (merge_data.when_clauses) |when_clause| {
-        const stmt = try transformWhenClause(
-            coord,
-            when_clause,
-            merge_data.target_table,
-            target_column.name,
-            source_table,
-            source_key_sql,
-            merged_source_column_name,
-            merged_target_column_name,
-            &column_mapping,
-            ctx,
-        );
+    for (merge_data.when_clauses, 0..) |when_clause, i| {
+        const stmt = try transformWhenClause(lowering, @intCast(i), when_clause);
         if (stmt.len > 0) try statements.append(alloc, stmt);
     }
-
-    // 3. Drop temporary table.
-    try statements.append(alloc, "DROP TABLE zigquery_merged_table");
+    try statements.append(alloc, "DROP TABLE " ++ merged_table);
 
     const compound = try sqlbuilder.newCompoundSQLFragment(
         alloc,
@@ -194,174 +205,140 @@ fn extractMergeColumns(merge_data: *const types_data.MergeData) Error!MergeColum
     return error.ValidationFailed;
 }
 
-/// Go transformWhenClause.
-fn transformWhenClause(
+/// What every lowered WHEN clause needs.
+const Lowering = struct {
     coord: *coordinator.QueryCoordinator,
-    when_clause: *const types_data.MergeWhenClauseData,
-    target_table_name: []const u8,
-    target_column_name: []const u8,
-    source_table: *sqlbuilder.FromItem,
-    source_key_sql: []const u8,
-    merged_source_column_name: []const u8,
-    merged_target_column_name: []const u8,
-    column_mapping: *const ColumnMapping,
     ctx: *context.TransformContext,
+    when_clauses: []const *MergeWhenClauseData,
+    target_table_name: []const u8,
+    /// SQLite's name for the target's row id (targetRowidName).
+    target_rowid: []const u8,
+    source_table: *sqlbuilder.FromItem,
+    /// The join key in the source scan's own scope.
+    source_key_sql: []const u8,
+    /// The join key's source column in the snapshot.
+    merged_source_key: []const u8,
+    column_mapping: *const ColumnMapping,
+    /// clauseCase(.source): the INSERT clause each source row is assigned.
+    insert_clause_case: []const u8 = "",
+};
+
+/// The rows a clause CASE is evaluated on: snapshot rows for the clauses that act on target rows,
+/// source rows for the INSERT clauses.
+const ClauseScope = enum { snapshot, source };
+
+/// A CASE naming the first WHEN clause that qualifies a row, in WHEN order, or NULL when no clause
+/// is evaluated in `scope`. CASE takes the first true branch, and a NULL search condition is not
+/// true (data-manipulation-language.md#merge_statement).
+fn clauseCase(l: Lowering, scope: ClauseScope) Error![]const u8 {
+    const alloc = l.coord.alloc;
+    var arms: std.ArrayList(u8) = .empty;
+    for (l.when_clauses, 0..) |when_clause, i| {
+        const match = try matchPredicate(l, when_clause, scope) orelse continue;
+        const condition = if (when_clause.condition) |c| try conditionSql(l, c, scope) else "TRUE";
+        try arms.print(alloc, " WHEN {s} AND ({s}) THEN {d}", .{ match, condition, i });
+    }
+    if (arms.items.len == 0) return "NULL";
+    return std.fmt.allocPrint(alloc, "CASE{s} END", .{arms.items});
+}
+
+/// A WHEN clause's search condition, over snapshot columns or the source scan's own.
+fn conditionSql(
+    l: Lowering,
+    condition: *const ExpressionData,
+    scope: ClauseScope,
 ) Error![]const u8 {
-    const alloc = coord.alloc;
-
-    // FROM-filter for this match type. Each branch has to correlate the merged
-    // row back to the target row being acted on: an uncorrelated predicate is a
-    // property of the merged table as a whole, so it holds for every target row
-    // as soon as it holds for one of them.
-    const from_filter = switch (when_clause.match_type) {
-        // Both target and source table have matching records.
-        .MATCHED => try sqlbuilder.newBinaryExpression(
-            alloc,
-            try sqlbuilder.newBinaryExpression(
-                alloc,
-                try sqlbuilder.newColumnExpression(alloc, merged_source_column_name, null),
-                "=",
-                try sqlbuilder.newColumnExpression(alloc, target_column_name, null),
-            ),
-            "AND",
-            try sqlbuilder.newBinaryExpression(
-                alloc,
-                try sqlbuilder.newColumnExpression(alloc, merged_target_column_name, null),
-                "=",
-                try sqlbuilder.newColumnExpression(alloc, target_column_name, null),
-            ),
-        ),
-        // Target table has a record but the source table doesn't. `IS` rather
-        // than `=` on the key so that a target row whose key is NULL — which
-        // can never satisfy the ON condition, and so is always unmatched — is
-        // still selected.
-        .NOT_MATCHED_BY_SOURCE => try sqlbuilder.newBinaryExpression(
-            alloc,
-            try sqlbuilder.newBinaryExpression(
-                alloc,
-                try sqlbuilder.newColumnExpression(alloc, merged_target_column_name, null),
-                "IS",
-                try sqlbuilder.newColumnExpression(alloc, target_column_name, null),
-            ),
-            "AND",
-            try sqlbuilder.newBinaryExpression(
-                alloc,
-                try sqlbuilder.newColumnExpression(alloc, merged_source_column_name, null),
-                "IS",
-                try sqlbuilder.newLiteralExpression(alloc, "NULL"),
-            ),
-        ),
-        // Source table has a record but the target table doesn't. Only INSERT
-        // is legal here, and it filters source rows rather than target rows, so
-        // this filter is unused — it stays for the match-type validation below.
-        .NOT_MATCHED_BY_TARGET => try sqlbuilder.newBinaryExpression(
-            alloc,
-            try sqlbuilder.newBinaryExpression(
-                alloc,
-                try sqlbuilder.newColumnExpression(alloc, merged_target_column_name, null),
-                "IS",
-                try sqlbuilder.newLiteralExpression(alloc, "NULL"),
-            ),
-            "AND",
-            try sqlbuilder.newBinaryExpression(
-                alloc,
-                try sqlbuilder.newColumnExpression(alloc, merged_source_column_name, null),
-                "IS NOT",
-                try sqlbuilder.newLiteralExpression(alloc, "NULL"),
-            ),
-        ),
-        // Go: "unsupported match type: %v"
-        else => return error.UnsupportedNode,
+    const sql = try (try l.coord.transformExpression(condition.*, l.ctx)).toString(l.coord.alloc);
+    return switch (scope) {
+        .snapshot => remapToMergedColumns(l.coord, sql, l.column_mapping, l.ctx),
+        .source => sql,
     };
+}
 
-    // `WHEN <match_type> AND <search_condition>`: the resolved AST hangs the
-    // extra predicate off the WHEN clause rather than folding it into the ON
-    // expression, so each lowered statement has to re-apply it itself.
-    const condition_sql: ?[]const u8 = if (when_clause.condition) |cond|
-        try (try coord.transformExpression(cond.*, ctx)).toString(alloc)
-    else
-        null;
+/// The row test for a clause's match type, or null when the clause is not evaluated in `scope`.
+/// A matched pair always has a non-NULL key: `zigquery_equal` is NULL when either side is.
+fn matchPredicate(
+    l: Lowering,
+    when_clause: *const MergeWhenClauseData,
+    scope: ClauseScope,
+) Error!?[]const u8 {
+    const alloc = l.coord.alloc;
+    const on_target = scope == .snapshot;
+    return switch (when_clause.match_type) {
+        .MATCHED => if (on_target) try std.fmt.allocPrint(
+            alloc,
+            "`{s}` IS NOT NULL AND `{s}` IS NOT NULL",
+            .{ target_rowid_column, l.merged_source_key },
+        ) else null,
+        .NOT_MATCHED_BY_SOURCE => if (on_target) try std.fmt.allocPrint(
+            alloc,
+            "`{s}` IS NOT NULL AND `{s}` IS NULL",
+            .{ target_rowid_column, l.merged_source_key },
+        ) else null,
+        .NOT_MATCHED_BY_TARGET => if (on_target) null else "TRUE",
+        else => error.UnsupportedNode,
+    };
+}
 
+/// The statement for WHEN clause `index`, acting only on the rows assigned to it.
+fn transformWhenClause(
+    l: Lowering,
+    index: u32,
+    when_clause: *const MergeWhenClauseData,
+) Error![]const u8 {
+    const inserts = when_clause.match_type == .NOT_MATCHED_BY_TARGET;
     switch (when_clause.action_type) {
-        .INSERT => return transformInsertAction(
-            coord,
-            when_clause,
-            target_table_name,
-            source_table,
-            source_key_sql,
-            merged_source_column_name,
-            merged_target_column_name,
-            condition_sql,
-            ctx,
-        ),
+        .INSERT => {
+            if (!inserts) return error.UnsupportedNode;
+            return transformInsertAction(l, index, when_clause);
+        },
         .UPDATE => {
-            var where_sql = try from_filter.toString(alloc);
-            if (condition_sql) |cond| {
-                where_sql = try std.fmt.allocPrint(alloc, "{s} AND ({s})", .{
-                    where_sql,
-                    try remapToMergedColumns(coord, cond, column_mapping, ctx),
-                });
-            }
-            return transformUpdateAction(
-                coord,
-                when_clause,
-                target_table_name,
-                where_sql,
-                column_mapping,
-                ctx,
-            );
+            if (inserts) return error.UnsupportedNode;
+            return transformUpdateAction(l, index, when_clause);
         },
         .DELETE => {
-            // WHERE clause with existence check over the merged table.
-            const subq = try sqlbuilder.newSelectStatement(alloc);
-            const subq_from = try alloc.create(sqlbuilder.FromItem);
-            subq_from.* = .{ .type = .table, .table_name = "zigquery_merged_table" };
-            subq.from_clause = subq_from;
-            const subq_list = try alloc.alloc(*sqlbuilder.SelectListItem, 2);
-            subq_list[0] = try create(alloc, sqlbuilder.SelectListItem{
-                .expression = try sqlbuilder.newColumnExpression(
-                    alloc,
-                    merged_source_column_name,
-                    null,
-                ),
-            });
-            subq_list[1] = try create(alloc, sqlbuilder.SelectListItem{
-                .expression = try sqlbuilder.newColumnExpression(
-                    alloc,
-                    merged_target_column_name,
-                    null,
-                ),
-            });
-            subq.select_list = subq_list;
-            subq.where_clause = from_filter;
-            if (condition_sql) |cond| {
-                subq.where_clause = try sqlbuilder.newBinaryExpression(
-                    alloc,
-                    from_filter,
-                    "AND",
-                    try sqlbuilder.newLiteralExpression(alloc, try std.fmt.allocPrint(alloc, "({s})", .{
-                        try remapToMergedColumns(coord, cond, column_mapping, ctx),
-                    })),
-                );
-            }
-
-            const target_from = try alloc.create(sqlbuilder.FromItem);
-            target_from.* = .{ .type = .table, .table_name = target_table_name };
-            const delete_stmt = try create(alloc, sqlbuilder.DeleteStatement{
-                .table = .{ .from_item = target_from },
-                .where_expr = .{ .expression = try sqlbuilder.newExistsExpression(alloc, subq) },
-            });
-            return delete_stmt.toString(alloc);
+            if (inserts) return error.UnsupportedNode;
+            return std.fmt.allocPrint(
+                l.coord.alloc,
+                "DELETE FROM `{s}` WHERE {s} IN (SELECT `{s}` FROM {s} WHERE `{s}` = {d})",
+                .{
+                    l.target_table_name, l.target_rowid, target_rowid_column,
+                    merged_table,        clause_column,  index,
+                },
+            );
         },
-        // Go: "unsupported action type: %v"
         else => return error.UnsupportedNode,
     }
 }
 
+/// SQLite's name for a target row's id: the first of its aliases no target column shadows.
+fn targetRowidName(columns: []const *ColumnData) Error![]const u8 {
+    for ([_][]const u8{ "rowid", "_rowid_", "oid" }) |name| {
+        for (columns) |column| {
+            if (std.ascii.eqlIgnoreCase(column.name, name)) break;
+        } else return name;
+    }
+    return error.UnsupportedNode;
+}
+
+fn appendSelectItem(
+    alloc: std.mem.Allocator,
+    items: []const *sqlbuilder.SelectListItem,
+    expression: *sqlbuilder.SQLExpression,
+    alias: []const u8,
+) Error![]const *sqlbuilder.SelectListItem {
+    const out = try alloc.alloc(*sqlbuilder.SelectListItem, items.len + 1);
+    @memcpy(out[0..items.len], items);
+    out[items.len] = try create(alloc, sqlbuilder.SelectListItem{
+        .expression = expression,
+        .alias = alias,
+    });
+    return out;
+}
+
 /// Rewrites source- and target-scan column references into the merged table's
 /// column names, so an expression written against `T`/`S` can be evaluated on a
-/// row of `zigquery_merged_table`. Go does this inline for UPDATE's SET items
-/// only; the WHEN search condition needs the same treatment.
+/// row of `zigquery_merged_table`.
 fn remapToMergedColumns(
     coord: *coordinator.QueryCoordinator,
     sql: []const u8,
@@ -376,7 +353,10 @@ fn remapToMergedColumns(
         const mapped = entry.value_ptr.*;
         const ref = try alloc.create(types_data.ColumnRefData);
         ref.* = .{ .column_id = column.id };
-        const expr = try coord.transformExpression(.{ .type = .column, .column = ref }, ctx);
+        const expr = try coord.transformExpression(.{
+            .type = .column,
+            .column = ref
+        }, ctx);
         const needle = try expr.toString(alloc);
         const replacement = try std.fmt.allocPrint(alloc, "`{s}`", .{mapped});
         out = try replaceAll(alloc, out, needle, replacement);
@@ -384,97 +364,92 @@ fn remapToMergedColumns(
     return out;
 }
 
-/// Go transformInsertAction: INSERT INTO target (cols) SELECT values FROM source.
+/// INSERT INTO target (cols) SELECT values FROM source, for the source rows assigned to clause
+/// `index`.
 fn transformInsertAction(
-    coord: *coordinator.QueryCoordinator,
-    when_clause: *const types_data.MergeWhenClauseData,
-    target_table_name: []const u8,
-    source_table: *sqlbuilder.FromItem,
-    source_key_sql: []const u8,
-    merged_source_column_name: []const u8,
-    merged_target_column_name: []const u8,
-    condition_sql: ?[]const u8,
-    ctx: *context.TransformContext,
+    l: Lowering,
+    index: u32,
+    when_clause: *const MergeWhenClauseData,
 ) Error![]const u8 {
-    const alloc = coord.alloc;
+    const alloc = l.coord.alloc;
 
     var columns: std.ArrayList([]const u8) = .empty;
     var values: std.ArrayList([]const u8) = .empty;
     for (when_clause.insert_columns, 0..) |col, i| {
         try columns.append(alloc, try std.fmt.allocPrint(alloc, "`{s}`", .{col.name}));
-        // Transform INSERT values.
         if (i >= when_clause.insert_values.len) return error.ValidationFailed;
-        const value_expr = try coord.transformExpression(when_clause.insert_values[i], ctx);
+        const value_expr = try l.coord.transformExpression(when_clause.insert_values[i], l.ctx);
         value_expr.alias = col.name;
         try values.append(alloc, try value_expr.toString(alloc));
     }
 
-    // INSERT is only reachable under NOT MATCHED BY TARGET, so a source row
-    // that already has a match in the target must be skipped — without this the
-    // statement copies the whole source across and an upsert duplicates every
-    // matched row. The test reads the merged table rather than the target so
-    // that a preceding WHEN clause which has already written to the target
-    // cannot change the answer: MERGE decides against the pre-MERGE snapshot.
-    var predicates: std.ArrayList([]const u8) = .empty;
-    try predicates.append(alloc, try std.fmt.allocPrint(
+    // A source row with a match in the target is skipped, tested against the snapshot so rows an
+    // earlier clause wrote cannot change the answer. Source rows have no row id, so the clause a
+    // row is assigned is evaluated on the source row itself.
+    return std.fmt.allocPrint(
         alloc,
-        "NOT EXISTS (SELECT 1 FROM zigquery_merged_table WHERE `{s}` = {s} AND `{s}` IS NOT NULL)",
-        .{ merged_source_column_name, source_key_sql, merged_target_column_name },
-    ));
-    // The search condition is evaluated in the source scan's own scope here, so
-    // unlike UPDATE/DELETE it needs no remapping onto the merged table.
-    if (condition_sql) |cond| {
-        try predicates.append(alloc, try std.fmt.allocPrint(alloc, "({s})", .{cond}));
-    }
-
-    return std.fmt.allocPrint(alloc, "INSERT INTO `{s}` ({s}) SELECT {s} FROM {s} WHERE {s}", .{
-        target_table_name,
-        try joinStrings(alloc, columns.items, ","),
-        try joinStrings(alloc, values.items, ","),
-        try source_table.toString(alloc),
-        try joinStrings(alloc, predicates.items, " AND "),
-    });
+        "INSERT INTO `{s}` ({s}) SELECT {s} FROM {s} " ++
+            "WHERE NOT EXISTS (SELECT 1 FROM {s} WHERE `{s}` = {s} AND `{s}` IS NOT NULL) " ++
+            "AND ({s}) = {d}",
+        .{
+            l.target_table_name,
+            try joinStrings(alloc, columns.items, ","),
+            try joinStrings(alloc, values.items, ","),
+            try l.source_table.toString(alloc),
+            merged_table,
+            l.merged_source_key,
+            l.source_key_sql,
+            target_rowid_column,
+            l.insert_clause_case,
+            index,
+        },
+    );
 }
 
-/// Go transformUpdateAction: UPDATE target SET ... FROM zigquery_merged_table WHERE filter.
+/// UPDATE target SET ... FROM the snapshot, for the target rows assigned to clause `index`. The
+/// merged table has a row id of its own, so the target's is qualified.
 fn transformUpdateAction(
-    coord: *coordinator.QueryCoordinator,
-    when_clause: *const types_data.MergeWhenClauseData,
-    target_table_name: []const u8,
-    where_stmt: []const u8,
-    column_mapping: *const ColumnMapping,
-    ctx: *context.TransformContext,
+    l: Lowering,
+    index: u32,
+    when_clause: *const MergeWhenClauseData,
 ) Error![]const u8 {
-    const alloc = coord.alloc;
+    const alloc = l.coord.alloc;
 
     var set_items: std.ArrayList([]const u8) = .empty;
     for (when_clause.set_items) |item| {
-        const value_expr = try coord.transformExpression(item.value, ctx);
-
-        // Replace column references with mapped names from the temp table.
+        const value_expr = try l.coord.transformExpression(item.value, l.ctx);
         const value_string = try remapToMergedColumns(
-            coord,
+            l.coord,
             try value_expr.toString(alloc),
-            column_mapping,
-            ctx,
+            l.column_mapping,
+            l.ctx,
         );
-
         try set_items.append(alloc, try std.fmt.allocPrint(alloc, "`{s}`= {s}", .{
             item.column,
             value_string,
         }));
     }
 
-    return std.fmt.allocPrint(alloc, "UPDATE `{s}` SET {s} FROM zigquery_merged_table WHERE {s}", .{
-        target_table_name,
-        try joinStrings(alloc, set_items.items, ","),
-        where_stmt,
-    });
+    return std.fmt.allocPrint(
+        alloc,
+        "UPDATE `{s}` SET {s} FROM {s} WHERE `{s}`.{s} = `{s}` AND `{s}` = {d}",
+        .{
+            l.target_table_name,
+            try joinStrings(alloc, set_items.items, ","),
+            merged_table,
+            l.target_table_name,
+            l.target_rowid,
+            target_rowid_column,
+            clause_column,
+            index,
+        },
+    );
 }
 
-/// Go createMergedTableStatement: CREATE TABLE <name> AS SELECT DISTINCT *
-/// FROM (source LEFT JOIN target UNION ALL target LEFT JOIN source) with the
-/// column mapping applied to both select lists.
+/// CREATE TABLE <name> AS SELECT DISTINCT * FROM (
+///     source LEFT JOIN target UNION ALL target LEFT JOIN source
+/// )
+/// with the column mapping applied to both select lists.
 fn createMergedTableStatement(
     coord: *coordinator.QueryCoordinator,
     table_name: []const u8,
@@ -517,6 +492,21 @@ fn createMergedTableStatement(
             .condition = join_condition,
         }),
     }), column_mapping, ctx);
+
+    // Both arms carry the target's row id, NULL on a source row with no match.
+    const target_rowid = try sqlbuilder.newColumnExpression(
+        alloc,
+        target_rowid_column,
+        if (target_table.alias.len > 0) target_table.alias else null,
+    );
+    for ([_]*sqlbuilder.SelectStatement{ left_join, right_join }) |arm| {
+        arm.select_list = try appendSelectItem(
+            alloc,
+            arm.select_list,
+            target_rowid,
+            target_rowid_column,
+        );
+    }
 
     // UNION ALL of the two joins.
     const union_items = try alloc.alloc(*sqlbuilder.SelectStatement, 2);

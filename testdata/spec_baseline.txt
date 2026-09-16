@@ -4942,6 +4942,14 @@ zigquery/syntax/dml/merge	merge two tables where target table name is substring 
 zigquery/syntax/dml/merge	merge two tables where source table is evaluated using a SELECT expression
 zigquery/syntax/dml/merge	merge two tables deleting matched rows
 zigquery/syntax/dml/merge	merge two tables omitting INSERT column list and using ROW
+zigquery/syntax/dml/merge	merge runs only the first qualifying WHEN MATCHED clause: UPDATE then DELETE
+zigquery/syntax/dml/merge	merge runs only the first qualifying WHEN MATCHED clause: two UPDATEs
+zigquery/syntax/dml/merge	merge runs only the first qualifying WHEN NOT MATCHED clause: two INSERTs
+zigquery/syntax/dml/merge	merge runs only the first qualifying WHEN NOT MATCHED BY SOURCE clause
+zigquery/syntax/dml/merge	merge skips a WHEN clause whose search condition is NULL
+zigquery/syntax/dml/merge	merge UPDATE that changes the join key is not acted on by a later clause
+zigquery/syntax/dml/merge	merge updates every one of identical matched target rows
+zigquery/syntax/dml/merge	merge NOT MATCHED BY SOURCE leaves a row inserted by an earlier clause alone
 zigquery/syntax/dml/truncate_table	simple truncate
 zigquery/syntax/query/array_subscript	array index access operator
 zigquery/syntax/query/array_subscript	array boundary indexing test

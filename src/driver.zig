@@ -5053,6 +5053,23 @@ test "a MERGE reports the rows all of its WHEN clauses changed" {
             \\WHEN NOT MATCHED BY SOURCE THEN DELETE
         ),
     );
+
+    // Each row is changed once, by the first WHEN clause that qualifies it:
+    // row 1 is updated and row 2 is deleted.
+    try db.exec(
+        \\CREATE TABLE overlap_t (id INT64, v STRING);
+        \\CREATE TABLE overlap_s (id INT64, n INT64);
+        \\INSERT INTO overlap_t (id, v) VALUES (1, 'a'), (2, 'b');
+        \\INSERT INTO overlap_s (id, n) VALUES (1, 20), (2, 5);
+    , &.{}, .{});
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .merge, .dml_affected_rows = 2 },
+        try testOutcome(db,
+            \\MERGE overlap_t T USING overlap_s S ON T.id = S.id
+            \\WHEN MATCHED AND S.n > 10 THEN UPDATE SET v = 'updated'
+            \\WHEN MATCHED THEN DELETE
+        ),
+    );
 }
 
 test "a statement that is not DML reports its type and no row count" {
