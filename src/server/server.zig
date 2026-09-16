@@ -1519,6 +1519,7 @@ pub const Server = struct {
         try query_handler.writeResultSet(
             arena,
             &out,
+            .get_query_results,
             project_id,
             job_id,
             job.set,
@@ -2167,18 +2168,29 @@ test "a DML job reports its statement type and affected rows on every surface" {
         const body = try objectOf(arena, results.body);
         try testing.expectEqualStrings("2", body.get("numDmlAffectedRows").?.string);
         try testing.expect(body.get("totalRows") == null);
+        try testing.expect(body.get("dmlStats") == null);
     }
 
-    const Case = struct { sql: []const u8, affected: []const u8 };
+    const Case = struct { sql: []const u8, affected: []const u8, dml_stats_field: []const u8 };
     for ([_]Case{
-        .{ .sql = "UPDATE dml_t SET v = 'z' WHERE file_id = 2", .affected = "1" },
-        .{ .sql = "DELETE FROM dml_t WHERE file_id = 1", .affected = "0" },
+        .{
+            .sql = "UPDATE dml_t SET v = 'z' WHERE file_id = 2",
+            .affected = "1",
+            .dml_stats_field = "updatedRowCount",
+        },
+        .{
+            .sql = "DELETE FROM dml_t WHERE file_id = 1",
+            .affected = "0",
+            .dml_stats_field = "deletedRowCount",
+        },
     }) |case| {
         const request_body = try std.json.Stringify.valueAlloc(arena, .{ .query = case.sql }, .{});
         const res = try request(s, arena, .POST, "/projects/test/queries", request_body);
         try testing.expectEqual(std.http.Status.ok, res.status);
         const body = try objectOf(arena, res.body);
         try testing.expectEqualStrings(case.affected, body.get("numDmlAffectedRows").?.string);
+        const dml_stats = body.get("dmlStats").?.object;
+        try testing.expectEqualStrings(case.affected, dml_stats.get(case.dml_stats_field).?.string);
         try testing.expect(body.get("totalRows") == null);
     }
 }

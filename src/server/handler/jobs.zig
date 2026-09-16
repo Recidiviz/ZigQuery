@@ -20,6 +20,7 @@ const job_rows_vtab = zigquery.function.job_rows_vtab;
 const queryparam = @import("../internal/types/queryparam.zig");
 const json_pb = @import("../json_pb.zig");
 const pb = @import("../proto/bigquery.zig");
+const response = @import("../internal/types/response.zig");
 
 /// Decodes a jobs.insert body. `google.api.http` names the body `job`
 /// (job.proto JobService.InsertJob), so the resource is the whole body.
@@ -88,20 +89,11 @@ pub fn writeJobResource(
     var cfg = pb.JobConfiguration{ .job_type = "QUERY", .query = &cfg_query };
     var job_ref = pb.JobReference{ .project_id = j.project_id, .job_id = j.job_id };
     var bytes = pb.Int64Value{ .value = @intCast(j.total_bytes) };
-    var affected = pb.Int64Value{ .value = j.outcome.dml_affected_rows orelse 0 };
-    // A MERGE's total is not split into the kinds of change it made.
-    // TODO: Use actual insert/update/delete counts
-    var dml_stats: ?pb.DmlStats = switch (j.outcome.statement_type) {
-        .insert => .{ .inserted_row_count = &affected },
-        .update => .{ .updated_row_count = &affected },
-        .delete => .{ .deleted_row_count = &affected },
-        else => null,
-    };
     var stats_query = pb.JobStatistics2{
         .total_bytes_processed = &bytes,
         .total_bytes_billed = &bytes,
-        .num_dml_affected_rows = if (j.outcome.dml_affected_rows != null) &affected else null,
-        .dml_stats = if (dml_stats) |*stats| stats else null,
+        .num_dml_affected_rows = try response.numDmlAffectedRows(arena, j.outcome),
+        .dml_stats = try response.dmlStats(arena, j.outcome),
         .statement_type = j.outcome.statement_type.bigQueryName(),
     };
     var stats = pb.JobStatistics{

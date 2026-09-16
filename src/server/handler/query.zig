@@ -378,10 +378,14 @@ pub fn parsePageToken(token: ?[]const u8) usize {
     return std.fmt.parseInt(usize, t, 10) catch 0;
 }
 
+/// The response a ResultSet is served in.
+pub const Endpoint = enum { jobs_query, get_query_results };
+
 /// Serializes a getQueryResults / jobs.query envelope from a ResultSet.
 pub fn writeResultSet(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
+    endpoint: Endpoint,
     project_id: []const u8,
     job_id: []const u8,
     set: ResultSet,
@@ -413,10 +417,11 @@ pub fn writeResultSet(
             try std.fmt.allocPrint(arena, "{d}", .{next})
         else
             null,
-        .numDmlAffectedRows = if (set.outcome.dml_affected_rows) |n|
-            try std.fmt.allocPrint(arena, "{d}", .{n})
-        else
-            null,
+        .numDmlAffectedRows = try response.numDmlAffectedRows(arena, set.outcome),
+        .dmlStats = switch (endpoint) {
+            .jobs_query => try response.dmlStats(arena, set.outcome),
+            .get_query_results => null,
+        },
     }, response.envelope_options);
     try out.appendSlice(arena, body);
 }
@@ -546,6 +551,7 @@ pub fn runQueryFormatted(
     try writeResultSet(
         arena,
         &out,
+        .jobs_query,
         project_id,
         job_id,
         set,

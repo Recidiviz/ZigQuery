@@ -211,8 +211,10 @@ pub const Envelope = struct {
     /// Absent unless this page is short of the total.
     pageToken: ?[]const u8 = null,
     jobComplete: bool = true,
-    /// A string on the wire. Present only for INSERT, UPDATE, DELETE and MERGE.
-    numDmlAffectedRows: ?[]const u8 = null,
+    /// Present only for INSERT, UPDATE, DELETE and MERGE.
+    numDmlAffectedRows: ?*const bqpb.Int64Value = null,
+    /// Present in the jobs.query response only.
+    dmlStats: ?*const bqpb.DmlStats = null,
 };
 
 /// `pageToken` is absent when null rather than present and null, which is what
@@ -220,6 +222,35 @@ pub const Envelope = struct {
 pub const envelope_options: std.json.Stringify.Options = .{
     .emit_null_optional_fields = false,
 };
+
+/// `numDmlAffectedRows`: present only for INSERT, UPDATE, DELETE and MERGE.
+pub fn numDmlAffectedRows(
+    arena: std.mem.Allocator,
+    outcome: driver.StatementOutcome,
+) std.mem.Allocator.Error!?*bqpb.Int64Value {
+    const affected = outcome.dml_affected_rows orelse return null;
+    const count = try arena.create(bqpb.Int64Value);
+    count.* = .{ .value = affected };
+    return count;
+}
+
+/// `dmlStats`: the affected-row count under the kind of change the statement made.
+/// Null for any statement but INSERT, UPDATE and DELETE; a MERGE's total is not split by kind.
+pub fn dmlStats(
+    arena: std.mem.Allocator,
+    outcome: driver.StatementOutcome,
+) std.mem.Allocator.Error!?*bqpb.DmlStats {
+    const count = try numDmlAffectedRows(arena, outcome) orelse return null;
+    const stats = try arena.create(bqpb.DmlStats);
+    // TODO: Use actual insert/update/delete counts
+    stats.* = switch (outcome.statement_type) {
+        .insert => .{ .inserted_row_count = count },
+        .update => .{ .updated_row_count = count },
+        .delete => .{ .deleted_row_count = count },
+        else => return null,
+    };
+    return stats;
+}
 
 /// Serializes the jobs.query / getQueryResults envelope.
 pub fn writeQueryResponse(
