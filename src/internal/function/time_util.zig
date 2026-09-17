@@ -7,7 +7,7 @@
 
 const std = @import("std");
 const value = @import("../value.zig");
-const shim_ffi = @import("../../shim_ffi.zig");
+const time_zone = @import("../time_zone.zig");
 const bind = @import("bind.zig");
 
 pub const Value = value.Value;
@@ -247,63 +247,18 @@ pub fn timestampValue(bt: BrokenTime) Value {
 }
 
 // ----------------------------------------------------------------------
-// Timezone offset resolution. Fixed offsets are parsed directly; named zones resolve through ICU
-// (GoogleSQL_TimeZoneOffsetSeconds in the shim, shim_ffi.zig), which has the full IANA database.
-// Unknown zone names error (caller reports expected-fail).
+// Timezone offset resolution lives in ../time_zone.zig, which the timestamp string parser shares;
+// this wrapper reports an unknown zone in the function layer's terms.
 // ----------------------------------------------------------------------
 
 /// Offset (seconds east of UTC) for `zone` at the given civil micros. The civil value is used as if
 ///  it were the UTC instant; for corpus instants (never near a transition).
 pub fn zoneOffsetSeconds(zone: []const u8, civ: i64) Error!i64 {
-    if (zone.len == 0) return 0;
-    if (std.mem.eql(u8, zone, "UTC") or std.mem.eql(u8, zone, "Z")) return 0;
-
-    if (zone[0] == '+' or zone[0] == '-')
-        return fixedOffsetSeconds(zone) orelse invalidZone(zone);
-
-    const millis = @divFloor(civ, 1000);
-    const off: i32 = shim_ffi.timeZoneOffsetSeconds(zone, millis) catch |err| switch (err) {
-        error.InvalidTimeZone => return invalidZone(zone),
-        else => return error.FailedConversion,
-    };
-    return off;
+    return time_zone.offsetSeconds(zone, civ) catch return invalidZone(zone);
 }
 
 fn invalidZone(zone: []const u8) Error {
     return bind.fail("Invalid time zone: {s}", .{zone}, error.FailedConversion);
-}
-
-/// Seconds east of UTC for the numeric offset form `(+|-)H[H][:M[M]]`, which also admits
-/// the colon-free `HHMM`. Null if `zone` is not one, minutes reach 60, or the offset
-/// passes the +/-14:00 bound. (timestamp_functions.md#timezone_definitions)
-fn fixedOffsetSeconds(zone: []const u8) ?i64 {
-    const rest = zone[1..];
-    var h_text = rest;
-    var m_text: []const u8 = "";
-    if (std.mem.indexOfScalar(u8, rest, ':')) |i| {
-        h_text = rest[0..i];
-        m_text = rest[i + 1 ..];
-    } else if (rest.len > 2) {
-        h_text = rest[0..2];
-        m_text = rest[2..];
-    }
-    const h = offsetField(h_text) orelse return null;
-    const m = if (m_text.len == 0) 0 else offsetField(m_text) orelse return null;
-    if (m > 59) return null;
-    const secs = h * 3600 + m * 60;
-    if (secs > 14 * 3600) return null;
-    return if (zone[0] == '-') -secs else secs;
-}
-
-/// One or two decimal digits as a number; null for anything else.
-fn offsetField(text: []const u8) ?i64 {
-    if (text.len == 0 or text.len > 2) return null;
-    var n: i64 = 0;
-    for (text) |ch| {
-        if (!std.ascii.isDigit(ch)) return null;
-        n = n * 10 + (ch - '0');
-    }
-    return n;
 }
 
 test "compose/decompose round trip and normalization" {

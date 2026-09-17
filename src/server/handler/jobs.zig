@@ -20,6 +20,7 @@ const job_rows_vtab = zigquery.function.job_rows_vtab;
 const queryparam = @import("../internal/types/queryparam.zig");
 const json_pb = @import("../json_pb.zig");
 const pb = @import("../proto/bigquery.zig");
+const response = @import("../internal/types/response.zig");
 
 /// Decodes a jobs.insert body. `google.api.http` names the body `job`
 /// (job.proto JobService.InsertJob), so the resource is the whole body.
@@ -62,9 +63,8 @@ pub const JobResource = struct {
     /// Go accumulates len() of each rendered cell string.
     total_bytes: usize,
     unix_seconds: i64,
-    /// Go derives this from the resolved statement kind; SELECT covers the
-    /// M1 surface.
-    statement_type: []const u8 = "SELECT",
+    /// `statistics.query.statementType`, `numDmlAffectedRows` and `dmlStats`.
+    outcome: driver.StatementOutcome,
 };
 
 /// Serializes a bigquery#job resource.
@@ -92,7 +92,9 @@ pub fn writeJobResource(
     var stats_query = pb.JobStatistics2{
         .total_bytes_processed = &bytes,
         .total_bytes_billed = &bytes,
-        .statement_type = j.statement_type,
+        .num_dml_affected_rows = try response.numDmlAffectedRows(arena, j.outcome),
+        .dml_stats = try response.dmlStats(arena, j.outcome),
+        .statement_type = j.outcome.statement_type.bigQueryName(),
     };
     var stats = pb.JobStatistics{
         .creation_time = j.unix_seconds,
@@ -196,6 +198,7 @@ test "job resource matches the Go emulator's shape" {
         .endpoint = "0.0.0.0:19050",
         .total_bytes = 1,
         .unix_seconds = 1785011395,
+        .outcome = .{ .statement_type = .select },
     });
 
     // Captured from the running Go emulator, with the random id replaced.
@@ -219,10 +222,70 @@ test "the job resource parses and reports DONE" {
         .endpoint = "h:1",
         .total_bytes = 0,
         .unix_seconds = 0,
+        .outcome = .{ .statement_type = .select },
     });
     const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.items, .{});
     try testing.expectEqualStrings("DONE", v.object.get("status").?.object.get("state").?.string);
     try testing.expectEqualStrings("bigquery#job", v.object.get("kind").?.string);
+}
+
+test "a DML job reports its statement type, affected rows and DML stats" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const Case = struct { outcome: driver.StatementOutcome, query_stats: []const u8 };
+    for ([_]Case{
+        .{
+            .outcome = .{ .statement_type = .delete, .dml = .{ .deleted = 2 } },
+            .query_stats =
+            \\{"dmlStats":{"deletedRowCount":"2"},"numDmlAffectedRows":"2",
+            \\ "statementType":"DELETE","totalBytesBilled":"0","totalBytesProcessed":"0"}
+            ,
+        },
+        .{
+            .outcome = .{ .statement_type = .update, .dml = .{} },
+            .query_stats =
+            \\{"dmlStats":{"updatedRowCount":"0"},"numDmlAffectedRows":"0",
+            \\ "statementType":"UPDATE","totalBytesBilled":"0","totalBytesProcessed":"0"}
+            ,
+        },
+        .{
+            .outcome = .{
+                .statement_type = .merge,
+                .dml = .{ .inserted = 2, .updated = 0, .deleted = 1 },
+            },
+            .query_stats =
+            \\{"dmlStats":{"insertedRowCount":"2","updatedRowCount":"0","deletedRowCount":"1"},
+            \\ "numDmlAffectedRows":"3",
+            \\ "statementType":"MERGE","totalBytesBilled":"0","totalBytesProcessed":"0"}
+            ,
+        },
+        .{
+            .outcome = .{ .statement_type = .create_table_as_select },
+            .query_stats =
+            \\{"statementType":"CREATE_TABLE_AS_SELECT","totalBytesBilled":"0",
+            \\ "totalBytesProcessed":"0"}
+            ,
+        },
+    }) |case| {
+        var out: std.ArrayList(u8) = .empty;
+        try writeJobResource(arena, &out, .{
+            .project_id = "p",
+            .job_id = "j",
+            .sql = "<statement>",
+            .endpoint = "h:1",
+            .total_bytes = 0,
+            .unix_seconds = 0,
+            .outcome = case.outcome,
+        });
+        const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.items, .{});
+        const query_stats = v.object.get("statistics").?.object.get("query").?;
+        try json_pb.expectJsonEqual(
+            case.query_stats,
+            try std.json.Stringify.valueAlloc(arena, query_stats, .{}),
+        );
+    }
 }
 
 // ---- query jobs that write to a destination table ----
@@ -250,6 +313,33 @@ pub fn destinationFromJobConfig(job: *const pb.Job) ?Destination {
         .table_id = dst.table_id orelse return null,
         .write_disposition = q.write_disposition orelse "WRITE_EMPTY",
     };
+}
+
+/// The fields of `configuration.query` that shape a table the job creates: `timePartitioning`,
+/// `rangePartitioning` and `clustering`, as the client posted them. Raw JSON, because a client
+/// compares tables.get with its request field for field and pb.TimePartitioning has no
+/// `requirePartitionFilter`. A null (the python client sends one beside `clustering`) asks for
+/// nothing.
+pub fn destinationLayoutFields(
+    arena: std.mem.Allocator,
+    body: []const u8,
+) std.mem.Allocator.Error!std.json.ObjectMap {
+    var out: std.json.ObjectMap = .empty;
+    const v = json_pb.parseBody(arena, body) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return out,
+    };
+    if (v != .object) return out;
+    const config = v.object.get("configuration") orelse return out;
+    if (config != .object) return out;
+    const query = config.object.get("query") orelse return out;
+    if (query != .object) return out;
+    for ([_][]const u8{ "timePartitioning", "rangePartitioning", "clustering" }) |key| {
+        const node = query.object.get(key) orelse continue;
+        if (node != .object) continue;
+        try out.put(arena, key, node);
+    }
+    return out;
 }
 
 fn strOf(v: std.json.Value, name: []const u8) ?[]const u8 {
@@ -307,6 +397,32 @@ test "reads a destination table and write disposition" {
     try testing.expectEqualStrings("d", dst.dataset_id);
     try testing.expectEqualStrings("t", dst.table_id);
     try testing.expectEqualStrings("WRITE_TRUNCATE", dst.write_disposition);
+}
+
+test "a destination job's table layout fields come back as posted, nulls dropped" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const layout = try destinationLayoutFields(arena,
+        \\{"configuration":{"query":{"query":"SELECT 1",
+        \\  "destinationTable":{"projectId":"p","datasetId":"d","tableId":"t"},
+        \\  "clustering":{"fields":["a"]},
+        \\  "timePartitioning":null,
+        \\  "rangePartitioning":{"field":"n","range":{"start":"0","end":"100","interval":"10"}}}}}
+    );
+    try testing.expectEqual(@as(usize, 2), layout.count());
+    try testing.expect(layout.get("timePartitioning") == null);
+    try testing.expect(layout.get("destinationTable") == null);
+    const fields = layout.get("clustering").?.object.get("fields").?.array.items;
+    try testing.expectEqual(@as(usize, 1), fields.len);
+    try testing.expectEqualStrings("a", fields[0].string);
+    const range = layout.get("rangePartitioning").?.object.get("range").?.object;
+    try testing.expectEqualStrings("100", range.get("end").?.string);
+
+    // Not a job body at all: nothing, rather than an error.
+    const none = try destinationLayoutFields(arena, "not json");
+    try testing.expectEqual(@as(usize, 0), none.count());
 }
 
 test "a query job without a destination has none" {

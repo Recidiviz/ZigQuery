@@ -56,16 +56,19 @@
         },
         .{
             .desc = "delete_everything_from_null_row",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql = "UPDATE BasicTable SET (DELETE array_value WHERE True) WHERE array_value IS NULL",
             .expect_error_any = true,
         },
         .{
             .desc = "delete_nothing_from_null_row",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql = "UPDATE BasicTable SET (DELETE array_value WHERE False) WHERE array_value IS NULL",
             .expect_error_any = true,
         },
         .{
             .desc = "delete_from_primary_key_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (DELETE primary_key WHERE primary_key = 1 ASSERT_ROWS_MODIFIED 1)
@@ -75,6 +78,7 @@
         },
         .{
             .desc = "delete_causes_primary_key_collision",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (DELETE primary_key WHERE primary_key = 4 ASSERT_ROWS_MODIFIED 1)
@@ -84,6 +88,7 @@
         },
         .{
             .desc = "delete_causes_primary_key_collision_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (DELETE primary_key WHERE primary_key = 4 ASSERT_ROWS_MODIFIED 1)
@@ -93,6 +98,7 @@
         },
         .{
             .desc = "nested_delete_assert_rows_modified_failure",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE BasicTable SET
             \\  (DELETE array_value WHERE True ASSERT_ROWS_MODIFIED 0)
@@ -102,6 +108,7 @@
         },
         .{
             .desc = "update_everything_from_one_null_row",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE BasicTable SET
             \\  (UPDATE array_value SET array_value = array_value + 1 WHERE True)
@@ -111,6 +118,7 @@
         },
         .{
             .desc = "update_nothing_in_null_row",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE BasicTable SET
             \\  (UPDATE array_value SET array_value = array_value + 1 WHERE False)
@@ -120,6 +128,7 @@
         },
         .{
             .desc = "update_primary_key_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\# An intermediate state has a primary key collision, but the spec says that is
             \\# ok.
@@ -132,6 +141,7 @@
         },
         .{
             .desc = "update_causes_primary_key_collision",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (UPDATE primary_key SET primary_key = 4 WHERE primary_key = 3)
@@ -141,6 +151,7 @@
         },
         .{
             .desc = "update_causes_primary_key_collision_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (UPDATE primary_key SET primary_key = 4 WHERE primary_key = 3)
@@ -150,6 +161,7 @@
         },
         .{
             .desc = "nested_update_assert_rows_modified_failure",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE BasicTable SET
             \\  (UPDATE array_value SET array_value = 100 WHERE True ASSERT_ROWS_MODIFIED 0)
@@ -159,6 +171,7 @@
         },
         .{
             .desc = "two_overlapping_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE BasicTable SET
             \\  (UPDATE array_value SET array_value = 1 WHERE array_value = 12
@@ -185,6 +198,7 @@
         },
         .{
             .desc = "insert_into_null_row",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE BasicTable SET (INSERT array_value VALUES (100), (200), (300))
             \\WHERE array_value IS NULL
@@ -193,6 +207,7 @@
         },
         .{
             .desc = "insert_into_primary_key_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\# An intermediate state has a primary key collision, but the spec says that is
             \\# ok.
@@ -204,6 +219,7 @@
         },
         .{
             .desc = "insert_causes_primary_key_collision",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (INSERT primary_key VALUES (4))
@@ -213,6 +229,7 @@
         },
         .{
             .desc = "insert_causes_primary_key_collision_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (INSERT primary_key VALUES (4))
@@ -222,6 +239,7 @@
         },
         .{
             .desc = "insert_query_causes_primary_key_collision",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (INSERT primary_key (SELECT 4))
@@ -231,6 +249,7 @@
         },
         .{
             .desc = "insert_query_causes_primary_key_collision_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\UPDATE TableWithArrayKey SET
             \\  (INSERT primary_key (SELECT 4))
@@ -240,6 +259,7 @@
         },
         .{
             .desc = "nested_delete_and_update_intermediate_primary_key_collision_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\# An intermediate state has a primary key collision, but the spec says that is
             \\# ok.
@@ -253,6 +273,7 @@
         },
         .{
             .desc = "nested_delete_and_insert_intermediate_primary_key_collision_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\# An intermediate state has a primary key collision, but the spec says that is
             \\# ok.
@@ -265,6 +286,7 @@
         },
         .{
             .desc = "nested_update_and_insert_intermediate_primary_key_collision_no_pk_updates",
+            .unsupported_in_bigquery = "Nested UPDATE not yet supported. (recidiviz-bigquery-sandbox, 2026-09-10)",
             .sql =
             \\# An intermediate state has a primary key collision, but the spec says that is
             \\# ok.

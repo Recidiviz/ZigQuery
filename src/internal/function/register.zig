@@ -87,6 +87,8 @@ pub fn registerAll(db: *sqlite.Db, gpa: std.mem.Allocator) !*State {
     try info_schema_vtab.register(db, gpa, &state.info_schema);
     try job_rows_vtab.register(db, gpa, &state.job_rows);
     try db.createScalarFunction("zigquery_group_by", -1, state, groupByTramp, true);
+    // Deterministic, as SQLite requires of a function inside a CHECK.
+    try db.createScalarFunction("zigquery_required", -1, state, requiredTramp, true);
 
     // Aggregate UDFs + option marker functions (Go: aggregateFuncs plus the
     // distinct/limit/order_by/ignore_nulls/having_* normalFuncs entries).
@@ -241,6 +243,40 @@ fn groupByTramp(
         return;
     }
     sqlite.resultValue(ctx, argv[0]);
+}
+
+/// `zigquery_required(value, position, message, ...)`: the CHECK behind a
+/// STRUCT member declared NOT NULL (spec.zig requiredCheckConstraint). Each
+/// position names one member; the first found NULL fails the statement with
+/// its paired message, which is BigQuery's own text. A NULL value passes.
+/// Nothing is allocated on either path.
+fn requiredTramp(
+    ctx: ?*c.sqlite3_context,
+    argc: c_int,
+    argv: [*c]?*c.sqlite3_value,
+) callconv(.c) void {
+    if (argc < 1 or @rem(argc - 1, 2) != 0) {
+        sqlite.resultError(ctx, "zigquery_required: invalid argument num");
+        return;
+    }
+    if (sqlite.valueType(argv[0]) == .null) {
+        sqlite.resultInt64(ctx, 1);
+        return;
+    }
+    const encoded = sqlite.valueBlob(argv[0]);
+    var i: usize = 1;
+    while (i + 1 <= @as(usize, @intCast(argc - 1))) : (i += 2) {
+        const position = sqlite.valueText(argv[i]);
+        const present = codec_binary.requiredMemberPresent(encoded, position) catch {
+            sqlite.resultError(ctx, "zigquery_required: value does not match the column's type");
+            return;
+        };
+        if (!present) {
+            sqlite.resultError(ctx, sqlite.valueText(argv[i + 1]));
+            return;
+        }
+    }
+    sqlite.resultInt64(ctx, 1);
 }
 
 fn joinToString(alloc: std.mem.Allocator, values: []const Value) ![]u8 {

@@ -191,6 +191,7 @@ pub const func_table = [_]FuncInfo{
         .safe_handler = arr.safeArrayAtOrdinal,
         .raw_args = 0b01,
     },
+    .{ .name = "unary_minus", .min_args = 1, .handler = math.unaryMinus },
     .{ .name = "safe_negate", .min_args = 1, .handler = math.safeNegate },
     .{ .name = "is_distinct_from", .min_args = 2, .handler = cmp.isDistinctFrom },
     .{ .name = "is_not_distinct_from", .min_args = 2, .handler = cmp.isNotDistinctFrom },

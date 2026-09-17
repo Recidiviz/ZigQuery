@@ -12,6 +12,7 @@
 //! trees are expected to live in an arena (no per-value deinit is provided).
 
 const std = @import("std");
+const time_zone = @import("time_zone.zig");
 
 pub const ValueError = error{
     NullValue,
@@ -2188,14 +2189,23 @@ pub fn parseDatetimeMicros(s: []const u8) ValueError!i64 {
     return days * day_micros + tod;
 }
 
-/// Go parseTimestamp -> unix microseconds (UTC). Accepts an optional zone
-/// suffix: Z, ±HH[:MM], or a trailing " NAME" (treated as UTC — Zig has no
-/// timezone database; the corpus runs TZ=UTC). Non-UTC named zones therefore
-/// parse as UTC.
-pub fn parseTimestampMicros(s: []const u8) ValueError!i64 {
+/// A timestamp string split at its time zone: the wall clock as written, in civil
+/// micros, and the zone text after it ("" when the string names none, so the caller's
+/// default applies). The zone is a slice of the input, or "UTC" for a `Z` suffix.
+pub const TimestampParts = struct {
+    civ: i64,
+    zone: []const u8,
+};
+
+/// Go parseTimestamp's layouts, with GoogleSQL's zone suffix grammar
+/// (ParseStringToTimestampParts in date_time_util.cc): a numeric offset right after the
+/// time ("+05", "-08:00", "+0530"), `Z`, or a space and then "UTC", "UTC+12" or a zone
+/// name. A space may not introduce a bare offset. The zone text itself is not checked
+/// here; time_zone.offsetSeconds rejects what it cannot resolve.
+pub fn parseTimestampParts(s: []const u8) ValueError!TimestampParts {
     if (s.len < 10) return fail("invalid timestamp literal", error.InvalidDate);
     const days = try parseDateDays(s[0..10]);
-    if (s.len == 10) return days * 86400 * second_micros;
+    if (s.len == 10) return .{ .civ = days * day_micros, .zone = "" };
     if (s[10] != 'T' and s[10] != ' ') return fail("invalid timestamp literal", error.InvalidDate);
     const rest = s[11..];
     const h = parseHour(rest) orelse return fail("invalid timestamp literal", error.InvalidDate);
@@ -2213,33 +2223,35 @@ pub fn parseTimestampMicros(s: []const u8) ValueError!i64 {
         micro = frac.micro;
         idx += 1 + frac.len;
     }
-    var offset_sec: i64 = 0;
+    var zone: []const u8 = "";
     if (idx < rest.len) {
-        const c = rest[idx];
-        if (c == 'Z') {
-            idx += 1;
-        } else if (c == '+' or c == '-') {
-            const zsign: i64 = if (c == '-') -1 else 1;
-            idx += 1;
-            const oh = try parseTwoDigits(rest[idx..], 24);
-            idx += 2;
-            var om: i64 = 0;
-            if (idx < rest.len and rest[idx] == ':') {
-                idx += 1;
-                om = try parseTwoDigits(rest[idx..], 60);
-                idx += 2;
-            }
-            offset_sec = zsign * (oh * 3600 + om * 60);
-        } else if (c == ' ') {
-            // " NAME" zone: assume UTC (documented limitation).
-            idx = rest.len;
-        } else {
-            return fail("invalid timestamp literal", error.InvalidDate);
+        const tail = rest[idx..];
+        switch (tail[0]) {
+            'Z', 'z' => {
+                if (tail.len != 1) return fail("invalid timestamp literal", error.InvalidDate);
+                zone = "UTC";
+            },
+            '+', '-' => zone = tail,
+            ' ' => {
+                if (tail.len < 2 or tail[1] == '+' or tail[1] == '-') {
+                    return fail("invalid timestamp literal", error.InvalidDate);
+                }
+                zone = tail[1..];
+            },
+            else => return fail("invalid timestamp literal", error.InvalidDate),
         }
     }
-    if (idx != rest.len) return fail("invalid timestamp literal", error.InvalidDate);
     const secs = days * 86400 + hour * 3600 + min * 60 + sec;
-    return secs * second_micros + micro - offset_sec * second_micros;
+    return .{ .civ = secs * second_micros + micro, .zone = zone };
+}
+
+/// Go parseTimestamp -> unix microseconds (UTC): the string's wall clock shifted by the
+/// zone it names, or read as UTC when it names none.
+pub fn parseTimestampMicros(s: []const u8) ValueError!i64 {
+    const p = try parseTimestampParts(s);
+    const off = time_zone.offsetSeconds(p.zone, p.civ) catch
+        return failFmt("Invalid time zone: {s}", .{p.zone}, error.FailedConversion);
+    return p.civ - off * second_micros;
 }
 
 // -- Interval parsing (bigquery.ParseInterval + go-zetasqlite wrapper) -------
@@ -2875,6 +2887,46 @@ test "timestamp parse accepts every Go layout" {
     // Non-zero offset shifts the instant: 00:04:05+02 == 22:04:05 UTC the
     // previous day, i.e. the same instant as `want`.
     try std.testing.expectEqual(want, try parseTimestampMicros("2006-01-03 00:04:05+02"));
+}
+
+test "a timestamp string's zone follows GoogleSQL's suffix grammar" {
+    // Every case is 2000-01-01 00:00:00 as a wall clock in some zone. A named or
+    // UTC-prefixed zone used to be dropped, reading the wall clock as UTC.
+    const midnight_utc: i64 = 946684800;
+    const cases = [_]struct { s: []const u8, secs: i64 }{
+        .{ .s = "2000-01-01 00:00:00 America/Los_Angeles", .secs = midnight_utc + 8 * 3600 },
+        .{ .s = "2000-01-01T00:00:00 Asia/Kolkata", .secs = midnight_utc - 5 * 3600 - 1800 },
+        .{ .s = "2000-01-01 00:00:00 UTC+12", .secs = midnight_utc - 12 * 3600 },
+        .{ .s = "2000-01-01 00:00:00 UTC-08:00", .secs = midnight_utc + 8 * 3600 },
+        .{ .s = "2000-01-01 00:00:00 UTC", .secs = midnight_utc },
+        .{ .s = "2000-01-01 00:00:00z", .secs = midnight_utc },
+        // MakeTimeZone's offset shapes: one-digit hours, and minutes without a colon.
+        .{ .s = "2000-01-01 00:00:00+0530", .secs = midnight_utc - 5 * 3600 - 1800 },
+        .{ .s = "2000-01-01 00:00:00+5", .secs = midnight_utc - 5 * 3600 },
+    };
+    for (cases) |c| {
+        try std.testing.expectEqual(c.secs * second_micros, try parseTimestampMicros(c.s));
+    }
+
+    const p = try parseTimestampParts("2000-01-01 00:00:00.5 America/Los_Angeles");
+    try std.testing.expectEqualStrings("America/Los_Angeles", p.zone);
+    try std.testing.expectEqual(midnight_utc * second_micros + 500_000, p.civ);
+    try std.testing.expectEqualStrings("", (try parseTimestampParts("2000-01-01 00:00:00")).zone);
+
+    // Shapes the grammar refuses: a space before a bare offset, text after Z, a bare space.
+    const malformed = [_][]const u8{
+        "2000-01-01 00:00:00 +05",
+        "2000-01-01 00:00:00Zx",
+        "2000-01-01 00:00:00 ",
+    };
+    for (malformed) |s| try std.testing.expectError(error.InvalidDate, parseTimestampMicros(s));
+    // Well-formed, but no such zone or offset.
+    const unknown = [_][]const u8{
+        "2000-01-01 00:00:00 Not/AZone",
+        "2000-01-01 00:00:00+15",
+        "2000-01-01 00:00:00 UTC+12:",
+    };
+    for (unknown) |s| try std.testing.expectError(error.FailedConversion, parseTimestampMicros(s));
 }
 
 test "the hour may be one digit, as Go's `15` layout element allows" {

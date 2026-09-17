@@ -1,0 +1,78 @@
+.{
+    .spec = "zigquery/functions/math/unary_minus",
+    .dialect = .zigquery,
+    .typed = true,
+    .cases = .{
+        .{
+            // The analyzer folds `-1` into a literal, so only a non-constant
+            // operand reaches zigquery_unary_minus at all — which is why this
+            // whole file selects through UNNEST rather than writing `SELECT -1`.
+            .desc = "unary minus over an INT64 column stays INT64",
+            .sql = "SELECT -x FROM UNNEST([1, -2, 0]) x",
+            .rows = .{
+                .{-1},
+                .{2},
+                .{0},
+            },
+        },
+        .{
+            // `.typed` makes this the assertion that matters: a FLOAT64 want
+            // does not match an INT64 cell, so a GROUP BY key that changed kind
+            // would fail here rather than silently regroup.
+            .desc = "the negated key groups as an INT64",
+            .sql = "SELECT -x AS k FROM UNNEST([1, 1, 2]) x GROUP BY k ORDER BY k",
+            .rows = .{
+                .{-2},
+                .{-1},
+            },
+        },
+        .{
+            .desc = "unary minus over a computed operand",
+            .sql = "SELECT -(x + 1), -(x * 1.5) FROM UNNEST([2]) x",
+            .rows = .{
+                .{ -3, -3.0 },
+            },
+        },
+        .{
+            .desc = "unary minus over a FLOAT64 column",
+            .sql = "SELECT -x FROM UNNEST([1.5, -2.5]) x",
+            .rows = .{
+                .{-1.5},
+                .{2.5},
+            },
+        },
+        .{
+            .desc = "unary minus is exact for NUMERIC and BIGNUMERIC",
+            .sql =
+            \\SELECT -n, -b
+            \\FROM UNNEST([CAST(1.000000001 AS NUMERIC)]) n,
+            \\     UNNEST([CAST(-2.25 AS BIGNUMERIC)]) b
+            ,
+            .rows = .{
+                .{ "-1.000000001", "2.25" },
+            },
+        },
+        .{
+            .desc = "unary minus flips every INTERVAL field",
+            .sql = "SELECT CAST(-x AS STRING) FROM UNNEST([INTERVAL '1-2 3 4:5:6' YEAR TO SECOND]) x",
+            .rows = .{
+                .{"-1-2 -3 -4:5:6"},
+            },
+        },
+        .{
+            .desc = "unary minus of NULL is NULL",
+            .sql = "SELECT -x FROM UNNEST([CAST(NULL AS INT64)]) x",
+            .rows = .{
+                .{null},
+            },
+        },
+        .{
+            // googlesql arithmetics.h UnaryMinus<int64_t> rejects the one int64
+            // with no positive counterpart; util.cc UnaryOverflowMessage is the
+            // wording, operator and operand concatenated.
+            .desc = "the INT64 with no negation is rejected",
+            .sql = "SELECT -x FROM UNNEST([-9223372036854775808]) x",
+            .expect_error = "int64 overflow: --9223372036854775808",
+        },
+    },
+}

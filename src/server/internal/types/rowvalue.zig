@@ -22,13 +22,38 @@ pub const Error = error{
     /// key the schema does not declare. Go dereferences a nil field there and
     /// panics; recoveryMiddleware turns that into the same 500 this does.
     UnknownStructField,
+    /// A REQUIRED member of a RECORD is absent or null.
+    MissingRequiredField,
 } || std.mem.Allocator.Error;
+
+/// BigQuery's insertErrors text for a NULL in a REQUIRED field;
+/// `path` is the field's name at each nesting level, top-level column first.
+pub fn missingRequiredMessage(
+    arena: std.mem.Allocator,
+    path: []const []const u8,
+) std.mem.Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.appendSlice(arena, zigquery.spec.missing_required_prefix);
+    for (path) |name| {
+        try out.append(arena, '.');
+        try out.appendSlice(arena, name);
+    }
+    try out.append(arena, '.');
+    return out.toOwnedSlice(arena);
+}
 
 /// Reshapes posted row values, carrying Go's error text for the 500 body.
 pub const Normalizer = struct {
     arena: std.mem.Allocator,
     /// Set when a call fails; empty otherwise.
     message: []const u8 = "",
+    /// The names being descended, outermost first, so a failure deep in a
+    /// value can name its full path. The caller pushes the column; RECORD
+    /// members push themselves.
+    path: std.ArrayList([]const u8) = .empty,
+    /// insertAll's `ignoreUnknownValues`
+    /// a member the schema does not declare is dropped rather than making the row invalid.
+    ignore_unknown: bool = false,
 
     /// `field` is a TableFieldSchema node from the table's stored schema.
     pub fn cellForField(
@@ -81,28 +106,29 @@ pub const Normalizer = struct {
             const out = try n.arena.alloc(driver.Cell.Field, fields.len);
             for (fields, 0..) |sub, i| {
                 const name = stringOf(sub, "name");
-                out[i] = .{
-                    .name = name,
-                    // Go pre-seeds every schema field to nil, so a value
-                    // missing a key yields NULL rather than an error.
-                    .value = if (json.object.get(name)) |v|
-                        try n.cellForField(v, sub)
-                    else
-                        .null,
-                };
+                try n.path.append(n.arena, name);
+                defer _ = n.path.pop();
+                const value: driver.Cell = if (json.object.get(name)) |v|
+                    try n.cellForField(v, sub)
+                else
+                    .null;
+                if (value == .null and std.mem.eql(u8, stringOf(sub, "mode"), "REQUIRED")) {
+                    n.message = try missingRequiredMessage(n.arena, n.path.items);
+                    return error.MissingRequiredField;
+                }
+                out[i] = .{ .name = name, .value = value };
             }
-            // Go looks the *value's* keys up in the schema and nil-derefs on a
-            // miss; report it instead. Checked after the fields are built so
-            // the common path does no extra work.
-            var it = json.object.iterator();
-            while (it.next()) |kv| {
-                if (!hasField(fields, kv.key_ptr.*)) {
-                    n.message = try std.fmt.allocPrint(
-                        n.arena,
-                        "failed to find value from {s}",
-                        .{kv.key_ptr.*},
-                    );
-                    return error.UnknownStructField;
+            if (!n.ignore_unknown) {
+                var it = json.object.iterator();
+                while (it.next()) |kv| {
+                    if (!hasField(fields, kv.key_ptr.*)) {
+                        n.message = try std.fmt.allocPrint(
+                            n.arena,
+                            "failed to find value from {s}",
+                            .{kv.key_ptr.*},
+                        );
+                        return error.UnknownStructField;
+                    }
                 }
             }
             return .{ .struct_ = out };
@@ -282,6 +308,51 @@ test "a struct key the schema does not declare is an error, not a panic" {
         n.cellForField(try parse(arena, "{\"a\":1,\"nope\":2}"), field),
     );
     try testing.expectEqualStrings("failed to find value from nope", n.message);
+}
+
+test "a REQUIRED RECORD member that is absent or null names its path" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var n = Normalizer{ .arena = arena };
+
+    const field = try parse(arena,
+        \\{"name":"s","type":"RECORD","fields":[
+        \\  {"name":"a","type":"INTEGER","mode":"REQUIRED"},
+        \\  {"name":"inner","type":"RECORD","fields":[{"name":"b","type":"STRING","mode":"REQUIRED"}]}
+        \\]}
+    );
+    _ = try n.cellForField(try parse(arena, "{\"a\":1}"), field);
+
+    try testing.expectError(
+        error.MissingRequiredField,
+        n.cellForField(try parse(arena, "{\"a\":null}"), field),
+    );
+    try testing.expectEqualStrings("Missing required field: Msg_0_CLOUD_QUERY_TABLE.a.", n.message);
+    try testing.expectError(
+        error.MissingRequiredField,
+        n.cellForField(try parse(arena, "{\"a\":1,\"inner\":{}}"), field),
+    );
+    try testing.expectEqualStrings(
+        "Missing required field: Msg_0_CLOUD_QUERY_TABLE.inner.b.",
+        n.message,
+    );
+    // The path unwinds after a failure.
+    try testing.expectEqual(@as(usize, 0), n.path.items.len);
+}
+
+test "ignore_unknown drops an undeclared RECORD member instead of failing" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var n = Normalizer{ .arena = arena, .ignore_unknown = true };
+
+    const field = try parse(arena,
+        \\{"name":"s","type":"RECORD","fields":[{"name":"a","type":"INTEGER"}]}
+    );
+    const cell = try n.cellForField(try parse(arena, "{\"a\":1,\"nope\":2}"), field);
+    try testing.expectEqual(@as(usize, 1), cell.struct_.len);
+    try testing.expectEqual(driver.Cell{ .int = 1 }, cell.struct_[0].value);
 }
 
 test "REPEATED RECORD keeps the element fields and drops the element mode" {

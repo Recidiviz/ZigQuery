@@ -831,8 +831,7 @@ fn repeatBytes(alloc: std.mem.Allocator, b: []const u8, n: usize) Error![]u8 {
 // SPLIT -----------------------------------------------------------------
 
 pub fn split(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    // Go bindSplit: any NULL argument yields an empty array.
-    if (bind.existsNull(args)) return value_mod.arrayValue(alloc, &.{});
+    if (bind.existsNull(args)) return null_v;
     switch (args[0]) {
         .string => {
             const v = try args[0].toString(alloc);

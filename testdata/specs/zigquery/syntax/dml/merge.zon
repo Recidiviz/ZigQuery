@@ -98,5 +98,152 @@
                 .{ 1, "test" },
             },
         },
+        // Only the first qualifying WHEN clause runs for a row
+        // (data-manipulation-language.md#merge_statement): row 1 is updated, row 2 deleted.
+        .{
+            .desc = "merge runs only the first qualifying WHEN MATCHED clause: UPDATE then DELETE",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE target(id INT64, v STRING);
+            \\CREATE TEMP TABLE source(id INT64, n INT64);
+            \\INSERT INTO target(id, v) VALUES (1, 'a'), (2, 'b');
+            \\INSERT INTO source(id, n) VALUES (1, 20), (2, 5);
+            \\MERGE target T USING source S ON T.id = S.id
+            \\WHEN MATCHED AND S.n > 10 THEN UPDATE SET v = 'updated'
+            \\WHEN MATCHED THEN DELETE;
+            \\SELECT id, v FROM target ORDER BY id;
+            ,
+            .rows = .{
+                .{ 1, "updated" },
+            },
+        },
+        .{
+            .desc = "merge runs only the first qualifying WHEN MATCHED clause: two UPDATEs",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE target(id INT64, v STRING);
+            \\CREATE TEMP TABLE source(id INT64, n INT64);
+            \\INSERT INTO target(id, v) VALUES (1, 'a'), (2, 'b');
+            \\INSERT INTO source(id, n) VALUES (1, 20), (2, 5);
+            \\MERGE target T USING source S ON T.id = S.id
+            \\WHEN MATCHED AND S.n > 10 THEN UPDATE SET v = 'big'
+            \\WHEN MATCHED THEN UPDATE SET v = 'small';
+            \\SELECT id, v FROM target ORDER BY id;
+            ,
+            .rows = .{
+                .{ 1, "big" },
+                .{ 2, "small" },
+            },
+        },
+        // Each source row is inserted once, by the first qualifying clause.
+        .{
+            .desc = "merge runs only the first qualifying WHEN NOT MATCHED clause: two INSERTs",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE target(id INT64, v STRING);
+            \\CREATE TEMP TABLE source(id INT64, n INT64);
+            \\INSERT INTO source(id, n) VALUES (1, 20), (2, 5);
+            \\MERGE target T USING source S ON T.id = S.id
+            \\WHEN NOT MATCHED AND S.n > 10 THEN INSERT (id, v) VALUES (S.id, 'big')
+            \\WHEN NOT MATCHED THEN INSERT (id, v) VALUES (S.id, 'small');
+            \\SELECT id, v FROM target ORDER BY id;
+            ,
+            .rows = .{
+                .{ 1, "big" },
+                .{ 2, "small" },
+            },
+        },
+        .{
+            .desc = "merge runs only the first qualifying WHEN NOT MATCHED BY SOURCE clause",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE target(id INT64, v STRING);
+            \\CREATE TEMP TABLE source(id INT64, n INT64);
+            \\INSERT INTO target(id, v) VALUES (1, 'a'), (2, 'b'), (3, 'c');
+            \\INSERT INTO source(id, n) VALUES (3, 0);
+            \\MERGE target T USING source S ON T.id = S.id
+            \\WHEN NOT MATCHED BY SOURCE AND T.id = 1 THEN UPDATE SET v = 'kept'
+            \\WHEN NOT MATCHED BY SOURCE THEN DELETE;
+            \\SELECT id, v FROM target ORDER BY id;
+            ,
+            .rows = .{
+                .{ 1, "kept" },
+                .{ 3, "c" },
+            },
+        },
+        // A NULL search condition does not qualify its clause, so row 1 falls to the second clause.
+        .{
+            .desc = "merge skips a WHEN clause whose search condition is NULL",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE target(id INT64, v STRING);
+            \\CREATE TEMP TABLE source(id INT64, n INT64);
+            \\INSERT INTO target(id, v) VALUES (1, 'a'), (2, 'b');
+            \\INSERT INTO source(id, n) VALUES (1, NULL), (2, 20);
+            \\MERGE target T USING source S ON T.id = S.id
+            \\WHEN MATCHED AND S.n > 10 THEN UPDATE SET v = 'big'
+            \\WHEN MATCHED THEN UPDATE SET v = 'fallback';
+            \\SELECT id, v FROM target ORDER BY id;
+            ,
+            .rows = .{
+                .{ 1, "fallback" },
+                .{ 2, "big" },
+            },
+        },
+        // Clauses act on the rows the pre-MERGE snapshot assigned them: row 1 moves to key 2,
+        // and the DELETE removes only the original row 2.
+        .{
+            .desc = "merge UPDATE that changes the join key is not acted on by a later clause",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE target(id INT64, v STRING);
+            \\CREATE TEMP TABLE source(id INT64, n INT64);
+            \\INSERT INTO target(id, v) VALUES (1, 'a'), (2, 'b');
+            \\INSERT INTO source(id, n) VALUES (1, 20), (2, 5);
+            \\MERGE target T USING source S ON T.id = S.id
+            \\WHEN MATCHED AND S.n > 10 THEN UPDATE SET id = 2, v = 'moved'
+            \\WHEN MATCHED AND S.n <= 10 THEN DELETE;
+            \\SELECT id, v FROM target ORDER BY id;
+            ,
+            .rows = .{
+                .{ 2, "moved" },
+            },
+        },
+        .{
+            .desc = "merge updates every one of identical matched target rows",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE target(id INT64, v STRING);
+            \\CREATE TEMP TABLE source(id INT64, n INT64);
+            \\INSERT INTO target(id, v) VALUES (1, 'a'), (1, 'a');
+            \\INSERT INTO source(id, n) VALUES (1, 20);
+            \\MERGE target T USING source S ON T.id = S.id
+            \\WHEN MATCHED THEN UPDATE SET v = 'updated';
+            \\SELECT id, v FROM target ORDER BY id;
+            ,
+            .rows = .{
+                .{ 1, "updated" },
+                .{ 1, "updated" },
+            },
+        },
+        // The NULL-key target row is unmatched and deleted. The NULL-key row the INSERT clause
+        // adds is outside the pre-MERGE snapshot and stays.
+        .{
+            .desc = "merge NOT MATCHED BY SOURCE leaves a row inserted by an earlier clause alone",
+            .sql =
+            \\
+            \\CREATE TEMP TABLE target(id INT64, v STRING);
+            \\CREATE TEMP TABLE source(id INT64, v STRING);
+            \\INSERT INTO target(id, v) VALUES (NULL, 'original');
+            \\INSERT INTO source(id, v) VALUES (NULL, 'new');
+            \\MERGE target T USING source S ON T.id = S.id
+            \\WHEN NOT MATCHED THEN INSERT (id, v) VALUES (S.id, 'inserted')
+            \\WHEN NOT MATCHED BY SOURCE THEN DELETE;
+            \\SELECT id, v FROM target ORDER BY id;
+            ,
+            .rows = .{
+                .{ null, "inserted" },
+            },
+        },
     },
 }

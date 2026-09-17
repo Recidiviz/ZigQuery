@@ -18,14 +18,27 @@
                 .{.{""}},
                 .{.{"a"}},
                 .{.{ "b", "c", "d" }},
-                .{.{}},
+                .{null},
             },
         },
         .{
             .desc = "split null delimiter",
             .sql = "SELECT SPLIT('abc', NULL), SPLIT(b'\\xab\\xcd\\xef\\xaa\\xbb', NULL)",
             .rows = .{
-                .{ .{}, .{} },
+                .{ null, null },
+            },
+        },
+        // Any NULL argument gives a NULL ARRAY, so OFFSET(0) is NULL and IS NULL is true.
+        // Query results render a NULL array as [] (data-types.md#array_nulls).
+        .{
+            .desc = "split null argument is a null array inside the query",
+            .sql =
+            \\SELECT SPLIT(CAST(NULL AS STRING), '=')[OFFSET(0)],
+            \\  SPLIT(CAST(NULL AS STRING), '=') IS NULL,
+            \\  SPLIT(b'x', NULL) IS NULL
+            ,
+            .rows = .{
+                .{ null, true, true },
             },
         },
     },

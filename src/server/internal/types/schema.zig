@@ -70,6 +70,8 @@ pub const Field = struct {
     /// True only for a column the catalog declared NOT NULL. REPEATED wins over
     /// it — an ARRAY is its own mode — which is why it is consulted after.
     required: bool = false,
+    /// The catalog's OPTIONS(description); "" writes none.
+    description: []const u8 = "",
 };
 
 pub fn writeFieldMode(
@@ -87,13 +89,15 @@ pub fn writeFieldMode(
     try out.append(arena, '{');
     var need_comma = false;
 
+    if (field.description.len > 0) {
+        try out.appendSlice(arena, "\"description\":");
+        try errors.writeJsonString(arena, out, field.description);
+        need_comma = true;
+    }
+
     if (elem.isStruct()) {
-        try out.appendSlice(arena, "\"fields\":[");
-        for (elem.field_types, 0..) |f, i| {
-            if (i > 0) try out.append(arena, ',');
-            try writeField(arena, out, f.name, f.type orelse elem);
-        }
-        try out.append(arena, ']');
+        if (need_comma) try out.append(arena, ',');
+        try writeSubFields(arena, out, elem);
         need_comma = true;
     }
 
@@ -117,6 +121,25 @@ pub fn writeFieldMode(
     try out.append(arena, '}');
 }
 
+/// `"fields":[...]`: a STRUCT's members, each with its own mode and description.
+fn writeSubFields(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    elem: *const spec.Type,
+) std.mem.Allocator.Error!void {
+    try out.appendSlice(arena, "\"fields\":[");
+    for (elem.field_types, 0..) |f, i| {
+        if (i > 0) try out.append(arena, ',');
+        try writeFieldMode(arena, out, .{
+            .name = f.name,
+            .type = f.type orelse elem,
+            .required = f.is_not_null,
+            .description = f.description,
+        });
+    }
+    try out.append(arena, ']');
+}
+
 /// The same field as a generated TableFieldSchema.
 ///
 /// `mode` is absent rather than "NULLABLE": a GoogleSQL type carries no
@@ -136,6 +159,11 @@ pub fn pbField(
         .type = legacyTypeName(elem.typeKind()),
         .mode = if (repeated) "REPEATED" else if (field.required) "REQUIRED" else null,
     };
+    if (field.description.len > 0) {
+        const description = try arena.create(bqpb.StringValue);
+        description.* = .{ .value = field.description };
+        out.description = description;
+    }
     if (elem.isStruct()) out.fields = try pbFields(arena, elem);
     return out;
 }
@@ -146,7 +174,12 @@ fn pbFields(
 ) std.mem.Allocator.Error![]*bqpb.TableFieldSchema {
     const subs = try arena.alloc(*bqpb.TableFieldSchema, elem.field_types.len);
     for (elem.field_types, 0..) |f, i| {
-        subs[i] = try pbField(arena, .{ .name = f.name, .type = f.type orelse elem });
+        subs[i] = try pbField(arena, .{
+            .name = f.name,
+            .type = f.type orelse elem,
+            .required = f.is_not_null,
+            .description = f.description,
+        });
     }
     return subs;
 }
@@ -339,6 +372,8 @@ pub fn fieldTypeText(
                     try out.appendSlice(arena, sub_name);
                     try out.appendSlice(arena, "` ");
                     try out.appendSlice(arena, try fieldTypeText(arena, sub));
+                    // REQUIRED on a member is NOT NULL on the field.
+                    if (sub == .object and isRequired(sub)) try out.appendSlice(arena, " NOT NULL");
                 }
             }
         }
@@ -356,6 +391,11 @@ pub fn fieldTypeText(
         return std.fmt.allocPrint(arena, "ARRAY<{s}>", .{base});
     }
     return base;
+}
+
+fn isRequired(field: std.json.Value) bool {
+    const m = field.object.get("mode") orelse return false;
+    return m == .string and std.mem.eql(u8, m.string, "REQUIRED");
 }
 
 /// `CREATE TABLE `project.dataset.table` (`col` TYPE, ...)`.
@@ -388,6 +428,8 @@ pub fn createTableDdl(
                             name_v.string,
                             try fieldTypeText(arena, field),
                         });
+                        // REQUIRED is NOT NULL on the column
+                        if (isRequired(field)) try out.appendSlice(arena, " NOT NULL");
                         wrote_any = true;
                     }
                 }
@@ -485,6 +527,54 @@ test "CREATE TABLE DDL covers scalars, REPEATED and nested RECORD" {
     );
 }
 
+test "CREATE TABLE DDL makes a REQUIRED column NOT NULL" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const schema = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[
+        \\  {"name":"a","type":"STRING","mode":"REQUIRED"},
+        \\  {"name":"b","type":"STRING","mode":"NULLABLE"},
+        \\  {"name":"c","type":"STRING","mode":"REPEATED"},
+        \\  {"name":"r","type":"RECORD","mode":"REQUIRED","fields":[{"name":"x","type":"INTEGER","mode":"REQUIRED"}]}
+        \\]}
+    , .{});
+
+    try testing.expectEqualStrings(
+        "CREATE TABLE IF NOT EXISTS `p.ds.t` (`a` STRING NOT NULL, `b` STRING, " ++
+            "`c` ARRAY<STRING>, `r` STRUCT<`x` INT64 NOT NULL> NOT NULL)",
+        try createTableDdl(arena, "p", "ds", "t", schema),
+    );
+}
+
+test "a REQUIRED column rejects NULL from DML and the statement rolls back" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const schema = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"fields":[{"name":"a","type":"STRING","mode":"REQUIRED"},{"name":"b","type":"STRING"}]}
+    , .{});
+    var db = try zigquery.driver.Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(try createTableDdl(arena, "p", "ds", "req", schema), &.{}, .{});
+
+    try db.exec("INSERT INTO `p.ds.req` (a, b) VALUES ('ok', NULL)", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.ds.req` (a, b) VALUES ('also ok', 'x'), (NULL, 'y')", &.{}, .{}),
+    );
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("UPDATE `p.ds.req` SET a = NULL WHERE TRUE", &.{}, .{}),
+    );
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.ds.req`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
 test "a schema-less table still creates" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -541,6 +631,7 @@ pub fn writeSchemaFromSpec(
             .name = col.name,
             .type = col.type,
             .required = col.is_not_null,
+            .description = col.description,
         });
     }
     try out.appendSlice(arena, "]}");

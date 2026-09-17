@@ -271,6 +271,8 @@ pub const ResultSet = struct {
     cells: []const encoder.SqliteRepr,
     /// Reported in full even when a response carries fewer rows, matching Go.
     total_rows: usize,
+    /// The statement type and DML row count the job reports.
+    outcome: driver.StatementOutcome = .{},
 
     fn cloneInto(set: ResultSet, arena: std.mem.Allocator) !ResultSet {
         const names = try arena.alloc([]const u8, set.names.len);
@@ -287,6 +289,7 @@ pub const ResultSet = struct {
             .types = types,
             .cells = cells,
             .total_rows = set.total_rows,
+            .outcome = set.outcome,
         };
     }
 
@@ -375,10 +378,14 @@ pub fn parsePageToken(token: ?[]const u8) usize {
     return std.fmt.parseInt(usize, t, 10) catch 0;
 }
 
+/// The response a ResultSet is served in.
+pub const Endpoint = enum { jobs_query, get_query_results };
+
 /// Serializes a getQueryResults / jobs.query envelope from a ResultSet.
 pub fn writeResultSet(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
+    endpoint: Endpoint,
     project_id: []const u8,
     job_id: []const u8,
     set: ResultSet,
@@ -400,12 +407,21 @@ pub fn writeResultSet(
         .jobReference = .{ .project_id = project_id, .job_id = job_id },
         .schema = try schema_mod.pbSchema(arena, render.cols),
         .rows = rows,
-        // The full count even when this page is short, matching Go.
-        .totalRows = try std.fmt.allocPrint(arena, "{d}", .{set.total_rows}),
+        // The full count even when this page is short.
+        // A statement without result columns, DML or DDL, has no result set to count.
+        .totalRows = if (set.names.len != 0)
+            try std.fmt.allocPrint(arena, "{d}", .{set.total_rows})
+        else
+            null,
         .pageToken = if (next < set.total_rows)
             try std.fmt.allocPrint(arena, "{d}", .{next})
         else
             null,
+        .numDmlAffectedRows = try response.numDmlAffectedRows(arena, set.outcome),
+        .dmlStats = switch (endpoint) {
+            .jobs_query => try response.dmlStats(arena, set.outcome),
+            .get_query_results => null,
+        },
     }, response.envelope_options);
     try out.appendSlice(arena, body);
 }
@@ -432,6 +448,10 @@ pub const RunResult = struct {
     /// back — which this request cannot know. Null only when the query failed.
     set: ?ResultSet = null,
     ok: bool,
+    /// The HTTP status a failed run should answer with. A query BigQuery
+    /// refuses as malformed is 400; one that names a dataset that does not
+    /// exist is 404, the same way the metadata API answers.
+    status: std.http.Status = .ok,
     total_bytes: usize = 0,
 };
 
@@ -447,12 +467,22 @@ pub fn runQueryFormatted(
     /// top-level TIMESTAMP column exists, so a later reader can choose.
     want_int64_timestamps: bool,
 ) !RunResult {
-    var rows = db.query(sql, params, .{}) catch {
-        const msg = try wrapEngineError(arena, db.lastError());
-        return .{
-            .body = try errors.body(arena, .invalid_query, msg),
+    var rows = db.query(sql, params, .{}) catch |err| switch (err) {
+        // The engine's message is BigQuery's own, verbatim: no "failed to
+        // analyze" prefix, and the API's 404 rather than a query error.
+        error.DatasetNotFound => return .{
+            .body = try errors.body(arena, .not_found, db.lastError()),
             .ok = false,
-        };
+            .status = .not_found,
+        },
+        else => {
+            const msg = try wrapEngineError(arena, db.lastError());
+            return .{
+                .body = try errors.body(arena, .invalid_query, msg),
+                .ok = false,
+                .status = .bad_request,
+            };
+        },
     };
     defer rows.deinit();
 
@@ -486,6 +516,7 @@ pub fn runQueryFormatted(
                 try wrapEngineError(arena, db.lastError()),
             ),
             .ok = false,
+            .status = .bad_request,
         };
     }) |row| {
         for (row) |v| try cells.append(arena, switch (v) {
@@ -505,6 +536,7 @@ pub fn runQueryFormatted(
         .types = types,
         .cells = try cells.toOwnedSlice(arena),
         .total_rows = total_rows,
+        .outcome = rows.outcome,
     };
 
     // Go accumulates len() of each rendered cell string as
@@ -519,6 +551,7 @@ pub fn runQueryFormatted(
     try writeResultSet(
         arena,
         &out,
+        .jobs_query,
         project_id,
         job_id,
         set,

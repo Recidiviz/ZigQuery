@@ -567,25 +567,15 @@ pub const Service = struct {
         // lookup only; everything above and below runs unlocked.
         s.app.engine_mutex.lockUncancelable(s.app.io);
         defer s.app.engine_mutex.unlock(s.app.io);
-        const repo = &s.app.repo;
-        const stored = repo.findTable(arena, ref.project, ref.dataset, ref.table) catch |err| {
-            log.err("findTable({s}.{s}.{s}) failed: {t}", .{
-                ref.project,
-                ref.dataset,
-                ref.table,
-                err,
-            });
-            return null;
-        };
-        if (stored) |json| return json;
-        // The same fallback `tables.get` makes: a table created by
-        // `CREATE TABLE` rather than `tables.insert` is in the engine's catalog
-        // and not in the metadata store. Without this a session over one comes
-        // back NOT_FOUND while the REST API finds it perfectly well -- and DDL
-        // is how a client that never touched `tables.insert` makes a table.
         const app = s.app;
-        return app.tableResourceFromEngine(arena, ref.project, ref.dataset, ref.table) catch |err| {
-            log.err("catalog lookup for {s}.{s}.{s} failed: {t}", .{
+        const table_spec = (try app.db.catalogTable(
+            arena,
+            ref.project,
+            ref.dataset,
+            ref.table,
+        )) orelse return null;
+        return app.tableResource(arena, table_spec) catch |err| {
+            log.err("rendering {s}.{s}.{s} failed: {t}", .{
                 ref.project,
                 ref.dataset,
                 ref.table,

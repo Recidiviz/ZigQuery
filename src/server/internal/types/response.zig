@@ -206,11 +206,15 @@ pub const Envelope = struct {
     jobReference: bqpb.JobReference,
     schema: *const bqpb.TableSchema,
     rows: []const tablerow.TableRow,
-    /// A string on the wire.
-    totalRows: []const u8,
+    /// A string on the wire. Absent for a statement with no result set, such as DML or DDL.
+    totalRows: ?[]const u8,
     /// Absent unless this page is short of the total.
     pageToken: ?[]const u8 = null,
     jobComplete: bool = true,
+    /// Present only for INSERT, UPDATE, DELETE and MERGE.
+    numDmlAffectedRows: ?*const bqpb.Int64Value = null,
+    /// Present in the jobs.query response only.
+    dmlStats: ?*const bqpb.DmlStats = null,
 };
 
 /// `pageToken` is absent when null rather than present and null, which is what
@@ -218,6 +222,45 @@ pub const Envelope = struct {
 pub const envelope_options: std.json.Stringify.Options = .{
     .emit_null_optional_fields = false,
 };
+
+/// `numDmlAffectedRows`: present only for INSERT, UPDATE, DELETE and MERGE.
+pub fn numDmlAffectedRows(
+    arena: std.mem.Allocator,
+    outcome: driver.StatementOutcome,
+) std.mem.Allocator.Error!?*bqpb.Int64Value {
+    const dml = outcome.dml orelse return null;
+    return int64Value(arena, dml.total());
+}
+
+/// `dmlStats`: rows changed by kind.
+/// INSERT, UPDATE or DELETE report only their own kind;
+/// MERGE reports all three.
+/// Null for any other statement.
+pub fn dmlStats(
+    arena: std.mem.Allocator,
+    outcome: driver.StatementOutcome,
+) std.mem.Allocator.Error!?*bqpb.DmlStats {
+    const dml = outcome.dml orelse return null;
+    const stats = try arena.create(bqpb.DmlStats);
+    stats.* = switch (outcome.statement_type) {
+        .insert => .{ .inserted_row_count = try int64Value(arena, dml.inserted) },
+        .update => .{ .updated_row_count = try int64Value(arena, dml.updated) },
+        .delete => .{ .deleted_row_count = try int64Value(arena, dml.deleted) },
+        .merge => .{
+            .inserted_row_count = try int64Value(arena, dml.inserted),
+            .updated_row_count = try int64Value(arena, dml.updated),
+            .deleted_row_count = try int64Value(arena, dml.deleted),
+        },
+        else => return null,
+    };
+    return stats;
+}
+
+fn int64Value(arena: std.mem.Allocator, value: i64) std.mem.Allocator.Error!*bqpb.Int64Value {
+    const out = try arena.create(bqpb.Int64Value);
+    out.* = .{ .value = value };
+    return out;
+}
 
 /// Serializes the jobs.query / getQueryResults envelope.
 pub fn writeQueryResponse(

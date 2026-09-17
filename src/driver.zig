@@ -47,6 +47,11 @@ pub const Error = error{
     UnsupportedFunction,
     /// SQLite prepare/step failed (message in Db.lastError).
     ExecFailed,
+    /// A CREATE named a dataset the catalog does not hold, and the connection
+    /// requires datasets to be declared (`Db.require_dataset`). The message
+    /// in Db.lastError is BigQuery's own, verbatim, so a server can answer
+    /// with it; nothing was created.
+    DatasetNotFound,
     /// Result-cell decoding failed.
     DecodeFailed,
     /// The database was written in a storage format this build cannot read.
@@ -224,6 +229,85 @@ pub const OutputColumn = struct {
     type: *spec.Type,
 };
 
+/// A query job's `statementType`, for the statement kinds `Db` executes.
+/// https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#JobStatistics2
+pub const StatementType = enum {
+    select,
+    insert,
+    update,
+    delete,
+    merge,
+    truncate_table,
+    create_table,
+    create_table_as_select,
+    create_view,
+    create_function,
+    create_row_access_policy,
+    drop_table,
+    drop_view,
+    drop_function,
+    drop_row_access_policy,
+    begin_transaction,
+    commit_transaction,
+    /// More than one statement in one call.
+    script,
+
+    pub fn bigQueryName(t: StatementType) []const u8 {
+        return bigquery_names.get(t);
+    }
+
+    const bigquery_names = std.enums.EnumArray(StatementType, []const u8).init(.{
+        .select = "SELECT",
+        .insert = "INSERT",
+        .update = "UPDATE",
+        .delete = "DELETE",
+        .merge = "MERGE",
+        .truncate_table = "TRUNCATE_TABLE",
+        .create_table = "CREATE_TABLE",
+        .create_table_as_select = "CREATE_TABLE_AS_SELECT",
+        .create_view = "CREATE_VIEW",
+        .create_function = "CREATE_FUNCTION",
+        .create_row_access_policy = "CREATE_ROW_ACCESS_POLICY",
+        .drop_table = "DROP_TABLE",
+        .drop_view = "DROP_VIEW",
+        .drop_function = "DROP_FUNCTION",
+        .drop_row_access_policy = "DROP_ROW_ACCESS_POLICY",
+        .begin_transaction = "BEGIN_TRANSACTION",
+        .commit_transaction = "COMMIT_TRANSACTION",
+        .script = "SCRIPT",
+    });
+};
+
+/// Rows an INSERT, UPDATE, DELETE or MERGE changed, by kind of change: a job's `dmlStats`.
+pub const DmlCounts = struct {
+    inserted: i64 = 0,
+    updated: i64 = 0,
+    deleted: i64 = 0,
+
+    /// A job's `numDmlAffectedRows`.
+    pub fn total(c: DmlCounts) i64 {
+        return c.inserted + c.updated + c.deleted;
+    }
+
+    /// Counts `rows` under the kind of change `statement` makes; any statement other than an
+    /// INSERT, UPDATE or DELETE counts nothing.
+    fn add(c: *DmlCounts, statement: sqlbuilder.SQLFragment, rows: i64) void {
+        switch (statement) {
+            .insert_statement => c.inserted += rows,
+            .update_statement => c.updated += rows,
+            .delete_statement => c.deleted += rows,
+            else => {},
+        }
+    }
+};
+
+/// What a query or exec call reports about the SQL it ran, besides its rows.
+pub const StatementOutcome = struct {
+    statement_type: StatementType = .select,
+    /// Set for an INSERT, UPDATE, DELETE or MERGE; null for every other statement and for a script.
+    dml: ?DmlCounts = null,
+};
+
 pub const Db = struct {
     gpa: std.mem.Allocator,
     sqlite_db: sqlite.Db,
@@ -246,7 +330,24 @@ pub const Db = struct {
     /// Lookups check this first, so a TEMP object shadows a persistent one of
     /// the same name.
     temps: *catalog_mod.Catalog,
+    /// The project a two-part DDL name (`dataset.table`) belongs to, when a
+    /// server sets one. BigQuery resolves such names against the job's
+    /// project; without a default the path is registered as written.
+    default_project: ?[]const u8 = null,
+    /// Whether a CREATE into `project.dataset.x` must name a dataset the
+    /// catalog holds, as BigQuery insists ("Not found: Dataset p:ds was not
+    /// found in location US"). Off by default: the engine library and the
+    /// spec corpus create `ds.t` freely and the catalog infers the dataset.
+    /// A server, whose clients declare datasets through the metadata API,
+    /// turns it on so the two agree on which datasets exist. Deliberately
+    /// separate from `default_project`, which is a name-resolution rule and
+    /// is set by engine tests that never declare a dataset.
+    require_dataset: bool = false,
     last_error: ?[]u8 = null,
+    /// The 1-based bind index whose value failed to convert, when `last_error` came from a bind.
+    /// Cleared at the start of every bind pass.
+    /// Lets a caller binding one placeholder per column name the column in its own error.
+    last_error_param: ?i32 = null,
     /// Parameter mode of the currently-running script (set per runStatements).
     param_mode: ParamMode = .named,
     /// Collects the canonical names of temp tables/views created during the
@@ -357,6 +458,11 @@ pub const Db = struct {
     /// Diagnostic message for the last failed query/exec call.
     pub fn lastError(db: *Db) []const u8 {
         return db.last_error orelse "";
+    }
+
+    /// The bind index behind the last `error.DecodeFailed`, or null when it wasn't a bind failure.
+    pub fn lastErrorParam(db: *Db) ?i32 {
+        return db.last_error_param;
     }
 
     /// The storage format this build reads and writes, kept in the database's
@@ -484,6 +590,7 @@ pub const Db = struct {
             .cols = prepared.columns,
             .names = names,
             .temp_tables = prepared.temp_tables,
+            .outcome = prepared.outcome,
         };
 
         // modernc.org/sqlite's (*stmt).Query steps once before handing back
@@ -634,7 +741,16 @@ pub const Db = struct {
         // reading a definition that another connection replaced a moment ago.
         var g = db.lockCatalog();
         defer g.unlock();
-        return g.catalog.tableSpecByName(canonical);
+        const found = g.catalog.tableSpecByName(canonical) orelse return null;
+        // The join is not injective: `foo_bar_baz` as one segment collides with
+        // `foo.bar.baz`. Only the path that was asked for counts.
+        if (!pathIs(found.name_path, project_id, dataset_id, table_id)) return null;
+        return found;
+    }
+
+    fn pathIs(path: []const []const u8, p: []const u8, d: []const u8, t: []const u8) bool {
+        return path.len == 3 and std.mem.eql(u8, path[0], p) and std.mem.eql(u8, path[1], d) and
+            std.mem.eql(u8, path[2], t);
     }
 
     /// Every table and view the GoogleSQL catalog holds under
@@ -666,19 +782,182 @@ pub const Db = struct {
         return out.toOwnedSlice(arena);
     }
 
-    /// Tells the GoogleSQL catalog that `project.dataset` exists, so
-    /// `<project>.INFORMATION_SCHEMA.SCHEMATA` reports it even before it holds
-    /// a table. Idempotent. The metadata store gets the same news through its
-    /// own `addDataset`; this is the SQL-analysis side's copy of it — see
-    /// `Catalog.ensureDataset`.
-    pub fn ensureDataset(
+    /// A DDL name path, normalized, with `default_project` prepended for`dataset.table` paths
+    fn qualifyPath(
         db: *Db,
+        arena: std.mem.Allocator,
+        path: []const []const u8,
+    ) error{OutOfMemory}![]const []const u8 {
+        const normalized = try normalizePath(arena, path);
+        const project = db.default_project orelse return normalized;
+        if (normalized.len != 2) return normalized;
+        return try arena.dupe([]const u8, &.{ project, normalized[0], normalized[1] });
+    }
+
+    /// Attaches the metadata API's resource text to `project.dataset.table`,
+    /// replacing what was there, and stamps `updated_at`. The analyzer-visible
+    /// shape is untouched, so this is a slot swap with no handle resync.
+    pub fn setTableMetadata(
+        db: *Db,
+        arena: std.mem.Allocator,
         project_id: []const u8,
         dataset_id: []const u8,
-    ) error{OutOfMemory}!void {
+        table_id: []const u8,
+        metadata_json: []const u8,
+    ) catalog_mod.Error!void {
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id, table_id });
+        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
         var g = db.lockCatalog();
         defer g.unlock();
-        try g.catalog.ensureDataset(&.{ project_id, dataset_id }, "");
+        const current = g.catalog.tableSpecByName(canonical) orelse return error.TableNotFound;
+        var updated = current.*;
+        updated.metadata = metadata_json;
+        updated.updated_at = now.rfc3339;
+        try g.catalog.updateTableSpec(&db.sqlite_db, &updated);
+    }
+
+    /// Declares that `project.dataset` exists, carrying the metadata API's resource text.
+    /// `DatasetAlreadyExists`, with nothing written, when a declared dataset holds the path; an
+    /// inferred entry is replaced. The catalog is a dataset's only store: datasets.get and
+    /// datasets.list read the resource back from here, `require_dataset` consults it, and
+    /// `<project>.INFORMATION_SCHEMA.SCHEMATA` reports the dataset even before it holds a table.
+    pub fn insertDataset(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        metadata_json: []const u8,
+    ) (catalog_mod.Error || error{DatasetAlreadyExists})!void {
+        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        if (g.catalog.datasetSpecByName(canonical)) |current| {
+            if (!current.is_synthetic and pathIs2(current.name_path, project_id, dataset_id)) {
+                return error.DatasetAlreadyExists;
+            }
+        }
+        try g.catalog.addNewDatasetSpec(&db.sqlite_db, &.{
+            .name_path = &.{ project_id, dataset_id },
+            .metadata = metadata_json,
+            .updated_at = now.rfc3339,
+            .created_at = now.rfc3339,
+        });
+    }
+
+    /// Replaces a declared dataset's resource (datasets.patch) and keeps its creation time.
+    /// `DatasetNotFound` when `project.dataset` is not declared.
+    pub fn updateDataset(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+        metadata_json: []const u8,
+    ) catalog_mod.Error!void {
+        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const current = g.catalog.datasetSpecByName(canonical) orelse return error.DatasetNotFound;
+        if (current.is_synthetic or !pathIs2(current.name_path, project_id, dataset_id)) {
+            return error.DatasetNotFound;
+        }
+        try g.catalog.addNewDatasetSpec(&db.sqlite_db, &.{
+            .name_path = &.{ project_id, dataset_id },
+            .metadata = metadata_json,
+            .updated_at = now.rfc3339,
+            .created_at = current.created_at,
+        });
+    }
+
+    /// Forgets a declared dataset. Its tables are the caller's business
+    /// (datasets.delete drops them first). A dataset the catalog only
+    /// inferred from a table's path is not declared, so it reports
+    /// `DatasetNotFound` like an unknown one.
+    pub fn deleteDataset(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) catalog_mod.Error!void {
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const current = g.catalog.datasetSpecByName(canonical) orelse return error.DatasetNotFound;
+        if (!pathIs2(current.name_path, project_id, dataset_id)) return error.DatasetNotFound;
+        try g.catalog.deleteDatasetSpec(&db.sqlite_db, canonical);
+    }
+
+    /// The declared dataset `project.dataset`, or null. Inferred datasets do
+    /// not count: this is the metadata API's "does this dataset exist", and
+    /// nobody created those. Pointer lifetime is as `catalogTable` describes.
+    pub fn catalogDataset(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) error{OutOfMemory}!?*const spec.DatasetSpec {
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const found = g.catalog.datasetSpecByName(canonical) orelse return null;
+        if (found.is_synthetic) return null;
+        if (!pathIs2(found.name_path, project_id, dataset_id)) return null;
+        return found;
+    }
+
+    /// Every declared dataset under `project`, in declaration order.
+    pub fn catalogDatasetsIn(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+    ) error{OutOfMemory}![]*const spec.DatasetSpec {
+        var out: std.ArrayList(*const spec.DatasetSpec) = .empty;
+        var g = db.lockCatalog();
+        defer g.unlock();
+        for (try g.catalog.liveDatasets(arena)) |ds| {
+            if (ds.is_synthetic) continue;
+            if (!std.mem.eql(u8, ds.name_path[0], project_id)) continue;
+            try out.append(arena, ds);
+        }
+        return out.toOwnedSlice(arena);
+    }
+
+    /// Whether the engine knows `project.dataset` at all — declared, or
+    /// inferred from a table already living in it.
+    pub fn datasetExists(
+        db: *Db,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        dataset_id: []const u8,
+    ) error{OutOfMemory}!bool {
+        const canonical = try std.mem.join(arena, "_", &.{ project_id, dataset_id });
+        var g = db.lockCatalog();
+        defer g.unlock();
+        const found = g.catalog.datasetSpecByName(canonical) orelse return false;
+        return pathIs2(found.name_path, project_id, dataset_id);
+    }
+
+    fn pathIs2(path: []const []const u8, p: []const u8, d: []const u8) bool {
+        return path.len == 2 and std.mem.eql(u8, path[0], p) and std.mem.eql(u8, path[1], d);
+    }
+
+    /// The `require_dataset` check, for a CREATE whose (qualified) name is
+    /// `name_path`. BigQuery's own message goes into `lastError`. Only a
+    /// `project.dataset.x` name can be checked: a shorter one has no dataset
+    /// to look up, and the anonymous results dataset and INFORMATION_SCHEMA
+    /// are the engine's own, never declared by anyone.
+    fn requireDataset(db: *Db, arena: std.mem.Allocator, name_path: []const []const u8) Error!void {
+        if (!db.require_dataset or name_path.len != 3) return;
+        if (std.mem.eql(u8, name_path[1], function.job_rows_vtab.anon_segment)) return;
+        if (std.mem.eql(u8, name_path[1], function.info_schema_vtab.info_schema_segment)) return;
+        if (try db.datasetExists(arena, name_path[0], name_path[1])) return;
+        db.setLastError(try std.fmt.allocPrint(
+            arena,
+            "Not found: Dataset {s}:{s} was not found in location US",
+            .{ name_path[0], name_path[1] },
+        ));
+        return error.DatasetNotFound;
     }
 
     /// Snapshots the live table specs for the INFORMATION_SCHEMA vtabs.
@@ -1007,14 +1286,13 @@ pub const Db = struct {
 
     const Mode = enum { query, exec };
 
-    /// Result of running a statement script. A null `stmt` mirrors Go's
-    /// empty &Rows{conn} returned when the last statement is not a query
-    /// (DML/DDL executed to completion; Rows yields no rows).
+    /// Result of running a statement script.
     const Prepared = struct {
         stmt: ?sqlite.Stmt = null,
         columns: []const OutputColumn = &.{},
-        /// Temp tables/views to drop when the returned Rows is deinited.
+        /// Temp tables/views to drop when the returned Rows is deinitialized.
         temp_tables: []const []const u8 = &.{},
+        outcome: StatementOutcome = .{},
     };
 
     /// One analyzer round trip: the catalog-handle path when the delta can be
@@ -1078,13 +1356,13 @@ pub const Db = struct {
         };
     }
 
-    /// The Analyze loop: analyzer -> per-kind statement action, mirroring
-    /// Go's newStmtAction dispatch. QueryStmt transforms and prepares;
-    /// CREATE/DML/DROP/TRUNCATE actions execute inline and mutate the
-    /// catalog; BEGIN/COMMIT and row-access-policy statements are no-ops.
+    /// The Analyze loop: analyzer -> per-kind statement action.
+    /// QueryStmt transforms and prepares;
+    /// CREATE/DML/DROP/TRUNCATE actions execute inline and mutate the catalog;
+    /// BEGIN/COMMIT and ROW ACCESS POLICY statements are no-ops.
     /// In .query mode the LAST statement's prepared query is returned
-    /// (empty Prepared when the last statement is not a query); in .exec
-    /// mode every statement runs to completion and null is returned.
+    /// (empty Prepared when the last statement is not a query);
+    ///  in .exec mode every statement runs to completion and null is returned.
     fn runStatements(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1156,6 +1434,10 @@ pub const Db = struct {
             db.unregisterFunctionSpec(name) catch {};
         };
 
+        // The latest statement's outcome, and how many statements ran: more than one is a script.
+        var outcome: StatementOutcome = .{};
+        var statement_count: u32 = 0;
+
         // No catalog re-read here (Go re-syncs from SQLite before every
         // statement). Every write goes through the in-process catalog, so it
         // is already current; re-reading only reintroduced the timestamp
@@ -1187,6 +1469,10 @@ pub const Db = struct {
             db.stmt_params = &.{};
 
             const stmt_node = statementNodeOf(analyzed.node) orelse return error.Unimplemented;
+            outcome = .{
+                .statement_type = statementTypeOf(stmt_node) orelse return error.Unimplemented,
+            };
+            statement_count += 1;
             switch (stmt_node) {
                 .resolved_query_stmt_node => |query_stmt| {
                     const formatted = try transformStatement(db, arena, analyzed.node, opts);
@@ -1203,13 +1489,11 @@ pub const Db = struct {
                             .stmt = stmt,
                             .columns = try outputColumns(arena, query_stmt),
                             .temp_tables = temp_tables.items,
+                            .outcome = scriptOutcome(outcome, statement_count),
                         };
                     }
 
                     switch (mode) {
-                        // Earlier statements in a query script are never
-                        // iterated (Go's database/sql laziness); prepare
-                        // validated them.
                         .query => stmt.finalize(),
                         .exec => {
                             while (stmt.step() catch {
@@ -1229,13 +1513,16 @@ pub const Db = struct {
                         opts,
                     );
                 },
-                // Go newDMLStmtAction: exec the formatted DML SQL.
                 .resolved_insert_stmt_node,
                 .resolved_update_stmt_node,
                 .resolved_delete_stmt_node,
                 => {
-                    const formatted = try transformStatement(db, arena, analyzed.node, opts);
-                    consumed = try db.execSql(arena, formatted, cur_args);
+                    const fragment = try transformStatementFragment(db, arena, analyzed.node, opts);
+                    const changes_before = db.sqlite_db.totalChanges();
+                    consumed = try db.execSql(arena, try fragment.toString(arena), cur_args);
+                    var counts: DmlCounts = .{};
+                    counts.add(fragment, db.sqlite_db.totalChanges() - changes_before);
+                    outcome.dml = counts;
                 },
                 .resolved_drop_stmt_node => |drop_stmt| {
                     consumed = try db.execDropStatement(
@@ -1246,39 +1533,30 @@ pub const Db = struct {
                         opts,
                     );
                 },
-                // Go newDropFunctionStmtAction -> DropStmtAction with
-                // objectType "FUNCTION": delete the catalog spec only (no
-                // SQLite object exists for a UDF).
+                // TODO: Investigate sqlite UDF leak for DROP FUNCTION
                 .resolved_drop_function_stmt_node => |drop_fn| {
                     const name = try formatNamePath(arena, drop_fn.name_path);
                     db.unregisterFunctionSpec(name) catch |err| {
-                        // DROP FUNCTION IF EXISTS on a missing function is
-                        // a no-op; otherwise Go errors out.
+                        // DROP FUNCTION IF EXISTS on a missing function is a no-op
                         if (err == error.TableNotFound and (drop_fn.is_if_exists orelse false)) {
                             // no-op
                         } else return db.failCatalog(err);
                     };
                 },
-                // Go MergeStmtAction: the transformer lowers MERGE to a list
-                // of plain statements (create merged temp table, one
-                // INSERT/UPDATE/DELETE per WHEN clause, drop temp table)
-                // executed in order without args.
+                // The transformer lowers MERGE to a list of plain statements executed in order.
+                // (create merged temp table, INSERT/UPDATE/DELETE per WHEN clause, drop temp table)
                 .resolved_merge_stmt_node => {
                     const fragment = try transformStatementFragment(db, arena, analyzed.node, opts);
                     const compound = switch (fragment) {
                         .compound => |c| c,
                         else => return error.TransformFailed,
                     };
-                    for (compound.getStatements()) |stmt_sql| {
-                        _ = try db.execSql(arena, stmt_sql, &.{});
-                    }
+                    outcome.dml = try db.execCompound(arena, compound);
                 },
-                // Go newTruncateStmtAction: DELETE FROM `table`.
                 .resolved_truncate_stmt_node => |truncate_stmt| {
                     try db.execTruncateStatement(arena, truncate_stmt);
                 },
-                // Go Begin/CommitStmtAction and NullStmtAction (row access
-                // policies): no-ops.
+                // Unsupported but implemented as no-ops
                 .resolved_begin_stmt_node,
                 .resolved_commit_stmt_node,
                 .resolved_create_row_access_policy_stmt_node,
@@ -1292,12 +1570,11 @@ pub const Db = struct {
 
             if (last) {
                 switch (mode) {
-                    // Query mode: the last statement was not a query (empty
-                    // Prepared). Temp tables are dropped now since no Rows
-                    // will carry them.
+                    // Query mode: the last statement was not a query (empty Prepared).
+                    // Temp tables are dropped now since no Rows will carry them.
                     .query => {
                         db.dropTempTables(arena, temp_tables.items);
-                        return Prepared{};
+                        return .{ .outcome = scriptOutcome(outcome, statement_count) };
                     },
                     // Exec mode: everything ran; drop temp tables and finish.
                     .exec => {
@@ -1340,6 +1617,22 @@ pub const Db = struct {
             return error.ExecFailed;
         }) {}
         return consumed;
+    }
+
+    /// Runs a compound fragment's statements in order, without args, counting the rows each one
+    /// changes under the kind of change it makes.
+    fn execCompound(
+        db: *Db,
+        arena: std.mem.Allocator,
+        compound: *const sqlbuilder.CompoundSQLFragment,
+    ) Error!DmlCounts {
+        var counts: DmlCounts = .{};
+        for (compound.getStatements()) |statement| {
+            const changes_before = db.sqlite_db.totalChanges();
+            _ = try db.execSql(arena, try statement.toString(arena), &.{});
+            counts.add(statement, db.sqlite_db.totalChanges() - changes_before);
+        }
+        return counts;
     }
 
     /// Creates the index backing a declared primary key, if the spec has one.
@@ -1420,6 +1713,11 @@ pub const Db = struct {
         opts: QueryOptions,
     ) Error!void {
         const fn_spec = try db.newFunctionSpec(arena, cf, opts);
+        // The spec keeps the path as written, which is what calls resolve; the check needs the
+        // project a `dataset.function` name lands in.
+        if (!fn_spec.is_temp) {
+            try db.requireDataset(arena, try db.qualifyPath(arena, fn_spec.name_path));
+        }
         if (fn_spec.is_temp)
             db.temps.addNewFunctionSpec(&db.sqlite_db, fn_spec) catch |err|
                 return db.failCatalog(err)
@@ -1555,14 +1853,18 @@ pub const Db = struct {
     ) Error!usize {
         const base = ct.parent orelse return error.TransformFailed;
         const create = base.parent orelse return error.TransformFailed;
-        const table_spec = try newTableSpecFromCreate(arena, create, base, "");
+        const table_spec = try newTableSpecFromCreate(arena, create, base, "", .{
+            .partition_by = ct.partition_by_list,
+            .cluster_by = ct.cluster_by_list,
+            .columns = try columnNamesFromDefinitions(arena, base.column_definition_list),
+        });
         return db.execCreateTableAction(arena, table_spec, args);
     }
 
-    /// Go CreateTableStmtAction for CREATE TABLE AS SELECT: the transformer
-    /// yields a CreateTableStatement whose AsSelect string is persisted in
-    /// the spec (newTableAsSelectSpec); exec runs spec.SQLiteSchema, which
-    /// renders "CREATE TABLE `t` AS <select>".
+    /// CREATE TABLE AS SELECT: the transformer yields a CreateTableStatement
+    /// whose AsSelect string is persisted in the spec (newTableAsSelectSpec);
+    /// exec runs spec.SQLiteSchema, which renders "CREATE TABLE `t` AS <select>", or, for a column
+    /// list with NOT NULL columns, creates the declared shape and inserts the select.
     fn execCreateTableAsSelect(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1581,8 +1883,50 @@ pub const Db = struct {
 
         const base = ctas.parent orelse return error.TransformFailed;
         const create = base.parent orelse return error.TransformFailed;
-        const table_spec = try newTableSpecFromCreate(arena, create, base, query_str);
+        const table_spec = try newTableSpecFromCreate(arena, create, base, query_str, .{
+            .partition_by = ctas.partition_by_list,
+            .cluster_by = ctas.cluster_by_list,
+            .columns = try columnNamesFromDefinitions(arena, base.column_definition_list),
+        });
         return db.execCreateTableAction(arena, table_spec, args);
+    }
+
+    /// A CTAS whose NOT NULL columns or members must check its rows, and the SQLite table the rows
+    /// go into: the destination itself, or the scratch table OR REPLACE swaps in.
+    const DeclaredTarget = struct { table_spec: *const spec.TableSpec, name: []const u8 };
+
+    /// CREATE TABLE `target.name` in the spec's declared shape, then INSERT the spec's query, so
+    /// the NOT NULL columns and members check every row. A failed INSERT drops the table it
+    /// created, and a NULL column reads as BigQuery reports it: `Required field <column> cannot be
+    /// null`.
+    fn createDeclaredThenInsert(
+        db: *Db,
+        arena: std.mem.Allocator,
+        target: DeclaredTarget,
+        args: []const Param,
+    ) Error!usize {
+        const table_spec = target.table_spec;
+        const name = target.name;
+        const create = table_spec.declaredSchemaAs(arena, name) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.TransformFailed,
+        };
+        _ = try db.execSql(arena, create, &.{});
+        const insert = try std.fmt.allocPrint(arena, "INSERT INTO `{s}` {s}", .{
+            name,
+            table_spec.query,
+        });
+        return db.execSql(arena, insert, args) catch |err| {
+            const failure = db.lastError();
+            const message = if (spec.notNullColumnFromMessage(failure)) |column|
+                try std.fmt.allocPrint(arena, "Required field {s} cannot be null", .{column})
+            else
+                try arena.dupe(u8, failure);
+            const drop = try std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name});
+            _ = db.execSql(arena, drop, &.{}) catch {};
+            db.setLastError(message);
+            return err;
+        };
     }
 
     /// Shared CreateTableStmtAction.exec body: OR REPLACE drops first,
@@ -1593,9 +1937,15 @@ pub const Db = struct {
         table_spec: *spec.TableSpec,
         args: []const Param,
     ) Error!usize {
+        // A TEMP table has no dataset to qualify into.
+        if (!table_spec.is_temp) {
+            table_spec.name_path = try db.qualifyPath(arena, table_spec.name_path);
+            try db.requireDataset(arena, table_spec.name_path);
+        }
         const table_name = try table_spec.tableName(arena);
         const replacing = table_spec.create_mode == spec.create_mode_create_or_replace;
         const from_query = table_spec.query.len != 0;
+        const through_declared = from_query and table_spec.hasNotNull();
 
         // CREATE OR REPLACE ... AS <query> builds into a scratch table and
         // swaps, rather than dropping first. WRITE_TRUNCATE arrives here, and
@@ -1615,12 +1965,18 @@ pub const Db = struct {
             );
             _ = try db.execSql(arena, drop_scratch, &.{});
 
-            const build = try std.fmt.allocPrint(
-                arena,
-                "CREATE TABLE `{s}` AS {s}",
-                .{ scratch, table_spec.query },
-            );
-            const consumed = db.execSql(arena, build, args) catch |err| {
+            const built = if (through_declared)
+                db.createDeclaredThenInsert(arena, .{
+                    .table_spec = table_spec,
+                    .name = scratch,
+                }, args)
+            else
+                db.execSql(arena, try std.fmt.allocPrint(
+                    arena,
+                    "CREATE TABLE `{s}` AS {s}",
+                    .{ scratch, table_spec.query },
+                ), args);
+            const consumed = built catch |err| {
                 // Leave the destination exactly as it was.
                 _ = db.execSql(arena, drop_scratch, &.{}) catch {};
                 return err;
@@ -1639,14 +1995,9 @@ pub const Db = struct {
             );
             _ = try db.execSql(arena, rename, &.{});
 
-            // No execPkIndex here, deliberately: a CTAS cannot carry a primary
-            // key, because declaring one needs a column definition list and the
-            // analyzer rejects that outright ("CREATE TABLE AS SELECT with
-            // column definition list is unsupported"). If that ever becomes
-            // supported, this branch needs the index — and it must be created
-            // *after* the rename above, since SQLite's ALTER TABLE ... RENAME
-            // leaves index names alone and it would otherwise stay called
-            // `<t>__zigquery_replace.pk`.
+            // After the rename: SQLite's ALTER TABLE ... RENAME leaves index names alone, so an
+            // index made on the scratch table would stay called `<t>__zigquery_replace.pk`.
+            try db.execPkIndex(arena, table_spec);
             db.registerTableSpec(table_spec) catch |err|
                 return db.failCatalog(err);
             return consumed;
@@ -1656,11 +2007,18 @@ pub const Db = struct {
             const drop_sql = try std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{table_name});
             _ = try db.execSql(arena, drop_sql, &.{});
         }
-        const schema = table_spec.sqliteSchema(arena) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.TransformFailed,
+        const consumed = if (through_declared)
+            try db.createDeclaredThenInsert(arena, .{
+                .table_spec = table_spec,
+                .name = table_name,
+            }, args)
+        else blk: {
+            const schema = table_spec.sqliteSchema(arena) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.TransformFailed,
+            };
+            break :blk try db.execSql(arena, schema, args);
         };
-        const consumed = try db.execSql(arena, schema, args);
 
         // Before the IF NOT EXISTS early return below, which would otherwise
         // skip it for an already-registered table. CREATE INDEX IF NOT EXISTS
@@ -1729,18 +2087,25 @@ pub const Db = struct {
         }
 
         const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        const is_temp = (create.create_scope orelse .CREATE_DEFAULT_SCOPE) == .CREATE_TEMP;
         const table_spec = try arena.create(spec.TableSpec);
         table_spec.* = .{
-            .is_temp = (create.create_scope orelse .CREATE_DEFAULT_SCOPE) == .CREATE_TEMP,
+            .is_temp = is_temp,
             .is_view = true,
-            .name_path = try normalizePath(arena, create.name_path),
+            .name_path = if (is_temp)
+                try normalizePath(arena, create.name_path)
+            else
+                try db.qualifyPath(arena, create.name_path),
             .columns = columns,
             .create_mode = goCreateMode(create.create_mode),
             .query = query_str,
             .updated_at = now.rfc3339,
             .created_at = now.rfc3339,
             .options = try optionSpecsFrom(arena, base.option_list),
+            .description = try stringOption(arena, base.option_list, "description"),
+            .source_sql = base.sql orelse "",
         };
+        if (!is_temp) try db.requireDataset(arena, table_spec.name_path);
 
         if (table_spec.create_mode == spec.create_mode_create_or_replace) {
             const drop_sql = try std.fmt.allocPrint(
@@ -1750,7 +2115,15 @@ pub const Db = struct {
             );
             _ = try db.execSql(arena, drop_sql, &.{});
         }
-        const create_sql = fragment.toString(arena) catch return error.OutOfMemory;
+        // The transformer named the view as written; the spec's name is the
+        // one SQLite must know it by.
+        const qualified = sqlbuilder.CreateViewStatement{
+            .if_not_exists = create_view_stmt.if_not_exists,
+            .view_name = try table_spec.tableName(arena),
+            .query = create_view_stmt.query,
+        };
+        const create_fragment = sqlbuilder.SQLFragment{ .create_view_statement = &qualified };
+        const create_sql = create_fragment.toString(arena) catch return error.OutOfMemory;
         _ = try db.execSql(arena, create_sql, &.{});
         db.registerTableSpec(table_spec) catch |err|
             return db.failCatalog(err);
@@ -1772,12 +2145,29 @@ pub const Db = struct {
             // separate node kind handled by the UDF milestone).
             return error.Unimplemented;
         }
-        const formatted = try transformStatement(db, arena, node, opts);
+        _ = node;
+        _ = opts;
+        // A TEMP object is registered as written; anything else under the
+        // project the name resolves to.
+        const as_written = try formatNamePath(arena, drop_stmt.name_path);
+        const name = if (db.temps.findTableSpec(as_written) != null)
+            as_written
+        else
+            try spec.formatPath(arena, try db.qualifyPath(arena, drop_stmt.name_path));
+        const drop = sqlbuilder.DropStatement{
+            .if_exists = drop_stmt.is_if_exists orelse false,
+            .object_type = object_type,
+            .object_name = name,
+        };
+        const drop_fragment = sqlbuilder.SQLFragment{ .drop_statement = &drop };
+        const formatted = drop_fragment.toString(arena) catch return error.OutOfMemory;
         const consumed = try db.execSql(arena, formatted, args);
 
-        const name = try formatNamePath(arena, drop_stmt.name_path);
-        db.unregisterTableSpec(name) catch |err|
-            return db.failCatalog(err);
+        // IF EXISTS covers the catalog too: nothing to remove is not an error.
+        db.unregisterTableSpec(name) catch |err| switch (err) {
+            error.TableNotFound => if (!drop.if_exists) return db.failCatalog(err),
+            else => return db.failCatalog(err),
+        };
         return consumed;
     }
 
@@ -1830,6 +2220,8 @@ pub const Db = struct {
         stmt_params: []const context_mod.CollectedParam,
         blobs: BlobLifetime,
     ) Error!usize {
+        db.last_error_param = null;
+
         const count = stmt.bindParameterCount();
         if (count <= 0) return 0;
         const ucount: usize = @intCast(count);
@@ -1906,11 +2298,11 @@ pub const Db = struct {
         // by some earlier conversion (function/bind.zig does the same before
         // it calls a UDF).
         value_mod.diagnostic = null;
-        var v = valueFromCell(arena, cell) catch |err| return db.failDecode(err);
+        var v = valueFromCell(arena, cell) catch |err| return db.failBind(err, idx);
         if (param_type) |t| {
-            v = castParamValue(arena, v, t) catch |err| return db.failDecode(err);
+            v = castParamValue(arena, v, t) catch |err| return db.failBind(err, idx);
         }
-        const repr = encoder.EncodeValue(arena, v) catch |err| return db.failDecode(err);
+        const repr = encoder.EncodeValue(arena, v) catch |err| return db.failBind(err, idx);
         switch (repr) {
             .null => try stmt.bindNull(idx),
             .int => |i| try stmt.bindInt64(idx, i),
@@ -1920,6 +2312,13 @@ pub const Db = struct {
                 .static => try stmt.bindBlobStatic(idx, b),
             },
         }
+    }
+
+    /// `failDecode` for a bind, which also names the placeholder.
+    fn failBind(db: *Db, err: anyerror, idx: i32) Error {
+        const out = db.failDecode(err);
+        if (out == error.DecodeFailed) db.last_error_param = idx;
+        return out;
     }
 
     fn failDecode(db: *Db, err: anyerror) Error {
@@ -2284,6 +2683,68 @@ fn statementNodeOf(
     }
 }
 
+/// The statement type of each kind `Db.runStatements` executes; null for every kind it rejects.
+fn statementTypeOf(stmt_node: pb.AnyResolvedStatementProto.NodeUnion) ?StatementType {
+    return switch (stmt_node) {
+        .resolved_create_statement_node => |create_any| createStatementTypeOf(create_any),
+        .resolved_drop_stmt_node => |drop_stmt| dropStatementTypeOf(drop_stmt),
+        else => node_statement_types.get(stmt_node),
+    };
+}
+
+/// The kinds whose statement type follows from the kind alone.
+const node_statement_types = std.enums.EnumMap(
+    std.meta.Tag(pb.AnyResolvedStatementProto.NodeUnion),
+    StatementType,
+).init(.{
+    .resolved_query_stmt_node = .select,
+    .resolved_insert_stmt_node = .insert,
+    .resolved_update_stmt_node = .update,
+    .resolved_delete_stmt_node = .delete,
+    .resolved_merge_stmt_node = .merge,
+    .resolved_truncate_stmt_node = .truncate_table,
+    .resolved_drop_function_stmt_node = .drop_function,
+    .resolved_begin_stmt_node = .begin_transaction,
+    .resolved_commit_stmt_node = .commit_transaction,
+    .resolved_create_row_access_policy_stmt_node = .create_row_access_policy,
+    .resolved_drop_row_access_policy_stmt_node = .drop_row_access_policy,
+});
+
+/// The DROP kinds `Db.execDropStatement` executes.
+fn dropStatementTypeOf(drop_stmt: *const pb.ResolvedDropStmtProto) ?StatementType {
+    const object_type = drop_stmt.object_type orelse return null;
+    if (std.mem.eql(u8, object_type, "TABLE")) return .drop_table;
+    if (std.mem.eql(u8, object_type, "VIEW")) return .drop_view;
+    return null;
+}
+
+/// The CREATE kinds `Db.execCreateStatement` executes.
+fn createStatementTypeOf(create_any: *const pb.AnyResolvedCreateStatementProto) ?StatementType {
+    switch (create_any.node orelse return null) {
+        .resolved_create_table_stmt_base_node => |base_any| {
+            return switch (base_any.node orelse return null) {
+                .resolved_create_table_stmt_node => .create_table,
+                .resolved_create_table_as_select_stmt_node => .create_table_as_select,
+                else => null,
+            };
+        },
+        .resolved_create_view_base_node => |view_any| {
+            return switch (view_any.node orelse return null) {
+                .resolved_create_view_stmt_node => .create_view,
+                else => null,
+            };
+        },
+        .resolved_create_function_stmt_node => return .create_function,
+        else => return null,
+    }
+}
+
+/// One statement reports its own outcome; several are a script, whose parent job carries no row
+/// count.
+fn scriptOutcome(last: StatementOutcome, statement_count: u32) StatementOutcome {
+    return if (statement_count == 1) last else .{ .statement_type = .script };
+}
+
 /// Go NamePath.normalizePath with an empty base path: every segment is
 /// split on "." (backticked identifiers may carry dots).
 fn normalizePath(
@@ -2334,8 +2795,8 @@ fn functionArgumentSpecType(
     return t;
 }
 
-/// Go spec.go newColumnsFromDef: ColumnSpecs from the resolved column
-/// definition list (type + NOT NULL annotation).
+/// Go spec.go newColumnsFromDef: ColumnSpecs from the resolved column definition list (type, NOT
+/// NULL, OPTIONS(description)).
 fn columnSpecsFromDefs(
     arena: std.mem.Allocator,
     defs: []const *pb.ResolvedColumnDefinitionProto,
@@ -2352,9 +2813,53 @@ fn columnSpecsFromDefs(
             },
             .is_not_null = if (def.annotations) |ann| (ann.not_null orelse false) else false,
         };
+        if (def.annotations) |ann| {
+            col.description = try stringOption(arena, ann.option_list, "description");
+            try applyNestedAnnotations(arena, col.type, ann);
+        }
         columns[i] = col;
     }
     return columns;
+}
+
+/// `STRUCT<x INT64 NOT NULL OPTIONS(description="...")>` and deeper:
+/// the analyzer's `child_list` has one entry per STRUCT field up to the last one annotated,
+///  and one for an ARRAY's element, so it is walked and the type indexed, never the reverse.
+/// An ARRAY member carries no nullability: BigQuery stores a NULL array as empty, so there is
+/// nothing for NOT NULL to reject.
+fn applyNestedAnnotations(
+    arena: std.mem.Allocator,
+    t: *spec.Type,
+    ann: *const pb.ResolvedColumnAnnotationsProto,
+) Error!void {
+    if (t.isArray()) {
+        if (ann.child_list.len != 1) return;
+        if (t.element_type) |elem| try applyNestedAnnotations(arena, elem, ann.child_list[0]);
+        return;
+    }
+    if (!t.isStruct()) return;
+    for (ann.child_list, 0..) |child, i| {
+        if (i >= t.field_types.len) break;
+        const field = t.field_types[i];
+        field.description = try stringOption(arena, child.option_list, "description");
+        const ft = field.type orelse continue;
+        field.is_not_null = !ft.isArray() and (child.not_null orelse false);
+        try applyNestedAnnotations(arena, ft, child);
+    }
+}
+
+/// The STRING value of option `name`, unquoted, or "" when it is absent or not a STRING literal.
+fn stringOption(
+    arena: std.mem.Allocator,
+    opts: []const *pb.ResolvedOptionProto,
+    name: []const u8,
+) Error![]const u8 {
+    for (opts) |opt| {
+        if (!std.ascii.eqlIgnoreCase(opt.name orelse continue, name)) continue;
+        const value = (try literalValueOf(arena, opt.value orelse continue)) orelse continue;
+        if (value == .string) return value.string;
+    }
+    return "";
 }
 
 /// DDL `OPTIONS(name=value)` as INFORMATION_SCHEMA.TABLE_OPTIONS reports them.
@@ -2402,15 +2907,157 @@ fn optionSpecsFrom(
     return out.toOwnedSlice(arena);
 }
 
+/// A CREATE TABLE's PARTITION BY and CLUSTER BY, and the names their column
+/// references resolve to. Both lists live on the concrete statement rather
+/// than on the shared base, so each caller hands them over.
+const TableLayout = struct {
+    partition_by: []const *pb.AnyResolvedExprProto = &.{},
+    cluster_by: []const *pb.AnyResolvedExprProto = &.{},
+    /// The new table's columns by analyzer column id.
+    columns: []const NamedColumn = &.{},
+};
+
+/// A column id and the name the new table gives that column.
+const NamedColumn = struct { id: i64, name: []const u8 };
+
+/// The new table's columns by definition. PARTITION BY and CLUSTER BY resolve against the column
+/// definitions, which the analyzer fills in for a CTAS without a column list too.
+fn columnNamesFromDefinitions(
+    arena: std.mem.Allocator,
+    defs: []const *pb.ResolvedColumnDefinitionProto,
+) Error![]const NamedColumn {
+    var out: std.ArrayList(NamedColumn) = .empty;
+    for (defs) |def| {
+        const col = def.column orelse continue;
+        try out.append(arena, .{ .id = col.column_id orelse continue, .name = def.name orelse continue });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// The new table's name for the column `expr` references, or null when
+/// `expr` is not a plain column reference.
+fn referencedColumn(expr: *const pb.AnyResolvedExprProto, columns: []const NamedColumn) ?[]const u8 {
+    const node = expr.node orelse return null;
+    const ref = switch (node) {
+        .resolved_column_ref_node => |n| n,
+        else => return null,
+    };
+    const col = ref.column orelse return null;
+    const id = col.column_id orelse return col.name;
+    for (columns) |c| {
+        if (c.id == id) return c.name;
+    }
+    return col.name;
+}
+
+/// A builtin function call: its name without the `<group>:` prefix
+/// (`timestamp_trunc`, not `GoogleSQL:timestamp_trunc`) and its arguments.
+const BuiltinCall = struct { name: []const u8, args: []const *pb.AnyResolvedExprProto };
+
+fn builtinCallOf(expr: *const pb.AnyResolvedExprProto) ?BuiltinCall {
+    const node = expr.node orelse return null;
+    const base_any = switch (node) {
+        .resolved_function_call_base_node => |n| n,
+        else => return null,
+    };
+    const call = switch (base_any.node orelse return null) {
+        .resolved_function_call_node => |n| n,
+        else => return null,
+    };
+    const fcb = call.parent orelse return null;
+    const raw = (fcb.function orelse return null).name orelse return null;
+    const name = if (std.mem.indexOfScalar(u8, raw, ':')) |i| raw[i + 1 ..] else raw;
+    return .{ .name = name, .args = fcb.argument_list };
+}
+
+/// A literal argument's value; null when `expr` is not a literal. A date-part
+/// argument (`HOUR` in TIMESTAMP_TRUNC) comes back as its name.
+fn literalValueOf(arena: std.mem.Allocator, expr: *const pb.AnyResolvedExprProto) Error!?value_mod.Value {
+    const node = expr.node orelse return null;
+    const lit = switch (node) {
+        .resolved_literal_node => |n| n,
+        else => return null,
+    };
+    const vwt = lit.value orelse return null;
+    return encoder.valueFromProto(arena, vwt.value orelse return null, vwt.type orelse return null) catch |err|
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return null,
+        };
+}
+
+/// PARTITION BY as the Table resource's `timePartitioning` / `rangePartitioning`.
+/// Null for any other shape: the analyzer accepted the DDL, so the table is made without
+/// partitioning.
+fn partitioningFrom(arena: std.mem.Allocator, layout: TableLayout) Error!?spec.Partitioning {
+    if (layout.partition_by.len != 1) return null;
+    const expr = layout.partition_by[0];
+    // `PARTITION BY d` on a DATE column.
+    if (referencedColumn(expr, layout.columns)) |field| {
+        return .{ .time = .{ .field = field, .unit = .DAY } };
+    }
+    const call = builtinCallOf(expr) orelse return null;
+    if (call.args.len == 0) return null;
+    const field = referencedColumn(call.args[0], layout.columns) orelse return null;
+
+    // `DATE(ts)` over a TIMESTAMP or DATETIME column.
+    if (std.mem.eql(u8, call.name, "date")) return .{ .time = .{ .field = field, .unit = .DAY } };
+
+    // `TIMESTAMP_TRUNC(ts, HOUR)` and its DATE / DATETIME counterparts.
+    const truncs = [_][]const u8{ "timestamp_trunc", "date_trunc", "datetime_trunc" };
+    for (truncs) |trunc| {
+        if (!std.mem.eql(u8, call.name, trunc)) continue;
+        if (call.args.len != 2) return null;
+        const part = (try literalValueOf(arena, call.args[1])) orelse return null;
+        if (part != .string) return null;
+        const unit = std.meta.stringToEnum(spec.Partitioning.TimeUnit, part.string) orelse return null;
+        return .{ .time = .{ .field = field, .unit = unit } };
+    }
+
+    // `RANGE_BUCKET(n, GENERATE_ARRAY(start, end[, interval]))`.
+    if (std.mem.eql(u8, call.name, "range_bucket")) {
+        if (call.args.len != 2) return null;
+        const gen = builtinCallOf(call.args[1]) orelse return null;
+        if (!std.mem.eql(u8, gen.name, "generate_array")) return null;
+        if (gen.args.len != 2 and gen.args.len != 3) return null;
+        var bounds = [3]i64{ 0, 0, 1 };
+        for (gen.args, 0..) |arg, i| {
+            const v = (try literalValueOf(arena, arg)) orelse return null;
+            if (v != .int) return null;
+            bounds[i] = v.int;
+        }
+        return .{ .range = .{
+            .field = field,
+            .start = bounds[0],
+            .end = bounds[1],
+            .interval = bounds[2],
+        } };
+    }
+    return null;
+}
+
+/// CLUSTER BY column names, in order; empty if any entry is not a plain
+/// column reference, which BigQuery does not accept anyway.
+fn clusteringFrom(arena: std.mem.Allocator, layout: TableLayout) Error![]const []const u8 {
+    if (layout.cluster_by.len == 0) return &.{};
+    const out = try arena.alloc([]const u8, layout.cluster_by.len);
+    for (layout.cluster_by, 0..) |expr, i| {
+        out[i] = referencedColumn(expr, layout.columns) orelse return &.{};
+    }
+    return out;
+}
+
 /// Go spec.go newTableSpec / newTableAsSelectSpec (shared body): scope,
 /// merged name path, column definitions, primary key, create mode and
 /// timestamps; `query_str` is empty for plain CREATE TABLE and holds the
-/// formatted AS SELECT text for CTAS.
+/// formatted AS SELECT text for CTAS. `layout` adds the PARTITION BY and
+/// CLUSTER BY that Go drops.
 fn newTableSpecFromCreate(
     arena: std.mem.Allocator,
     create: *const pb.ResolvedCreateStatementProto,
     base: *const pb.ResolvedCreateTableStmtBaseProto,
     query_str: []const u8,
+    layout: TableLayout,
 ) Error!*spec.TableSpec {
     const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
     const table_spec = try arena.create(spec.TableSpec);
@@ -2424,6 +3071,9 @@ fn newTableSpecFromCreate(
         .updated_at = now.rfc3339,
         .created_at = now.rfc3339,
         .options = try optionSpecsFrom(arena, base.option_list),
+        .description = try stringOption(arena, base.option_list, "description"),
+        .partitioning = try partitioningFrom(arena, layout),
+        .clustering = try clusteringFrom(arena, layout),
     };
     return table_spec;
 }
@@ -2940,6 +3590,8 @@ pub const Rows = struct {
     names: []const []const u8 = &.{},
     /// Temp tables to drop on deinit (Go StmtAction.Cleanup).
     temp_tables: []const []const u8 = &.{},
+    /// The statement type and DML row count of what query() ran.
+    outcome: StatementOutcome = .{},
     /// query() already took the first step (modernc steps eagerly); the next
     /// next() call consumes its outcome instead of stepping again.
     first_step_done: bool = false,
@@ -3559,6 +4211,524 @@ test "INFORMATION_SCHEMA.TABLE_OPTIONS reports DDL options for tables and views"
     try testing.expectEqual(want.len, i);
 }
 
+test "a default project qualifies two-part DDL names" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
+    try testing.expect((try db.catalogTable(arena, "p", "d", "t")) != null);
+    try db.exec("INSERT INTO d.t VALUES (1)", &.{}, .{});
+
+    // Both spellings reach the one table. Each read is closed before the
+    // replace below, which drops the table SQLite would otherwise hold open.
+    {
+        var short = try db.query("SELECT a FROM d.t", &.{}, .{});
+        defer short.deinit();
+        try testing.expectEqual(@as(i64, 1), (try short.next()).?[0].int);
+    }
+    {
+        var full = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
+        defer full.deinit();
+        try testing.expectEqual(@as(i64, 1), (try full.next()).?[0].int);
+    }
+
+    // A replace lands on that table rather than beside it.
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS s", &.{}, .{});
+    try testing.expectEqual(@as(usize, 1), (try db.catalogTablesIn(arena, "p", "d")).len);
+    const replaced = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("s", replaced.columns[0].name);
+
+    try db.exec("CREATE VIEW d.v AS SELECT s FROM d.t", &.{}, .{});
+    try testing.expect((try db.catalogTable(arena, "p", "d", "v")) != null);
+    {
+        var via_view = try db.query("SELECT s FROM `p.d.v`", &.{}, .{});
+        defer via_view.deinit();
+        try testing.expectEqualStrings("x", (try via_view.next()).?[0].string);
+    }
+
+    try db.exec("DROP VIEW d.v", &.{}, .{});
+    try db.exec("DROP TABLE d.t", &.{}, .{});
+    try testing.expectEqual(@as(usize, 0), (try db.catalogTablesIn(arena, "p", "d")).len);
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT s FROM `p.d.t`", &.{}, .{}));
+
+    // A TEMP table stays where it was written, for the script that made it.
+    try db.exec("CREATE TEMP TABLE scratch (a INT64); DROP TABLE scratch; SELECT 1", &.{}, .{});
+}
+
+test "catalogTable answers only the path it was asked for" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // One segment whose canonical name reads like three. The SQLite object
+    // name is the same for both spellings, so only the spec's path can tell.
+    try db.exec("CREATE TABLE foo_bar_baz (x INT64)", &.{}, .{});
+    try testing.expectEqual(
+        @as(?*const spec.TableSpec, null),
+        try db.catalogTable(arena, "foo", "bar", "baz"),
+    );
+    try testing.expectEqual(@as(usize, 0), (try db.catalogTablesIn(arena, "foo", "bar")).len);
+}
+
+test "require_dataset refuses a CREATE into an undeclared dataset with BigQuery's message" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    db.default_project = "p";
+    db.require_dataset = true;
+
+    // Refused before any SQLite work: no object, no spec.
+    try testing.expectError(error.DatasetNotFound, db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{}));
+    try testing.expectEqualStrings("Not found: Dataset p:d was not found in location US", db.lastError());
+    try testing.expectEqual(@as(?*const spec.TableSpec, null), try db.catalogTable(arena, "p", "d", "t"));
+    {
+        var rows = try db.rawQuery("SELECT name FROM sqlite_master WHERE name = 'p_d_t'", &.{});
+        defer rows.deinit();
+        try testing.expect((try rows.next()) == null);
+    }
+    try testing.expectError(
+        error.DatasetNotFound,
+        db.exec("CREATE VIEW d.v AS SELECT 1 AS x", &.{}, .{}),
+    );
+    try testing.expectError(
+        error.DatasetNotFound,
+        db.exec("CREATE FUNCTION p.d.f(x INT64) AS (x + 1)", &.{}, .{}),
+    );
+    // A `dataset.function` name lands in the default project, as a table's does.
+    try testing.expectError(
+        error.DatasetNotFound,
+        db.exec("CREATE FUNCTION d.g(x INT64) AS (x + 1)", &.{}, .{}),
+    );
+    try testing.expectEqualStrings(
+        "Not found: Dataset p:d was not found in location US",
+        db.lastError(),
+    );
+
+    // Declared, the same statements go through.
+    try db.insertDataset(arena, "p", "d", "{\"id\":\"d\"}");
+    try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE FUNCTION p.d.f(x INT64) AS (x + 1)", &.{}, .{});
+    try db.exec("CREATE FUNCTION d.g(x INT64) AS (x + 1)", &.{}, .{});
+    try testing.expect((try db.catalogTable(arena, "p", "d", "t")) != null);
+    {
+        // Called by the path it was written with.
+        var rows = try db.query("SELECT d.g(1)", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(i64, 2), row[0].int);
+    }
+
+    // The engine's own datasets are exempt: TEMP objects have none, and the
+    // anonymous results dataset is never declared by anyone.
+    try db.exec("CREATE TEMP TABLE scratch (a INT64)", &.{}, .{});
+    try db.exec("CREATE TABLE `p._anon.job1` (a INT64)", &.{}, .{});
+
+    // Off — the library default — the catalog infers the dataset instead.
+    db.require_dataset = false;
+    try db.exec("CREATE TABLE other.t (a INT64)", &.{}, .{});
+    try testing.expect(try db.datasetExists(arena, "p", "other"));
+    try testing.expectEqual(@as(?*const spec.DatasetSpec, null), try db.catalogDataset(arena, "p", "other"));
+    try testing.expectEqual(@as(usize, 1), (try db.catalogDatasetsIn(arena, "p")).len);
+}
+
+test "declared datasets persist across connections, keep their creation time, and delete cleanly" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena,
+        ".zig-cache/tmp/{s}/datasets.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    var created_at: []const u8 = "";
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try db.insertDataset(arena, "p", "ds", "{\"id\":\"ds\"}");
+        const first = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
+        created_at = try arena.dupe(u8, first.created_at);
+        try testing.expect(created_at.len > 0);
+        // A second declaration is refused and writes nothing.
+        try testing.expectError(
+            error.DatasetAlreadyExists,
+            db.insertDataset(arena, "p", "ds", "{\"id\":\"other\"}"),
+        );
+        const kept = (try db.catalogDataset(arena, "p", "ds")) orelse
+            return error.TestUnexpectedResult;
+        try testing.expectEqualStrings("{\"id\":\"ds\"}", kept.metadata);
+        // An update (datasets.patch) replaces the resource only.
+        try db.updateDataset(arena, "p", "ds", "{\"id\":\"ds\",\"description\":\"kept\"}");
+        const second = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
+        try testing.expectEqualStrings(created_at, second.created_at);
+        try testing.expectEqualStrings("{\"id\":\"ds\",\"description\":\"kept\"}", second.metadata);
+        try testing.expectEqual(@as(usize, 1), (try db.catalogDatasetsIn(arena, "p")).len);
+    }
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        const reloaded = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
+        try testing.expectEqualStrings("{\"id\":\"ds\",\"description\":\"kept\"}", reloaded.metadata);
+        try testing.expectEqualStrings(created_at, reloaded.created_at);
+
+        try db.deleteDataset(arena, "p", "ds");
+        try testing.expectEqual(@as(?*const spec.DatasetSpec, null), try db.catalogDataset(arena, "p", "ds"));
+        try testing.expect(!try db.datasetExists(arena, "p", "ds"));
+        try testing.expectError(error.DatasetNotFound, db.deleteDataset(arena, "p", "ds"));
+    }
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try testing.expectEqual(@as(usize, 0), (try db.catalogDatasetsIn(arena, "p")).len);
+    }
+}
+
+test "insertDataset declares over an inferred dataset, and updateDataset needs a declared one" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The table's path makes `p.other` an inferred dataset, which nobody declared.
+    try db.exec("CREATE TABLE p.other.t (a INT64)", &.{}, .{});
+    try testing.expect(try db.datasetExists(arena, "p", "other"));
+    try testing.expectError(error.DatasetNotFound, db.updateDataset(arena, "p", "other", "{}"));
+
+    try db.insertDataset(arena, "p", "other", "{\"id\":\"other\"}");
+    const declared = (try db.catalogDataset(arena, "p", "other")) orelse
+        return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("{\"id\":\"other\"}", declared.metadata);
+    try testing.expect(declared.created_at.len > 0);
+}
+
+test "a dataset and a table sharing a canonical name both survive a reopen" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena,
+        ".zig-cache/tmp/{s}/shared_name.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    // Dataset `p.a_b` and table `p.a.b` are both `p_a_b`; each keeps its own catalog row.
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try db.insertDataset(arena, "p", "a", "");
+        try db.insertDataset(arena, "p", "a_b", "");
+        try db.exec("CREATE TABLE p.a.b (x INT64)", &.{}, .{});
+        try db.exec("INSERT INTO p.a.b (x) VALUES (7)", &.{}, .{});
+    }
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        try testing.expect((try db.catalogDataset(arena, "p", "a_b")) != null);
+        try testing.expect((try db.catalogTable(arena, "p", "a", "b")) != null);
+        // Deleting the dataset takes its own row only.
+        try db.deleteDataset(arena, "p", "a_b");
+    }
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        const gone = try db.catalogDataset(arena, "p", "a_b");
+        try testing.expectEqual(@as(?*const spec.DatasetSpec, null), gone);
+        var rows = try db.query("SELECT x FROM p.a.b", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(i64, 7), row[0].int);
+    }
+}
+
+test "a view cannot take a table's name, so the name keeps its one catalog row" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The invariant `Catalog.tableSpecKind` states: a name never moves between `table` and `view`.
+    try db.exec("CREATE TABLE p.ds.t (a INT64)", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("CREATE VIEW p.ds.t AS SELECT 1 AS n", &.{}, .{}),
+    );
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("CREATE OR REPLACE VIEW p.ds.t AS SELECT 1 AS n", &.{}, .{}),
+    );
+    const t = (try db.catalogTable(arena, "p", "ds", "t")) orelse return error.TestUnexpectedResult;
+    try testing.expect(!t.is_view);
+    var rows = try db.rawQuery("SELECT kind FROM zigquery_catalog WHERE name = 'p_ds_t'", &.{});
+    defer rows.deinit();
+    const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("table", row[0].text);
+    try testing.expect((try rows.next()) == null);
+}
+
+test "DROP TABLE IF EXISTS on nothing is a no-op, DROP TABLE on nothing is an error" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    try db.exec("DROP TABLE IF EXISTS d.nothing", &.{}, .{});
+    try db.exec("DROP VIEW IF EXISTS `p.d.nothing`", &.{}, .{});
+    // Without IF EXISTS, SQLite rejects it first.
+    try testing.expectError(error.ExecFailed, db.exec("DROP TABLE d.nothing", &.{}, .{}));
+}
+
+test "a NOT NULL STRUCT member is enforced by DML and reported in BigQuery's words" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec(
+        "CREATE TABLE `p.d.t` (id INT64, r STRUCT<x INT64 NOT NULL, y STRING>, " ++
+            "rs ARRAY<STRUCT<k INT64 NOT NULL>>)",
+        &.{},
+        .{},
+    );
+    const table = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expect(table.columns[1].type.field_types[0].is_not_null);
+    try testing.expect(!table.columns[1].type.field_types[1].is_not_null);
+    try testing.expect(table.columns[2].type.element_type.?.field_types[0].is_not_null);
+
+    try db.exec("INSERT INTO `p.d.t` VALUES (1, STRUCT(1, 'a'), [STRUCT(2)])", &.{}, .{});
+    // A NULL parent has no members to require.
+    try db.exec("INSERT INTO `p.d.t` VALUES (2, NULL, [])", &.{}, .{});
+
+    const cases = [_][]const u8{
+        "INSERT INTO `p.d.t` VALUES (3, STRUCT(NULL, 'a'), [])",
+        "INSERT INTO `p.d.t` SELECT 4, STRUCT(CAST(NULL AS INT64) AS x, 'b' AS y), [] " ++
+            "FROM UNNEST([1])",
+        "UPDATE `p.d.t` SET r = STRUCT(NULL, 'c') WHERE id = 1",
+        "INSERT INTO `p.d.t` VALUES (5, NULL, [STRUCT(1), STRUCT(NULL)])",
+    };
+    for (cases) |sql| {
+        try testing.expectError(error.ExecFailed, db.exec(sql, &.{}, .{}));
+    }
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.d.t` VALUES (6, STRUCT(NULL, 'a'), [])", &.{}, .{}),
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        db.lastError(),
+        "Required field r.x cannot be null; error in writing field r",
+    ) != null);
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.d.t` VALUES (7, NULL, [STRUCT(NULL)])", &.{}, .{}),
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        db.lastError(),
+        "Required field rs.k cannot be null; error in writing field rs",
+    ) != null);
+
+    // A column the check does not reference is free to change.
+    try db.exec("UPDATE `p.d.t` SET id = 10 WHERE id = 1", &.{}, .{});
+    var rows = try db.query("SELECT COUNT(*), MAX(id) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 2), row[0].int);
+    try testing.expectEqual(@as(i64, 10), row[1].int);
+}
+
+test "NOT NULL on an ARRAY member is recorded as nothing, and a NULL array lands" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec(
+        "CREATE TABLE `p.d.t` (r STRUCT<a ARRAY<INT64> NOT NULL, x INT64 NOT NULL>)",
+        &.{},
+        .{},
+    );
+    const table = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expect(!table.columns[0].type.field_types[0].is_not_null);
+    try testing.expect(table.columns[0].type.field_types[1].is_not_null);
+
+    try db.exec("INSERT INTO `p.d.t` VALUES (STRUCT(CAST(NULL AS ARRAY<INT64>), 1))", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.d.t` VALUES (STRUCT([1], NULL))", &.{}, .{}),
+    );
+}
+
+test "a member name with an apostrophe still makes a table with a working check" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE `p.d.t` (r STRUCT<`it's` INT64 NOT NULL>)", &.{}, .{});
+    try db.exec("INSERT INTO `p.d.t` VALUES (STRUCT(1))", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("INSERT INTO `p.d.t` VALUES (STRUCT(NULL))", &.{}, .{}),
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        db.lastError(),
+        "Required field r.it's cannot be null; error in writing field r",
+    ) != null);
+}
+
+test "UPDATE SET r.x rebuilds the struct, merges members, and descends" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        "CREATE TABLE `p.d.t` (id INT64, r STRUCT<x INT64, y STRING, nested STRUCT<z INT64>>)",
+        &.{},
+        .{},
+    );
+    try db.exec(
+        "INSERT INTO `p.d.t` VALUES (1, NULL), (2, STRUCT(1, 'a', STRUCT(9))), " ++
+            "(3, STRUCT(3, 'c', NULL))",
+        &.{},
+        .{},
+    );
+
+    // A NULL parent is rebuilt from NULL siblings (recidiviz-bigquery-sandbox, 2026-09-10).
+    try db.exec("UPDATE `p.d.t` SET r.x = 5 WHERE id = 1", &.{}, .{});
+    // Two members of one column fold into one assignment.
+    try db.exec("UPDATE `p.d.t` SET r.x = 5, r.y = 'b' WHERE id = 2", &.{}, .{});
+    // A deeper path rebuilds only the struct it descends through.
+    try db.exec("UPDATE `p.d.t` SET r.nested.z = 42 WHERE id = 2", &.{}, .{});
+    // Untouched rows and members stay as they were.
+
+    var rows = try db.query(
+        "SELECT id, r.x, r.y, r.nested.z FROM `p.d.t` ORDER BY id",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    const r1 = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 5), r1[1].int);
+    try testing.expectEqual(Cell.null, r1[2]);
+    try testing.expectEqual(Cell.null, r1[3]);
+    const r2 = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 5), r2[1].int);
+    try testing.expectEqualStrings("b", r2[2].string);
+    try testing.expectEqual(@as(i64, 42), r2[3].int);
+    const r3 = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 3), r3[1].int);
+    try testing.expectEqualStrings("c", r3[2].string);
+    try testing.expectEqual(Cell.null, r3[3]);
+}
+
+test "UPDATE SET r.x = NULL on a NOT NULL member is rejected with BigQuery's words" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE `p.d.t` (id INT64, r STRUCT<x INT64 NOT NULL, y STRING>)", &.{}, .{});
+    try db.exec("INSERT INTO `p.d.t` VALUES (1, STRUCT(1, 'a'))", &.{}, .{});
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("UPDATE `p.d.t` SET r.x = NULL WHERE id = 1", &.{}, .{}),
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        db.lastError(),
+        "Required field r.x cannot be null; error in writing field r",
+    ) != null);
+    // The sibling assignment in the same statement did not land either.
+    try testing.expectError(
+        error.ExecFailed,
+        db.exec("UPDATE `p.d.t` SET r.y = 'z', r.x = NULL WHERE id = 1", &.{}, .{}),
+    );
+    var rows = try db.query("SELECT r.x, r.y FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 1), row[0].int);
+    try testing.expectEqualStrings("a", row[1].string);
+}
+
+test "UPDATE targets the analyzer or the transformer refuse" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec(
+        "CREATE TABLE `p.d.t` (id INT64, r STRUCT<x INT64>, rs ARRAY<STRUCT<k INT64>>)",
+        &.{},
+        .{},
+    );
+    try db.exec("INSERT INTO `p.d.t` VALUES (1, STRUCT(1), [STRUCT(2)])", &.{}, .{});
+    // Overlap and repetition are the analyzer's to reject.
+    try testing.expectError(
+        error.AnalyzeFailed,
+        db.exec("UPDATE `p.d.t` SET r = STRUCT(2), r.x = 3 WHERE id = 1", &.{}, .{}),
+    );
+    try testing.expectError(
+        error.AnalyzeFailed,
+        db.exec("UPDATE `p.d.t` SET r.x = 1, r.x = 2 WHERE id = 1", &.{}, .{}),
+    );
+    // An array element is not a target here.
+    const element_target = "UPDATE `p.d.t` SET rs[OFFSET(0)].k = 5 WHERE id = 1";
+    try testing.expect(if (db.exec(element_target, &.{}, .{})) |_| false else |_| true);
+}
+
+test "a view keeps the GoogleSQL it was written with" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE `p.d.t` (a INT64, b STRING)", &.{}, .{});
+    const view_sql = "SELECT a, UPPER(b) AS b FROM `p.d.t` WHERE a > 1";
+    try db.exec("CREATE VIEW `p.d.v` AS " ++ view_sql, &.{}, .{});
+
+    const view = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expect(view.is_view);
+    try testing.expectEqualStrings(view_sql, view.source_sql);
+    // The engine's own text is the SQLite translation, kept apart from it.
+    try testing.expect(std.mem.indexOf(u8, view.query, "p_d_t") != null);
+}
+
+test "setTableMetadata is what catalogTable reads back" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE `p.d.t` (a INT64)", &.{}, .{});
+    const before = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("", before.metadata);
+
+    try db.setTableMetadata(arena, "p", "d", "t", "{\"description\":\"posted\"}");
+    const after = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("{\"description\":\"posted\"}", after.metadata);
+    try testing.expectEqualStrings("a", after.columns[0].name);
+    // A published spec is never mutated in place: the earlier pointer is intact.
+    try testing.expectEqualStrings("", before.metadata);
+
+    try testing.expectError(
+        error.TableNotFound,
+        db.setTableMetadata(arena, "p", "d", "nope", "{}"),
+    );
+}
+
 test "a quoted description renders the way BigQuery escapes it" {
     // BigQuery returns `"he said \"hi\" and it's fine"` for this description:
     // inner double quotes backslash-escaped, single quotes left alone.
@@ -3717,20 +4887,25 @@ test "CREATE OR REPLACE re-creates the primary-key index" {
     try testing.expectEqualStrings("pk_rep.pk", names[0]);
 }
 
-test "CREATE TABLE AS SELECT cannot declare a primary key" {
-    // Pins the assumption the swap branch in execCreateTableAction relies on:
-    // it skips index creation because a CTAS spec can never carry a key. If
-    // this test ever starts failing, that branch needs an execPkIndex call.
+test "CREATE OR REPLACE TABLE AS SELECT keeps one primary-key index, named for the table" {
+    // The swap branch builds into a scratch table and renames it; the index must be named for
+    // the destination, and a second replace must not add another.
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
     try db.exec("CREATE TABLE ctas_src (id INT64)", &.{}, .{});
-    try testing.expectError(error.AnalyzeFailed, db.exec(
-        "CREATE OR REPLACE TABLE ctas_pk (id INT64 PRIMARY KEY NOT ENFORCED) " ++
-            "AS SELECT id FROM ctas_src",
-        &.{},
-        .{},
-    ));
+    const replace = "CREATE OR REPLACE TABLE ctas_pk (id INT64 PRIMARY KEY NOT ENFORCED) " ++
+        "AS SELECT id FROM ctas_src";
+    try db.exec(replace, &.{}, .{});
+    try db.exec(replace, &.{}, .{});
+
+    const names = try indexNamesFor(db, testing.allocator, "ctas_pk");
+    defer {
+        for (names) |n| testing.allocator.free(n);
+        testing.allocator.free(names);
+    }
+    try testing.expectEqual(@as(usize, 1), names.len);
+    try testing.expectEqualStrings("ctas_pk.pk", names[0]);
 }
 
 test "struct field names outlive the step that produced them" {
@@ -3855,6 +5030,144 @@ test "UPDATE with WHERE and DELETE" {
         try testing.expectEqual(Cell{ .int = 1 }, row[0]);
         try testing.expectEqual(Cell{ .int = 1 }, row[1]);
     }
+}
+
+/// What `query` reports for `sql`, its rows drained.
+fn testOutcome(db: *Db, sql: []const u8) !StatementOutcome {
+    var rows = try db.query(sql, &.{}, .{});
+    defer rows.deinit();
+    while (try rows.next()) |_| {}
+    return rows.outcome;
+}
+
+test "a DML statement reports its type and the rows it changed" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE dml_n (file_id INT64, v STRING)", &.{}, .{});
+
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .insert, .dml = .{ .inserted = 3 } },
+        try testOutcome(db, "INSERT INTO dml_n (file_id, v) VALUES (1, 'a'), (1, 'b'), (2, 'c')"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .insert, .dml = .{ .inserted = 3 } },
+        try testOutcome(db, "INSERT INTO dml_n SELECT file_id + 10, v FROM dml_n"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .update, .dml = .{ .updated = 1 } },
+        try testOutcome(db, "UPDATE dml_n SET v = 'z' WHERE file_id = 2"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .delete, .dml = .{ .deleted = 2 } },
+        try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 1"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .delete, .dml = .{} },
+        try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 1"),
+    );
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .delete, .dml = .{ .deleted = 1 } },
+        try testOutcome(db, "DELETE FROM dml_n WHERE file_id = 2;"),
+    );
+}
+
+test "a MERGE reports the rows all of its WHEN clauses changed" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(
+        \\CREATE TABLE merge_t (id INT64, v STRING);
+        \\CREATE TABLE merge_s (id INT64, v STRING);
+        \\INSERT INTO merge_t (id, v) VALUES (1, 'a'), (2, 'b');
+        \\INSERT INTO merge_s (id, v) VALUES (2, 'B'), (3, 'C'), (4, 'D');
+    , &.{}, .{});
+
+    try testing.expectEqual(
+        StatementOutcome{
+            .statement_type = .merge,
+            .dml = .{ .inserted = 2, .updated = 1, .deleted = 1 },
+        },
+        try testOutcome(db,
+            \\MERGE merge_t T USING merge_s S ON T.id = S.id
+            \\WHEN MATCHED THEN UPDATE SET v = S.v
+            \\WHEN NOT MATCHED THEN INSERT (id, v) VALUES (S.id, S.v)
+            \\WHEN NOT MATCHED BY SOURCE THEN DELETE
+        ),
+    );
+
+    // Each row is changed once, by the first WHEN clause that qualifies it:
+    // row 1 is updated and row 2 is deleted.
+    try db.exec(
+        \\CREATE TABLE overlap_t (id INT64, v STRING);
+        \\CREATE TABLE overlap_s (id INT64, n INT64);
+        \\INSERT INTO overlap_t (id, v) VALUES (1, 'a'), (2, 'b');
+        \\INSERT INTO overlap_s (id, n) VALUES (1, 20), (2, 5);
+    , &.{}, .{});
+    try testing.expectEqual(
+        StatementOutcome{ .statement_type = .merge, .dml = .{ .updated = 1, .deleted = 1 } },
+        try testOutcome(db,
+            \\MERGE overlap_t T USING overlap_s S ON T.id = S.id
+            \\WHEN MATCHED AND S.n > 10 THEN UPDATE SET v = 'updated'
+            \\WHEN MATCHED THEN DELETE
+        ),
+    );
+}
+
+test "a statement that is not DML reports its type and no row count" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    try db.exec(
+        "CREATE TABLE nd_src (a INT64); INSERT INTO nd_src (a) VALUES (1), (2)",
+        &.{},
+        .{},
+    );
+
+    const cases = [_]struct { sql: []const u8, statement_type: StatementType }{
+        .{ .sql = "SELECT a FROM nd_src", .statement_type = .select },
+        .{ .sql = "CREATE TABLE nd_t (a INT64)", .statement_type = .create_table },
+        .{
+            .sql = "CREATE TABLE nd_ctas AS SELECT a FROM nd_src",
+            .statement_type = .create_table_as_select,
+        },
+        // Rebuilt through a scratch table and a catalog upsert, neither of which is a row count.
+        .{
+            .sql = "CREATE OR REPLACE TABLE nd_ctas AS SELECT a FROM nd_src",
+            .statement_type = .create_table_as_select,
+        },
+        .{ .sql = "CREATE VIEW nd_v AS SELECT a FROM nd_src", .statement_type = .create_view },
+        .{ .sql = "CREATE FUNCTION nd_f(x INT64) AS (x + 1)", .statement_type = .create_function },
+        .{ .sql = "TRUNCATE TABLE nd_ctas", .statement_type = .truncate_table },
+        .{ .sql = "DROP VIEW nd_v", .statement_type = .drop_view },
+        .{ .sql = "DROP TABLE nd_ctas", .statement_type = .drop_table },
+        .{ .sql = "DROP FUNCTION nd_f", .statement_type = .drop_function },
+        .{ .sql = "BEGIN TRANSACTION", .statement_type = .begin_transaction },
+        .{ .sql = "COMMIT TRANSACTION", .statement_type = .commit_transaction },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("sql: {s}\n", .{case.sql});
+        try testing.expectEqual(
+            StatementOutcome{ .statement_type = case.statement_type },
+            try testOutcome(db, case.sql),
+        );
+    }
+}
+
+test "several statements in one call are a SCRIPT with no row count" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    const script = StatementOutcome{ .statement_type = .script };
+    try testing.expectEqual(
+        script,
+        try testOutcome(db, "CREATE TABLE sc_t (a INT64); INSERT INTO sc_t (a) VALUES (1), (2)"),
+    );
+    try testing.expectEqual(
+        script,
+        try testOutcome(db, "INSERT INTO sc_t (a) VALUES (3); SELECT a FROM sc_t"),
+    );
+    try testing.expectEqual(
+        script,
+        try testOutcome(db, "BEGIN TRANSACTION; DELETE FROM sc_t WHERE a = 1; COMMIT TRANSACTION"),
+    );
 }
 
 test "INSERT ... SELECT copies rows" {

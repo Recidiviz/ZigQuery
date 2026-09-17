@@ -12,11 +12,68 @@ const pb = @import("../proto/resolved_ast.zig");
 
 pub const Error = error{ OutOfMemory, Unimplemented, InvalidType };
 
-/// Go spec.go NameWithType.
+/// A named entry of a composite type:
+/// one field of a STRUCT's `field_types` or one argument of a FunctionSpec.
+/// `is_not_null` is a STRUCT field declared `NOT NULL` (BigQuery's nested REQUIRED);
+/// the DDL renderer turns it into a CHECK on the column.
+///`description` is the field's OPTIONS(description). Both are serialised
+/// only when set.
 pub const NameWithType = struct {
     name: []const u8 = "",
     type: ?*Type = null,
+    is_not_null: bool = false,
+    description: []const u8 = "",
 };
+
+/// BigQuery's prefix for a REQUIRED field left NULL, as its streaming API reports it;
+/// the table's row type is `Msg_0_CLOUD_QUERY_TABLE` for every table.
+/// The full message appends `.<column>.<member>...` and a final `.`.
+pub const missing_required_prefix = "Missing required field: Msg_0_CLOUD_QUERY_TABLE";
+
+/// BigQuery's message when DML leaves a REQUIRED member NULL:
+/// `Required field y.x cannot be null; error in writing field y`. `path` is
+/// the dotted member path from the column down; `column` is its first segment.
+pub fn requiredFieldMessage(
+    alloc: std.mem.Allocator,
+    column: []const u8,
+    path: []const u8,
+) error{OutOfMemory}![]u8 {
+    return std.fmt.allocPrint(
+        alloc,
+        "Required field {s} cannot be null; error in writing field {s}",
+        .{ path, column },
+    );
+}
+
+/// The `path` and `column` a `requiredFieldMessage` text names, or null for
+/// any other text. The text may be embedded in a longer error.
+pub const RequiredField = struct { path: []const u8, column: []const u8 };
+
+pub fn requiredFieldFromMessage(text: []const u8) ?RequiredField {
+    const head = "Required field ";
+    const middle = " cannot be null; error in writing field ";
+    const start = std.mem.indexOf(u8, text, head) orelse return null;
+    const after_head = text[start + head.len ..];
+    const mid = std.mem.indexOf(u8, after_head, middle) orelse return null;
+    const path = after_head[0..mid];
+    var column = after_head[mid + middle.len ..];
+    if (std.mem.indexOf(u8, column, " (")) |paren| column = column[0..paren];
+    if (path.len == 0 or column.len == 0) return null;
+    return .{ .path = path, .column = column };
+}
+
+/// The column SQLite names in a NOT NULL constraint failure, or null for any other text.
+/// The text may be embedded in a longer error i.e.:
+/// `constraint failed: NOT NULL constraint failed: <table>.<column> (19)`.
+pub fn notNullColumnFromMessage(text: []const u8) ?[]const u8 {
+    const marker = "NOT NULL constraint failed: ";
+    const start = std.mem.indexOf(u8, text, marker) orelse return null;
+    var rest = text[start + marker.len ..];
+    if (std.mem.lastIndexOf(u8, rest, " (")) |paren| rest = rest[0..paren];
+    const dot = std.mem.lastIndexOfScalar(u8, rest, '.') orelse return null;
+    const column = rest[dot + 1 ..];
+    return if (column.len == 0) null else column;
+}
 
 /// A deep copy of `t` in `arena`, so it can outlive whatever produced it.
 ///
@@ -42,6 +99,8 @@ pub fn cloneType(arena: std.mem.Allocator, t: *const Type) std.mem.Allocator.Err
         f.* = .{
             .name = try arena.dupe(u8, src.name),
             .type = if (src.type) |ft| try cloneType(arena, ft) else null,
+            .is_not_null = src.is_not_null,
+            .description = try arena.dupe(u8, src.description),
         };
         dst.* = f;
     }
@@ -222,6 +281,8 @@ pub const ColumnSpec = struct {
     name: []const u8 = "",
     type: *Type,
     is_not_null: bool = false,
+    /// OPTIONS(description), for the metadata API's schema. Serialised only when set.
+    description: []const u8 = "",
 
     /// Go ColumnSpec.SQLiteSchema: "`name` TYPE[ NOT NULL]".
     pub fn sqliteSchema(self: *const ColumnSpec, alloc: std.mem.Allocator) Error![]u8 {
@@ -232,6 +293,109 @@ pub const ColumnSpec = struct {
         return std.fmt.allocPrint(alloc, "`{s}` {s}", .{ self.name, typ });
     }
 };
+
+/// A STRUCT member declared NOT NULL, located by position so the check walks
+/// the stored value without comparing names: `1.[].0` is the first member of
+/// every element of the array in the column's second member.
+const RequiredMember = struct {
+    position: []const u8,
+    /// The `requiredFieldMessage` a NULL there raises, rendered once here so
+    /// the check allocates nothing.
+    message: []const u8,
+};
+
+/// CONSTRAINT `col` CHECK (zigquery_required(`col`, '<pos>', '<msg>', ...))`
+/// for a column with NOT NULL members somewhere inside its type, else null.
+fn requiredCheckConstraintSQL(alloc: std.mem.Allocator, col: *const ColumnSpec) Error!?[]u8 {
+    var members: std.ArrayList(RequiredMember) = .empty;
+    try collectRequiredMembers(alloc, col.type, "", col.name, &members);
+    if (members.items.len == 0) return null;
+
+    var out: std.ArrayList(u8) = .empty;
+    try out.print(alloc, "CONSTRAINT `{s}` CHECK (zigquery_required(`{s}`", .{
+        col.name, col.name,
+    });
+    for (members.items) |m| {
+        try out.append(alloc, ',');
+        try appendSqlStringLiteral(&out, alloc, m.position);
+        try out.append(alloc, ',');
+        try appendSqlStringLiteral(&out, alloc, m.message);
+    }
+    try out.appendSlice(alloc, "))");
+    return try out.toOwnedSlice(alloc);
+}
+
+/// `'text'` with every `'` doubled: a member's name can carry one, and it
+/// lands in the message.
+fn appendSqlStringLiteral(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    text: []const u8,
+) error{OutOfMemory}!void {
+    try out.append(alloc, '\'');
+    for (text) |c| {
+        if (c == '\'') try out.append(alloc, '\'');
+        try out.append(alloc, c);
+    }
+    try out.append(alloc, '\'');
+}
+
+fn hasNotNullMember(t: *const Type) bool {
+    if (t.isArray()) return if (t.element_type) |elem| hasNotNullMember(elem) else false;
+    if (!t.isStruct()) return false;
+    for (t.field_types) |field| {
+        if (field.is_not_null) return true;
+        if (field.type) |ft| {
+            if (hasNotNullMember(ft)) return true;
+        }
+    }
+    return false;
+}
+
+fn collectRequiredMembers(
+    alloc: std.mem.Allocator,
+    t: *const Type,
+    position: []const u8,
+    names: []const u8,
+    members: *std.ArrayList(RequiredMember),
+) Error!void {
+    return collectRequiredMembersOf(alloc, t, position, names, names, members);
+}
+
+/// `column` is the column's own name, carried down unchanged: a name may
+/// contain a `.`, so it cannot be recovered from `names` by splitting.
+fn collectRequiredMembersOf(
+    alloc: std.mem.Allocator,
+    t: *const Type,
+    position: []const u8,
+    names: []const u8,
+    column: []const u8,
+    members: *std.ArrayList(RequiredMember),
+) Error!void {
+    if (t.isArray()) {
+        const elem = t.element_type orelse return;
+        const inner = if (position.len == 0)
+            "[]"
+        else
+            try std.fmt.allocPrint(alloc, "{s}.[]", .{position});
+        return collectRequiredMembersOf(alloc, elem, inner, names, column, members);
+    }
+    if (!t.isStruct()) return;
+    for (t.field_types, 0..) |field, i| {
+        const pos = if (position.len == 0)
+            try std.fmt.allocPrint(alloc, "{d}", .{i})
+        else
+            try std.fmt.allocPrint(alloc, "{s}.{d}", .{ position, i });
+        const path = try std.fmt.allocPrint(alloc, "{s}.{s}", .{ names, field.name });
+        if (field.is_not_null) {
+            try members.append(alloc, .{
+                .position = pos,
+                .message = try requiredFieldMessage(alloc, column, path),
+            });
+        }
+        if (field.type) |ft| try collectRequiredMembersOf(alloc, ft, pos, path, column, members);
+    }
+}
 
 /// One `OPTIONS(name=value)` entry from CREATE TABLE / CREATE VIEW, as
 /// INFORMATION_SCHEMA.TABLE_OPTIONS reports it.
@@ -246,15 +410,101 @@ pub const OptionSpec = struct {
     value: []const u8 = "",
 };
 
-/// A dataset the catalog has been told exists, independent of any table it may or may not hold
+/// A CREATE TABLE's PARTITION BY, reduced to what the metadata API reports for it:
+/// BigQuery's `timePartitioning` or `rangePartitioning` resource.
+/// The engine does not partition anything; this is table metadata only.
+pub const Partitioning = union(enum) {
+    /// `PARTITION BY d`, `DATE(ts)`, `TIMESTAMP_TRUNC(ts, HOUR)`,
+    /// `DATE_TRUNC(d, MONTH)`, `DATETIME_TRUNC(dt, YEAR)`.
+    time: TimePartitioning,
+    /// `PARTITION BY RANGE_BUCKET(n, GENERATE_ARRAY(start, end, interval))`.
+    range: RangePartitioning,
+
+    pub const TimePartitioning = struct {
+        field: []const u8,
+        unit: TimeUnit,
+    };
+
+    /// `timePartitioning.type`; the tag names are BigQuery's spellings.
+    pub const TimeUnit = enum { HOUR, DAY, MONTH, YEAR };
+
+    pub const RangePartitioning = struct {
+        field: []const u8,
+        start: i64,
+        end: i64,
+        interval: i64,
+    };
+};
+
+/// A dataset the catalog has been told exists, independent of any table it
+/// may or may not hold.
+///
+/// Go has no analogue: the reference emulator keeps datasets only in its
+/// metadata store. Here the catalog is the single store for them, as it is
+/// for tables since the metadata consolidation, so the REST resource rides
+/// on the spec (`metadata`) and the spec persists as a `dataset` row in
+/// `zigquery_catalog`.
 pub const DatasetSpec = struct {
     /// `[project, dataset]`.
     name_path: []const []const u8 = &.{},
-    created_at: []const u8 = "",
+    updated_at: []const u8 = "", // RFC3339 timestamp
+    created_at: []const u8 = "", // RFC3339 timestamp
+    /// The metadata API's view of the dataset: the resource JSON a client
+    /// posted or patched, echoed back by datasets.get. Empty for a dataset
+    /// the catalog only inferred.
+    metadata: []const u8 = "",
+    /// Inferred from a table's path rather than declared by anyone: the
+    /// catalog registers one for every dataset a table lands in, so
+    /// INFORMATION_SCHEMA can report it. Memory-only, never persisted, and
+    /// invisible to the metadata API; an explicit registration under the
+    /// same name replaces it.
+    is_synthetic: bool = false,
+
+    /// The canonical "_"-joined name, which the `dataset` kind keys to the`zigquery_catalog` row.
+    pub fn datasetName(self: *const DatasetSpec, alloc: std.mem.Allocator) error{OutOfMemory}![]u8 {
+        return formatPath(alloc, self.name_path);
+    }
+
+    pub fn toJson(self: *const DatasetSpec, alloc: std.mem.Allocator) Error![]u8 {
+        var out: std.ArrayList(u8) = .empty;
+        try out.appendSlice(alloc, "{\"namePath\":");
+        try appendJsonStringArray(&out, alloc, self.name_path);
+        try out.appendSlice(alloc, ",\"updatedAt\":");
+        try appendJsonString(&out, alloc, self.updated_at);
+        try out.appendSlice(alloc, ",\"createdAt\":");
+        try appendJsonString(&out, alloc, self.created_at);
+        try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
+        try out.append(alloc, '}');
+        return out.toOwnedSlice(alloc);
+    }
 };
 
-/// Go spec.go TableSpec. `updated_at`/`created_at` hold the RFC3339 strings
-/// Go's time.Time marshals to; they are round-tripped opaquely.
+/// json.Unmarshal into DatasetSpec (the shape `DatasetSpec.toJson` produces).
+pub fn datasetSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*DatasetSpec {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, json_text, .{}) catch |err|
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidType,
+        };
+    if (parsed != .object) return error.InvalidType;
+    const obj = parsed.object;
+
+    const ds = try alloc.create(DatasetSpec);
+    ds.* = .{};
+    ds.name_path = try stringSliceField(alloc, obj, "namePath");
+    if (obj.get("updatedAt")) |v| {
+        if (v == .string) ds.updated_at = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("createdAt")) |v| {
+        if (v == .string) ds.created_at = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("metadata")) |v| {
+        if (v == .string) ds.metadata = try alloc.dupe(u8, v.string);
+    }
+    return ds;
+}
+
+/// A representation of a table in BigQuery
 pub const TableSpec = struct {
     is_temp: bool = false,
     is_view: bool = false,
@@ -263,12 +513,34 @@ pub const TableSpec = struct {
     primary_key: []const []const u8 = &.{},
     create_mode: i64 = create_mode_unspecified,
     query: []const u8 = "",
-    updated_at: []const u8 = "",
-    created_at: []const u8 = "",
+    updated_at: []const u8 = "", // RFC3339 timestamp
+    created_at: []const u8 = "", // RFC3339 timestamp
     /// DDL OPTIONS. Go's TableSpec has no such field, so this is serialised
     /// only when non-empty — see toJson — keeping the JSON byte-identical to
     /// Go's for every spec that has none.
     options: []const *OptionSpec = &.{},
+    /// DDL PARTITION BY, for the metadata API to report when no client posted
+    /// a partitioning of its own. Serialised only when set, like `options`.
+    partitioning: ?Partitioning = null,
+    /// DDL CLUSTER BY column names, in order. Serialised only when non-empty.
+    clustering: []const []const u8 = &.{},
+    /// DDL OPTIONS(description), for the metadata API to report when no client posted one.
+    /// Serialised only when set.
+    description: []const u8 = "",
+    /// The metadata API's view of the table: the resource keys a client
+    /// posted (schema with nested modes and descriptions, clustering,
+    /// partitioning, labels, description, view, ...), as one JSON object's
+    /// text. Opaque to the engine and carried as a JSON string, so the bytes
+    /// come back exactly as they went in. Empty for a table nobody posted.
+    /// Serialised only when non-empty, like `options`.
+    metadata: []const u8 = "",
+    /// A view's defining query as the client wrote it, in GoogleSQL. `query`
+    /// holds the SQLite translation the engine runs; the metadata API reports
+    /// this one. Serialised only when non-empty.
+    source_sql: []const u8 = "",
+    /// Registered for the analyzer only, never persisted: a job's result table
+    /// or an INFORMATION_SCHEMA view. Runtime state, not part of the JSON.
+    is_synthetic: bool = false,
 
     /// Go TableSpec.Column.
     pub fn column(self: *const TableSpec, name: []const u8) ?*ColumnSpec {
@@ -291,10 +563,6 @@ pub const TableSpec = struct {
         if (self.query.len != 0) {
             return std.fmt.allocPrint(alloc, "CREATE TABLE `{s}` AS {s}", .{ table_name, self.query });
         }
-        var columns: std.ArrayList([]const u8) = .empty;
-        for (self.columns) |c| {
-            try columns.append(alloc, try c.sqliteSchema(alloc));
-        }
         // No PRIMARY KEY clause, deliberately. BigQuery only accepts
         // `PRIMARY KEY ... NOT ENFORCED`: the key is optimizer metadata for
         // join elimination, never a uniqueness or non-null guarantee, and
@@ -315,9 +583,44 @@ pub const TableSpec = struct {
         return std.fmt.allocPrint(alloc, "{s} `{s}` ({s}) {s}", .{
             stmt,
             table_name,
-            try std.mem.join(alloc, ",", columns.items),
+            try self.declaredColumnsSql(alloc),
             clustering,
         });
+    }
+
+    /// `CREATE TABLE `name` (<declared columns>)`: the declared shape under `name`, for a CTAS
+    /// whose rows must pass its NOT NULL columns and members, which `CREATE TABLE ... AS` does not
+    /// carry.
+    pub fn declaredSchemaAs(
+        self: *const TableSpec,
+        alloc: std.mem.Allocator,
+        name: []const u8,
+    ) Error![]u8 {
+        return std.fmt.allocPrint(alloc, "CREATE TABLE `{s}` ({s})", .{
+            name,
+            try self.declaredColumnsSql(alloc),
+        });
+    }
+
+    /// The column definitions and the CHECK constraints for their NOT NULL STRUCT members,
+    /// comma-joined for a `CREATE TABLE` column list.
+    fn declaredColumnsSql(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
+        var columns: std.ArrayList([]const u8) = .empty;
+        for (self.columns) |c| {
+            try columns.append(alloc, try c.sqliteSchema(alloc));
+        }
+        for (self.columns) |c| {
+            if (try requiredCheckConstraintSQL(alloc, c)) |check| try columns.append(alloc, check);
+        }
+        return std.mem.join(alloc, ",", columns.items);
+    }
+
+    /// Whether a column, or a STRUCT member anywhere inside one, is NOT NULL.
+    pub fn hasNotNull(self: *const TableSpec) bool {
+        for (self.columns) |c| {
+            if (c.is_not_null or hasNotNullMember(c.type)) return true;
+        }
+        return false;
     }
 
     /// The declared primary key as a **non-unique** index, or null when there
@@ -407,10 +710,50 @@ pub const TableSpec = struct {
             }
             try out.append(alloc, ']');
         }
+        if (self.partitioning) |p| {
+            try out.appendSlice(alloc, ",\"partitioning\":{\"type\":");
+            switch (p) {
+                .time => |t| {
+                    try appendJsonString(&out, alloc, @tagName(t.unit));
+                    try out.appendSlice(alloc, ",\"field\":");
+                    try appendJsonString(&out, alloc, t.field);
+                },
+                .range => |r| {
+                    try out.appendSlice(alloc, "\"RANGE\",\"field\":");
+                    try appendJsonString(&out, alloc, r.field);
+                    try out.print(alloc, ",\"start\":{d},\"end\":{d},\"interval\":{d}", .{
+                        r.start, r.end, r.interval,
+                    });
+                },
+            }
+            try out.append(alloc, '}');
+        }
+        if (self.clustering.len > 0) {
+            try out.appendSlice(alloc, ",\"clustering\":");
+            try appendJsonStringArray(&out, alloc, self.clustering);
+        }
+        try appendStringFieldIfSet(&out, alloc, "description", self.description);
+        try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
+        try appendStringFieldIfSet(&out, alloc, "sourceSql", self.source_sql);
         try out.append(alloc, '}');
         return out.toOwnedSlice(alloc);
     }
 };
+
+/// `,"key":"value"`, or nothing for an empty value: the fields Go's TableSpec
+/// lacks stay out of the JSON when unused.
+fn appendStringFieldIfSet(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    key: []const u8,
+    value: []const u8,
+) Error!void {
+    if (value.len == 0) return;
+    try out.appendSlice(alloc, ",\"");
+    try out.appendSlice(alloc, key);
+    try out.appendSlice(alloc, "\":");
+    try appendJsonString(out, alloc, value);
+}
 
 fn appendColumnSpecJson(
     out: *std.ArrayList(u8),
@@ -423,6 +766,7 @@ fn appendColumnSpecJson(
     try appendTypeJson(out, alloc, col.type);
     try out.appendSlice(alloc, ",\"isNotNull\":");
     try out.appendSlice(alloc, if (col.is_not_null) "true" else "false");
+    try appendStringFieldIfSet(out, alloc, "description", col.description);
     try out.append(alloc, '}');
 }
 
@@ -452,6 +796,8 @@ fn appendTypeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, t: *const T
             } else {
                 try out.appendSlice(alloc, "null");
             }
+            if (field.is_not_null) try out.appendSlice(alloc, ",\"isNotNull\":true");
+            try appendStringFieldIfSet(out, alloc, "description", field.description);
             try out.append(alloc, '}');
         }
         try out.append(alloc, ']');
@@ -562,7 +908,46 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
             table_spec.options = opts;
         }
     }
+    // Same reason as options: toJson writes these, so they must be read back.
+    if (obj.get("partitioning")) |v| {
+        if (v == .object) table_spec.partitioning = try partitioningFromJson(alloc, v.object);
+    }
+    table_spec.clustering = try stringSliceField(alloc, obj, "clustering");
+    if (obj.get("description")) |v| {
+        if (v == .string) table_spec.description = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("metadata")) |v| {
+        if (v == .string) table_spec.metadata = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("sourceSql")) |v| {
+        if (v == .string) table_spec.source_sql = try alloc.dupe(u8, v.string);
+    }
     return table_spec;
+}
+
+/// The `partitioning` object `TableSpec.toJson` writes: `type` is a
+/// `TimeUnit` name, or `RANGE` with integer `start`, `end` and `interval`.
+fn partitioningFromJson(alloc: std.mem.Allocator, obj: std.json.ObjectMap) Error!Partitioning {
+    const type_v = obj.get("type") orelse return error.InvalidType;
+    const field_v = obj.get("field") orelse return error.InvalidType;
+    if (type_v != .string or field_v != .string) return error.InvalidType;
+    const field = try alloc.dupe(u8, field_v.string);
+    if (std.mem.eql(u8, type_v.string, "RANGE")) {
+        return .{ .range = .{
+            .field = field,
+            .start = try intField(obj, "start"),
+            .end = try intField(obj, "end"),
+            .interval = try intField(obj, "interval"),
+        } };
+    }
+    const unit = std.meta.stringToEnum(Partitioning.TimeUnit, type_v.string) orelse
+        return error.InvalidType;
+    return .{ .time = .{ .field = field, .unit = unit } };
+}
+
+fn intField(obj: std.json.ObjectMap, key: []const u8) Error!i64 {
+    const v = obj.get(key) orelse return error.InvalidType;
+    return if (v == .integer) v.integer else error.InvalidType;
 }
 
 fn getBool(obj: std.json.ObjectMap, key: []const u8) ?bool {
@@ -596,6 +981,9 @@ fn columnSpecFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*Colum
         if (name == .string) col.name = try alloc.dupe(u8, name.string);
     }
     if (getBool(obj, "isNotNull")) |b| col.is_not_null = b;
+    if (obj.get("description")) |d| {
+        if (d == .string) col.description = try alloc.dupe(u8, d.string);
+    }
     if (obj.get("type")) |tv| {
         if (tv == .object) col.type = try typeFromValue(alloc, tv);
     }
@@ -631,6 +1019,12 @@ fn typeFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*Type {
                 }
                 if (item.object.get("type")) |tv| {
                     if (tv == .object) nwt.type = try typeFromValue(alloc, tv);
+                }
+                if (item.object.get("isNotNull")) |b| {
+                    if (b == .bool) nwt.is_not_null = b.bool;
+                }
+                if (item.object.get("description")) |d| {
+                    if (d == .string) nwt.description = try alloc.dupe(u8, d.string);
                 }
                 fields[i] = nwt;
             }
@@ -988,6 +1382,287 @@ test "pkIndexSchema lowers a primary key to a non-unique index" {
         .query = "SELECT 1",
     };
     try testing.expectEqual(@as(?[]u8, null), try view.pkIndexSchema(alloc));
+}
+
+test "a NOT NULL STRUCT member round-trips through the type JSON and stays out of it when unset" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const with = try makeGoShapeSpec(alloc);
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const y = try alloc.create(NameWithType);
+    y.* = .{ .name = "y", .type = try newSimpleType(alloc, .TYPE_STRING) };
+    const record = try alloc.create(Type);
+    record.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{ x, y } };
+    const col = try alloc.create(ColumnSpec);
+    col.* = .{ .name = "r", .type = record };
+    with.columns = &.{col};
+
+    const encoded = try with.toJson(alloc);
+    // x carries the key; y, unset, ends its entry right after its type.
+    try testing.expect(std.mem.indexOf(u8, encoded, "\"name\":\"x\",\"type\":{") != null);
+    const x_then_y = "\"fieldTypes\":null},\"isNotNull\":true},{\"name\":\"y\"";
+    try testing.expect(std.mem.indexOf(u8, encoded, x_then_y) != null);
+    const y_entry = "\"name\":\"y\",\"type\":{\"name\":\"\",\"kind\":8,\"signatureKind\":0," ++
+        "\"elementType\":null,\"fieldTypes\":null}}]";
+    try testing.expect(std.mem.indexOf(u8, encoded, y_entry) != null);
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expect(decoded.columns[0].type.field_types[0].is_not_null);
+    try testing.expect(!decoded.columns[0].type.field_types[1].is_not_null);
+    try testing.expect((try cloneType(alloc, record)).field_types[0].is_not_null);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+}
+
+test "SQLiteSchema adds one CHECK per column with NOT NULL members, positioned" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // r STRUCT<x INT64 NOT NULL, inner STRUCT<y STRING NOT NULL>>,
+    // rs ARRAY<STRUCT<k INT64 NOT NULL>>, plain STRUCT<z INT64>
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const y = try alloc.create(NameWithType);
+    y.* = .{ .name = "y", .type = try newSimpleType(alloc, .TYPE_STRING), .is_not_null = true };
+    const inner_t = try alloc.create(Type);
+    inner_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{y} };
+    const inner = try alloc.create(NameWithType);
+    inner.* = .{ .name = "inner", .type = inner_t };
+    const r_t = try alloc.create(Type);
+    r_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{ x, inner } };
+
+    const k = try alloc.create(NameWithType);
+    k.* = .{ .name = "k", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const elem_t = try alloc.create(Type);
+    elem_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{k} };
+    const rs_t = try alloc.create(Type);
+    rs_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_ARRAY), .element_type = elem_t };
+
+    const z = try alloc.create(NameWithType);
+    z.* = .{ .name = "z", .type = try newSimpleType(alloc, .TYPE_INT64) };
+    const plain_t = try alloc.create(Type);
+    plain_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{z} };
+
+    const r = try alloc.create(ColumnSpec);
+    r.* = .{ .name = "r", .type = r_t };
+    const rs = try alloc.create(ColumnSpec);
+    rs.* = .{ .name = "rs", .type = rs_t };
+    const plain = try alloc.create(ColumnSpec);
+    plain.* = .{ .name = "plain", .type = plain_t };
+    const t = try alloc.create(TableSpec);
+    t.* = .{
+        .name_path = &.{"t"},
+        .columns = &.{ r, rs, plain },
+        .create_mode = create_mode_create_default,
+    };
+
+    try testing.expectEqualStrings(
+        "CREATE TABLE `t` (`r` TEXT,`rs` TEXT,`plain` TEXT," ++
+            "CONSTRAINT `r` CHECK (zigquery_required(`r`," ++
+            "'0','Required field r.x cannot be null; error in writing field r'," ++
+            "'1.0','Required field r.inner.y cannot be null; error in writing field r'))," ++
+            "CONSTRAINT `rs` CHECK (zigquery_required(`rs`," ++
+            "'[].0','Required field rs.k cannot be null; error in writing field rs'))) ",
+        try t.sqliteSchema(alloc),
+    );
+}
+
+test "SQLiteSchema quotes a member name's apostrophe and keeps a dotted column name whole" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const its = try alloc.create(NameWithType);
+    its.* = .{ .name = "it's", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const r_t = try alloc.create(Type);
+    r_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{its} };
+    const r = try alloc.create(ColumnSpec);
+    r.* = .{ .name = "a.b", .type = r_t };
+    const t = try alloc.create(TableSpec);
+    t.* = .{ .name_path = &.{"t"}, .columns = &.{r}, .create_mode = create_mode_create_default };
+
+    try testing.expectEqualStrings(
+        "CREATE TABLE `t` (`a.b` TEXT,CONSTRAINT `a.b` CHECK (zigquery_required(`a.b`," ++
+            "'0','Required field a.b.it''s cannot be null; error in writing field a.b'))) ",
+        try t.sqliteSchema(alloc),
+    );
+}
+
+test "requiredFieldFromMessage reads the path and column back, embedded or not" {
+    const ui_text = "Required field y.x cannot be null; error in writing field y";
+    const bare = requiredFieldFromMessage(ui_text).?;
+    try testing.expectEqualStrings("y.x", bare.path);
+    try testing.expectEqualStrings("y", bare.column);
+    const wrapped = requiredFieldFromMessage(
+        "constraint failed: Required field r.inner.y cannot be null; error in writing field r (19)",
+    ).?;
+    try testing.expectEqualStrings("r.inner.y", wrapped.path);
+    try testing.expectEqualStrings("r", wrapped.column);
+    const other = "NOT NULL constraint failed: t.a";
+    try testing.expectEqual(@as(?RequiredField, null), requiredFieldFromMessage(other));
+    const empty = "Required field  cannot be null; error in writing field ";
+    try testing.expectEqual(@as(?RequiredField, null), requiredFieldFromMessage(empty));
+}
+
+test "metadata and source SQL round-trip through JSON and stay out of it when empty" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare = try makeGoShapeSpec(alloc);
+    const bare_json = try bare.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"metadata\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"sourceSql\"") == null);
+
+    const with = try makeGoShapeSpec(alloc);
+    // The resource text is carried as a string: its own quotes and nesting
+    // are escaped, never re-serialised.
+    with.metadata =
+        \\{"description":"he said \"hi\"","schema":{"fields":[{"name":"a","type":"INTEGER"}]}}
+    ;
+    with.source_sql = "SELECT a FROM `p.d.t`";
+    const encoded = try with.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, encoded, ",\"metadata\":\"{\\\"description\\\"") != null);
+    try testing.expect(
+        std.mem.indexOf(u8, encoded, ",\"sourceSql\":\"SELECT a FROM `p.d.t`\"}") != null,
+    );
+
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expectEqualStrings(with.metadata, decoded.metadata);
+    try testing.expectEqualStrings(with.source_sql, decoded.source_sql);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+}
+
+test "a dataset spec round-trips through JSON, metadata only when set" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare = DatasetSpec{
+        .name_path = &.{ "p", "ds" },
+        .updated_at = "2024-01-02T03:04:05Z",
+        .created_at = "2024-01-02T03:04:05Z",
+    };
+    try testing.expectEqualStrings(
+        \\{"namePath":["p","ds"],"updatedAt":"2024-01-02T03:04:05Z","createdAt":"2024-01-02T03:04:05Z"}
+    ,
+        try bare.toJson(alloc),
+    );
+    try testing.expectEqualStrings("p_ds", try bare.datasetName(alloc));
+
+    var with = bare;
+    with.metadata =
+        \\{"datasetReference":{"datasetId":"ds","projectId":"p"},"id":"ds","labels":{"k":"v"}}
+    ;
+    // `is_synthetic` is a memory-only marker and never reaches the JSON.
+    with.is_synthetic = true;
+    const encoded = try with.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, encoded, "synthetic") == null);
+    try testing.expect(std.mem.indexOf(u8, encoded, ",\"metadata\":\"{\\\"datasetReference\\\"") != null);
+
+    const decoded = try datasetSpecFromJson(alloc, encoded);
+    try testing.expectEqualStrings("p", decoded.name_path[0]);
+    try testing.expectEqualStrings("ds", decoded.name_path[1]);
+    try testing.expectEqualStrings(with.metadata, decoded.metadata);
+    try testing.expectEqualStrings(with.created_at, decoded.created_at);
+    try testing.expect(!decoded.is_synthetic);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+}
+
+test "partitioning and clustering round-trip through JSON and stay out of it when unset" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare = try makeGoShapeSpec(alloc);
+    const bare_json = try bare.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"partitioning\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"clustering\"") == null);
+
+    const timed = try makeGoShapeSpec(alloc);
+    timed.partitioning = .{ .time = .{ .field = "ts", .unit = .HOUR } };
+    timed.clustering = try alloc.dupe([]const u8, &.{ "a", "n" });
+    const timed_json = try timed.toJson(alloc);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        timed_json,
+        ",\"partitioning\":{\"type\":\"HOUR\",\"field\":\"ts\"},\"clustering\":[\"a\",\"n\"]",
+    ) != null);
+    // addNewTableSpec stores the re-parsed spec, so the round trip is what
+    // the catalog actually keeps.
+    const timed_back = try tableSpecFromJson(alloc, timed_json);
+    try testing.expectEqualStrings("ts", timed_back.partitioning.?.time.field);
+    try testing.expectEqual(Partitioning.TimeUnit.HOUR, timed_back.partitioning.?.time.unit);
+    try testing.expectEqual(@as(usize, 2), timed_back.clustering.len);
+    try testing.expectEqualStrings("n", timed_back.clustering[1]);
+    try testing.expectEqualStrings(timed_json, try timed_back.toJson(alloc));
+
+    const ranged = try makeGoShapeSpec(alloc);
+    ranged.partitioning = .{ .range = .{ .field = "n", .start = -10, .end = 100, .interval = 10 } };
+    const ranged_json = try ranged.toJson(alloc);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        ranged_json,
+        ",\"partitioning\":{\"type\":\"RANGE\",\"field\":\"n\",\"start\":-10,\"end\":100,\"interval\":10}",
+    ) != null);
+    const ranged_back = try tableSpecFromJson(alloc, ranged_json);
+    try testing.expectEqual(@as(i64, -10), ranged_back.partitioning.?.range.start);
+    try testing.expectEqual(@as(i64, 10), ranged_back.partitioning.?.range.interval);
+    try testing.expectEqualStrings(ranged_json, try ranged_back.toJson(alloc));
+
+    try testing.expectError(error.InvalidType, tableSpecFromJson(alloc,
+        \\{"namePath":["p","d","t"],"columns":[],"partitioning":{"type":"WEEK","field":"d"}}
+    ));
+}
+
+test "notNullColumnFromMessage reads the column out of SQLite's message" {
+    try testing.expectEqualStrings("a", notNullColumnFromMessage(
+        "constraint failed: NOT NULL constraint failed: test_ds1_req.a (19)",
+    ).?);
+    try testing.expectEqualStrings("col_1", notNullColumnFromMessage(
+        "NOT NULL constraint failed: t.col_1",
+    ).?);
+    try testing.expectEqual(
+        @as(?[]const u8, null),
+        notNullColumnFromMessage("constraint failed: UNIQUE constraint failed: t.a (19)"),
+    );
+    try testing.expectEqual(
+        @as(?[]const u8, null),
+        notNullColumnFromMessage("NOT NULL constraint failed: nodot (19)"),
+    );
+}
+
+test "descriptions round-trip through JSON and stay out of it when unset" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare = try makeGoShapeSpec(alloc);
+    try testing.expect(std.mem.indexOf(u8, try bare.toJson(alloc), "\"description\"") == null);
+
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .description = "nested" };
+    const record = try alloc.create(Type);
+    record.* = .{
+        .kind = @backingInt(pb.TypeKind.TYPE_STRUCT),
+        .field_types = try alloc.dupe(*NameWithType, &.{x}),
+    };
+    const col = try alloc.create(ColumnSpec);
+    col.* = .{ .name = "r", .type = record, .description = "a \"record\"" };
+    const with = try makeGoShapeSpec(alloc);
+    with.columns = try alloc.dupe(*ColumnSpec, &.{col});
+    with.description = "the table";
+
+    const encoded = try with.toJson(alloc);
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expectEqualStrings("the table", decoded.description);
+    try testing.expectEqualStrings("a \"record\"", decoded.columns[0].description);
+    try testing.expectEqualStrings("nested", decoded.columns[0].type.field_types[0].description);
+    const cloned = try cloneType(alloc, record);
+    try testing.expectEqualStrings("nested", cloned.field_types[0].description);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 
 test "options round-trip through JSON and stay out of it when empty" {

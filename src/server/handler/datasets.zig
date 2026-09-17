@@ -1,11 +1,13 @@
 //! Port of bigquery-emulator server/handler.go datasets{Insert,Get,List,Delete}.
 //!
-//! Response shapes captured from a running Go emulator. Note the emulator is
-//! deliberately sparse here: datasets.get returns only `datasetReference`,
-//! while insert and list also carry `id`.
+//! Response shapes captured from a running Go emulator. A dataset's resource is what was posted
+//! to insert with patches merged over it (`writeDatasetResource`), stored on its catalog spec and
+//! reported back verbatim by get and list; `writeDataset` builds the minimal resource for a
+//! dataset declared without one (the `--dataset` flag, a loader fixture).
 
 const std = @import("std");
 const errors = @import("../error.zig");
+const tables = @import("tables.zig");
 
 /// `{"datasetReference":{"datasetId":..,"projectId":..},"id":..}`
 pub fn writeDataset(
@@ -13,30 +15,44 @@ pub fn writeDataset(
     out: *std.ArrayList(u8),
     project_id: []const u8,
     dataset_id: []const u8,
-    include_id: bool,
 ) std.mem.Allocator.Error!void {
     try out.appendSlice(arena, "{\"datasetReference\":{\"datasetId\":");
     try errors.writeJsonString(arena, out, dataset_id);
     try out.appendSlice(arena, ",\"projectId\":");
     try errors.writeJsonString(arena, out, project_id);
-    try out.append(arena, '}');
-    if (include_id) {
-        try out.appendSlice(arena, ",\"id\":");
-        try errors.writeJsonString(arena, out, dataset_id);
-    }
+    try out.appendSlice(arena, "},\"id\":");
+    try errors.writeJsonString(arena, out, dataset_id);
     try out.append(arena, '}');
 }
 
-pub fn writeDatasetList(
+/// The resource `fields` describe, with `datasetReference` and `id` set from the request path
+/// whatever `fields` says. Keys come out sorted, as `tables.writeJsonValue` writes them.
+pub fn writeDatasetResource(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
     project_id: []const u8,
-    dataset_ids: []const []const u8,
+    dataset_id: []const u8,
+    fields: std.json.ObjectMap,
+) std.mem.Allocator.Error!void {
+    var resource = try fields.clone(arena);
+    var ref: std.json.ObjectMap = .empty;
+    try ref.put(arena, "datasetId", .{ .string = dataset_id });
+    try ref.put(arena, "projectId", .{ .string = project_id });
+    try resource.put(arena, "datasetReference", .{ .object = ref });
+    try resource.put(arena, "id", .{ .string = dataset_id });
+    try tables.writeJsonValue(arena, out, .{ .object = resource });
+}
+
+/// `{"datasets":[<resource>,...]}`, each resource appended as stored.
+pub fn writeDatasetList(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    resources: []const []const u8,
 ) std.mem.Allocator.Error!void {
     try out.appendSlice(arena, "{\"datasets\":[");
-    for (dataset_ids, 0..) |id, i| {
+    for (resources, 0..) |resource, i| {
         if (i > 0) try out.append(arena, ',');
-        try writeDataset(arena, out, project_id, id, true);
+        try out.appendSlice(arena, resource);
     }
     try out.appendSlice(arena, "]}");
 }
@@ -59,17 +75,10 @@ test "dataset resource matches the Go emulator" {
     const arena = arena_state.allocator();
 
     var out: std.ArrayList(u8) = .empty;
-    try writeDataset(arena, &out, "test", "ds1", true);
+    try writeDataset(arena, &out, "test", "ds1");
     try testing.expectEqualStrings(
         \\{"datasetReference":{"datasetId":"ds1","projectId":"test"},"id":"ds1"}
     , out.items);
-
-    // datasets.get omits id.
-    var got: std.ArrayList(u8) = .empty;
-    try writeDataset(arena, &got, "test", "ds1", false);
-    try testing.expectEqualStrings(
-        \\{"datasetReference":{"datasetId":"ds1","projectId":"test"}}
-    , got.items);
 }
 
 test "dataset list matches the Go emulator" {
@@ -77,14 +86,16 @@ test "dataset list matches the Go emulator" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    var ds1: std.ArrayList(u8) = .empty;
+    try writeDataset(arena, &ds1, "test", "ds1");
     var out: std.ArrayList(u8) = .empty;
-    try writeDatasetList(arena, &out, "test", &.{"ds1"});
+    try writeDatasetList(arena, &out, &.{ds1.items});
     try testing.expectEqualStrings(
         \\{"datasets":[{"datasetReference":{"datasetId":"ds1","projectId":"test"},"id":"ds1"}]}
     , out.items);
 
     var empty: std.ArrayList(u8) = .empty;
-    try writeDatasetList(arena, &empty, "test", &.{});
+    try writeDatasetList(arena, &empty, &.{});
     try testing.expectEqualStrings("{\"datasets\":[]}", empty.items);
 }
 

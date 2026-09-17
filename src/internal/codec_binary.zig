@@ -433,6 +433,66 @@ fn skipValue(r: *BinReader) ValueError!void {
     }
 }
 
+/// Whether a STRUCT member at `path` inside the encoded value `buf` is present.
+/// `path` is positional: `.`-separated STRUCT field indices with `[]` for every element of an ARRAY
+/// i.e. `1.[].0`.
+/// A NULL value on the way passes: a member is required only if its parent exists
+/// Walks the entries before the target without decoding any; allocates nothing.
+pub fn requiredMemberPresent(buf: []const u8, path: []const u8) ValueError!bool {
+    var r = BinReader{ .buf = buf };
+    return memberPresent(&r, path);
+}
+
+/// One segment of `path` per call, recursing on the rest. The cursor sits on a
+/// value's tag byte on entry:
+///
+/// - `0x00` (NULL) at any depth is a present-enough answer:
+///    the member is required if its parent exists, and this one does not.
+/// - A `[]` segment expects the ARRAY tag, reads the element count, and applies the remaining path
+///   to each element from a copy of the cursor, then skips the original past that element.
+///   Every element must pass.
+/// - A numeric segment expects the STRUCT tag, reads the field count, steps over `index` entries.
+///   An entry is a uvarint key length, the key, and one encoded value, so each step is two length
+///   reads and a skip. Past the wanted entry's key, the last segment peeks its tag and answers; an
+///   earlier segment recurses into it.
+///
+/// A segment that does not match the tag it meets, an index past the count, or a buffer that ends
+/// early is `CorruptData`: the path was rendered from the column's type at DDL time,
+/// so a mismatch is a broken value, never a value of another shape.
+fn memberPresent(r: *BinReader, path: []const u8) ValueError!bool {
+    const tag = try r.byte();
+    if (tag == bin_tag_null) return true;
+    if (path.len == 0) return true;
+
+    const dot = std.mem.indexOfScalar(u8, path, '.');
+    const segment = if (dot) |d| path[0..d] else path;
+    const remaining_segments = if (dot) |d| path[d + 1 ..] else "";
+
+    if (std.mem.eql(u8, segment, "[]")) {
+        if (tag != bin_tag_array) return error.CorruptData;
+        const n = try r.uvarint();
+        if (n > r.buf.len - r.pos) return error.CorruptData;
+        for (0..@intCast(n)) |_| {
+            var element = r.*;
+            if (!try memberPresent(&element, remaining_segments)) return false;
+            try skipValue(r);
+        }
+        return true;
+    }
+
+    if (tag != bin_tag_struct) return error.CorruptData;
+    const n = try r.uvarint();
+    const index = std.fmt.parseInt(u64, segment, 10) catch return error.CorruptData;
+    if (index >= n) return error.CorruptData;
+    for (0..@intCast(index)) |_| {
+        _ = try r.lenBytes();
+        try skipValue(r);
+    }
+    _ = try r.lenBytes();
+    if (remaining_segments.len == 0) return (try r.byte()) != bin_tag_null;
+    return memberPresent(r, remaining_segments);
+}
+
 /// An encoded ARRAY or STRUCT, positioned for reading one entry out of it.
 ///
 /// `ArrayWalker` below streams every element in order, which is what UNNEST
@@ -628,6 +688,58 @@ test "CompositeRef reads one entry without decoding the others" {
     // A truncated element is caught by the walk, not returned as junk.
     var w = try CompositeRef.init(arr[0 .. arr.len - 2]);
     try testing.expectError(error.CorruptData, w.at(alloc, elems.len - 1));
+}
+
+test "requiredMemberPresent finds a NULL member by position, through structs and arrays" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Build = struct {
+        fn record(a: std.mem.Allocator, x: Value, inner: Value) ![]u8 {
+            const st = try value_mod.structValue(a, &.{ "x", "inner" }, &.{ x, inner });
+            return encodeBinaryValue(a, st);
+        }
+        fn elements(a: std.mem.Allocator, items: []const Value) ![]u8 {
+            return encodeBinaryValue(a, try value_mod.arrayValue(a, items));
+        }
+    };
+
+    // r = STRUCT(x, inner STRUCT(y))
+    const inner = try value_mod.structValue(alloc, &.{"y"}, &.{.{ .string = "present" }});
+    const inner_null = try value_mod.structValue(alloc, &.{"y"}, &.{Value.null});
+    const full = try Build.record(alloc, .{ .int = 1 }, inner);
+    try testing.expect(try requiredMemberPresent(full, "0"));
+    try testing.expect(try requiredMemberPresent(full, "1.0"));
+
+    const x_null = try Build.record(alloc, Value.null, inner);
+    try testing.expect(!try requiredMemberPresent(x_null, "0"));
+    try testing.expect(try requiredMemberPresent(x_null, "1.0"));
+
+    const y_null = try Build.record(alloc, .{ .int = 1 }, inner_null);
+    try testing.expect(!try requiredMemberPresent(y_null, "1.0"));
+
+    // A NULL parent has no members to require.
+    const inner_absent = try Build.record(alloc, .{ .int = 1 }, Value.null);
+    try testing.expect(try requiredMemberPresent(inner_absent, "1.0"));
+    try testing.expect(try requiredMemberPresent(try encodeBinaryValue(alloc, Value.null), "0"));
+
+    // rs = ARRAY<STRUCT(k)>: every element is checked.
+    const ok_elem = try value_mod.structValue(alloc, &.{"k"}, &.{.{ .int = 7 }});
+    const bad_elem = try value_mod.structValue(alloc, &.{"k"}, &.{Value.null});
+    const all_ok = try Build.elements(alloc, &.{ ok_elem, ok_elem });
+    try testing.expect(try requiredMemberPresent(all_ok, "[].0"));
+    const one_bad = try Build.elements(alloc, &.{ ok_elem, bad_elem });
+    try testing.expect(!try requiredMemberPresent(one_bad, "[].0"));
+    try testing.expect(try requiredMemberPresent(try Build.elements(alloc, &.{}), "[].0"));
+
+    // Malformed input is reported, never misread.
+    try testing.expectError(error.CorruptData, requiredMemberPresent(full, "5"));
+    try testing.expectError(error.CorruptData, requiredMemberPresent(full, "[].0"));
+    // Cut off y's value entirely, tag included, so the walk runs out of bytes.
+    const truncated = full[0 .. full.len - 9];
+    try testing.expectError(error.CorruptData, requiredMemberPresent(truncated, "1.0"));
+    try testing.expectError(error.CorruptData, requiredMemberPresent(full, "x"));
 }
 
 test "ArrayWalker yields element slices that decode to the originals" {

@@ -26,6 +26,52 @@ pub fn sub(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     return args[0].sub(alloc, args[1]);
 }
 
+/// GoogleSQL `$unary_minus` (arithmetics.h UnaryMinus).
+/// Unlike ABS and SAFE_NEGATE, which coerce through f64, this one preserves the input type
+pub fn unaryMinus(alloc: std.mem.Allocator, args: []const Value) Error!Value {
+    if (bind.existsNull(args)) return null_v;
+    return negate(alloc, args[0]);
+}
+
+fn negate(alloc: std.mem.Allocator, v: Value) Error!Value {
+    // The analyzer only resolves for INT64, FLOAT64, NUMERIC, BIGNUMERIC, and INTERVAL,
+    // so the final arm is unreachable today and exists to fail loudly if that ever widens.
+    switch (v) {
+        .int => |i| {
+            if (i == std.math.minInt(i64)) {
+                return bind.fail("int64 overflow: -{d}", .{i}, error.NumericOutOfRange);
+            }
+            return Value{ .int = -i };
+        },
+        // Negation is exact for every float, -0.0 and the infinities included.
+        .float => |f| return Value{ .float = -f },
+        .numeric => |n| {
+            if (n.unscaled == std.math.minInt(@TypeOf(value_mod.numeric_unscaled_max))) {
+                return bind.fail("numeric value out of range", .{}, error.NumericOutOfRange);
+            }
+            return value_mod.numericFromUnscaled(alloc, -n.unscaled, n.is_bignumeric);
+        },
+        // The seven fields carry independent signs, so negating the interval is negating each of them
+        .interval => |iv| return Value{ .interval = .{
+            .years = -iv.years,
+            .months = -iv.months,
+            .days = -iv.days,
+            .hours = -iv.hours,
+            .minutes = -iv.minutes,
+            .seconds = -iv.seconds,
+            .sub_second_nanos = -iv.sub_second_nanos,
+        } },
+        // SAFE. wrapping is transparent to the operation;
+        // register.zig's safe trampoline is what turns a raised error into NULL.
+        .safe => |p| return negate(alloc, p.*),
+        else => return bind.fail(
+            "unary minus is unsupported for this type",
+            .{},
+            error.UnsupportedOperation,
+        ),
+    }
+}
+
 pub fn mul(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (bind.existsNull(args)) return null_v;
     return args[0].mul(alloc, args[1]);
@@ -751,4 +797,113 @@ pub fn euclideanDistance(alloc: std.mem.Allocator, args: []const Value) Error!Va
     _ = alloc;
     const s = try twoVectors("EUCLIDEAN_DISTANCE", args) orelse return null_v;
     return Value{ .float = @sqrt(s.diff2) };
+}
+
+// ---------------------------------------------------------------------
+// Tests.
+// ---------------------------------------------------------------------
+
+const testing = std.testing;
+
+fn minus(alloc: std.mem.Allocator, v: Value) Error!Value {
+    return unaryMinus(alloc, &.{v});
+}
+
+test "unary minus keeps an INT64 an INT64" {
+    // The point of the type switch: ABS and SAFE_NEGATE would hand back
+    // FLOAT64 here, and a GROUP BY key that changed kind would regroup.
+    try value_mod.expectValueEqual(
+        .{ .int = -7 },
+        try minus(testing.allocator, .{ .int = 7 }),
+    );
+    try value_mod.expectValueEqual(
+        .{ .int = 7 },
+        try minus(testing.allocator, .{ .int = -7 }),
+    );
+    try value_mod.expectValueEqual(
+        .{ .int = 0 },
+        try minus(testing.allocator, .{ .int = 0 }),
+    );
+}
+
+test "unary minus rejects the one INT64 with no negation" {
+    // googlesql arithmetics.h:442 -> util.cc:72 UnaryOverflowMessage, which
+    // concatenates the operator and the operand without a separator.
+    try testing.expectError(
+        error.NumericOutOfRange,
+        minus(testing.allocator, .{ .int = std.math.minInt(i64) }),
+    );
+    try testing.expectEqualStrings(
+        "int64 overflow: --9223372036854775808",
+        bind.message.?,
+    );
+}
+
+test "unary minus is exact for every FLOAT64" {
+    // Bit-for-bit comparisons: signed zero is the case a value comparison
+    // would wave through, and it is the one the corpus asks about.
+    try value_mod.expectValueEqual(
+        .{ .float = -0.0 },
+        try minus(testing.allocator, .{ .float = 0.0 }),
+    );
+    try value_mod.expectValueEqual(
+        .{ .float = 0.0 },
+        try minus(testing.allocator, .{ .float = -0.0 }),
+    );
+    try value_mod.expectValueEqual(
+        .{ .float = -std.math.inf(f64) },
+        try minus(testing.allocator, .{ .float = std.math.inf(f64) }),
+    );
+    try value_mod.expectValueEqual(
+        .{ .float = -1.5 },
+        try minus(testing.allocator, .{ .float = 1.5 }),
+    );
+}
+
+test "unary minus keeps NUMERIC and BIGNUMERIC exact and keeps their kind" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const n = try value_mod.numericFromString(arena, "1.000000001", false);
+    const got = try minus(arena, n);
+    try testing.expect(!got.numeric.is_bignumeric);
+    try testing.expectEqualStrings("-1.000000001", try got.numeric.toText(arena));
+
+    const b = try value_mod.numericFromString(arena, "-2.25", true);
+    const got_big = try minus(arena, b);
+    try testing.expect(got_big.numeric.is_bignumeric);
+    try testing.expectEqualStrings("2.25", try got_big.numeric.toText(arena));
+}
+
+test "unary minus flips every INTERVAL field" {
+    const got = try minus(testing.allocator, .{ .interval = .{
+        .years = 1,
+        .months = -2,
+        .days = 3,
+        .hours = -4,
+        .minutes = 5,
+        .seconds = -6,
+        .sub_second_nanos = 7,
+    } });
+    try testing.expectEqual(@as(i32, -1), got.interval.years);
+    try testing.expectEqual(@as(i32, 2), got.interval.months);
+    try testing.expectEqual(@as(i32, -3), got.interval.days);
+    try testing.expectEqual(@as(i32, 4), got.interval.hours);
+    try testing.expectEqual(@as(i32, -5), got.interval.minutes);
+    try testing.expectEqual(@as(i32, 6), got.interval.seconds);
+    try testing.expectEqual(@as(i32, -7), got.interval.sub_second_nanos);
+}
+
+test "unary minus passes NULL through and sees through SAFE wrapping" {
+    try value_mod.expectValueEqual(
+        Value.null,
+        try minus(testing.allocator, Value.null),
+    );
+
+    var inner: Value = .{ .int = 3 };
+    try value_mod.expectValueEqual(
+        .{ .int = -3 },
+        try minus(testing.allocator, .{ .safe = &inner }),
+    );
 }
