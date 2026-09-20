@@ -305,7 +305,7 @@ pub fn build(b: *std.Build) void {
 
     // CLI: zigquery "SELECT ..." (debug flags: --ast --data --sql)
     const exe = b.addExecutable(.{
-        .name = "zigquery",
+        .name = "zigquery-cli",
         .root_module = b.createModule(.{
             .root_source_file = b.path("entrypoints/cli.zig"),
             .target = target,
@@ -573,7 +573,7 @@ pub fn build(b: *std.Build) void {
     const run_loadbench = b.addRunArtifact(loadbench_exe);
     b.step("load-bench", "Benchmark bulk CREATE TABLE cost").dependOn(&run_loadbench.step);
 
-    // ---- bigquery-emulator server ----
+    // ---- zigquery server ----
     //
     // A separate module from the engine so `test` and `corpus` — the engine's
     // regression gates — are unaffected by server work.
@@ -585,7 +585,7 @@ pub fn build(b: *std.Build) void {
     const static_server_mod = serverModule(b, server_deps, optimize, static_mod);
 
     const server_exe = b.addExecutable(.{
-        .name = "bigquery-emulator",
+        .name = "zigquery-server",
         .root_module = b.createModule(.{
             .root_source_file = b.path("entrypoints/server.zig"),
             .target = target,
@@ -685,7 +685,7 @@ pub fn build(b: *std.Build) void {
     // harnesses and benchmarks. A release is only the two products, each
     // statically linked against the shim (see static_mod/static_server_mod
     // above) — so a tarball of zig-out is exactly the shipped tree, with no
-    // sibling `lib/` needed, and `bin/bigquery-emulator` runs from wherever
+    // sibling `lib/` needed, and `bin/zigquery-server` runs from wherever
     // it is unpacked.
     const dist_step = b.step("dist", "Install just the release artifacts (bin/)");
     dist_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
