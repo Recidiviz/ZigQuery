@@ -50,29 +50,6 @@ Zig can link C natively, so interop becomes nearly free.
 
 Intentional, explicit control over memory allocation improves process stability.
 
-
-## The Query Spec Suite
-
-`testdata/specs` holds three trees, each with its own `NOTICE`:
-
-| Tree | Cases | Where its expectations come from |
-|---|---:|---|
-| `googlesql/`, `bigquery/` | 1012 | goccy/googlesqlite, whose values were scraped from the result tables printed in the GoogleSQL reference docs. Imported by `tools/spec_import.py`; do not hand-edit. |
-| `zigquery/` | 748 | This engine's own regression suite, inherited from go-zetasqlite's `query_test.go`. Hand-maintained. |
-
-Every `.zon` file under `testdata/specs` is a spec.
-`zigquery/` files declare `.typed = true`, which asserts each expected value's *type* and not only its value;
-the imported trees cannot, because a doc table does not say whether `42` was an INT64 or the string `"42"`.
-See `src/internal/spec_expect.zig`.
-
-`testdata/spec_baseline.txt` lists the `spec<TAB>desc` of every case that must
-keep passing, and `zig build spec` exits nonzero on any regression. Regenerate
-it with `zig build spec -- --update-baseline`.
-
-`zig build coverage` and `zig build coverage-spec` measure what the unit tests and the corpus each execute.
-[docs/COVERAGE.md](docs/COVERAGE.md) has the current figures and the two caveats worth knowing before quoting one: the runs
-cannot be summed, and a line counts as covered once control reaches it.
-
 ## CI & releases
 
 | Workflow | Trigger | What it does |
