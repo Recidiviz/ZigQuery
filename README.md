@@ -1,7 +1,7 @@
 # ⚡️ZigQuery - A BigQuery Emulator
 
 <p style="text-align: center;">
-  <strong>A BigQuery emulator server, built on a GoogleSQL and SQLite.</strong><br />
+  <strong>A BigQuery emulator server, built on [Zig](https://ziglang.org], [GoogleSQL](https://github.com/google/googlesql), and [SQLite](https://sqlite.org).</strong><br />
   Focused on query engine correctness, performance, throughput, and stability
 </p>
 
