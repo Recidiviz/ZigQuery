@@ -4,7 +4,7 @@
     // In a future version of Zig it will be used for package deduplication.
     .version = "0.0.4",
     // Together with name, this represents a globally unique package identifier.
-    .fingerprint = 0x3a8ad61ae4373f75, // Changing this has security and trust implications.
+    .fingerprint = 0xb1f226137bbd21ea, // Changing this has security and trust implications.
     // Tracks the earliest Zig version that the package considers to be a supported use case.
     .minimum_zig_version = "0.17.0-dev.2131+d08989840",
     // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
