@@ -1,12 +1,10 @@
-//! The server. BigQuery's REST and Storage Read APIs over the zigquery engine.
+//! bigquery-emulator server, ported to Zig on top of the zigquery engine.
+//! Go counterpart: the `server/` and `internal/` trees of
+//! Recidiviz/bigquery-emulator.
 //!
-//! A request is routed (router.zig), decoded into the BigQuery's wire types (internal/types),
-//! turned into SQL run through the engine's driver, and encoded back as the API's JSON or,
-//! for the Storage Read API, as Arrow or Avro batches (grpc/).
-//!
-//! Datasets, tables and jobs are the state it keeps; the engine holds the rows.
-//!
-//! Server tests run under `zig build test-server`.
+//! Kept as a separate module from the engine (src/root.zig) so that
+//! `zig build test` and `zig build spec` — the engine's regression gates —
+//! stay untouched by server work. Server tests run under `zig build test-server`.
 
 pub const http_server = @import("http/server.zig");
 pub const router = @import("router.zig");

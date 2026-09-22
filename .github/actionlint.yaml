@@ -11,5 +11,5 @@
 # ${{ }} expression, which actionlint does not try to validate.
 self-hosted-runner:
   labels:
-    - zigquery-mac-build
-    - zigquery-mac-build-x64
+    - zigquery-emulator-mac-build
+    - zigquery-emulator-mac-build-x64

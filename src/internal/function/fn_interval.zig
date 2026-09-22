@@ -1,15 +1,5 @@
-//! INTERVAL builtins: the `INTERVAL n <part>` constructor, MAKE_INTERVAL, and
-//! JUSTIFY_DAYS/JUSTIFY_HOURS/JUSTIFY_INTERVAL. interval_functions.md
-//!
-//! An interval is three independent counts — months, days and microseconds — and not one
-//! duration, because a month has no fixed number of days and a day has no fixed number of hours.
-//! Every part a caller names reduces to one of those three: a quarter is three months, a week is
-//! seven days, and the sub-day parts are microseconds. The JUSTIFY functions are what move a
-//! count from one field into the next, under the 30-day month and 24-hour day that normalization
-//! defines.
-//!
-//! Each field has its own bound, so a constructor saturates rather than wrapping (see
-//! value.zig's interval_max_*).
+//! Port of go-zetasqlite function_interval.go: INTERVAL, MAKE_INTERVAL, and
+//! JUSTIFY_DAYS/HOURS/INTERVAL.
 
 const std = @import("std");
 const bind = @import("bind.zig");

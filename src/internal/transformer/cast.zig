@@ -1,9 +1,9 @@
-//! CAST, lowered to `zigquery_cast(expr, <from type JSON>, <to type JSON>, return_null_on_err)`.
+//! Faithful port of go-zetasqlite internal/transformer_cast.go.
 //!
-//! The cast expression is transformed recursively and both types are JSON-encoded into the call.
-//! A cast cannot become SQLite's own CAST, because the answer depends on GoogleSQL types SQLite has no
-//! notion of, so the types travel to the UDF as literals.
-//! See function/fn_misc.zig for the evaluation. conversion_rules.md
+//! Recursively transforms the cast expression, JSON-encodes the source and
+//! target types (matching Go's json.Marshal of the internal Type spec, field
+//! order and null emission included), and emits a zigquery_cast function
+//! call: zigquery_cast(expr, fromTypeJSON, toTypeJSON, returnNullOnErr).
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -15,11 +15,13 @@ const common = @import("common.zig");
 
 const Error = types_data.Error;
 
+/// Go CastTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ExpressionData,
     ctx: *context.TransformContext,
 ) Error!*sqlbuilder.SQLExpression {
+    // Go: "expected cast expression data, got type %v"
     if (data.type != .cast) return error.UnsupportedNode;
     const cast = data.cast orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -27,7 +29,8 @@ pub fn transform(
     // Transform the inner expression recursively.
     const inner_expr = try coord.transformExpression(cast.expression, ctx);
 
-    // The two types travel as JSON string literals, alongside the safe-cast flag.
+    // Go createZetaSQLiteCast: encode type information as JSON string
+    // literals plus the safe-cast flag.
     const from_type = cast.from_type orelse return error.InvalidType;
     const to_type = cast.to_type orelse return error.InvalidType;
     const json_from_type = try marshalType(alloc, from_type);
@@ -46,7 +49,7 @@ pub fn transform(
     args[0] = inner_expr; // Expression to cast
     args[1] = encoded_from; // Source type
     args[2] = encoded_to; // Target type
-    // SAFE_CAST turns a conversion failure into NULL.
+    // Safe cast flag (Go: fmt.Sprintf("%t", cast.ReturnNullOnErr)).
     args[3] = try sqlbuilder.newLiteralExpression(
         alloc,
         if (cast.return_null_on_err) "true" else "false",
@@ -55,16 +58,11 @@ pub fn transform(
     return sqlbuilder.newFunctionExpression(alloc, "zigquery_cast", args);
 }
 
-/// A type as the JSON the cast UDF reads back:
-/// {
-///   "name":"",
-///   "kind":N,
-///   "signatureKind":N,
-///   "elementType":<Type|null>,
-///   "fieldTypes":<[NameWithType]|null>
-/// }
-/// with NameWithType as {"name":"...","type":<Type|null>}.
-/// `fieldTypes` is null for anything but a struct with fields.
+/// Byte-identical mirror of Go's json.Marshal over the internal Type spec:
+///   {"name":"","kind":N,"signatureKind":N,"elementType":<Type|null>,
+///    "fieldTypes":<[NameWithType]|null>}
+/// with NameWithType as {"name":"...","type":<Type|null>}. Go's newType
+/// leaves FieldTypes nil (-> null) unless the type is a struct with fields.
 pub fn marshalType(alloc: std.mem.Allocator, t: *const spec.Type) Error![]u8 {
     var out: std.ArrayList(u8) = .empty;
     try writeType(alloc, &out, t);
@@ -89,7 +87,7 @@ fn writeType(
     }
     try out.appendSlice(alloc, ",\"fieldTypes\":");
     if (t.field_types.len == 0) {
-        // An empty field list is null, not [].
+        // Go: nil slice marshals as null.
         try out.appendSlice(alloc, "null");
     } else {
         try out.append(alloc, '[');

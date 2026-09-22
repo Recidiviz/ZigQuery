@@ -1,5 +1,7 @@
-//! A query statement: the main scan becomes the FROM clause and each output column a SELECT list
-//! item under the alias the user wrote.
+//! Faithful port of go-zetasqlite internal/transformer_stmt_query.go.
+//!
+//! Transforms the main query scan into the FROM clause and each output
+//! column into a SELECT list item carrying the user-visible alias.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -8,16 +10,18 @@ const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const query_expr = @import("../sqlbuilder/query_expr.zig");
 
+/// Go QueryStmtTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.StatementData,
     ctx: *context.TransformContext,
 ) types_data.Error!sqlbuilder.SQLFragment {
+    // Go: "expected select statement data for query stmt, got type %v"
     if (data.type != .select) return error.UnsupportedNode;
     const select_data = data.select orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
-    // A select statement with no FROM clause is a malformed AST.
+    // Go dereferences *selectData.FromClause unconditionally.
     const from_clause = select_data.from_clause orelse return error.InvalidAST;
     const input = try coord.transformScan(from_clause.*, ctx);
 

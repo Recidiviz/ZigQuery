@@ -1,6 +1,10 @@
-//! The definition of a recursive CTE: the base term and the recursive term each transform to a
-//! SELECT, combine under UNION [ALL], and are wrapped in a SELECT carrying that set operation
-//! directly, so with_entry.zig can emit the CTE body verbatim.
+//! Faithful port of go-zetasqlite internal/transformer_scan_recursive.go.
+//!
+//! Transforms a RecursiveScan (the definition of a recursive CTE): the
+//! non-recursive term (base case) and recursive term are transformed to
+//! SELECT statements, combined with a set operation (UNION [ALL]), and
+//! wrapped in a SELECT statement carrying the set operation directly so the
+//! WithEntryTransformer can emit the recursive CTE body verbatim.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -9,11 +13,13 @@ const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const flatten = @import("../sqlbuilder/flatten.zig");
 
+/// Go RecursiveScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
+    // Go: "expected recursive scan data, got type %v"
     if (data.type != .recursive) return error.UnsupportedNode;
     const recursive_scan_data = data.recursive_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -23,6 +29,7 @@ pub fn transform(
         recursive_scan_data.non_recursive_term,
         ctx,
     );
+    // Go: "non-recursive term is not a SELECT statement"
     const non_recursive_select: *sqlbuilder.SelectStatement = switch (non_recursive_fragment) {
         .select_statement => |stmt| @constCast(stmt),
         else => return error.UnsupportedNode,
@@ -33,6 +40,7 @@ pub fn transform(
         recursive_scan_data.recursive_term,
         ctx,
     );
+    // Go: "recursive term is not a SELECT statement"
     var recursive_select: *sqlbuilder.SelectStatement = switch (recursive_fragment) {
         .select_statement => |stmt| @constCast(stmt),
         else => return error.UnsupportedNode,
@@ -53,6 +61,7 @@ pub fn transform(
         op_type = "UNION";
         modifier = "";
     } else {
+        // Go: "unsupported recursive operation type: %s"
         return error.UnsupportedNode;
     }
 

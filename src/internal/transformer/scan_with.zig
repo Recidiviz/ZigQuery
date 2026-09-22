@@ -1,9 +1,14 @@
-//! A WITH clause: every entry becomes a WithClause, then the main query transforms and comes back
-//! as `SELECT * FROM (main query)` carrying them.
+//! Faithful port of go-zetasqlite internal/transformer_scan_with.go.
 //!
-//! A recursive CTE has its name registered in the context before its subquery transforms, so the
-//! self-reference inside the recursive term can resolve it, and the name is cleared afterwards.
-//! See scan_recursive.zig and scan_recursive_ref.zig.
+//! Transforms every WITH entry into a WithClause, then transforms the main
+//! query and returns SELECT * FROM (main query) carrying the WITH clauses.
+//!
+//! Recursive CTEs are excluded from the foundation port: the Go original
+//! sets ctx.SetRecursiveCTEName(entry name) before each entry, marks the
+//! produced WithClause recursive, and clears the name afterwards; the entry
+//! and recursive-scan machinery it relies on (scan_recursive.zig /
+//! scan_recursive_ref.zig) is still stubbed, so WithScanData.recursive
+//! returns error.Unimplemented up front.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -12,11 +17,13 @@ const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const query_expr = @import("../sqlbuilder/query_expr.zig");
 
+/// Go WithScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
+    // Go: "expected with scan data, got type %v"
     if (data.type != .with) return error.UnsupportedNode;
     const with_scan_data = data.with_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;

@@ -1,17 +1,5 @@
-//! TIMESTAMP builtins: the constructor, ADD/SUB/DIFF/TRUNC/BUCKET, the FORMAT/PARSE pair, the
-//! epoch conversions in both directions, STRING and GENERATE_TIMESTAMP_ARRAY.
-//! timestamp_functions.md
-//!
-//! A TIMESTAMP is an absolute instant, held as microseconds since the Unix epoch in UTC. That is
-//! what separates this family from the other three: a zone argument never changes the instant,
-//! only the civil fields read off it, so TIMESTAMP(datetime, zone) shifts on the way in and
-//! STRING(timestamp, zone) renders on the way out, while the stored scalar is the same either
-//! way.
-//!
-//! TIMESTAMP_TRUNC is the exception that must resolve a zone in both directions: truncating to a
-//! DAY means the midnight an observer sees, which is a different instant in each zone, so the
-//! instant is shifted to that wall clock, truncated there, and shifted back. TIMESTAMP_BUCKET
-//! takes no zone at all — its arithmetic is on the instant.
+//! Port of go-zetasqlite function_timestamp.go bind handlers plus STRING and
+//! GENERATE_TIMESTAMP_ARRAY.
 
 const std = @import("std");
 const bind = @import("bind.zig");

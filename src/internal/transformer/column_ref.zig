@@ -1,4 +1,4 @@
-//! A column reference.
+//! Port of go-zetasqlite internal/transformer_column_ref.go.
 //!
 //! Converts ColumnRefData to an SQLExpression: the expression that computes
 //! the column if its defining scan has not projected it yet, otherwise the
@@ -9,11 +9,13 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
+/// Go ColumnRefTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ExpressionData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SQLExpression {
+    // Go: "expected column reference data, got type %v"
     if (data.type != .column) return error.UnsupportedNode;
     const column_data = data.column orelse return error.UnsupportedNode;
 

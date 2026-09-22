@@ -1,6 +1,9 @@
-//! A reference to a CTE defined earlier: select the stored position-based column mapping from the
-//! CTE under a fresh `wrs<scope id>` alias, re-aliasing each column to its ID-based output name.
-//! The fresh alias is what lets one CTE be referenced more than once in a query.
+//! Faithful port of go-zetasqlite internal/transformer_scan_with_ref.go.
+//!
+//! References a previously defined CTE by name: SELECT the stored
+//! position-based column mapping (ctx.getWithEntryMapping) from the CTE
+//! table under a fresh "wrs<scope id>" alias, re-aliasing each column with
+//! its ID-based output name.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -8,11 +11,13 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
+/// Go WithRefScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
+    // Go: "expected with ref scan data, got type %v"
     if (data.type != .with_ref) return error.UnsupportedNode;
     const with_ref_data = data.with_ref_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -29,8 +34,10 @@ pub fn transform(
     select_statement.from_clause = table_from_item;
 
     // Get stored column mappings from context for this WITH query.
+    // Go: "no entry mapping found for query %v"
     const mapping = ctx.getWithEntryMapping(with_ref_data.with_query_name) orelse
         return error.InvalidAST;
+    // Go: "incorrect number of columns found for query %v"
     if (mapping.len != with_ref_data.column_list.len) return error.ValidationFailed;
 
     // Leave each column pending as `wrsN`.`<cte column>`: the CTE reference is

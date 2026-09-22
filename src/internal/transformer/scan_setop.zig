@@ -1,10 +1,15 @@
-//! A set operation. Each operand transforms, they combine under UNION/INTERSECT/EXCEPT with an
-//! optional ALL, operand WITH clauses hoist to the top level, and the whole thing is wrapped in a
-//! subquery re-exposing the output columns under ID-based aliases.
+//! Faithful port of go-zetasqlite internal/transformer_scan_setop.go.
 //!
-//! The DISTINCT forms carry no modifier: plain UNION, INTERSECT and EXCEPT already deduplicate in
-//! SQLite, so only the *_ALL forms need `ALL`. Nothing here needs a collation or a GROUP BY to
-//! get the dedup.
+//! Transforms each operand statement, combines them with the set operation
+//! (UNION/INTERSECT/EXCEPT + optional ALL), hoists operand WITH clauses to
+//! the top level, and wraps everything in a subquery that re-exposes the set
+//! operation's output columns under ID-based aliases.
+//!
+//! DISTINCT dedup note: the extractor (coordinator_extractor.go
+//! extractSetOperationScanData) maps UNION_DISTINCT / INTERSECT_DISTINCT /
+//! EXCEPT_DISTINCT to modifier "" — plain UNION/INTERSECT/EXCEPT in SQLite
+//! already deduplicate — and only the *_ALL variants get modifier "ALL".
+//! No collation or GROUP BY trick is involved here.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -12,11 +17,13 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
+/// Go SetOperationScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
+    // Go: "expected set operation scan data, got type %v"
     if (data.type != .set_op) return error.UnsupportedNode;
     const set_op_data = data.set_operation_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -25,9 +32,11 @@ pub fn transform(
     const select_statements = try alloc.alloc(*sqlbuilder.SelectStatement, set_op_data.items.len);
     for (set_op_data.items, 0..) |stmt_data, i| {
         const fragment = try coord.transformStatement(stmt_data, ctx);
-        // An operand must be a SELECT. The fragment union stores a const pointer, and the
-        // statement was freshly built by the statement transformer, so casting mutability back
-        // is safe: nothing else holds it.
+        // Ensure it's a SELECT statement (Go type assertion:
+        // "set operation item %d is not a SELECT statement"). The fragment
+        // union stores a const pointer; the statement was freshly built by
+        // the statement transformer, so casting mutability back is safe
+        // (Go mutates the same object through its interface value).
         select_statements[i] = switch (fragment) {
             .select_statement => |stmt| @constCast(stmt),
             else => return error.UnsupportedNode,
@@ -54,8 +63,10 @@ pub fn transform(
     }
     set_statement.with_clauses = try with_clauses.toOwnedSlice(alloc);
 
-    // The set operation's output columns are introduced by renaming each branch's SELECT items
-    // in place, rather than by projecting the whole set operation through another level.
+    // Introduce the set operation's own output columns by renaming each
+    // branch's SELECT items in place, rather than by projecting the whole set
+    // operation through an extra level to rename them. Go emits both levels;
+    // GoogleSQL renames in place too (QueryExpression::SetAliasForSelectColumn).
     //
     // SQLite takes a compound SELECT's column names from its first branch, so
     // only branch 0's aliases are load-bearing; the rest are renamed to match
@@ -64,7 +75,8 @@ pub fn transform(
     for (data.column_list, 0..) |column, i| {
         const alias = try context.generateIDBasedAlias(alloc, column.name, column.id);
         for (select_statements) |branch| {
-            // A branch with fewer items than the output column list is a malformed AST.
+            // Go indexes the first item list without a bounds check and would
+            // panic; the port errors instead.
             if (i >= branch.select_list.len) return error.ValidationFailed;
             const item = branch.select_list[i];
             // A `SELECT *` arm has no alias to rename; leave it and let the

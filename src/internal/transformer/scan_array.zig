@@ -1,10 +1,14 @@
-//! UNNEST, through the `zigquery_unnest` table-valued function over the encoded array: its
-//! `value` column is the element and `key` the zero-based offset. A correlated array joins the
-//! transformed input scan against it — LEFT when is_outer, INNER with an ON condition, CROSS when
-//! there is no join expression.
+//! Faithful port of go-zetasqlite internal/transformer_scan_array.go.
 //!
-//! The virtual table reads the encoded array in place, so unnesting costs no intermediate
-//! serialization of the elements. See function/unnest_vtab.zig.
+//! UNNEST via the zigquery_unnest table-valued function over the encoded
+//! array: its `value` column is the array element and `key` the zero-based
+//! offset. Correlated arrays join the transformed input scan against it (LEFT
+//! when is_outer, INNER with an ON condition, CROSS when there is no join
+//! expression).
+//!
+//! This used to be json_each over zigquery_decode_array, which serialised
+//! every element into a JSON array text for SQLite to re-parse. See
+//! function/unnest_vtab.zig for why that had to go.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -12,11 +16,13 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
+/// Go ArrayScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
+    // Go: "expected array scan data, got type %v"
     if (data.type != .array) return error.UnsupportedNode;
     const array_data = data.array_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -46,9 +52,10 @@ pub fn transform(
         .alias = try std.fmt.allocPrint(alloc, "$array_{s}", .{ctx.fragmentContext().getID()}),
     };
 
-    // The element and key columns are registered before the join expression transforms, because
-    // that expression references columns of the table-valued function, which the resolved AST
-    // knows nothing about.
+    // The element / key columns must be made available prior to the JoinExpr
+    // being transformed since they reference columns of the table-valued
+    // function, which do not exist in ZetaSQL. (Go dereferences
+    // arrayData.ElementColumn unconditionally.)
     const element_column = array_data.element_column orelse return error.InvalidAST;
     const element_info = try alloc.create(context.ColumnInfo);
     element_info.* = .{

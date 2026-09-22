@@ -1,13 +1,4 @@
-//! TIME builtins: the constructor, ADD/SUB/DIFF/TRUNC, and the FORMAT/PARSE pair.
-//! time_functions.md
-//!
-//! A TIME is a time of day, held as the day remainder of civil micros. Constructing one from a
-//! TIMESTAMP shifts by the zone offset before that remainder is taken, since the wall clock an
-//! observer reads is what decides the hour; CURRENT_TIME shifts for the same reason, and shifting
-//! after the wrap would give the UTC time of day instead.
-//!
-//! Arithmetic units are MICROSECOND through HOUR. A calendar part has no meaning for a value
-//! with no date, so nothing here reaches date_ops.zig.
+//! Port of go-zetasqlite function_time.go bind handlers.
 
 const std = @import("std");
 const bind = @import("bind.zig");

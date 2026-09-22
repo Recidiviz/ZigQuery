@@ -27,4 +27,4 @@ COPY dist/bin/ /usr/local/bin/
 # emulator's defaults so existing fixtures need no changes.
 EXPOSE 9050 9060
 
-ENTRYPOINT ["/usr/local/bin/zigquery-server"]
+ENTRYPOINT ["/usr/local/bin/bigquery-emulator"]

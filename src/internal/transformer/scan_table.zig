@@ -1,9 +1,11 @@
-//! A table scan, the leaf of the scan transformation tree: a subquery selecting every scan output
-//! column from the SQLite table under its ID-based alias (`name__id`), so a parent scan resolves
-//! columns the same way whatever sits beneath it.
+//! Faithful port of go-zetasqlite internal/transformer_scan_table.go.
 //!
-//! Synthetic columns transform and append after the real ones. Wildcard tables are unsupported,
-//! which is the only thing that puts a column in that list, so it is empty.
+//! The TableScan is the leaf of the scan transformation tree: a subquery
+//! that SELECTs every scan output column from the SQLite table under its
+//! ID-based alias (name__id), so parent scans resolve columns uniformly.
+//! Synthetic columns (wildcard-table _TABLE_SUFFIX expressions in Go) are
+//! transformed and appended after the real columns; the wildcard catalog
+//! itself is not ported yet, so the list is empty in practice.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -38,11 +40,13 @@ fn quoteLiteral(alloc: std.mem.Allocator, s: []const u8) ![]const u8 {
     return buf.toOwnedSlice(alloc);
 }
 
+/// Go TableScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
+    // Go: "expected table scan data, got type %v"
     if (data.type != .table) return error.UnsupportedNode;
     const table_data = data.table_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
