@@ -48,11 +48,10 @@ const sqlite_cflags = [_][]const u8{
     "-DSQLITE_MAX_FUNCTION_ARG=1000",
 };
 
-// zigquery: GoogleSQL -> SQLite translator, a faithful Zig port of
-// Recidiviz/go-zetasqlite. The GoogleSQL analyzer is consumed as a Bazel-built
-// C-ABI dylib from the googlesql repo (see zig/BUILD there); SQLite is the
-// amalgamation, pinned by build.zig.zon and compiled by Zig itself, so the
-// only build inputs from outside this repo are Zig and Bazel.
+// zigquery: GoogleSQL in, SQLite out.
+// The GoogleSQL analyzer is consumed as a Bazel-built C-ABI dylib (or static object) ;
+// SQLite is the amalgamation, pinned by build.zig.zon and compiled by Zig itself,
+// so the only build inputs from outside this repo are Zig and Bazel.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const opts: std.Build.StandardOptimizeOptionOptions = .{ .preferred_optimize_mode = .fast };
