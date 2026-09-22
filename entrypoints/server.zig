@@ -1,9 +1,3 @@
-//! Port of bigquery-emulator cmd/bigquery-emulator/main.go.
-//!
-//! Differences from Go, by design:
-//! - Flags are parsed by hand rather than via jessevdk/go-flags. Same names,
-//!   same defaults, same required-ness.
-
 const std = @import("std");
 const builtin = @import("builtin");
 const bqserver = @import("bqserver");
@@ -14,6 +8,29 @@ const grpc_read_service = bqserver.grpc_read_service;
 const default_host = "0.0.0.0";
 const default_port: u16 = 9050;
 const default_grpc_port: u16 = 9060;
+
+const usage =
+    \\Usage:
+    \\  zigquery-server --project=<name> [OPTIONS]
+    \\
+    \\A local BigQuery emulator serving the REST API and the Storage Read API.
+    \\Flags take the form --name=value.
+    \\
+    \\Options:
+    \\  --project=<name>        project ID to serve (required)
+    \\  --dataset=<name>        create an empty dataset with this ID at startup
+    \\  --host=<addr>           address both servers bind (default: 0.0.0.0)
+    \\  --port=<port>           REST API port (default: 9050)
+    \\  --grpc-port=<port>      Storage Read API gRPC port; 0 picks a free port
+    \\                          (default: 9060)
+    \\  --database=<path>       SQLite file to store data in; :memory: or empty
+    \\                          keeps data in memory (default: :memory:)
+    \\  --data-from-json=<path> load datasets and tables from a JSON file at
+    \\                          startup; repeatable, files load in order
+    \\  --log-level=<level>     accepted for compatibility; currently ignored
+    \\  --log-format=<format>   accepted for compatibility; currently ignored
+    \\  -h, --help              show this help and exit
+;
 
 const Options = struct {
     project: ?[]const u8 = null,
@@ -52,7 +69,13 @@ pub fn main(init: std.process.Init) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next(); // program name
     while (args.next()) |arg| {
-        if (flagValue(arg, "--project")) |v| {
+        if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+            var stdout_buf: [2048]u8 = undefined;
+            var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);
+            try stdout_writer.interface.writeAll(usage);
+            try stdout_writer.interface.flush();
+            return;
+        } else if (flagValue(arg, "--project")) |v| {
             opts.project = v;
         } else if (flagValue(arg, "--dataset")) |v| {
             opts.dataset = v;
@@ -72,14 +95,14 @@ pub fn main(init: std.process.Init) !void {
         } else if (flagValue(arg, "--log-format")) |v| {
             opts.log_format = v;
         } else {
-            try err_out.print("unknown flag: {s}\n", .{arg});
+            try err_out.print("unknown flag: {s}\n\n" ++ usage, .{arg});
             try err_out.flush();
             std.process.exit(1);
         }
     }
 
     if (opts.project == null) {
-        try err_out.print("the required flag `--project' was not specified\n", .{});
+        try err_out.print("the required flag `--project' was not specified\n\n" ++ usage, .{});
         try err_out.flush();
         std.process.exit(1);
     }

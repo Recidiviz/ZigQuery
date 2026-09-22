@@ -1,5 +1,16 @@
-//! Port of go-zetasqlite function_date.go bind handlers plus EXTRACT and
-//! GENERATE_DATE_ARRAY. Date-part arguments arrive as decoded enum strings.
+//! DATE builtins: the constructor, ADD/SUB/DIFF/TRUNC/BUCKET, LAST_DAY, the FORMAT/PARSE pair,
+//! the UNIX_DATE conversions and GENERATE_DATE_ARRAY. date_functions.md
+//!
+//! A DATE is civil days since 1970-01-01, so it carries no time of day and no zone.
+//!
+//! EXTRACT lives here rather than with the kind it reads, because one entry point serves all
+//! four: the part decides the answer, and a DATE, DATETIME, TIME or TIMESTAMP first reduces to
+//! the civil fields the part names. A zone argument is admitted only for a TIMESTAMP, which is
+//! the only input whose civil fields depend on where they are read.
+//!
+//! Date-part arguments arrive as decoded enum strings. `nowCiv`, `nowLocal` and `currentZone`
+//! are shared with the other three families, which is why CURRENT_DATE's own zone handling sits
+//! next to them.
 
 const std = @import("std");
 const bind = @import("bind.zig");

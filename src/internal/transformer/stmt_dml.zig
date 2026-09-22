@@ -1,9 +1,8 @@
-//! Faithful port of go-zetasqlite internal/transformer_stmt_dml.go.
+//! INSERT, UPDATE and DELETE, as SQLite DML fragments.
 //!
-//! Converts INSERT / UPDATE / DELETE statement data to SQLite DML fragments.
-//! Column names are the RAW SQLite column names: the fragment context's
-//! addAvailableColumnsForDML registers the target table's columns without
-//! ID-based aliases before WHERE/SET expressions are transformed.
+//! These name the raw SQLite columns rather than the ID-based aliases a query uses: DML writes to
+//! the table itself, so the target's columns are registered without aliases before any WHERE or
+//! SET expression transforms.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -11,7 +10,6 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
-/// Go DMLStmtTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.StatementData,
@@ -21,18 +19,16 @@ pub fn transform(
         .insert => return transformInsert(coord, data, ctx),
         .update => return transformUpdate(coord, data, ctx),
         .delete => return transformDelete(coord, data, ctx),
-        // Go: "unsupported DML statement type: %v"
         else => return error.UnsupportedNode,
     }
 }
 
-/// Go transformInsert: INSERT ... VALUES vs INSERT ... SELECT.
+/// INSERT, in both forms: a VALUES list or a SELECT.
 fn transformInsert(
     coord: *coordinator.QueryCoordinator,
     data: types_data.StatementData,
     ctx: *context.TransformContext,
 ) types_data.Error!sqlbuilder.SQLFragment {
-    // Go: "expected insert statement data, got nil"
     const insert_data = data.insert orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
@@ -71,8 +67,7 @@ fn transformInsert(
 
         insert_stmt.query = select_stmt;
     } else {
-        // INSERT ... VALUES: each row renders as one comma-joined literal
-        // expression (Go joins the transformed value strings).
+        // INSERT ... VALUES: each row renders as one comma-joined literal expression.
         const rows = try alloc.alloc(sqlbuilder.SQLFragment, insert_data.values.len);
         for (insert_data.values, 0..) |row_values, i| {
             var value_strings: std.ArrayList([]const u8) = .empty;
@@ -94,13 +89,12 @@ fn transformInsert(
     return .{ .insert_statement = insert_stmt };
 }
 
-/// Go transformUpdate.
+/// UPDATE, with its optional FROM clause.
 fn transformUpdate(
     coord: *coordinator.QueryCoordinator,
     data: types_data.StatementData,
     ctx: *context.TransformContext,
 ) types_data.Error!sqlbuilder.SQLFragment {
-    // Go: "expected update statement data, got nil"
     const update_data = data.update orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 
@@ -115,8 +109,8 @@ fn transformUpdate(
     const update_stmt = try alloc.create(sqlbuilder.UpdateStatement);
     update_stmt.* = .{ .table = table };
 
-    // FROM clause (for JOINs in UPDATE) first: makes its columns available
-    // to the SetItems / WhereClause, like Go.
+    // The FROM clause transforms first, so its columns are available to the SET items and the
+    // WHERE clause.
     if (update_data.from_clause) |from_clause| {
         update_stmt.from_clause = try coord.materializeScan(
             try coord.transformScan(from_clause.*, ctx),
@@ -142,13 +136,12 @@ fn transformUpdate(
     return .{ .update_statement = update_stmt };
 }
 
-/// Go transformDelete.
+/// DELETE.
 fn transformDelete(
     coord: *coordinator.QueryCoordinator,
     data: types_data.StatementData,
     ctx: *context.TransformContext,
 ) types_data.Error!sqlbuilder.SQLFragment {
-    // Go: "expected delete statement data, got nil"
     const delete_data = data.delete orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
 

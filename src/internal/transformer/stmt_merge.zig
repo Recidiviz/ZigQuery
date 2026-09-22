@@ -27,8 +27,8 @@ const target_rowid_column = "zigquery_merge_target_rowid";
 /// Index into the WHEN clauses of the clause that acts on a target row; NULL for none.
 const clause_column = "zigquery_merge_clause";
 
-/// Go ColumnMapping: original column -> merged-table column name. Array maps
-/// keep Go's per-map grouping but with deterministic iteration order.
+/// Original column -> merged-table column name, one map per side. Array maps, so iteration order
+/// is the insertion order and the generated SQL is the same on every run.
 const ColumnMapping = struct {
     source_column_map: std.AutoArrayHashMapUnmanaged(*ColumnData, []const u8) = .empty,
     target_column_map: std.AutoArrayHashMapUnmanaged(*ColumnData, []const u8) = .empty,
@@ -39,13 +39,11 @@ const ColumnMapping = struct {
     }
 };
 
-/// Go MergeStmtTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.StatementData,
     ctx: *context.TransformContext,
 ) Error!sqlbuilder.SQLFragment {
-    // Go: "expected MERGE statement data, got %v"
     if (data.type != .merge) return error.UnsupportedNode;
     const merge_data = data.merge orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -146,19 +144,15 @@ pub fn transform(
     return .{ .compound = compound };
 }
 
-/// Go validateMergeExpression: only `zigquery_equal(col, col)` supported.
+/// The ON condition must be `zigquery_equal(col, col)`; anything else is unsupported.
 fn validateMergeExpression(merge_expr: ExpressionData) Error!void {
-    // Go: "merge expression must be a function call"
     if (merge_expr.type != .function) return error.UnsupportedNode;
     const function = merge_expr.function orelse return error.UnsupportedNode;
 
-    // Go: "currently MERGE expression is supported equal expression only"
     if (!std.mem.eql(u8, function.name, "zigquery_equal")) return error.UnsupportedNode;
 
-    // Go: "unexpected MERGE expression column num ..."
     if (function.arguments.len != 2) return error.UnsupportedNode;
 
-    // Go: "unexpected MERGE expression. expected column reference ..."
     for (function.arguments) |arg| {
         if (arg.type != .column) return error.UnsupportedNode;
     }
@@ -169,8 +163,7 @@ const MergeColumns = struct {
     target: *ColumnData,
 };
 
-/// Go extractMergeColumns: determine which side of the equality belongs to
-/// the target table and which to the source.
+/// Which side of the ON equality is the target column and which the source.
 fn extractMergeColumns(merge_data: *const types_data.MergeData) Error!MergeColumns {
     const function = merge_data.merge_expr.function orelse return error.UnsupportedNode;
     if (function.arguments.len != 2) return error.UnsupportedNode;
@@ -206,7 +199,6 @@ fn extractMergeColumns(merge_data: *const types_data.MergeData) Error!MergeColum
         }
     }
 
-    // Go: "could not determine source and target columns"
     return error.ValidationFailed;
 }
 
@@ -660,8 +652,8 @@ fn createMergedTableStatement(
     });
 }
 
-/// Go createColumnMapping: merged_source_<name>/merged_target_<name>, with
-/// numeric suffixes for uniqueness.
+/// Names the snapshot's columns merged_source_<name> and merged_target_<name>, with a numeric
+/// suffix where that would collide.
 fn createColumnMapping(
     alloc: std.mem.Allocator,
     source_columns: []const *ColumnData,
@@ -698,8 +690,7 @@ fn uniqueName(
     return name;
 }
 
-/// Go createJoinWithColumnMapping: SELECT with an explicit mapped column list
-/// over the join.
+/// A SELECT over the join, naming the mapped columns explicitly.
 fn createJoinWithColumnMapping(
     coord: *coordinator.QueryCoordinator,
     join_from_item: *sqlbuilder.FromItem,
@@ -712,7 +703,7 @@ fn createJoinWithColumnMapping(
 
     var select_list: std.ArrayList(*sqlbuilder.SelectListItem) = .empty;
 
-    // Source columns, then target columns (Go iterates the two maps).
+    // Source columns, then target columns.
     const maps = [_]*const std.AutoArrayHashMapUnmanaged(*ColumnData, []const u8){
         &mapping.source_column_map,
         &mapping.target_column_map,

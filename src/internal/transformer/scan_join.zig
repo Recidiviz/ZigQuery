@@ -1,13 +1,9 @@
-//! Faithful port of go-zetasqlite internal/transformer_scan_join.go.
+//! A join. Both scans transform, the join type maps to SQLite's INNER/LEFT/RIGHT/FULL OUTER, the
+//! ON condition transforms when there is one, and the result is wrapped in a `SELECT *` subquery.
+//! An unrecognized join kind is INNER.
 //!
-//! Transforms left and right scans, maps the ZetaSQL join type to SQLite's
-//! (INNER/LEFT/RIGHT/FULL OUTER; unknown kinds fall back to INNER, exactly
-//! like Go's convertJoinType default), transforms the ON condition when
-//! present, and wraps the join in a SELECT * subquery.
-//!
-//! Fidelity note: JoinScanData.using_columns is extracted but — like the Go
-//! transformer — never emitted; the analyzer lowers USING into a regular
-//! join condition over the resolved columns.
+//! `JoinScanData.using_columns` is extracted and never emitted: the analyzer lowers USING into an
+//! ON condition over the resolved columns, so there is nothing left to render.
 
 const std = @import("std");
 const pb = @import("../../proto/resolved_ast.zig");
@@ -16,13 +12,11 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
-/// Go JoinScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
-    // Go: "expected join scan data, got type %v"
     if (data.type != .join) return error.UnsupportedNode;
     const join_scan_data = data.join_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -55,15 +49,14 @@ pub fn transform(
     const join_from_item = try alloc.create(sqlbuilder.FromItem);
     join_from_item.* = .{ .type = .join, .join = join_clause };
 
-    // The join is a row source, not a query: leave the select slot free so the
-    // projection above it lands here instead of one level up. Go always emits
-    // `SELECT * FROM (L) JOIN (R)`.
+    // The join is a row source, not a query: leaving the select slot free lets the projection
+    // above it land here rather than one level up.
     const select_statement = try alloc.create(sqlbuilder.SelectStatement);
     select_statement.* = .{ .from_clause = join_from_item };
     return select_statement;
 }
 
-/// Go convertJoinType (default: INNER).
+/// The SQLite join type for a resolved join kind. An unrecognized kind is INNER.
 fn convertJoinType(join_type: pb.ResolvedJoinScanEnums_JoinType) sqlbuilder.JoinType {
     return switch (join_type) {
         .INNER => .inner,

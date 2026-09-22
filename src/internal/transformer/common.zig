@@ -1,9 +1,8 @@
-//! Shared transformer helpers ported from go-zetasqlite:
-//! - createOrderByItems (internal/transformer_scan_orderby.go)
-//! - NewLiteralExpressionFromGoValue (internal/sqlbuilder_sqlbuilder.go),
-//!   here taking an already-constructed Value
-//! - currentTimeFuncMap (internal/function_register.go); the extractor keeps
-//!   its own private copy for name normalization.
+//! Helpers more than one transformer needs:
+//! - `createOrderByItems`, the ORDER BY item list with its collation and null ordering
+//! - `newLiteralExpression`, a literal SQLExpression from an already-constructed Value
+//! - the CURRENT_* function set, so a deterministic time can be injected at a call site. The
+//!   extractor keeps its own copy for name normalization, which runs before any of this.
 
 const std = @import("std");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
@@ -22,9 +21,7 @@ pub const current_time_func_names = std.StaticStringMap(void).initComptime(.{
     .{"zigquery_current_timestamp"},
 });
 
-/// Go NewLiteralExpressionFromGoValue: ValueFromGoValue + LiteralFromValue +
-/// NewLiteralExpression. The zType parameter is unused in Go; callers here
-/// pass the Value directly.
+/// A Value as a literal SQLExpression, through the codec's literal rendering.
 pub fn newLiteralExpressionFromValue(
     alloc: std.mem.Allocator,
     v: value_mod.Value,
@@ -33,8 +30,8 @@ pub fn newLiteralExpressionFromValue(
     return sqlbuilder.newLiteralExpression(alloc, literal);
 }
 
-/// Go createOrderByItems (transformer_scan_orderby.go): ORDER BY items with
-/// proper NULL handling. An explicit NULLS FIRST/LAST modifier becomes an
+/// ORDER BY items, with the null ordering handled explicitly. A NULLS FIRST/LAST modifier
+/// becomes an
 /// extra `expr IS NOT NULL` term (ASC puts nulls first, DESC last); the main
 /// term is emitted for an explicit NULLS FIRST/LAST.
 pub fn createOrderByItems(
@@ -44,9 +41,8 @@ pub fn createOrderByItems(
 ) Error![]const *sqlbuilder.OrderByItem {
     var items: std.ArrayList(*sqlbuilder.OrderByItem) = .empty;
 
-    // Handle NULL ordering only when an explicit NULLS FIRST/LAST modifier
-    // is present (go-googlesql numbers ORDER_UNSPECIFIED as 1, so Go checks
-    // the two explicit modes rather than != 0).
+    // Only an explicit NULLS FIRST or NULLS LAST needs a term of its own; unspecified takes
+    // SQLite's own ordering.
     if (order_data.null_order == .NULLS_FIRST or order_data.null_order == .NULLS_LAST) {
         const bin = try alloc.create(sqlbuilder.BinaryExpression);
         bin.* = .{

@@ -1,8 +1,8 @@
-//! Faithful port of go-zetasqlite internal/transformer_scan_limit.go.
+//! LIMIT and OFFSET: the transformed input scan wrapped in `SELECT * FROM (...) LIMIT count
+//! [OFFSET offset]`.
 //!
-//! Wraps the transformed input scan in SELECT * FROM (...) LIMIT count
-//! [OFFSET offset]. Count and offset are full expressions (parameters,
-//! function calls, ...), not just literals.
+//! Count and offset transform as expressions rather than being read as literal values, because
+//! GoogleSQL admits a parameter or a function call in either position.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -11,14 +11,13 @@ const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const query_expr = @import("../sqlbuilder/query_expr.zig");
 
-/// Go LimitScanTransformer.Transform (wrapInSubqueryWithLimit +
-/// addLimitToSelect inlined; they are only called in this sequence).
+/// One subquery wrap plus the LIMIT clause. Kept as one function because the wrap is never
+/// applied without the clause.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
-    // Go: "expected limit scan data, got type %v"
     if (data.type != .limit) return error.UnsupportedNode;
     const limit_data = data.limit_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -37,7 +36,7 @@ pub fn transform(
     const limit_clause = try alloc.create(sqlbuilder.LimitClause);
     limit_clause.* = .{ .count = count_expr };
 
-    // Transform offset if present (Go: LimitScanData.Offset != zero value).
+    // OFFSET is optional.
     if (limit_data.offset) |offset_data| {
         limit_clause.offset = try coord.transformExpression(offset_data, ctx);
     }

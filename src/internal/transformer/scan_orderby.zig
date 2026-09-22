@@ -1,17 +1,8 @@
-//! Faithful port of go-zetasqlite internal/transformer_scan_orderby.go.
+//! ORDER BY. The input scan transforms, each ORDER BY expression transforms, and the SELECT list
+//! names the scan's column list explicitly rather than using `SELECT *`, which is what drops the
+//! `$orderby` columns the analyzer added for the sort from the visible output.
 //!
-//! Recursively transforms the input scan, transforms each ORDER BY
-//! expression, and selects the scan's ColumnList explicitly (rather than
-//! SELECT *) so used `$orderby` columns are dropped from the output.
-//!
-//! Fidelity note: the Go OrderByScanTransformer carries its own
-//! createOrderByItems method whose rendered output is identical to the
-//! package-level createOrderByItems already ported into common.zig (the
-//! method assigns expr.Collation up-front, but the IS NOT NULL term's Left
-//! side is the same pointer, so both orders render the same SQL; and its
-//! `!= OrderUnspecified` gate combined with a switch over only
-//! NULLS FIRST/LAST is equivalent to the explicit two-mode check). The port
-//! therefore reuses common.createOrderByItems.
+//! Item rendering, with its collation and null ordering, is `common.createOrderByItems`.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -20,13 +11,11 @@ const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const common = @import("common.zig");
 
-/// Go OrderByScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
-    // Go: "expected order by scan data, got type %v"
     if (data.type != .order_by) return error.UnsupportedNode;
     const order_by_data = data.order_by_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -36,7 +25,7 @@ pub fn transform(
         ctx,
     );
 
-    // Transform ORDER BY expressions (Go transformOrderByItems).
+    // Each ORDER BY expression transforms in turn.
     var order_by_items: std.ArrayList(*sqlbuilder.OrderByItem) = .empty;
     for (order_by_data.order_by_columns) |item_data| {
         const expr = try coord.transformExpression(item_data.expression, ctx);
