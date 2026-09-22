@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="610" viewBox="-10 -10 900 550" role="img" aria-labelledby="ttl dsc">
 <title id="ttl">Relative query time of four BigQuery emulators, zigquery = 1×</title>
 <desc id="dsc">Grouped bar chart. Relative query time over the 22-query goccy/googlesqlite corpus issued through the BigQuery REST jobs.query API, with zigquery normalised to 1x. Lower is faster. Categories: Window, Aggregate, Scalar, Mixed, TPC-H-like. Per category the bar is the geometric mean of per-query median times relative to the baseline, over only the queries every engine answered. Engines and their overall standing: recidiviz fork 2.5×, goccy upstream 9.6×, bqemulator 4.9×. Bars that are absent are queries an engine could not run, not zero times. zigquery answered 21 of 22 queries and cold-starts in 211 ms. recidiviz fork answered 21 of 22 queries and cold-starts in 372 ms. goccy upstream answered 22 of 22 queries and cold-starts in 555 ms. bqemulator answered 22 of 22 queries and cold-starts in 3.4 s.</desc>
+<rect x="-10" y="-10" width="900" height="550" fill="rgb(255,255,255)" fill-opacity="0.8"/>
 <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
 
 <text x="0" y="22" font-size="16" font-weight="600" fill="var(--fgColor-default)">Relative query time by category</text>
