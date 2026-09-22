@@ -218,10 +218,10 @@ jobs:
           [ ! -d lib ]
           echo "no lib/ shipped, as expected for a statically-linked build"
           echo "--- CLI ---"
-          ./bin/zigquery "SELECT 1 AS n, 'ok' AS s"
+          ./bin/zigquery-cli "SELECT 1 AS n, 'ok' AS s"
           echo "--- server ---"
           # --flag=value only; the parser rejects the space-separated form.
-          ./bin/bigquery-emulator --project=smoke > server.log 2>&1 &
+          ./bin/zigquery-server --project=smoke > server.log 2>&1 &
           pid=$!
           for _ in $(seq 1 60); do
             grep -q "REST server listening" server.log && break
