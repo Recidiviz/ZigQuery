@@ -7,8 +7,7 @@
 
 
 <p style="text-align: center;">
-<img type="image/svg+xml" media="(prefers-color-scheme: dark)" src="./docs/bench/emubench-dark.svg">
-<img type="image/svg+xml" media="(prefers-color-scheme: light)" src="./docs/bench/emubench-light.svg">
+<img type="image/svg+xml" src="./docs/bench/emubench.svg">
 <em>Measured on an M4 Macbook using Docker AMD64 emulation</em>
 </p>
 
@@ -52,7 +51,7 @@ Zig can link C natively, so interop becomes nearly free.
 Intentional, explicit control over memory allocation improves process stability.
 
 
-### The Query Spec Suite
+## The Query Spec Suite
 
 `testdata/specs` holds three trees, each with its own `NOTICE`:
 
