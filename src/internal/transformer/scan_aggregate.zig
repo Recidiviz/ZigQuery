@@ -1,22 +1,19 @@
-//! Faithful port of go-zetasqlite internal/transformer_scan_aggregate.go.
-//!
-//! Converts an AggregateScan into a SELECT with GROUP BY:
+//! Aggregation, as a SELECT with GROUP BY:
 //! - the input scan becomes the FROM item
-//! - aggregate computed columns transform into zigquery_<agg>(...) calls
-//!   (their trailing option markers were attached by the extractor)
-//! - each GROUP BY expression is wrapped in zigquery_group_by(...) inside
-//!   the GROUP BY clause, while the SELECT list references the *unwrapped*
-//!   expression (SQLite permits bare columns functionally dependent on the
-//!   grouped expression)
-//! - output columns get ID-based aliases
-//! HAVING never reaches this transformer: googlesql resolves it as a
-//! FilterScan above the AggregateScan (Go has no HAVING code here either).
+//! - an aggregate computed column becomes a `zigquery_<agg>(...)` call, with the option markers
+//!   the extractor attached
+//! - each GROUP BY expression is wrapped in `zigquery_group_by(...)` inside the GROUP BY clause,
+//!   while the SELECT list names the unwrapped expression, which SQLite allows for a column
+//!   functionally dependent on the grouped one
+//! - output columns take ID-based aliases
 //!
-//! GROUPING SETS/ROLLUP/CUBE (Go buildGroupingSetsQuery) is also ported:
-//! each grouping set becomes a SELECT (NULL for the non-grouped columns)
-//! UNION ALL'ed together and re-aliased. The extractor currently rejects
-//! grouping sets with error.Unimplemented, so the path is dormant until the
-//! grouping-set extraction lands.
+//! HAVING never arrives here: the analyzer resolves it as a FilterScan above the aggregation.
+//!
+//! GROUPING SETS, ROLLUP and CUBE become one SELECT per grouping set, NULL for the columns that
+//! set does not group by, UNION ALL'ed and re-aliased. query-syntax.md#group_by_rollup
+//!
+//! Aggregation is a hard materialization boundary: outputs are projected here and never left
+//! pending, or a projection above would inline an aggregate into an outer aggregate.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -28,13 +25,11 @@ const query_expr = @import("../sqlbuilder/query_expr.zig");
 const Error = types_data.Error;
 const SQLExpression = sqlbuilder.SQLExpression;
 
-/// Go AggregateScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) Error!*sqlbuilder.SelectStatement {
-    // Go: "expected aggregate scan data, got type %v"
     if (data.type != .aggregate) return error.UnsupportedNode;
     const agg_data = data.aggregate_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -95,7 +90,6 @@ pub fn transform(
             (if (grouping_call_map.contains(col.id))
                 try sqlbuilder.newLiteralExpression(alloc, "0")
             else
-                // Go: "column %s not found in aggregate or GROUP BY expressions"
                 return error.ColumnNotFound);
 
         const item = try alloc.create(sqlbuilder.SelectListItem);
@@ -139,9 +133,8 @@ pub fn transform(
     return q;
 }
 
-/// Go buildGroupingSetsQuery: ROLLUP/GROUPING SETS as a UNION ALL of one
-/// SELECT per grouping set, with NULL projected for the columns a set does
-/// not group by, ordered by the grouping columns.
+/// GROUPING SETS, ROLLUP and CUBE as a UNION ALL of one SELECT per grouping set, with NULL
+/// projected for the columns a set does not group by, ordered by the grouping columns.
 fn buildGroupingSetsQuery(
     alloc: std.mem.Allocator,
     agg_data: *const types_data.AggregateScanData,
@@ -201,7 +194,7 @@ fn buildGroupingSetsQuery(
                 const item = try alloc.create(sqlbuilder.SelectListItem);
                 item.* = .{
                     .expression = try sqlbuilder.newLiteralExpression(alloc, "NULL"),
-                    // Go uses the bare column name for the NULL slots.
+                    // A NULL slot takes the bare column name.
                     .alias = column_data[i].name,
                 };
                 select_list[i] = item;
@@ -256,7 +249,8 @@ fn buildGroupingSetsQuery(
         var order_by_items: std.ArrayList(*sqlbuilder.OrderByItem) = .empty;
         var val_it = group_by_map.valueIterator();
         while (val_it.next()) |group_by_col| {
-            // Copy the SQLExpression, as Go does.
+            // Copy the expression: the ORDER BY term must not alias the GROUP BY one, which
+            // gets `collation` assigned in place.
             const order_expr = try alloc.create(SQLExpression);
             order_expr.* = group_by_col.*.*;
 

@@ -1,23 +1,20 @@
-//! Faithful port of go-zetasqlite internal/transformer_function.go.
+//! A function call: what it takes to turn one resolved call into SQLite text.
 //!
-//! Handles:
-//! - recursive argument transformation through the coordinator
-//! - current-time literal injection for current_* functions (only when a
-//!   deterministic time was provided; Go appends nothing otherwise and the
-//!   runtime UDF falls back to time.Now() at eval time)
-//! - the special zigquery_ifnull / zigquery_if / zigquery_case_*
-//!   rewrites into CASE expression objects
-//! - window specification construction (PARTITION BY / ORDER BY / frame)
-//! - the fast-path lowering of comparison/logical functions into native SQL
-//!   operators (canOptimizeFunction/optimizeFunctionToSQL)
+//! - arguments transform recursively through the coordinator
+//! - a CURRENT_* call takes a literal instant only when one was supplied; otherwise the UDF
+//!   reads the clock when it runs
+//! - `zigquery_ifnull`, `zigquery_if` and `zigquery_case_*` become CASE expression objects
+//! - a windowed call carries its PARTITION BY, ORDER BY and frame
+//! - a comparison or logical function lowers to a native SQL operator where it can
 //!
-//! A kind lowers to a native operator when SQLite compares its stored form the
-//! way GoogleSQL compares the value. `isPrimitiveKind` carries that argument;
-//! `codec_sortable.zig` carries the proof.
+//! That last one is the only choice here with a correctness condition: a kind lowers to a native
+//! operator when SQLite compares its stored form the way GoogleSQL compares the value.
+//! `isPrimitiveKind` carries that argument; `codec_sortable.zig` carries the proof. A windowed
+//! call never lowers, because it has to stay a function call to keep its OVER clause.
 //!
-//! The Go funcMap CallSQL branch (user-defined FunctionSpec) is skipped for
-//! this milestone: no UDFs are registered yet, so the map is always empty
-//! and the default function-call rendering below matches Go's behavior.
+//! A user-defined function is inlined at its call site: the stored SQL body with each `@argname`
+//! replaced by the rendered argument. A JS or templated function has no stored body and reports
+//! error.Unimplemented.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -32,13 +29,11 @@ const Error = types_data.Error;
 const ExpressionData = types_data.ExpressionData;
 const SQLExpression = sqlbuilder.SQLExpression;
 
-/// Go FunctionCallTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ExpressionData,
     ctx: *context.TransformContext,
 ) Error!*SQLExpression {
-    // Go: "expected function call expression data, got type %v"
     if (data.type != .function) return error.UnsupportedNode;
     const function = data.function orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -51,8 +46,8 @@ pub fn transform(
     }
 
     if (common.current_time_func_names.has(function.name)) {
-        // Go: CurrentTime(ctx) != nil -> append the encoded UnixNano int64
-        // literal; nil (no WithCurrentTime) appends nothing.
+        // A supplied instant is appended as a nanosecond literal; without one the call takes
+        // no argument and the UDF reads the clock when it runs.
         if (ctx.query_ctx.current_time_unix_micros) |micros| {
             const nanos = micros * std.time.ns_per_us;
             try args.append(alloc, try common.newLiteralExpressionFromValue(
@@ -65,7 +60,6 @@ pub fn transform(
     // Handle special ZetaSQL functions that need transformation.
     if (std.mem.eql(u8, function.name, "zigquery_ifnull")) {
         // IFNULL(a, b) => CASE WHEN a IS NULL THEN b ELSE a END
-        // Go: "zigquery_ifnull requires exactly 2 arguments"
         if (args.items.len != 2) return error.InvalidAST;
         const when = try alloc.create(sqlbuilder.WhenClause);
         when.* = .{
@@ -82,7 +76,6 @@ pub fn transform(
         return sqlbuilder.newCaseExpression(alloc, whens, args.items[0]);
     } else if (std.mem.eql(u8, function.name, "zigquery_if")) {
         // IF(cond, then, else) => CASE WHEN cond THEN then ELSE else END
-        // Go: "zigquery_if requires exactly 3 arguments"
         if (args.items.len != 3) return error.InvalidAST;
         const when = try alloc.create(sqlbuilder.WhenClause);
         when.* = .{ .condition = args.items[0], .result = args.items[1] };
@@ -104,7 +97,6 @@ pub fn transform(
         return sqlbuilder.newCaseExpression(alloc, try whens.toOwnedSlice(alloc), else_expr);
     } else if (std.mem.eql(u8, function.name, "zigquery_case_with_value")) {
         // First arg is the value, then condition, result, ..., [else].
-        // Go: "zigquery_case_with_value requires at least 3 arguments"
         if (args.items.len < 3) return error.InvalidAST;
         const value_expr = args.items[0];
         const remaining = args.items[1..];
@@ -148,9 +140,8 @@ pub fn transform(
         // Transform frame clause if present.
         var frame_clause: ?*sqlbuilder.FrameClause = null;
         if (ws_data.frame_clause) |frame_data| {
-            // The sqlbuilder FrameClause requires a start bound (Go leaves a
-            // nil pointer that would crash at render time; the extractor
-            // always provides one).
+            // A frame always has a start bound, and the renderer needs one, so a frame
+            // without it is a malformed AST rather than a default.
             const start_data = frame_data.start orelse return error.InvalidAST;
 
             var start_offset: ?*SQLExpression = null;
@@ -192,10 +183,9 @@ pub fn transform(
         return optimizeFunctionToSQL(alloc, function.name, args.items);
     }
 
-    // Go funcMapFromContext: user-defined FunctionSpec -> CallSQL inlining
-    // (the stored SQL body with each @argname replaced by the rendered
-    // argument SQL, wrapped in parens). JS-language / templated functions
-    // have no stored body and surface error.Unimplemented (goja excluded).
+    // A user-defined function is inlined here: the stored SQL body with each `@argname`
+    // replaced by the rendered argument, wrapped in parens. A JS or templated function has no
+    // stored body and reports error.Unimplemented.
     if (ctx.findFunctionSpec(function.name)) |fn_spec| {
         const arg_sql = try alloc.alloc([]const u8, args.items.len);
         for (args.items, 0..) |arg_expr, i| {
@@ -217,7 +207,7 @@ pub fn transform(
     return expr;
 }
 
-/// Go: frameData.Start.Offset != (ExpressionData{}).
+/// Whether an ExpressionData carries nothing, which is how an absent frame offset arrives.
 fn isZeroExpressionData(e: ExpressionData) bool {
     return e.type == .column and
         e.parameter == null and
@@ -848,8 +838,7 @@ test "current-time literal injection" {
         try expr.toString(a),
     );
 
-    // Without an injected time no argument is appended (Go appends nothing
-    // when WithCurrentTime is unset).
+    // Without an injected time the call takes no argument.
     const ctx2 = try testCtx(a);
     const expr2 = try transform(&coord, data, ctx2);
     try testing.expectEqualStrings("zigquery_current_date()", try expr2.toString(a));

@@ -1,4 +1,14 @@
-//! Port of go-zetasqlite function_datetime.go bind handlers.
+//! DATETIME builtins: the constructor, ADD/SUB/DIFF/TRUNC/BUCKET, and the FORMAT/PARSE pair.
+//! datetime_functions.md
+//!
+//! A DATETIME is civil time with no zone, held as microseconds since 1970-01-01T00:00:00 read as
+//! a literal wall clock (see time_util.zig). Every function here is arithmetic on that one
+//! scalar, so none of them consults a zone. A zone appears only where a TIMESTAMP is the input:
+//! DATETIME(timestamp, zone) shifts the instant by that zone's offset first, because the civil
+//! fields a caller asked for are the ones an observer in that zone would read.
+//!
+//! Date-part arguments arrive as decoded enum strings, and the sub-day parts a DATETIME can
+//! shift by are MICROSECOND through HOUR; the calendar parts go through date_ops.zig.
 
 const std = @import("std");
 const bind = @import("bind.zig");

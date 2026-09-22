@@ -1,12 +1,10 @@
-//! Faithful port of go-zetasqlite internal/transformer_subquery.go.
-//!
-//! Subquery expressions by kind:
+//! A subquery expression, by kind:
 //!   SCALAR -> (SELECT * FROM (...))
 //!   ARRAY  -> (SELECT zigquery_array(<first output column>) FROM (...))
 //!   EXISTS -> EXISTS (SELECT * FROM (...))
 //!   IN     -> <expr> IN (SELECT * FROM (...))
-//! Unhandled kinds fall through to the scalar shape, exactly like the Go
-//! switch without a default case.
+//!
+//! Any other kind takes the scalar shape.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -14,13 +12,11 @@ const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 
-/// Go SubqueryTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ExpressionData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SQLExpression {
-    // Go: "expected subquery expression data, got type %v"
     if (data.type != .subquery) return error.UnsupportedNode;
     const subquery_data = data.subquery orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -40,7 +36,6 @@ pub fn transform(
     switch (subquery_data.subquery_type) {
         .SCALAR => {},
         .ARRAY => {
-            // Go: "failed to find computed column names for array subquery"
             if (subquery_data.query.column_list.len == 0) return error.InvalidAST;
             const subquery_fragment = try sqlbuilder.newSubqueryFromItem(
                 alloc,
@@ -64,19 +59,16 @@ pub fn transform(
             expression.subquery = select_statement;
         },
         .EXISTS => {
-            // EXISTS subquery: EXISTS (SELECT ...). Go builds a second
-            // SelectStarStatement here.
+            // EXISTS (SELECT ...).
             return sqlbuilder.newExistsExpression(alloc, scalar_query);
         },
         .IN => {
-            // IN subquery: expr IN (SELECT ...). Go dereferences InExpr
-            // unconditionally.
+            // expr IN (SELECT ...). The left operand is required.
             const in_expr_data = subquery_data.in_expr orelse return error.InvalidAST;
             const in_expr = try coord.transformExpression(in_expr_data.*, ctx);
             return sqlbuilder.newBinaryExpression(alloc, in_expr, "IN", expression);
         },
-        // Go switch has no default: other kinds fall through to the
-        // scalar-shaped expression.
+        // Any other kind takes the scalar shape built above.
         else => {},
     }
 

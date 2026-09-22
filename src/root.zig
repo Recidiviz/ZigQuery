@@ -1,6 +1,17 @@
-//! zigquery: GoogleSQL -> SQLite translator, a faithful port of
-//! Recidiviz/go-zetasqlite. Only the SQL driver interface is redesigned
-//! (sqlite.zig + driver.zig); the internal pipeline mirrors the Go original.
+//! zigquery: the engine. GoogleSQL in, SQLite out.
+//!
+//! A statement is analyzed by GoogleSQL's own analyzer through the C++ shim,
+//! the resolved AST is extracted into plain data (internal/coordinator),
+//! that data is transformed into SQLite SQL (internal/transformer, internal/sqlbuilder),
+//! and result cells are decoded back into GoogleSQL values (internal/value, internal/codec_*).
+//!
+//! SQLite supplies storage and the relational operators;
+//! everything BigQuery has and SQLite does not — type system, builtins, value encodings — live here
+//!
+//! sqlite.zig wraps the SQLite C API and driver.zig is the public surface over this pipeline.
+//!
+//! The server (src/server/root.zig) depends on this module and not the reverse,
+//! so `zig build test` and `zig build spec` gate the engine on its own.
 
 pub const sqlite = @import("sqlite.zig");
 pub const analyzer_ffi = @import("analyzer_ffi.zig");
