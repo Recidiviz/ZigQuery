@@ -7,9 +7,6 @@
 
 
 <img type="image/svg+xml" src="./docs/bench/emubench.svg">
-<p style="text-align: center;">
-<em>Measured on an M4 Macbook using Docker AMD64 emulation</em>
-</p>
 
 ## Usage
 ```
