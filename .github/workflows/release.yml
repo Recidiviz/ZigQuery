@@ -49,6 +49,7 @@ jobs:
 
   shim:
     name: shim (${{ matrix.platform }})
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -60,8 +61,8 @@ jobs:
             runner: runs-on=${{ github.run_id }}/runner=shim-arm64/extras=s3-cache
             runs_on_agent: true
           # RunsOn is Linux/Windows on EC2, so darwin builds on GitHub-hosted
-          # *larger runners*: zigquery-emulator-mac-build for arm64 and
-          # zigquery-emulator-mac-build-x64 for x64. Both are matched by name
+          # *larger runners*: zigquery-mac-build for arm64 and
+          # zigquery-mac-build-x64 for x64. Both are matched by name
           # alone — pairing either with the `self-hosted` label would mean the
           # job never schedules, since that label exists only on genuinely
           # self-hosted runners.
@@ -69,19 +70,72 @@ jobs:
           # Keeping a real x64 runner rather than cross-compiling means the
           # tarball is built and smoke-tested on the architecture it targets.
           - platform: darwin-arm64
-            runner: zigquery-emulator-mac-build
+            runner: zigquery-mac-build
             runs_on_agent: false
           - platform: darwin-x64
-            runner: zigquery-emulator-mac-build-x64
+            runner: zigquery-mac-build-x64
             runs_on_agent: false
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: runs-on/action@v2
         if: matrix.runs_on_agent
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/shim
+      - id: shim
+        uses: ./.github/actions/shim
         with:
           platform: ${{ matrix.platform }}
+
+      # The dylib is a *developer* build input (-Dshim-dylib), not part of the
+      # product: the shipped binaries link the static object instead, and the
+      # tarball smoke test below asserts no lib/ is present. Publishing it
+      # means a contributor can run `zig build test`/`spec` without bazel and
+      # without the 82 MB googlesql submodule.
+      #
+      # SHIM_KEY is the shim action's content-addressed key: a hash of the
+      # submodule pointer, analyzer_shim.cc, shim.lds, shim/BUILD.bazel,
+      # MODULE.bazel{,.lock}, .bazelrc and .bazelversion. The shim's ABI
+      # tracks those inputs, not the release tag, so a downloaded dylib whose
+      # key differs from the checkout's is a mismatch and has to be rebuilt —
+      # that failure surfaces as a bus error at the first FFI call, not as a
+      # link error, so the key is the only cheap way to catch it.
+      - name: package
+        id: pkg
+        run: |
+          set -euo pipefail
+          name="googlesql-shim-${{ needs.version.outputs.version }}-${{ matrix.platform }}"
+          stage=$(mktemp -d)
+          cp "${{ steps.shim.outputs.path }}" "$stage/"
+          echo "${{ steps.shim.outputs.key }}" > "$stage/SHIM_KEY"
+
+          # googlesql is Apache-2.0 and is linked into this dylib along with
+          # ICU, RE2, abseil and protobuf, so its license travels with the
+          # binary. The shim action stages it next to the outputs, which keeps
+          # it in the same cache entry; a cache saved before that step predates
+          # the file, so fall back to the pinned submodule commit rather than
+          # publishing the binary bare.
+          if [ -f dist/shim/LICENSE.googlesql ]; then
+            cp dist/shim/LICENSE.googlesql "$stage/"
+          else
+            sha=$(git rev-parse HEAD:third_party/googlesql)
+            curl -fsSL -o "$stage/LICENSE.googlesql" \
+              "https://raw.githubusercontent.com/google/googlesql/$sha/LICENSE"
+          fi
+
+          tar -C "$stage" -czf "$name.tar.gz" .
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          else
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shim-dist-${{ matrix.platform }}
+          path: |
+            ${{ steps.pkg.outputs.name }}.tar.gz
+            ${{ steps.pkg.outputs.name }}.tar.gz.sha256
+          retention-days: 7
 
   binaries:
     name: binaries (${{ matrix.platform }})
@@ -97,10 +151,10 @@ jobs:
             runner: runs-on=${{ github.run_id }}/runner=zig-arm64/extras=s3-cache
             runs_on_agent: true
           - platform: darwin-arm64
-            runner: zigquery-emulator-mac-build
+            runner: zigquery-mac-build
             runs_on_agent: false
           - platform: darwin-x64
-            runner: zigquery-emulator-mac-build-x64
+            runner: zigquery-mac-build-x64
             runs_on_agent: false
     runs-on: ${{ matrix.runner }}
     steps:
@@ -140,8 +194,8 @@ jobs:
         id: pkg
         run: |
           set -euo pipefail
-          # Named for the product and the repo (Recidiviz/zigquery-emulator).
-          name="zigquery-emulator-${{ needs.version.outputs.version }}-${{ matrix.platform }}"
+          # Named for the product and the repo (Recidiviz/zigquery).
+          name="zigquery-${{ needs.version.outputs.version }}-${{ matrix.platform }}"
           cp README.md stage/
           [ -f LICENSE ] && cp LICENSE stage/ || true
           tar -C stage -czf "$name.tar.gz" .
@@ -164,10 +218,10 @@ jobs:
           [ ! -d lib ]
           echo "no lib/ shipped, as expected for a statically-linked build"
           echo "--- CLI ---"
-          ./bin/zigquery "SELECT 1 AS n, 'ok' AS s"
+          ./bin/zigquery-cli "SELECT 1 AS n, 'ok' AS s"
           echo "--- server ---"
           # --flag=value only; the parser rejects the space-separated form.
-          ./bin/bigquery-emulator --project=smoke > server.log 2>&1 &
+          ./bin/zigquery-server --project=smoke > server.log 2>&1 &
           pid=$!
           for _ in $(seq 1 60); do
             grep -q "REST server listening" server.log && break
@@ -216,7 +270,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          tar -C dist -xzf zigquery-emulator-*.tar.gz
+          tar -C dist -xzf zigquery-*.tar.gz
           rm -f dist/README.md dist/LICENSE
           find dist -type f
 
@@ -299,7 +353,7 @@ jobs:
 
   release:
     name: github release
-    needs: [version, binaries, manifest]
+    needs: [version, shim, binaries, manifest]
     if: needs.version.outputs.publish == 'true'
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
@@ -307,6 +361,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
+          path: artifacts
+          merge-multiple: true
+      # A separate pattern, because `dist-*` is a prefix glob and would not
+      # match these. Same directory on purpose: the shim tarball then lands in
+      # SHA256SUMS and in `files: artifacts/*.tar.gz` below with no further
+      # changes.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shim-dist-*
           path: artifacts
           merge-multiple: true
       - run: |

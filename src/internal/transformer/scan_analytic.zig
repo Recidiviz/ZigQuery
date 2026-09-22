@@ -1,15 +1,11 @@
-//! Faithful port of go-zetasqlite internal/transformer_scan_analytic.go.
-//!
-//! Converts an AnalyticScan (window functions) into a SELECT:
+//! Window functions, as a SELECT:
 //! - the input scan becomes the FROM item
-//! - every window function expression is pre-transformed BEFORE the
-//!   coordinator registers this scan's output columns, so its column refs
-//!   resolve against the input scan
-//! - the SELECT list carries both passthrough columns (qualified refs) and
-//!   the computed window functions, all under ID-based aliases
-//! - a result-level ORDER BY is synthesized from each function's PARTITION
-//!   BY + ORDER BY columns so rows come out in the window evaluation order,
-//!   like Go
+//! - every window function expression transforms BEFORE the coordinator registers this scan's
+//!   output columns, so its column references resolve against the input scan
+//! - the SELECT list carries the passthrough columns as qualified references alongside the
+//!   computed window functions, all under ID-based aliases
+//! - the outer SELECT takes an ORDER BY built from each function's PARTITION BY and ORDER BY
+//!   columns, so rows come out in window evaluation order
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -21,13 +17,11 @@ const query_expr = @import("../sqlbuilder/query_expr.zig");
 const Error = types_data.Error;
 const SQLExpression = sqlbuilder.SQLExpression;
 
-/// Go AnalyticScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) Error!*sqlbuilder.SelectStatement {
-    // Go: "expected analytic scan data, got type %v"
     if (data.type != .analytic) return error.UnsupportedNode;
     const analytic_data = data.analytic_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
@@ -38,10 +32,8 @@ pub fn transform(
         ctx,
     );
 
-    // Pre-transform all window function expressions BEFORE registering
-    // output columns, so window function references resolve to input
-    // columns, not output columns. (Go keeps two maps keyed identically —
-    // functionColumns and transformedFunctions; one map serves both here.)
+    // Transform every window function expression BEFORE registering output columns, so a
+    // reference inside one resolves against the input scan's columns.
     var transformed_functions = std.AutoHashMap(i64, *SQLExpression).init(alloc);
     for (analytic_data.function_list) |func_data| {
         const col = func_data.column orelse return error.InvalidAST;
@@ -66,9 +58,8 @@ pub fn transform(
         try select_list.append(alloc, item);
     }
 
-    // Extract ORDER BY from the window specifications so results come out
-    // in PARTITION BY + ORDER BY order (Go preserves window semantics in
-    // the produced row order).
+    // The outer ORDER BY comes from the window specifications, so rows come out in the order
+    // the windows were evaluated in.
     var order_by_items: std.ArrayList(*sqlbuilder.OrderByItem) = .empty;
     for (analytic_data.function_list) |func_data| {
         if (func_data.expression.type != .function) continue;
@@ -114,24 +105,18 @@ pub fn transform(
 // ----------------------------------------------------------------------
 // Tests: golden SQL through driver.translate.
 //
-// Expected-text derivation (from the Go pipeline this ports):
-// - extractor: ROW_NUMBER() -> getZetasqliteFuncName(isWindowFunc=true) ->
-//   "zigquery_window_row_number" (windowFuncs table); its frame comes from
-//   windowFuncFixedRanges: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
-//   SUM(x) OVER (...) -> "zigquery_window_sum"; the explicit frame is
-//   extracted via getWindowBoundaryOptionFuncSQL ("ROWS", "1 PRECEDING",
-//   "CURRENT ROW"). The group's PARTITION BY / ORDER BY columns attach to
-//   the call's WindowSpec.
-// - transformer_function.go: ORDER BY renders "<expr> ASC|DESC"
-//   (createOrderByItems). Go also set Collation = "zigquery_collate" on the
-//   PARTITION BY and ORDER BY exprs; that is gone here, because the encodings
-//   are memcomparable and the collation no longer exists.
-// - sqlbuilder: FunctionCall renders "name(args) OVER (<spec>)"; the frame
-//   renders "<unit> BETWEEN <start> AND <end>", offsets as "<n> PRECEDING".
-// - transformer_scan_analytic.go additionally ORDER BYs the outer SELECT on
-//   the partition/order columns.
-// Column aliases are ID-based (name__id); IDs come from the analyzer, so
-// assertions match on the stable fragments around them.
+// Where the expected text comes from:
+// - the extractor names a window function `zigquery_window_<name>`. ROW_NUMBER() takes a fixed
+//   ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW frame; SUM(x) OVER (...) takes the frame
+//   the query wrote. The group's PARTITION BY and ORDER BY columns attach to the call.
+// - an ORDER BY term renders "<expr> ASC|DESC". No collation is attached: the encodings are
+//   memcomparable, so byte order is value order (see codec_sortable.zig).
+// - sqlbuilder renders a call as "name(args) OVER (<spec>)", a frame as
+//   "<unit> BETWEEN <start> AND <end>", and an offset as "<n> PRECEDING".
+// - the outer SELECT takes an ORDER BY on the partition and order columns.
+//
+// Column aliases are ID-based (name__id) and the IDs come from the analyzer, so these assertions
+// match on the stable fragments around them.
 // ----------------------------------------------------------------------
 
 const testing = std.testing;
@@ -156,9 +141,8 @@ test "golden SQL: ROW_NUMBER() OVER (ORDER BY x)" {
     try testing.expectEqual(@as(usize, 1), stmts.len);
     const sql = stmts[0];
 
-    // zigquery_window_row_number carries the fixed frame from Go's
-    // windowFuncFixedRanges (ROWS UNBOUNDED PRECEDING..CURRENT ROW) and the
-    // group ORDER BY.
+    // ROW_NUMBER carries its fixed ROWS UNBOUNDED PRECEDING..CURRENT ROW frame and the group
+    // ORDER BY.
     try expectContains(sql, "zigquery_window_row_number() OVER (ORDER BY `x__");
     try expectContains(
         sql,

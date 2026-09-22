@@ -1,5 +1,15 @@
-//! Port of ERROR() (Go function_bind.go bindError) and CAST (Go bindCast +
-//! function.go CAST + encoder.go CastValue, foundation type kinds only).
+//! ERROR(), CAST and the PARSE_NUMERIC/PARSE_BIGNUMERIC pair.
+//!
+//! ERROR() raises its argument as the query's message, so it reaches the caller as the failure
+//! rather than as a row.
+//!
+//! CAST arrives as `zigquery_cast(expr, '<from type JSON>', '<to type JSON>', is_safe)`: the
+//! transformer cannot lower a cast to SQLite's own, because the answer depends on GoogleSQL types
+//! SQLite has no notion of. Both type documents are applied in turn, the source type first, and
+//! `is_safe` turns a failure into NULL rather than raising. conversion_rules.md
+//!
+//! The two type documents are SQL literals, identical on every row of a scan, so the parsed form
+//! is cached against the call site; parsing them per row dominated the cost of a cast.
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -10,7 +20,7 @@ const Value = bind.Value;
 const Error = bind.Error;
 const null_v = Value.null;
 
-/// Go bindError: NULL message -> NULL, otherwise raise the message verbatim.
+/// NULL message -> NULL, otherwise raise the message verbatim.
 pub fn errorFn(alloc: std.mem.Allocator, args: []const Value) Error!Value {
     if (args[0] == .null) return null_v;
     const msg = try args[0].toString(alloc);
@@ -20,9 +30,7 @@ pub fn errorFn(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 // ---------------------------------------------------------------------
 // CAST. The transformer emits
 //   zigquery_cast(expr, '<from Type JSON>', '<to Type JSON>', bool)
-// where the Type JSON is spec.Type ({"kind": <TypeKind int>, "elementType":
-// {...}, ...}). Go decodes both types and applies CastValue twice
-// (from-type first, then to-type); safe casts turn errors into NULL.
+// where the Type JSON is spec.Type. Safe casts turn errors into NULL.
 // ---------------------------------------------------------------------
 
 pub fn cast(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -108,9 +116,9 @@ fn parseTypeJson(alloc: std.mem.Allocator, s: []const u8) !std.json.Value {
 }
 
 // ---------------------------------------------------------------------
-// PARSE_NUMERIC / PARSE_BIGNUMERIC (Go function_numeric.go + bindParseNumeric):
-// take the argument's string form and big.Rat.SetString it; a form Rat cannot
-// parse is "unexpected numeric literal: <s>".
+// PARSE_NUMERIC / PARSE_BIGNUMERIC:
+// take the argument's string form and parses it;
+// a form cannot parse raises the error "unexpected numeric literal: <s>".
 // ---------------------------------------------------------------------
 
 fn parseNumericImpl(alloc: std.mem.Allocator, args: []const Value, is_big: bool) Error!Value {
@@ -144,8 +152,8 @@ fn typeKindOf(t: std.json.Value) Error!pb.TypeKind {
 /// CAST(STRING AS BOOL): only 'true'/'false', case-insensitively; every other
 /// string is an error rather than a value. This is stricter than toBool's
 /// other callers (query-parameter coercion, driver value assignment), which
-/// also accept "1"/"0"/"t"/"f" and NULL-string-as-false the way a Go database
-/// driver's Scan would. conversion_functions.md#cast_bool.
+/// also accept "1"/"0"/"t"/"f" and NULL-string-as-false
+/// conversion_functions.md#cast_bool.
 fn boolForCast(v: Value) Error!bool {
     return switch (v) {
         .string => |s| strictBool(s),
@@ -172,7 +180,7 @@ fn numericForCast(alloc: std.mem.Allocator, v: Value, is_bignumeric: bool) Error
     };
 }
 
-/// Go encoder.go CastValue, foundation kinds. NULL input stays NULL.
+/// CastValue, foundation kinds. NULL input stays NULL.
 fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value {
     if (v == .null) return null_v;
     const kind = try typeKindOf(t);
@@ -183,15 +191,10 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
         .TYPE_BOOL => return Value{ .bool = try boolForCast(v) },
         .TYPE_FLOAT, .TYPE_DOUBLE => return Value{ .float = try v.toFloat64() },
         .TYPE_STRING, .TYPE_ENUM => {
-            // Go formats date/time kinds with dedicated layouts; for the
-            // foundation set only DATE exists and its ToString already
-            // yields the "2006-01-02" layout.
             return Value{ .string = try v.toString(alloc) };
         },
         .TYPE_BYTES => return Value{ .bytes = try v.toBytes(alloc) },
-        // Go CastValue: JsonValue(v.ToJSON()).
         .TYPE_JSON => return Value{ .json = try v.toJson(alloc) },
-        // Go CastValue: DATE(v.ToTime()) — the civil date of the instant.
         .TYPE_DATE => switch (v) {
             .date => return v,
             .string => |s| return Value{ .date = try value_mod.parseDateDays(s) },
@@ -201,23 +204,18 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
             },
             else => return bind.fail("CAST: unimplemented cast to DATE", .{}, error.Unimplemented),
         },
-        // Go CastValue: TIMESTAMP/DATETIME/TIME(v.ToTime()). DATETIME shares
-        // the unix-micros scale; TIME is the time-of-day remainder.
         .TYPE_TIMESTAMP => return Value{ .timestamp = try value_mod.toUnixMicros(v) },
         .TYPE_DATETIME => return Value{ .datetime = try value_mod.toUnixMicros(v) },
         .TYPE_TIME => {
             const micros = try value_mod.toUnixMicros(v);
             return Value{ .time = @mod(micros, value_mod.day_micros) };
         },
-        // Go CastValue: parseInterval(v.ToString()).
         .TYPE_INTERVAL => switch (v) {
             .interval => return v,
             else => return Value{
                 .interval = try value_mod.parseIntervalValue(try v.toString(alloc)),
             },
         },
-        // Go castValueInternal: NumericValue{Rat: v.ToRat()}, isBigNumeric per
-        // the target kind (a numeric input is rewrapped under the new kind).
         .TYPE_NUMERIC => return numericForCast(alloc, v, false),
         .TYPE_BIGNUMERIC => return numericForCast(alloc, v, true),
         .TYPE_ARRAY => {
@@ -232,10 +230,6 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
             }
             return value_mod.arrayValue(alloc, out);
         },
-        // Go castValueInternal: an ARRAY input flattens into one struct by
-        // concatenating each element's fields; anything else is read as a
-        // struct and its fields are cast field-by-field, in the target type's
-        // field order. A field the source does not reach becomes NULL.
         .TYPE_STRUCT => return castToStruct(alloc, t, v),
         else => return bind.fail(
             "CAST: unimplemented cast to type kind {d}",
@@ -245,10 +239,13 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
     }
 }
 
-/// Go castValueInternal's TypeKindTypeStruct branch.
+
+/// An ARRAY input flattens into one struct by concatenating each element's fields;
+/// anything else is read as a struct and its fields are cast field-by-field,
+/// in the target type's field order.
+//
+/// A field the source does not reach becomes NULL.
 fn castToStruct(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value {
-    // An ARRAY of structs collapses into a single struct holding every
-    // element's fields end to end — no per-field cast, exactly as Go does.
     if (v == .array) {
         const arr = try v.toArray();
         var keys: std.ArrayList([]const u8) = .empty;
@@ -282,11 +279,8 @@ fn castToStruct(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Val
         }
         try keys.append(alloc, key);
         // Field-by-position: the target type supplies the names, the source
-        // supplies the values, and the two need not agree. BigQuery says
-        // `CAST(STRUCT(1 AS x) AS STRUCT<y INT64>).y` is 1 — a rename, not a
-        // lookup. Go matches by name (its StructValue is a map), which turns
-        // every renaming cast, and every cast off an anonymous field, into
-        // NULL. A source too short still leaves the tail NULL, as Go does.
+        // supplies the values, and the two need not agree.
+        // BigQuery says `CAST(STRUCT(1 AS x) AS STRUCT<y INT64>).y` is 1.
         if (i >= src.values.len) {
             try values.append(alloc, null_v);
             continue;

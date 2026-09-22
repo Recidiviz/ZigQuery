@@ -1,16 +1,12 @@
-//! Public driver surface — the redesigned counterpart of go-zetasqlite's
-//! database/sql layer (driver.go / conn.go / stmt.go / rows.go).
+//! The engine's public surface: open a database, run GoogleSQL, read cells back.
 //!
-//! Mirrors the Go flow: Analyzer.Analyze splits the input into statements,
-//! each QueryStmt is transformed through the coordinator into a SQLite
-//! SELECT, executed via sqlite3, and result cells are decoded back through
-//! DecodeValue + castValueInternal semantics (rows.go assignValue /
-//! assignInterfaceValue) using the statement's output column types.
+//! One call carries a whole script. The analyzer splits the input into statements, each query
+//! statement is transformed through the coordinator into a SQLite SELECT, executed, and its
+//! result cells decoded through the statement's output column types.
 //!
-//! Like Go's ZetaSQLiteConn.QueryContext, a multi-statement script runs all
-//! statements and returns Rows over the LAST one (earlier SELECTs are
-//! prepared but their rows are never iterated, matching database/sql's lazy
-//! semantics); ExecContext runs every statement to completion.
+//! `query` returns rows over the LAST statement of a script. Earlier queries are prepared and
+//! their rows never iterated, so a script that ends in a SELECT reads as that SELECT; `exec`
+//! runs every statement to completion instead.
 //!
 //! API shape:
 //!   var db = try Db.open(gpa, ":memory:");
@@ -62,8 +58,7 @@ pub const Error = error{
     OutOfMemory,
 } || sqlite.Error;
 
-/// A decoded result cell, mirroring what Go's Rows.Scan produces per column
-/// (scalars, or nested arrays / structs rebuilt from encoded values).
+/// A decoded result cell: a scalar, or a nested array or struct rebuilt from encoded values.
 pub const Cell = union(enum) {
     null,
     int: i64,
@@ -71,16 +66,13 @@ pub const Cell = union(enum) {
     bool: bool,
     string: []const u8,
     bytes: []const u8,
-    /// A raw JSON payload, for binding to a JSON column. Never produced when
-    /// reading: Go's rows.go hands a JSON column back as its ToApiString, i.e.
-    /// a plain string cell, so `cellFromValue` still yields `.string`. It
-    /// exists because CastValue(JSON) on a `.string` calls ToJSON, which
-    /// *quotes* the string — Go avoids that by unmarshalling before it binds
-    /// (contentdata/repository.go:510).
+    /// A raw JSON payload, for binding to a JSON column. Never produced when reading: a JSON
+    /// column reads back as its API string, so `cellFromValue` yields `.string`. This variant
+    /// exists because casting a `.string` to JSON quotes it, which a caller binding a JSON
+    /// document does not want.
     json: []const u8,
-    date: []const u8, // civil date rendered as YYYY-MM-DD, like Go returns
-    // Date/time kinds render as their Go ToApiString forms (what rows.go
-    // hands back through database/sql): timestamp "sec.rem", datetime
+    date: []const u8, // civil date rendered as YYYY-MM-DD
+    // Date/time kinds render as their API string forms: timestamp "sec.rem", datetime
     // "YYYY-MM-DDTHH:MM:SS.ffffff", time "HH:MM:SS.ffffff", interval canonical.
     timestamp: []const u8,
     datetime: []const u8,
@@ -114,11 +106,12 @@ pub const Param = struct {
     type_text: ?[]const u8 = null,
 };
 
-/// Parameter placeholder style of a query script (Go getParameterMode).
+/// Parameter placeholder style of a query script: `@name`/`:name`, or positional `?`.
 pub const ParamMode = enum { named, positional };
 
 pub const QueryOptions = struct {
-    /// Deterministic CURRENT_* time injection (go-zetasqlite WithCurrentTime).
+    /// Deterministic CURRENT_* time injection: every CURRENT_* call in the script reads this
+    /// instant instead of the clock.
     current_time_unix_micros: ?i64 = null,
     /// How much of the catalog the analyzer is given.
     ///
@@ -217,13 +210,9 @@ pub const AllocStats = struct {
     }
 };
 
-/// One output column of a QueryStmt (Go ColumnSpec: name + spec Type).
+/// One output column of a query statement: its name and its resolved type.
 ///
-/// Public so servers can derive a result schema. Go reaches the same data
-/// through Rows.ColumnTypeDatabaseTypeName, which is literally
-/// `json.Marshal(internal.Type)` (go-zetasqlite internal/rows.go:38-41) that
-/// the caller immediately unmarshals again (column.go:11); handing back the
-/// `*spec.Type` skips that round trip.
+/// Public so a server can derive a result schema.
 pub const OutputColumn = struct {
     name: []const u8,
     type: *spec.Type,
@@ -350,21 +339,16 @@ pub const Db = struct {
     last_error_param: ?i32 = null,
     /// Parameter mode of the currently-running script (set per runStatements).
     param_mode: ParamMode = .named,
-    /// Collects the canonical names of temp tables/views created during the
-    /// current script so they can be dropped once the query completes (Go's
-    /// StmtAction.Cleanup). Arena-backed by runStatements' arena.
+    /// Collects the canonical names of temp tables/views created during the current script so
+    /// they can be dropped once the query completes. Arena-backed by runStatements' arena.
     temp_collector: ?*std.ArrayList([]const u8) = null,
-    /// Same for CREATE TEMP FUNCTION names (Go
-    /// CreateFunctionStmtAction.Cleanup deletes the temp spec after the
-    /// query). Dropped when runStatements returns: UDF calls are inlined at
-    /// transform time, so nothing outlives the script.
+    /// Same for CREATE TEMP FUNCTION names, dropped when runStatements returns: UDF calls are
+    /// inlined at transform time, so nothing outlives the script.
     temp_func_collector: ?*std.ArrayList([]const u8) = null,
     /// Parameter occurrences of the most recently transformed statement
-    /// (identifier + resolved type). Arena-backed; used by bindParams to
-    /// cast values (Go EncodeNamedValues with getParamsFromNode results).
+    /// (identifier + resolved type). Arena-backed; used by bindParams to cast values.
     stmt_params: []const context_mod.CollectedParam = &.{},
-    /// Prepared-statement cache for the raw SQLite path, keyed by SQL text
-    /// (Go's per-connection ManagedConnection.stmts). gpa-owned keys.
+    /// Prepared-statement cache for the raw SQLite path, keyed by SQL text. gpa-owned keys.
     raw_cache: std.StringHashMapUnmanaged(*RawStmt) = .empty,
     /// Persistent analyzer catalog. Without it, every statement re-parses the
     /// whole catalog JSON and rebuilds the builtin function set in C++, which
@@ -385,10 +369,8 @@ pub const Db = struct {
         return openWith(gpa, path, .{});
     }
 
-    /// open() with connection-level SQLite configuration. Go applies the
-    /// equivalent through the DSN (`&_pragma=journal_mode(WAL)` etc. in
-    /// bigquery-emulator server.go); the C API has no DSN pragma syntax, so
-    /// they run as statements instead.
+    /// open() with connection-level SQLite configuration. The C API has no DSN pragma syntax,
+    /// so each pragma runs as a statement.
     ///
     /// Pragmas are applied before UDF registration and the catalog sync
     /// because journal_mode=WAL must precede the first write to the file.
@@ -412,9 +394,7 @@ pub const Db = struct {
             };
         }
         try db.checkStorageFormat();
-        // zigquery_* UDFs and the unnest vtab (Go: RegisterFunctions in
-        // driver init; Go also registered a collation, which this no longer
-        // needs — see codec_sortable.zig).
+        // zigquery_* UDFs and the unnest vtab.
         db.udf_state = function.registerAll(&db.sqlite_db, gpa) catch
             return error.ExecFailed;
         errdefer db.udf_state.deinit();
@@ -559,8 +539,8 @@ pub const Db = struct {
         db.last_error = null;
     }
 
-    /// Records the current SQLite error in modernc's errstrForDB shape, which
-    /// is what Go's driver hands back (e.g. "SQL logic error: <msg> (1)").
+    /// Records the current SQLite error as "<code text>: <msg> (<code>)", e.g.
+    /// "SQL logic error: <msg> (1)". See sqlite.zig's errorText.
     fn setLastSqliteError(db: *Db) void {
         const text = db.sqlite_db.errorText(db.gpa) catch {
             db.setLastError(db.sqlite_db.errmsg());
@@ -570,8 +550,7 @@ pub const Db = struct {
         db.setLastError(text);
     }
 
-    /// Mirrors Go QueryContext: run the statement pipeline, returning Rows
-    /// over the last statement.
+    /// Runs the statement pipeline, returning Rows over the last statement.
     pub fn query(db: *Db, sql: []const u8, args: []const Param, opts: QueryOptions) Error!Rows {
         var arena_state = std.heap.ArenaAllocator.init(db.gpa);
         errdefer arena_state.deinit();
@@ -593,18 +572,16 @@ pub const Db = struct {
             .outcome = prepared.outcome,
         };
 
-        // modernc.org/sqlite's (*stmt).Query steps once before handing back
-        // rows, so a failure on the FIRST row surfaces from Query rather than
-        // from iteration (go-zetasqlite then wraps it "failed to query %s").
-        // Later rows fail during iteration instead. Reproduce that timing by
-        // taking the first step here and letting next() consume its result.
+        // The first step happens here, so a failure on the FIRST row surfaces from query()
+        // itself and a failure on a later row surfaces from iteration. next() consumes the
+        // result of this step rather than stepping again.
         if (rows.stmt) |*stmt| {
             rows.first_has_row = stmt.step() catch {
                 db.setLastSqliteError();
                 stmt.finalize();
                 rows.stmt = null;
-                // Go's action Cleanup still runs for a failed query; the
-                // arena backing these names is released by the errdefer.
+                // Temp tables are dropped even for a failed query; the arena backing these
+                // names is released by the errdefer.
                 if (rows.temp_tables.len > 0) db.dropTempTables(arena, rows.temp_tables);
                 return error.ExecFailed;
             };
@@ -613,27 +590,22 @@ pub const Db = struct {
         return rows;
     }
 
-    /// Mirrors Go ExecContext: run every statement to completion.
+    /// Runs every statement of the script to completion, keeping no rows.
     pub fn exec(db: *Db, sql: []const u8, args: []const Param, opts: QueryOptions) Error!void {
         var arena_state = std.heap.ArenaAllocator.init(db.gpa);
         defer arena_state.deinit();
         _ = try db.runStatements(arena_state.allocator(), sql, args, opts, .exec);
     }
 
-    /// Analyzes, transforms and SQLite-prepares one statement for reuse across
-    /// many bind/exec cycles — Go's conn.PrepareContext, which is how
-    /// bigquery-emulator's contentdata.AddTableData writes a whole batch
-    /// through a single prepare. Without it every row would pay its own
-    /// analyze + transform.
+    /// Analyzes, transforms and SQLite-prepares one statement for reuse across many bind/exec
+    /// cycles, so a batch insert pays one analyze and one transform rather than one per row.
     ///
-    /// One statement only, and only the kinds that lower to one reusable
-    /// SQLite statement: a query, or INSERT / UPDATE / DELETE. DDL, MERGE and
-    /// TRUNCATE *are* their own execution — they mutate the catalog inline and
-    /// leave nothing to hold on to — so they report error.Unimplemented.
+    /// One statement only, and only the kinds that lower to one reusable SQLite statement:
+    /// a query, or INSERT / UPDATE / DELETE. DDL, MERGE and TRUNCATE *are* their own execution -
+    /// they mutate the catalog inline - so they report error.Unimplemented.
     ///
-    /// The handle embeds the schema resolved at prepare time, so it stays
-    /// valid only while the catalog objects it referenced are unchanged. Go's
-    /// prepared statements carry the same caveat.
+    /// The handle embeds the schema resolved at prepare time, so it stays valid only while the
+    /// catalog objects it referenced are unchanged.
     pub fn prepare(db: *Db, sql: []const u8, opts: QueryOptions) Error!PreparedStmt {
         var arena_state = std.heap.ArenaAllocator.init(db.gpa);
         errdefer arena_state.deinit();
@@ -1060,19 +1032,17 @@ pub const Db = struct {
         return g.catalog.findTableSpec(name) != null;
     }
 
-    // ---- Raw SQLite passthrough (Go zetasqlite.WithQueryFormattingDisabled) ----
+    // ---- Raw SQLite passthrough ----
     //
-    // bigquery-emulator's metadata tables (projects/datasets/tables/jobs/...)
-    // are plain SQLite, not GoogleSQL: Go prepares all 22 of them under
-    // WithQueryFormattingDisabled (internal/connection/manager.go
-    // PrepareQueries). These entry points are that path — no analyzer, no
-    // transform, no catalog. They are invisible to the GoogleSQL catalog, so
-    // a table created here cannot be reached by query()/exec().
+    // The server's own bookkeeping tables (projects, datasets, tables, jobs, ...) are plain
+    // SQLite rather than GoogleSQL, so they need no analyzer, no transform and no catalog.
+    // These entry points are that path.
     //
-    // Statements are cached per Db, which is what Go's per-connection
-    // `stmts map[string]*sql.Stmt` achieves. Go needs txConnMap/txMu to route
-    // a *sql.Tx back to the connection owning its prepared statement; here a
-    // statement never leaves its Db, so no such bookkeeping exists.
+    // They are invisible to the GoogleSQL catalog.
+    // A table created here cannot be reached by query() or exec().
+    //
+    // Statements are cached per Db, and a statement never leaves the Db that prepared it, so
+    // nothing has to route one back to its owning connection.
 
     /// Bindable value for the raw path. Distinct from Cell: no GoogleSQL
     /// types, since nothing here is analyzed or encoded.
@@ -1084,8 +1054,7 @@ pub const Db = struct {
         blob: []const u8,
     };
 
-    /// `name` binds by `@name`/`:name` (Go's sql.Named); null binds
-    /// positionally in argument order.
+    /// `name` binds by `@name`/`:name`; null binds positionally in argument order.
     pub const RawArg = struct {
         name: ?[:0]const u8 = null,
         value: RawValue,
@@ -1371,10 +1340,9 @@ pub const Db = struct {
         opts: QueryOptions,
         mode: Mode,
     ) Error!?Prepared {
-        // Go parseScript flattens BEGIN ... END script blocks before analysis
-        // (flattenBeginEndBlock); AnalyzeNextStatement can't parse script
-        // blocks, so blank out the block keywords at the text level (lengths
-        // preserved so analyzer error positions stay accurate).
+        // The analyzer takes one statement at a time and has no script parser, so BEGIN ... END
+        // block keywords are blanked out at the text level. Lengths are preserved so analyzer
+        // error positions stay accurate.
         const flattened_sql = try flattenBeginEndBlocks(arena, sql);
         const sqlz = try arena.dupeSentinel(u8, flattened_sql, 0);
         var offset: usize = 0;
@@ -1392,8 +1360,8 @@ pub const Db = struct {
         // stays valid exactly as long as the rows do; Rows.deinit clears it.
         try db.publishInfoSchemaSnapshot(arena);
 
-        // Go getParameterMode: scan the (literal-stripped) query for `?`
-        // (positional) vs `@name` (named); mixing is rejected.
+        // Scan the literal-stripped query for `?` (positional) or `@name` (named); mixing the
+        // two is rejected.
         db.param_mode = parameterMode(arena, sql) catch {
             db.setLastError("named parameter and positional parameter cannot be used together");
             return error.AnalyzeFailed;
@@ -1403,9 +1371,8 @@ pub const Db = struct {
             .named => "{}",
         };
 
-        // Positional parameters are consumed statement-by-statement across a
-        // script (Go slices args by each statement's parameter count); named
-        // parameters apply to every statement.
+        // Positional parameters are consumed statement by statement across a script, each one
+        // taking as many as it has placeholders; named parameters apply to every statement.
         var cur_args = args;
 
         // Named declarations are constant across the script, so build them
@@ -1416,9 +1383,8 @@ pub const Db = struct {
         else
             null;
 
-        // Collect temp tables/views created during this script; dropped when
-        // the query's Rows is deinited (query mode) or right after the last
-        // statement (exec mode), mirroring Go's per-action Cleanup.
+        // Collect temp tables/views created during this script; dropped when the query's Rows
+        // is deinitialized (query mode) or right after the last statement (exec mode).
         var temp_tables: std.ArrayList([]const u8) = .empty;
         db.temp_collector = &temp_tables;
         defer db.temp_collector = null;
@@ -1438,10 +1404,9 @@ pub const Db = struct {
         var outcome: StatementOutcome = .{};
         var statement_count: u32 = 0;
 
-        // No catalog re-read here (Go re-syncs from SQLite before every
-        // statement). Every write goes through the in-process catalog, so it
-        // is already current; re-reading only reintroduced the timestamp
-        // cursor's lost-commit window and a SQLite round trip per statement.
+        // The catalog is not re-read per statement. Every write goes through the in-process
+        // catalog, so it is current by construction, and a re-read would cost a SQLite round
+        // trip per statement and reopen the timestamp cursor's lost-commit window.
         while (true) {
             const decls = switch (db.param_mode) {
                 .named => named_decls,
@@ -1460,8 +1425,7 @@ pub const Db = struct {
             offset = analyzed.resume_offset;
             const last = analyzed.at_end;
 
-            // Positional parameters consumed by this statement (Go
-            // action.Args() count); used to advance cur_args below.
+            // Positional parameters this statement consumes; used to advance cur_args below.
             var consumed: usize = 0;
 
             // Parameter types are re-collected per statement by
@@ -1586,9 +1550,8 @@ pub const Db = struct {
         }
     }
 
-    /// Drops the given temp tables/views and removes their catalog specs
-    /// (Go CreateTableStmtAction.Cleanup). Best-effort: errors are ignored
-    /// since cleanup runs after the query has already produced its result.
+    /// Drops the given temp tables/views and removes their catalog specs. Best-effort: errors
+    /// are ignored since cleanup runs after the query has already produced its result.
     fn dropTempTables(db: *Db, arena: std.mem.Allocator, names: []const []const u8) void {
         for (names) |name| {
             const drop_sql = std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name}) catch continue;
@@ -1597,9 +1560,8 @@ pub const Db = struct {
         }
     }
 
-    /// Prepares `sql_text`, binds `args`, and steps it to completion
-    /// (Go conn.ExecContext used by every non-query action). Returns the
-    /// number of positional args consumed (0 in named mode).
+    /// Prepares `sql_text`, binds `args`, and steps it to completion. Returns the number of
+    /// positional args consumed (0 in named mode).
     fn execSql(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1660,8 +1622,7 @@ pub const Db = struct {
         return error.ExecFailed;
     }
 
-    /// Go newStmtAction's CREATE dispatch: table / table-as-select / view /
-    /// function.
+    /// CREATE dispatch: table, table-as-select, view or function.
     fn execCreateStatement(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1702,10 +1663,8 @@ pub const Db = struct {
         }
     }
 
-    /// Go CreateFunctionStmtAction: build the FunctionSpec (spec.go
-    /// newFunctionSpec) and register it with the catalog (persisted unless
-    /// TEMP). No SQLite DDL is emitted — calls are inlined at transform
-    /// time via FunctionSpec.CallSQL.
+    /// Builds the FunctionSpec and registers it with the catalog, persisted unless TEMP. No
+    /// SQLite DDL is emitted: calls are inlined at transform time by FunctionSpec.callSql.
     fn execCreateFunction(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1731,11 +1690,9 @@ pub const Db = struct {
         }
     }
 
-    /// Go spec.go newFunctionSpec: signature arguments (name + type or
-    /// templated kind), language/code, return type, and — for SQL bodies —
-    /// the function expression transformed to SQLite text with the
-    /// arguments left as "@name" parameter references (extractArgumentRefData
-    /// renders a ResolvedArgumentRef as "@name", which CallSQL substitutes).
+    /// Signature arguments (name plus type, or templated kind), language, code and return
+    /// type. A SQL body is transformed to SQLite text with the arguments left as `@name`
+    /// parameter references, which callSql substitutes at each call site.
     fn newFunctionSpec(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1764,15 +1721,13 @@ pub const Db = struct {
         const language = cf.language orelse "";
         const code = cf.code orelse "";
 
-        // The SQL body: transform the resolved function expression on its
-        // own (Go newFunctionSpec: ExtractExpressionData + TransformExpression
-        // against a fresh transform context).
+        // The SQL body: the resolved function expression transformed on its own, against a
+        // fresh transform context.
         var body: ?[]const u8 = null;
         if (cf.function_expression) |expr| {
-            // JS functions carry no resolved expression; a SQL function
-            // always does. Templated SQL functions (untyped arguments) also
-            // resolve to null here and stay unimplemented, like Go's
-            // analyzeTemplatedFunctionWithRuntimeArgument path (excluded).
+            // A JS function carries no resolved expression; a SQL function always does. A
+            // templated SQL function (untyped arguments) also resolves to null here and is
+            // unimplemented.
             body = try transformFunctionBody(db, arena, expr, opts);
         }
 
@@ -1843,8 +1798,7 @@ pub const Db = struct {
         return sql_expr.toString(arena) catch return error.OutOfMemory;
     }
 
-    /// Go CreateTableStmtAction for a plain CREATE TABLE (spec built by
-    /// newTableSpec; exec runs spec.SQLiteSchema).
+    /// A plain CREATE TABLE: build the table spec, then run the SQLite schema it renders.
     fn execCreateTable(
         db: *Db,
         arena: std.mem.Allocator,
@@ -1947,15 +1901,12 @@ pub const Db = struct {
         const from_query = table_spec.query.len != 0;
         const through_declared = from_query and table_spec.hasNotNull();
 
-        // CREATE OR REPLACE ... AS <query> builds into a scratch table and
-        // swaps, rather than dropping first. WRITE_TRUNCATE arrives here, and
-        // a truncate whose query reads its own destination is ordinary — the
-        // dataflow metric pruning job is `SELECT ... FROM t` replacing `t`.
-        // Dropping first loses the rows the query is about to read, and left
-        // the spec registered against a table SQLite no longer had, so later
-        // reads analyzed fine and then failed at prepare with "no such table".
-        // Go has no such window: it runs the query to completion first and
-        // only then truncates and inserts.
+        // CREATE OR REPLACE ... AS <query> builds into a scratch table and swaps it in, rather
+        // than dropping the destination first. WRITE_TRUNCATE arrives here, and a truncate whose
+        // query reads its own destination is ordinary — the dataflow metric pruning job is
+        // `SELECT ... FROM t` replacing `t`. Dropping first would lose the rows the query is
+        // about to read and would leave the spec registered against a table SQLite no longer
+        // has, so a later read analyzes and then fails at prepare with "no such table".
         if (replacing and from_query) {
             const scratch = try std.fmt.allocPrint(arena, "{s}__zigquery_replace", .{table_name});
             const drop_scratch = try std.fmt.allocPrint(
@@ -2025,21 +1976,17 @@ pub const Db = struct {
         // is the right no-op in that case.
         try db.execPkIndex(arena, table_spec);
 
-        // Temp tables are dropped once the query completes (Go Cleanup);
-        // record them so a later statement/query can re-create the name.
+        // Temp tables are dropped once the query completes; record them so a later statement or
+        // query can re-create the name.
         if (table_spec.is_temp) {
             if (db.temp_collector) |collector| {
                 collector.append(arena, table_name) catch {};
             }
         }
 
-        // IF NOT EXISTS on an already-registered table keeps the existing
-        // spec. Go's exec unconditionally upserts the JSON spec, but its
-        // live engine catalog keeps the first registration
-        // (AddOwnedTableIfNotPresent), so the old schema stays visible;
-        // this port re-renders the analyzer catalog from the spec map per
-        // statement, so skipping the upsert reproduces Go's observable
-        // (and BigQuery's actual) no-op semantics.
+        // IF NOT EXISTS on an already-registered table keeps the existing spec, so the first
+        // registration's schema stays visible. The analyzer catalog is re-rendered from the spec
+        // map per statement, so not upserting here is what makes the statement a no-op.
         if (table_spec.create_mode == spec.create_mode_create_if_not_exists and
             db.tableSpecExists(table_name))
         {
@@ -2050,8 +1997,7 @@ pub const Db = struct {
         return consumed;
     }
 
-    /// Go CreateViewStmtAction: exec the CREATE VIEW fragment SQL and
-    /// register a view spec (newTableAsViewSpec) whose Query is the inner
+    /// Execs the CREATE VIEW fragment SQL and registers a view spec whose query is the inner
     /// SELECT text.
     fn execCreateView(
         db: *Db,
@@ -2070,7 +2016,7 @@ pub const Db = struct {
         const base = cv.parent orelse return error.TransformFailed;
         const create = base.parent orelse return error.TransformFailed;
 
-        // Go newTableAsViewSpec: columns from the output column list.
+        // A view's columns come from the output column list.
         const columns = try arena.alloc(*spec.ColumnSpec, base.output_column_list.len);
         for (base.output_column_list, 0..) |oc, i| {
             const column = oc.column orelse return error.TransformFailed;
@@ -2129,8 +2075,7 @@ pub const Db = struct {
             return db.failCatalog(err);
     }
 
-    /// Go DropStmtAction: exec the formatted DROP for tables/views, then
-    /// delete the catalog spec. DROP FUNCTION belongs to the UDF milestone.
+    /// Execs the formatted DROP for a table or view, then deletes the catalog spec.
     fn execDropStatement(
         db: *Db,
         arena: std.mem.Allocator,
@@ -2141,8 +2086,7 @@ pub const Db = struct {
     ) Error!usize {
         const object_type = drop_stmt.object_type orelse "";
         if (!std.mem.eql(u8, object_type, "TABLE") and !std.mem.eql(u8, object_type, "VIEW")) {
-            // Go: "currently unsupported DROP %s statement" (FUNCTION is a
-            // separate node kind handled by the UDF milestone).
+            // DROP FUNCTION arrives as its own node kind, not through here.
             return error.Unimplemented;
         }
         _ = node;
@@ -2171,8 +2115,7 @@ pub const Db = struct {
         return consumed;
     }
 
-    /// Go newTruncateStmtAction + TruncateStmtAction.exec:
-    /// DELETE FROM `<canonical table name>`.
+    /// TRUNCATE TABLE lowers to DELETE FROM `<canonical table name>`.
     fn execTruncateStatement(
         db: *Db,
         arena: std.mem.Allocator,
@@ -2186,10 +2129,9 @@ pub const Db = struct {
         _ = try db.execSql(arena, sql_text, &.{});
     }
 
-    /// Binds `args` to the prepared statement's placeholders (Go
-    /// getArgsFromParams + database/sql binding). Returns the number of
-    /// positional args this statement consumed (0 in named mode, where the
-    /// full arg set applies to every statement of the script).
+    /// Binds `args` to the prepared statement's placeholders. Returns the number of positional
+    /// args this statement consumed: 0 in named mode, where the full arg set applies to every
+    /// statement of the script.
     fn bindParams(
         db: *Db,
         arena: std.mem.Allocator,
@@ -2226,7 +2168,7 @@ pub const Db = struct {
         if (count <= 0) return 0;
         const ucount: usize = @intCast(count);
 
-        // Go getArgsFromParams: fewer supplied values than placeholders.
+        // Fewer supplied values than placeholders.
         if (args.len < ucount) {
             db.setLastError("not enough query arguments");
             return error.ExecFailed;
@@ -2273,7 +2215,7 @@ pub const Db = struct {
         }
     }
 
-    /// Case-insensitive lookup of a named arg (Go lowercases both sides).
+    /// Case-insensitive lookup of a named arg.
     fn findArgByName(args: []const Param, name: []const u8) ?Cell {
         for (args) |param| {
             const n = param.name orelse continue;
@@ -2282,9 +2224,8 @@ pub const Db = struct {
         return null;
     }
 
-    /// Encodes and binds a single cell at 1-based `idx`, casting to the
-    /// parameter's resolved type first when known (Go EncodeGoValue =
-    /// ValueFromGoValue + CastValue + EncodeValue).
+    /// Encodes and binds a single cell at 1-based `idx`, casting to the parameter's resolved
+    /// type first when that type is known.
     fn bindCell(
         db: *Db,
         arena: std.mem.Allocator,
@@ -2323,19 +2264,17 @@ pub const Db = struct {
 
     fn failDecode(db: *Db, err: anyerror) Error {
         if (err == error.OutOfMemory) return error.OutOfMemory;
-        // Value conversions record Go's own message (e.g. "failed to convert
-        // 202-06-06 to time.Time type"); the error tag alone would throw it
+        // A value conversion records its own message, which the error tag alone would throw
         // away. Same precedence the UDF error paths use.
         db.setLastError(value_mod.diagnostic orelse @errorName(err));
         return error.DecodeFailed;
     }
 };
 
-/// Flattens BEGIN ... END script blocks by blanking the block keywords with
-/// spaces, leaving the inner statements as a plain statement list (Go's
-/// analyzer parses scripts with ParseNextScriptStatement and flattens
-/// ASTBeginEndBlock nodes; our shim's AnalyzeNextStatement cannot parse
-/// script blocks). `BEGIN TRANSACTION` / bare `BEGIN;` are left untouched.
+/// Flattens BEGIN ... END script blocks by blanking the block keywords with spaces, leaving the
+/// inner statements as a plain statement list. The shim analyzes one statement at a time and has
+/// no script parser, so a block has to be reduced to its statements before it reaches the
+/// analyzer. `BEGIN TRANSACTION` and a bare `BEGIN;` are left untouched.
 /// Byte length is preserved so analyzer error offsets stay meaningful.
 fn flattenBeginEndBlocks(arena: std.mem.Allocator, sql: []const u8) error{OutOfMemory}![]const u8 {
     var out: ?[]u8 = null; // copy-on-write
@@ -2405,9 +2344,8 @@ fn startsWithKeyword(s: []const u8, kw: []const u8) bool {
     return !(std.ascii.isAlphanumeric(next) or next == '_');
 }
 
-/// Go getParameterMode: scans the literal-stripped query for unquoted `?`
-/// (positional) vs `@name` (named). Mixing the two is rejected; a query with
-/// neither defaults to named.
+/// Scans the literal-stripped query for an unquoted `?` (positional) or `@name` (named).
+/// Mixing the two is rejected; a query with neither is named.
 fn parameterMode(
     arena: std.mem.Allocator,
     sql: []const u8,
@@ -2466,7 +2404,7 @@ fn paramDecls(
     }
 }
 
-/// Go namedParamPattern `@\w+`: an '@' followed by at least one word char.
+/// A named parameter is an '@' followed by at least one word character.
 fn hasNamedParam(s: []const u8) bool {
     var i: usize = 0;
     while (i < s.len) : (i += 1) {
@@ -2549,8 +2487,8 @@ pub fn splitStatements(
     return out.toOwnedSlice(arena);
 }
 
-/// Go stripSQLLiterals: blanks out single/double/backtick-quoted spans and
-/// `--` line comments so parameter detection ignores `?`/`@` inside them.
+/// Blanks out single/double/backtick-quoted spans and `--` line comments so parameter detection
+/// ignores a `?` or `@` inside them.
 fn stripSQLLiterals(arena: std.mem.Allocator, q: []const u8) error{OutOfMemory}![]const u8 {
     var b: std.ArrayList(u8) = .empty;
     try b.ensureTotalCapacity(arena, q.len);
@@ -2630,9 +2568,8 @@ fn transformStatementFragment(
     config.* = context_mod.defaultTransformConfig();
     const ctx = try context_mod.TransformContext.init(arena, config);
     ctx.query_ctx.current_time_unix_micros = opts.current_time_unix_micros;
-    // Go analyzer.go: withFuncMap(ctx, catalog.getFunctions(namePath)) before
-    // transforming, so the function transformer can inline UDF bodies
-    // (transformer_function.go funcMapFromContext -> spec.CallSQL).
+    // The context carries the catalog's functions, so the function transformer can inline a
+    // UDF body at its call site.
     if (db) |d| {
         ctx.func_map = try d.mergedFuncMap(arena);
     }
@@ -2650,9 +2587,8 @@ fn transformStatementFragment(
             return error.TransformFailed;
         },
     };
-    // Surface the parameter occurrences (with resolved types) to the driver
-    // so bindParams can cast bound values (Go getParamsFromNode +
-    // EncodeNamedValues).
+    // Surface the parameter occurrences, with their resolved types, so bindParams can cast the
+    // values a caller bound.
     if (db) |d| d.stmt_params = ctx.collected_params.items;
     if (opts.capture) |cap| {
         cap.ast_text = ast_text.render(cap.arena, node) catch "";
@@ -2745,8 +2681,7 @@ fn scriptOutcome(last: StatementOutcome, statement_count: u32) StatementOutcome 
     return if (statement_count == 1) last else .{ .statement_type = .script };
 }
 
-/// Go NamePath.normalizePath with an empty base path: every segment is
-/// split on "." (backticked identifiers may carry dots).
+/// Splits every path segment on ".", since a backticked identifier may carry dots.
 fn normalizePath(
     arena: std.mem.Allocator,
     path: []const []const u8,
@@ -2759,7 +2694,7 @@ fn normalizePath(
     return out.toOwnedSlice(arena);
 }
 
-/// Go NamePath.format with an empty base path: normalize + "_"-join.
+/// Normalizes the path, then joins its segments with "_".
 fn formatNamePath(
     arena: std.mem.Allocator,
     path: []const []const u8,
@@ -2767,8 +2702,8 @@ fn formatNamePath(
     return spec.formatPath(arena, try normalizePath(arena, path));
 }
 
-/// Maps the 0-based proto CreateMode onto the 1-based values Go's binding
-/// persists in TableSpec JSON (see spec.zig create_mode_* constants).
+/// Maps the 0-based proto CreateMode onto the 1-based values persisted in TableSpec JSON (see
+/// spec.zig's create_mode_* constants).
 fn goCreateMode(mode: ?pb.ResolvedCreateStatementEnums_CreateMode) i64 {
     return switch (mode orelse .CREATE_DEFAULT) {
         .CREATE_DEFAULT => spec.create_mode_create_default,
@@ -2778,7 +2713,7 @@ fn goCreateMode(mode: ?pb.ResolvedCreateStatementEnums_CreateMode) i64 {
     };
 }
 
-/// Go spec.go newTypeFromFunctionArgumentType: a templated argument keeps
+/// Type of one function argument. A templated argument keeps
 /// only its SignatureArgumentKind; a fixed one carries the concrete type.
 fn functionArgumentSpecType(
     arena: std.mem.Allocator,
@@ -2795,8 +2730,7 @@ fn functionArgumentSpecType(
     return t;
 }
 
-/// Go spec.go newColumnsFromDef: ColumnSpecs from the resolved column definition list (type, NOT
-/// NULL, OPTIONS(description)).
+/// ColumnSpecs from the resolved column definition list: type, NOT NULL, OPTIONS(description).
 fn columnSpecsFromDefs(
     arena: std.mem.Allocator,
     defs: []const *pb.ResolvedColumnDefinitionProto,
@@ -3047,11 +2981,9 @@ fn clusteringFrom(arena: std.mem.Allocator, layout: TableLayout) Error![]const [
     return out;
 }
 
-/// Go spec.go newTableSpec / newTableAsSelectSpec (shared body): scope,
-/// merged name path, column definitions, primary key, create mode and
-/// timestamps; `query_str` is empty for plain CREATE TABLE and holds the
-/// formatted AS SELECT text for CTAS. `layout` adds the PARTITION BY and
-/// CLUSTER BY that Go drops.
+/// The table spec a CREATE statement yields: scope, merged name path, column definitions,
+/// primary key, create mode and timestamps. `query_str` is empty for a plain CREATE TABLE and
+/// holds the formatted AS SELECT text for CTAS; `layout` carries PARTITION BY and CLUSTER BY.
 fn newTableSpecFromCreate(
     arena: std.mem.Allocator,
     create: *const pb.ResolvedCreateStatementProto,
@@ -3183,8 +3115,7 @@ fn queryStmtOf(node: *const pb.AnyResolvedNodeProto) ?*const pb.ResolvedQueryStm
     }
 }
 
-/// Go newQueryStmtAction: output column specs (name + spec Type) from the
-/// statement's output column list.
+/// Output column specs — name plus resolved type — from the statement's output column list.
 fn outputColumns(
     arena: std.mem.Allocator,
     query_stmt: *const pb.ResolvedQueryStmtProto,
@@ -3204,13 +3135,11 @@ fn outputColumns(
     return out;
 }
 
-/// Go encoder.go CastValue, keyed on the resolved parameter/column type.
+/// Casts a bound value to the resolved parameter or column type.
 ///
-/// STRUCT re-projects the fields in declared order (missing fields become
-/// NULL) and ARRAY casts every element; the scalar arms coerce whatever the
-/// caller bound to what the column actually holds, which is what lets a REST
-/// client send an INT64 as the JSON string "5". Go reaches this through
-/// EncodeGoValue = ValueFromGoValue + CastValue + EncodeValue.
+/// STRUCT re-projects the fields in declared order (a missing field becomes NULL) and ARRAY
+/// casts every element; the scalar arms coerce whatever the caller bound to what the column
+/// actually holds, which is what lets a REST client send an INT64 as the JSON string "5".
 ///
 /// The same switch exists twice more, pre-existing and untouched: the CAST
 /// UDF's copy keyed on a JSON type node
@@ -3271,31 +3200,27 @@ fn castParamValue(
         },
         .TYPE_BOOL => return .{ .bool = try v.toBool() },
         .TYPE_FLOAT, .TYPE_DOUBLE => return .{ .float = try v.toFloat64() },
-        // Go checks the concrete date/time types first and renders them with
-        // dedicated layouts; Value.toString already uses exactly those.
+        // Value.toString renders a date/time kind with its own layout.
         .TYPE_STRING, .TYPE_ENUM => return .{ .string = try v.toString(alloc) },
         .TYPE_BYTES => return .{ .bytes = try v.toBytes(alloc) },
-        // Go CastValue: JsonValue(v.ToJSON()).
+        // CAST to JSON.
         .TYPE_JSON => return .{ .json = try v.toJson(alloc) },
-        // Go CastValue: DATE(v.ToTime()) — the civil date of the instant.
-        // Routed through ToTime for every kind, as Go does, so a malformed
-        // date reports Go's "failed to convert %s to time.Time type" rather
-        // than a parser-specific message.
+        // The civil date of the instant. Every kind routes through the instant rather than
+        // through a per-kind parser, so a malformed date reports one message.
         .TYPE_DATE => {
             if (v == .date) return v;
             return .{
                 .date = @divFloor(try value_mod.toUnixMicros(v), value_mod.day_micros),
             };
         },
-        // Go CastValue: TIMESTAMP/DATETIME/TIME(v.ToTime()). DATETIME shares
-        // the unix-micros scale; TIME is the time-of-day remainder.
+        // DATETIME shares the unix-micros scale; TIME is the time-of-day remainder.
         .TYPE_TIMESTAMP => return .{ .timestamp = try value_mod.toUnixMicros(v) },
         .TYPE_DATETIME => return .{ .datetime = try value_mod.toUnixMicros(v) },
         .TYPE_TIME => {
             const micros = try value_mod.toUnixMicros(v);
             return .{ .time = @mod(micros, value_mod.day_micros) };
         },
-        // Go CastValue: parseInterval(v.ToString()).
+        // An INTERVAL is parsed from its canonical text.
         .TYPE_INTERVAL => switch (v) {
             .interval => return v,
             else => return .{ .interval = try value_mod.parseIntervalValue(try v.toString(alloc)) },
@@ -3305,8 +3230,8 @@ fn castParamValue(
         .TYPE_NUMERIC => return value_mod.numericValue(alloc, v, false),
         .TYPE_BIGNUMERIC => return value_mod.numericValue(alloc, v, true),
 
-        // Kinds with no CastValue arm in Go (geography, proto, ...) pass the
-        // value through unchanged rather than failing the bind.
+        // A kind with no cast of its own (geography, proto, ...) passes through unchanged
+        // rather than failing the bind.
         else => return v,
     }
 }
@@ -3344,8 +3269,7 @@ fn valueFromCell(alloc: std.mem.Allocator, cell: Cell) !value_mod.Value {
     }
 }
 
-/// Value -> Cell conversion per the output column type, mirroring Go
-/// rows.go castValueInternal + assignInterfaceValue for foundation kinds.
+/// Value -> Cell conversion under the output column type.
 /// A rendered `Cell` from a stored value and the type it was stored under.
 ///
 /// The pair `Rows.next` applies internally, exposed for a caller that held raw
@@ -3366,7 +3290,7 @@ fn cellFromValue(
     v: value_mod.Value,
     typ: *const spec.Type,
 ) value_mod.ValueError!Cell {
-    // Go: nil src -> zero dest (SQL NULL).
+    // A null value is a null cell whatever the column type.
     if (v == .null) return .null;
     switch (typ.typeKind()) {
         .TYPE_INT32, .TYPE_INT64, .TYPE_UINT32, .TYPE_UINT64 => {
@@ -3374,20 +3298,17 @@ fn cellFromValue(
         },
         .TYPE_BOOL => return .{ .bool = try v.toBool() },
         .TYPE_FLOAT, .TYPE_DOUBLE => return .{ .float = try v.toFloat64() },
-        // Go castValueInternal STRING renders DateValue as "2006-01-02";
-        // Value.toString does the same for .date.
+        // Value.toString renders a .date as YYYY-MM-DD.
         .TYPE_STRING => return .{ .string = try v.toString(alloc) },
-        // Go rows.go renders a BYTES column through BytesValue.ToApiString =
-        // base64(StdEncoding), i.e. a plain string cell (database/sql sees a
-        // string, never []byte).
+        // A BYTES column reads back as standard base64 in a string cell, which is what the
+        // REST API carries.
         .TYPE_BYTES => {
             const b = try v.toBytes(alloc);
             const enc = std.base64.standard.Encoder;
             const out = try alloc.alloc(u8, enc.calcSize(b.len));
             return .{ .string = enc.encode(out, b) };
         },
-        // Go rows.go: JSON columns are scanned as their raw JSON string
-        // (ToApiString) through database/sql, i.e. a plain string cell.
+        // A JSON column reads back as its raw JSON text in a string cell.
         .TYPE_JSON => return .{ .string = try v.toApiString(alloc) },
         .TYPE_DATE => switch (v) {
             .date => |days| {
@@ -3398,8 +3319,8 @@ fn cellFromValue(
             .string => |s| return .{ .date = try alloc.dupe(u8, s) },
             else => return error.FailedConversion,
         },
-        // Go rows.go assignInterfaceValue renders these via ToApiString after
-        // castValueInternal; the decoded value already carries the right kind.
+        // The decoded value already carries the right kind, so these render as their API
+        // string form.
         .TYPE_TIMESTAMP => switch (v) {
             .timestamp => return .{ .timestamp = try v.toApiString(alloc) },
             .string => |s| return .{ .timestamp = try (value_mod.Value{
@@ -3438,9 +3359,8 @@ fn cellFromValue(
             }).toApiString(alloc) },
             else => return error.FailedConversion,
         },
-        // Go rows.go: castValueInternal wraps v.ToRat() in a NumericValue for
-        // the column kind, then assignInterfaceValue renders ToApiString — a
-        // plain decimal-string cell through database/sql.
+        // A NUMERIC or BIGNUMERIC column reads back as decimal text in a string cell, rescaled
+        // to the column's kind.
         .TYPE_NUMERIC, .TYPE_BIGNUMERIC => {
             const is_big = typ.typeKind() == .TYPE_BIGNUMERIC;
             const wrapped = try value_mod.numericValue(alloc, v, is_big);
@@ -3479,9 +3399,8 @@ fn cellFromValue(
     }
 }
 
-/// A translated, SQLite-prepared statement that can be bound and run many
-/// times (Go database/sql Stmt). Created by Db.prepare; see its docs for the
-/// statement kinds accepted and the catalog-staleness caveat.
+/// A translated, SQLite-prepared statement that can be bound and run many times. Created by
+/// Db.prepare; see its docs for the statement kinds accepted and the catalog-staleness caveat.
 pub const PreparedStmt = struct {
     db: *Db,
     /// Owns the translated SQL and the collected parameter types, so the
@@ -3495,8 +3414,8 @@ pub const PreparedStmt = struct {
     /// Result columns of a query statement; empty for DML.
     columns: []const OutputColumn = &.{},
 
-    /// Binds `args` and runs the statement to completion (Go
-    /// Stmt.ExecContext). Rows produced by a query statement are discarded.
+    /// Binds `args` and runs the statement to completion. Rows produced by a query statement
+    /// are discarded.
     pub fn exec(p: *PreparedStmt, args: []const Param) Error!void {
         // Encoding allocates, and those allocations live only as long as the
         // bind, so they must not accumulate in the handle's own arena. One
@@ -3588,12 +3507,12 @@ pub const Rows = struct {
     stmt: ?sqlite.Stmt = null,
     cols: []const OutputColumn = &.{},
     names: []const []const u8 = &.{},
-    /// Temp tables to drop on deinit (Go StmtAction.Cleanup).
+    /// Temp tables to drop on deinit.
     temp_tables: []const []const u8 = &.{},
     /// The statement type and DML row count of what query() ran.
     outcome: StatementOutcome = .{},
-    /// query() already took the first step (modernc steps eagerly); the next
-    /// next() call consumes its outcome instead of stepping again.
+    /// query() already took the first step, so the next next() call consumes its outcome
+    /// rather than stepping again.
     first_step_done: bool = false,
     first_has_row: bool = false,
 
@@ -3601,12 +3520,9 @@ pub const Rows = struct {
         return r.names;
     }
 
-    /// Output columns with their resolved types (Go
-    /// Rows.ColumnTypeDatabaseTypeName, minus the JSON round trip — see
-    /// OutputColumn). Parallel to columns(); valid until deinit().
+    /// Output columns with their resolved types. Parallel to columns(); valid until deinit().
     ///
-    /// Empty for statements that produce no result set (DDL/DML), matching
-    /// columns().
+    /// Empty for a statement that produces no result set (DDL/DML), as columns() is.
     pub fn columnTypes(r: *Rows) []const OutputColumn {
         return r.cols;
     }
@@ -3619,8 +3535,7 @@ pub const Rows = struct {
             return r.first_has_row;
         }
         return stmt.step() catch {
-            // Mid-iteration failures carry modernc's wrapped text verbatim
-            // (go-zetasqlite does not re-wrap the iteration path).
+            // A mid-iteration failure carries SQLite's own text; nothing re-wraps it.
             r.db.setLastSqliteError();
             return error.ExecFailed;
         };
@@ -3714,8 +3629,8 @@ pub const Rows = struct {
         // slice between queries is correct rather than merely safe.
         r.db.udf_state.info_schema.info_schema = &.{};
         r.db.udf_state.info_schema.datasets = &.{};
-        // Drop temp tables created by this query (Go Cleanup) before the
-        // arena (which backs the name strings) is released.
+        // Drop temp tables created by this query before the arena backing their names is
+        // released.
         if (r.temp_tables.len > 0) {
             r.db.dropTempTables(r.arena.allocator(), r.temp_tables);
         }
@@ -3770,7 +3685,7 @@ test "query scalar literals of each foundation kind" {
     try testing.expectEqualStrings("a", row[1].string);
     try testing.expectEqual(true, row[2].bool);
     try testing.expect(row[3] == .null);
-    // BYTES columns render as base64 STRING cells (Go ToApiString).
+    // A BYTES column renders as a base64 string cell.
     try testing.expectEqualStrings("eHk=", row[4].string);
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
@@ -4044,7 +3959,7 @@ test "dotted table names resolve and scan" {
 }
 
 // ----------------------------------------------------------------------
-// CREATE TABLE + DML statement actions (Go stmt_action.go end-to-end)
+// CREATE TABLE + DML, end to end
 // ----------------------------------------------------------------------
 
 test "CREATE TABLE + INSERT + SELECT round-trip across foundation kinds" {
@@ -4987,8 +4902,8 @@ test "CREATE TEMP TABLE registers in memory but is not persisted" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    // Temp tables live only within one query script (Go Cleanup), so create,
-    // populate and read within a single script.
+    // A temp table lives only within one query script, so create, populate and read it in a
+    // single script.
     var rows = try db.query(
         "CREATE TEMP TABLE tmp1 (a INT64); INSERT INTO tmp1 (a) VALUES (9); SELECT a FROM tmp1",
         &.{},
@@ -4997,7 +4912,7 @@ test "CREATE TEMP TABLE registers in memory but is not persisted" {
     defer rows.deinit();
     try testing.expectEqual(Cell{ .int = 9 }, (try rows.next()).?[0]);
 
-    // No zigquery_catalog row (Go AddNewTableSpec skips persist for temp).
+    // A temp table is not persisted, so the catalog holds no row for it.
     var stmt = try db.sqlite_db.prepare("SELECT COUNT(*) FROM zigquery_catalog");
     defer stmt.finalize();
     try testing.expect(try stmt.step());
@@ -5494,9 +5409,8 @@ test "CREATE TEMP TABLE AS SELECT (Go newTableAsSelectSpec temp path)" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    // Temp tables live for the duration of a single query script and are
-    // dropped when its Rows is closed (Go StmtAction.Cleanup), so the CREATE
-    // and the SELECT share one script here.
+    // A temp table lives for one query script and is dropped when its Rows is closed, so the
+    // CREATE and the SELECT share one script here.
     var rows = try db.query(
         "CREATE TEMP TABLE tmp_ctas AS SELECT 'Kylie' AS FirstName UNION ALL SELECT 'Nick'; " ++
             "SELECT FirstName FROM tmp_ctas ORDER BY FirstName",
@@ -5512,8 +5426,8 @@ test "temp table is dropped after its query script completes" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    // Go drops temp tables at Rows.Close; re-creating the same name in a
-    // later script must therefore succeed rather than collide.
+    // A temp table is dropped at Rows.deinit, so re-creating the same name in a later script
+    // succeeds rather than colliding.
     {
         var rows = try db.query(
             "CREATE TEMP TABLE reused (a INT64); SELECT * FROM reused",
@@ -5687,10 +5601,8 @@ test "NUMERIC arithmetic rounds to the declared scale" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    // These pin a deliberate divergence from go-zetasqlite, which keeps an
-    // exact big.Rat and so answers 1, and a move toward BigQuery, whose NUMERIC
-    // is decimal(38,9). No corpus case covers any of it, so without these tests
-    // the change would be invisible.
+    // NUMERIC is decimal(38,9), so a result is rounded onto the scale grid rather than kept
+    // exact. No corpus case covers this, so these tests are the only record of it.
     const cases = [_]struct { sql: []const u8, want: []const u8 }{
         // Division rounds, so multiplying back does not recover the input.
         .{ .sql = "SELECT CAST((NUMERIC '1' / NUMERIC '7') * NUMERIC '7' AS STRING) AS v", .want = "1.000000001" },
@@ -5705,7 +5617,7 @@ test "NUMERIC arithmetic rounds to the declared scale" {
             .sql = "SELECT CAST(BIGNUMERIC '0.00000000000000000000000000000000000001' + NUMERIC '0' AS STRING) AS v",
             .want = "0.00000000000000000000000000000000000001",
         },
-        // A magnitude below the scale rounds to a true zero, not Go's "-0".
+        // A magnitude below the scale rounds to a true zero, which renders as "0".
         .{ .sql = "SELECT CAST(CAST('-1e-10' AS NUMERIC) AS STRING) AS v", .want = "0" },
     };
     for (cases) |tc| {
@@ -5805,9 +5717,8 @@ test "rawQuery round-trips values and stays invisible to the analyzer" {
         try testing.expectEqual(@as(?[]const Db.RawValue, null), try rows.next());
     }
 
-    // The raw path bypasses the catalog entirely, so the GoogleSQL side must
-    // not resolve the table (Go: WithQueryFormattingDisabled statements never
-    // reach the analyzer).
+    // The raw path bypasses the catalog entirely, so the GoogleSQL side cannot resolve the
+    // table.
     try testing.expectError(error.AnalyzeFailed, db.query("SELECT a FROM raw_t", &.{}, .{}));
 }
 
@@ -6217,9 +6128,8 @@ test "scalar parameters are cast to the column type" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    // The REST surface hands every scalar over as JSON text — google-cloud-
-    // bigquery sends INT64, NUMERIC and the date/time kinds as strings — so
-    // CastValue has to coerce them on the way in, exactly as Go does.
+    // The REST surface hands every scalar over as JSON text — google-cloud-bigquery sends
+    // INT64, NUMERIC and the date/time kinds as strings — so the bind path coerces them.
     var rows = try db.query(
         "CREATE TABLE cast_params (i INT64, f FLOAT64, b BOOL, n NUMERIC, d DATE, ts TIMESTAMP);\n" ++
             "INSERT INTO cast_params (i, f, b, n, d, ts) VALUES (?, ?, ?, ?, ?, ?);\n" ++
@@ -6266,7 +6176,7 @@ test "a DATE column accepts the datetime spellings ToTime handles" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    // Go casts through ToTime and keeps the civil date of the instant.
+    // A DATE bind keeps the civil date of the instant.
     var rows = try db.query(
         "CREATE TABLE dates (d DATE);\n" ++
             "INSERT INTO dates (d) VALUES (?), (?);\n" ++
@@ -6283,10 +6193,8 @@ test "a DATE column accepts the datetime spellings ToTime handles" {
 }
 
 test "an unpadded hour parses on both the bind path and the runtime cast" {
-    // Raw state extracts spell midnight "0:00:00" and morning "7:34:44". Go's
-    // `15` layout element takes one or two digits, so both paths accept them;
-    // this port used to reject both, as HTTP 500 out of insertAll and as
-    // "SQL logic error: failed to convert ... (1)" out of a query.
+    // Raw state extracts spell midnight "0:00:00" and morning "7:34:44", so the hour element
+    // takes one or two digits on both the bind path and the runtime cast.
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
@@ -6347,8 +6255,8 @@ test "a JSON cell binds its payload without re-quoting it" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    // Binding the same text as a plain string would go through ToJSON and
-    // come back quoted; Go avoids that by unmarshalling before it binds.
+    // The same text bound as a plain string would be cast to JSON and come back quoted, which
+    // is why a JSON document binds as `.json`.
     var rows = try db.query(
         "CREATE TABLE docs (j JSON);\n" ++
             "INSERT INTO docs (j) VALUES (?);\n" ++
@@ -6460,8 +6368,7 @@ test "a prepared query statement can be exec'd" {
     try db.exec("CREATE TABLE q (a INT64)", &.{}, .{});
     try db.exec("INSERT INTO q (a) VALUES (1)", &.{}, .{});
 
-    // Rows are discarded, as Go's ExecContext does; the columns are still
-    // reported so a future Rows-returning variant has them.
+    // exec discards rows; the columns are still reported so a caller can read the schema.
     var stmt = try db.prepare("SELECT a FROM q WHERE a = ?", .{});
     defer stmt.deinit();
     try testing.expectEqual(@as(usize, 1), stmt.columns.len);
@@ -6480,7 +6387,7 @@ test "BEGIN..END block is flattened before analysis" {
 }
 
 // ----------------------------------------------------------------------
-// CREATE / DROP FUNCTION (Go CreateFunctionStmtAction / DropStmtAction)
+// CREATE / DROP FUNCTION
 // ----------------------------------------------------------------------
 
 test "CREATE FUNCTION then use it in a SELECT" {
@@ -6671,7 +6578,7 @@ test "CONTAINS_SUBSTR truth table including tri-state NULL semantics" {
         }
     }
 
-    // A NULL search literal is an error, not NULL (Go bindContainsSubstr).
+    // CONTAINS_SUBSTR raises on a NULL search literal.
     {
         var rows = db.query("SELECT CONTAINS_SUBSTR('hello', NULL)", &.{}, .{}) catch {
             return; // analyze/prepare-time failure is also acceptable
@@ -6730,7 +6637,7 @@ test "JS-language function is persisted and analyzable but not executable" {
         \\CREATE FUNCTION jsf(x INT64) RETURNS INT64 LANGUAGE js AS """return x+1;"""
     , &.{}, .{});
 
-    // Persisted with its language and code (Go newFunctionSpec).
+    // The spec is persisted with its language and code.
     var g = db.lockCatalog();
     defer g.unlock();
     const fs = g.catalog.findFunctionSpec("jsf") orelse return error.TestUnexpectedResult;
@@ -6748,8 +6655,8 @@ test "Go error-message shapes: modernc wrapper + StringValue.ToTime text" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
 
-    // First-row failure surfaces from query() (modernc steps eagerly), and
-    // carries Go's StringValue.ToTime message.
+    // A first-row failure surfaces from query() itself, carrying the conversion's own
+    // message.
     {
         const err = db.query(
             \\WITH toks AS (SELECT "20100317" AS dt) SELECT CAST(dt AS DATETIME) FROM toks
@@ -6761,8 +6668,7 @@ test "Go error-message shapes: modernc wrapper + StringValue.ToTime text" {
         );
     }
 
-    // Later-row failure surfaces from iteration in modernc's errstrForDB
-    // shape: "SQL logic error: <msg> (1)".
+    // A later-row failure surfaces from iteration as "SQL logic error: <msg> (1)".
     {
         var rows = try db.query(
             \\SELECT CASE WHEN value = 'baz' THEN ERROR('Found unexpected value: baz')

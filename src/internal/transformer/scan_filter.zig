@@ -1,8 +1,6 @@
-//! Port of go-zetasqlite internal/transformer_scan_filter.go.
-//!
-//! Transforms the input scan and writes the filter into its WHERE slot,
-//! spending a subquery level only when that slot is unavailable. Go always
-//! emits `SELECT * FROM (...) WHERE <condition>`.
+//! A filter, written into the input scan's own WHERE slot. A subquery level is spent only when
+//! that slot is already taken, which keeps the generated SQL one level flatter than wrapping
+//! every filter in `SELECT * FROM (...)` would.
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -11,13 +9,11 @@ const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const query_expr = @import("../sqlbuilder/query_expr.zig");
 
-/// Go FilterScanTransformer.Transform.
 pub fn transform(
     coord: *coordinator.QueryCoordinator,
     data: types_data.ScanData,
     ctx: *context.TransformContext,
 ) types_data.Error!*sqlbuilder.SelectStatement {
-    // Go: "expected filter scan data, got type %v"
     if (data.type != .filter) return error.UnsupportedNode;
     const filter_data = data.filter_scan orelse return error.UnsupportedNode;
     const input = try coord.transformScan(filter_data.input_scan, ctx);

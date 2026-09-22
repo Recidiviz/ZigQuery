@@ -5,7 +5,7 @@
 # pointer alone. Everything this repo needs from it is expressed here.
 
 module(
-    name = "zigquery_emulator",
+    name = "zigquery",
     version = "0.0.0",
 )
 
