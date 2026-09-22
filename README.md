@@ -1,13 +1,13 @@
 # ⚡️ZigQuery - A BigQuery Emulator
 
 <p style="text-align: center;">
-  <strong>A BigQuery emulator server, built on [Zig](https://ziglang.org], [GoogleSQL](https://github.com/google/googlesql), and [SQLite](https://sqlite.org).</strong><br />
+  <strong>A BigQuery emulator server, built on <a href="https://ziglang.org">Zig</a>, <a href="https://github.com/google/googlesql">GoogleSQL</a>, and <a href="https://sqlite.org">SQLite</a>.</strong><br />
   Focused on query engine correctness, performance, throughput, and stability
 </p>
 
 
-<p style="text-align: center;">
 <img type="image/svg+xml" src="./docs/bench/emubench.svg">
+<p style="text-align: center;">
 <em>Measured on an M4 Macbook using Docker AMD64 emulation</em>
 </p>
 
