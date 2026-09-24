@@ -30,6 +30,7 @@ const storage_mod = @import("storage.zig");
 const query_handler = @import("handler/query.zig");
 const discovery = @import("discovery.zig");
 const jobs_handler = @import("handler/jobs.zig");
+const copy_handler = @import("handler/jobs.copy.zig");
 const datasets_handler = @import("handler/datasets.zig");
 const tables_handler = @import("handler/tables.zig");
 const tabledata_handler = @import("handler/tabledata.zig");
@@ -1212,6 +1213,15 @@ pub const Server = struct {
         const job = jobs_handler.parseInsert(arena, req.body) catch {
             return badRequest(arena, "failed to decode request body");
         };
+
+        // --- COPY job ---
+        const copy_spec = copy_handler.parse(arena, job) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return badRequest(arena, copy_handler.parseErrorMessage(err)),
+        };
+        if (copy_spec) |copy| return s.handleCopyJob(arena, project_id, copy);
+
+        // --- QUERY job ---
         const sql = jobs_handler.queryFromJobConfig(job) orelse {
             return badRequest(arena, "configuration.query.query is required");
         };
@@ -1327,7 +1337,7 @@ pub const Server = struct {
             .outcome = res.set.?.outcome,
         });
 
-        try s.jobs.put(project_id, job_id, res.set.?, resource.items);
+        try s.jobs.put(project_id, job_id, .query, res.set.?, resource.items);
         // The destination table the resource above advertises. Registered now,
         // eagerly, because it costs nothing to: the rows are already in the
         // store and the table is a view onto them rather than a copy
@@ -1458,6 +1468,204 @@ pub const Server = struct {
     ///
     /// Reports which form ran, because the two leave the destination's
     /// declared resource in different states (see recordMaterializedTable).
+    // ---- copy jobs ----
+
+    /// jobs.insert carrying a `configuration.copy`.
+    ///
+    /// Existence is settled first and answered with an HTTP status. A failure found after that
+    /// completes the job and rides in `status.errorResult`. docs/adr/0001.
+    fn handleCopyJob(
+        s: *Server,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        copy: copy_handler.CopySpec,
+    ) !http_server.Response {
+        for (copy.sources) |src| {
+            if (!try s.db.datasetExists(arena, src.project_id, src.dataset_id)) {
+                return datasetNotFound(arena, src.project_id, src.dataset_id);
+            }
+        }
+        const dst = copy.destination;
+        if (!try s.db.datasetExists(arena, dst.project_id, dst.dataset_id)) {
+            return datasetNotFound(arena, dst.project_id, dst.dataset_id);
+        }
+
+        const source_specs = try arena.alloc(*const zigquery.spec.TableSpec, copy.sources.len);
+        for (copy.sources, source_specs) |src, *slot| {
+            slot.* = try s.db.catalogTable(
+                arena,
+                src.project_id,
+                src.dataset_id,
+                src.table_id,
+            ) orelse return notFound(arena, try tableNotFound(arena, src));
+        }
+
+        const job_id = try query_handler.randomId(arena, &s.rng);
+        const unix_seconds = @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000);
+
+        const prior_metadata: []const u8 = if (try s.db.catalogTable(
+            arena,
+            dst.project_id,
+            dst.dataset_id,
+            dst.table_id,
+        )) |existing| existing.metadata else "";
+
+        const outcome: copy_handler.Outcome =
+            if (try s.copyFailure(arena, copy, source_specs)) |failure|
+                .{ .failed = failure }
+            else blk: {
+                const copied = s.runCopy(arena, copy, source_specs) catch |err| switch (err) {
+                    error.OutOfMemory => return err,
+                    else => return internalError(arena, s.db.lastError()),
+                };
+                // A rebuilt destination keeps the resource fields it had, schema aside, as a
+                // truncating query job's does. A copy job declares no layout of its own.
+                if (copy.write_disposition != .WRITE_APPEND) {
+                    try s.recordMaterializedTable(arena, .{
+                        .project_id = dst.project_id,
+                        .dataset_id = dst.dataset_id,
+                        .table_id = dst.table_id,
+                    }, .replaced, prior_metadata, .empty);
+                }
+                break :blk .{ .copied = copied };
+            };
+
+        var resource: std.ArrayList(u8) = .empty;
+        try copy_handler.writeJobResource(arena, &resource, .{
+            .project_id = project_id,
+            .job_id = job_id,
+            .endpoint = s.endpoint,
+            .unix_seconds = unix_seconds,
+            .copy = copy,
+            .outcome = outcome,
+        });
+        // No result set: a copy job's rows are in the destination, and getQueryResults refuses
+        // a job that is not a query job.
+        try s.jobs.put(project_id, job_id, .copy, .{
+            .names = &.{},
+            .types = &.{},
+            .cells = &.{},
+            .total_rows = 0,
+        }, resource.items);
+        return .{ .body = resource.items };
+    }
+
+    /// The first reason this copy cannot run, in the order BigQuery reports them.
+    fn copyFailure(
+        s: *Server,
+        arena: std.mem.Allocator,
+        copy: copy_handler.CopySpec,
+        source_specs: []const *const zigquery.spec.TableSpec,
+    ) !?copy_handler.Outcome.Failure {
+        for (copy.sources, source_specs) |src, src_spec| {
+            if (src_spec.is_view) return .{
+                .reason = "invalid",
+                .message = try copy_handler.viewSourceMessage(arena, src),
+            };
+        }
+
+        // The sources agree with one another before any of them is read, so a mismatch on the
+        // last one leaves the destination untouched.
+        for (source_specs[1..]) |other| {
+            if (!copy_handler.identicalSchemas(source_specs[0], other)) return .{
+                .reason = "invalid",
+                .message = try copy_handler.incompatibleSourcesMessage(arena, copy.sources),
+            };
+        }
+
+        const dst = copy.destination;
+        const existing = try s.db.catalogTable(
+            arena,
+            dst.project_id,
+            dst.dataset_id,
+            dst.table_id,
+        );
+        if (existing) |dest_spec| {
+            if (copy.refusesOccupiedDestination() and try s.tableRowCount(arena, dest_spec) > 0) {
+                return .{
+                    .reason = "duplicate",
+                    .message = try std.fmt.allocPrint(
+                        arena,
+                        "Already Exists: Table {s}",
+                        .{try dst.display(arena)},
+                    ),
+                };
+            }
+            if (copy.write_disposition == .WRITE_APPEND) {
+                if (copy_handler.appendMismatch(source_specs[0], dest_spec)) |mismatch| return .{
+                    .reason = "invalid",
+                    .message = try copy_handler.appendMismatchMessage(arena, dst, mismatch),
+                };
+            }
+        } else if (!copy.mayCreateDestination()) return .{
+            .reason = "notFound",
+            .message = try tableNotFound(arena, dst),
+        };
+        return null;
+    }
+
+    /// Copies every source into the destination under one transaction, and answers with the
+    /// number of rows copied.
+    ///
+    /// Counting the sources rather than the statements: `CREATE TABLE AS SELECT` leaves
+    /// SQLite's change counter alone, so a truncating copy would otherwise report nothing.
+    fn runCopy(
+        s: *Server,
+        arena: std.mem.Allocator,
+        copy: copy_handler.CopySpec,
+        source_specs: []const *const zigquery.spec.TableSpec,
+    ) !i64 {
+        var copied: i64 = 0;
+        for (source_specs) |src_spec| copied += try s.tableRowCount(arena, src_spec);
+
+        const dst = copy.destination;
+        const destination: jobs_handler.Destination = .{
+            .project_id = dst.project_id,
+            .dataset_id = dst.dataset_id,
+            .table_id = dst.table_id,
+        };
+
+        try s.db.rawExec("BEGIN", &.{});
+        errdefer s.db.rawExec("ROLLBACK", &.{}) catch {};
+
+        for (copy.sources, 0..) |src, i| {
+            const select = try std.fmt.allocPrint(arena, "SELECT * FROM `{s}.{s}.{s}`", .{
+                src.project_id, src.dataset_id, src.table_id,
+            });
+            // The first source defines the destination unless the job appends to it. Every
+            // source after the first appends, whatever the disposition.
+            const defines_destination = i == 0 and copy.write_disposition != .WRITE_APPEND;
+            const ddl = if (defines_destination)
+                try jobs_handler.replaceDdl(arena, destination, select)
+            else
+                try jobs_handler.appendDdl(arena, destination, select);
+            try s.db.exec(ddl, &.{}, .{});
+        }
+
+        try s.db.rawExec("COMMIT", &.{});
+        return copied;
+    }
+
+    fn tableRowCount(
+        s: *Server,
+        arena: std.mem.Allocator,
+        table_spec: *const zigquery.spec.TableSpec,
+    ) !i64 {
+        const sql = try std.fmt.allocPrintSentinel(
+            arena,
+            "SELECT COUNT(*) FROM `{s}`",
+            .{try table_spec.tableName(arena)},
+            0,
+        );
+        var rows = try s.db.rawQuery(sql, &.{});
+        defer rows.deinit();
+        const row = try rows.next() orelse return 0;
+        return switch (row[0]) {
+            .int => |n| n,
+            else => 0,
+        };
+    }
+
     const MaterializationMethod = enum {
         /// The rows were appended; the table's shape is as declared.
         appended,
@@ -1577,6 +1785,13 @@ pub const Server = struct {
     ) !http_server.Response {
         const arena = req.arena;
         const job = s.jobs.get(job_id) orelse return notFoundJob(arena, job_id);
+        if (job.kind != .query) {
+            return badRequest(arena, try std.fmt.allocPrint(
+                arena,
+                "Job {s}:US.{s} is not a query job",
+                .{ project_id, job_id },
+            ));
+        }
         // handler.go:1497-1498 takes both from the query string only.
         //
         // `maxResults=0` — the Python client's completeness probe — returns no
@@ -1616,6 +1831,11 @@ fn datasetNotFound(
         "Not found: Dataset {s}:{s}",
         .{ project_id, dataset_id },
     ));
+}
+
+/// Error message when a copy job specifies a table that is not there.
+fn tableNotFound(arena: std.mem.Allocator, table: copy_handler.TableRef) ![]const u8 {
+    return std.fmt.allocPrint(arena, "Not found: Table {s}", .{try table.display(arena)});
 }
 
 fn notFoundJob(arena: std.mem.Allocator, job_id: []const u8) !http_server.Response {
@@ -4407,4 +4627,369 @@ test "without useInt64Timestamp every TIMESTAMP keeps the float-seconds form" {
     try json_pb.expectJsonEqual(
         \\[{"f":[{"v":{"f":[{"v":"1768003200.0"}]}}]}]
     , actual);
+}
+
+// ---- copy jobs ----
+//
+// The wording and the HTTP-or-job-resource split are measured: recidiviz-bigquery-sandbox,
+// 2026-09-21 and 2026-09-24. docs/adr/0001.
+
+/// A dataset `d` holding `src` with two rows, which the copy tests start from.
+fn copyFixture(s: *Server, arena: std.mem.Allocator) !void {
+    _ = try request(s, arena, .POST, "/projects/test/datasets",
+        \\{"datasetReference":{"projectId":"test","datasetId":"d"}}
+    );
+    const made = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\ "CREATE TABLE `test.d.src` AS SELECT 1 AS a UNION ALL SELECT 2 AS a"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, made.status);
+}
+
+/// `status.errorResult.message` of a job resource.
+fn errorResultMessage(arena: std.mem.Allocator, body: []const u8) ![]const u8 {
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    return v.object.get("status").?.object.get("errorResult").?.object.get("message").?.string;
+}
+
+test "a copy job creates the destination and reports the rows it copied" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"}}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "\"jobType\":\"COPY\"") != null);
+    try testing.expect(std.mem.indexOf(u8, res.body, "\"copiedRows\":\"2\"") != null);
+
+    const rows = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT a FROM `test.d.dst` ORDER BY a"}
+    );
+    try testing.expectEqualDeep(
+        @as([]const []const u8, &.{ "1", "2" }),
+        try cellsOf(arena, rows.body),
+    );
+}
+
+test "a copy job is replayable through jobs.get and refused by getQueryResults" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"}}}}
+    );
+    const job_id = try jobIdOf(arena, res.body);
+
+    const got = try request(s, arena, .GET, try std.fmt.allocPrint(
+        arena,
+        "/projects/test/jobs/{s}",
+        .{job_id},
+    ), "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expect(std.mem.indexOf(u8, got.body, "\"jobType\":\"COPY\"") != null);
+
+    // The Python client polls jobs.get, never this endpoint, for a copy job.
+    const results = try request(s, arena, .GET, try std.fmt.allocPrint(
+        arena,
+        "/projects/test/queries/{s}",
+        .{job_id},
+    ), "");
+    try testing.expectEqual(std.http.Status.bad_request, results.status);
+    try testing.expect(std.mem.indexOf(u8, results.body, "is not a query job") != null);
+}
+
+test "WRITE_EMPTY refuses a destination holding rows and leaves it alone" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\ "CREATE TABLE `test.d.dst` AS SELECT 9 AS a"}}}
+    );
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"},
+        \\ "writeDisposition":"WRITE_EMPTY"}}}
+    );
+    // The failure rides in the job, not in the HTTP status.
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        "Already Exists: Table test:d.dst",
+        try errorResultMessage(arena, res.body),
+    );
+
+    const rows = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT a FROM `test.d.dst`"}
+    );
+    try testing.expectEqualDeep(
+        @as([]const []const u8, &.{"9"}),
+        try cellsOf(arena, rows.body),
+    );
+}
+
+test "WRITE_EMPTY accepts a destination that exists and is empty" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE TABLE `test.d.dst` (a INT64)"}}}
+    );
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"},
+        \\ "writeDisposition":"WRITE_EMPTY"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "errorResult") == null);
+    try testing.expect(std.mem.indexOf(u8, res.body, "\"copiedRows\":\"2\"") != null);
+}
+
+test "CREATE_NEVER will not bring a destination into existence" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"gone"},
+        \\ "createDisposition":"CREATE_NEVER"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        "Not found: Table test:d.gone",
+        try errorResultMessage(arena, res.body),
+    );
+}
+
+test "a source table that is not there is refused before a job exists" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"absent"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"}}}}
+    );
+    try testing.expectEqual(std.http.Status.not_found, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "Not found: Table test:d.absent") != null);
+}
+
+test "a dataset that is not there is refused before a job exists" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"nope","tableId":"dst"}}}}
+    );
+    try testing.expectEqual(std.http.Status.not_found, res.status);
+    // A copy job's dataset message carries no location suffix, where a query job into a
+    // missing dataset adds one.
+    try testing.expect(std.mem.indexOf(u8, res.body, "Not found: Dataset test:nope") != null);
+    try testing.expect(std.mem.indexOf(u8, res.body, "was not found in location") == null);
+}
+
+test "WRITE_APPEND adds to the destination rather than rebuilding it" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\ "CREATE TABLE `test.d.dst` AS SELECT 9 AS a"}}}
+    );
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"},
+        \\ "writeDisposition":"WRITE_APPEND"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+
+    const rows = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT a FROM `test.d.dst` ORDER BY a"}
+    );
+    try testing.expectEqualDeep(
+        @as([]const []const u8, &.{ "1", "2", "9" }),
+        try cellsOf(arena, rows.body),
+    );
+}
+
+test "sources whose schemas disagree are refused before the destination is touched" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\ "CREATE TABLE `test.d.other` AS SELECT 'x' AS a"}}}
+    );
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTables":[{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\                 {"projectId":"test","datasetId":"d","tableId":"other"}],
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"}}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        "Incompatible table schemata between tables: test:d.src, test:d.other.",
+        try errorResultMessage(arena, res.body),
+    );
+
+    // Nothing was written: the destination never came into existence.
+    const missing = try request(s, arena, .GET, "/projects/test/datasets/d/tables/dst", "");
+    try testing.expectEqual(std.http.Status.not_found, missing.status);
+}
+
+test "several sources concatenate into one destination" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\ "CREATE TABLE `test.d.more` AS SELECT 3 AS a"}}}
+    );
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTables":[{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\                 {"projectId":"test","datasetId":"d","tableId":"more"}],
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"}}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "\"copiedRows\":\"3\"") != null);
+
+    const rows = try request(s, arena, .POST, "/projects/test/queries",
+        \\{"query":"SELECT a FROM `test.d.dst` ORDER BY a"}
+    );
+    try testing.expectEqualDeep(
+        @as([]const []const u8, &.{ "1", "2", "3" }),
+        try cellsOf(arena, rows.body),
+    );
+}
+
+test "a view named as a source is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+    _ = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":
+        \\ "CREATE VIEW `test.d.v` AS SELECT a FROM `test.d.src`"}}}
+    );
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"v"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"}}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+    try testing.expectEqualStrings(
+        "test:d.v is not allowed for this operation because it is currently a VIEW.",
+        try errorResultMessage(arena, res.body),
+    );
+}
+
+test "an unsupported operation type never becomes a job" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"},
+        \\ "operationType":"SNAPSHOT"}}}
+    );
+    try testing.expectEqual(std.http.Status.bad_request, res.status);
+    try testing.expect(std.mem.indexOf(u8, res.body, "only COPY is supported") != null);
+}
+
+test "a truncating copy keeps the destination's description" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    defer s.deinit();
+    try copyFixture(s, arena);
+
+    _ = try request(s, arena, .POST, "/projects/test/datasets/d/tables",
+        \\{"tableReference":{"projectId":"test","datasetId":"d","tableId":"dst"},
+        \\ "description":"kept across a rebuild",
+        \\ "schema":{"fields":[{"name":"a","type":"INTEGER"}]}}
+    );
+
+    const res = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"copy":{
+        \\ "sourceTable":{"projectId":"test","datasetId":"d","tableId":"src"},
+        \\ "destinationTable":{"projectId":"test","datasetId":"d","tableId":"dst"},
+        \\ "writeDisposition":"WRITE_TRUNCATE"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, res.status);
+
+    const meta = try request(s, arena, .GET, "/projects/test/datasets/d/tables/dst", "");
+    try testing.expect(std.mem.indexOf(u8, meta.body, "kept across a rebuild") != null);
 }
