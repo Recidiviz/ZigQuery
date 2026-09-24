@@ -223,6 +223,20 @@ runs all three at `-Drelease=true`.
 `-Dtsan=true` applies to the first two. `grpc-smoke` is run-only and is not
 installed by `install`.
 
+### Python client integration tests
+
+Not a `zig build` step: `test/python` is a pytest suite, ported from
+Recidiviz/bigquery-emulator, that drives a running server through the official
+Python clients. CI runs it against the Docker image; locally, point it at a
+`dist` binary:
+
+```
+BIGQUERY_EMULATOR_BINARY=$PWD/zig-out/dist/bin/zigquery-server \
+    uv run --directory test/python pytest -n 4
+```
+
+See `test/python/README.md`.
+
 ### Benchmarks
 
 Run these with `-Drelease=true`; a Debug build prints a warning and the numbers
