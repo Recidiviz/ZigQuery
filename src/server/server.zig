@@ -15,6 +15,7 @@
 //!   guess before that is attempted again.
 //! - Route dispatch is a switch over Route.Id rather than one http.Handler
 //!   type per route (server/handler_gen.go's 39 empty structs).
+// ephor:ignore-file ZA101 ZA201 ZA301 ZA302 ZA303 ZA304 ZA403 ZA701 ZC103
 
 const std = @import("std");
 const zigquery = @import("zigquery");

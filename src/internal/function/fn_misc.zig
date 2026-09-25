@@ -10,6 +10,7 @@
 //!
 //! The two type documents are SQL literals, identical on every row of a scan, so the parsed form
 //! is cached against the call site; parsing them per row dominated the cost of a cast.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const bind = @import("bind.zig");

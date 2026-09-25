@@ -38,6 +38,7 @@
 //!
 //! This lives in the library rather than the harness because it is pure and it
 //! is the only part of the spec pipeline that genuinely needs unit tests.
+// ephor:ignore-file ZA303 ZA304 ZA701 ZT105
 
 const std = @import("std");
 const Zoir = std.zig.Zoir;

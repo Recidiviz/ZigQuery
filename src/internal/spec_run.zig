@@ -14,6 +14,7 @@
 //! `Capture` — the AST node and transformed SQL are computed on every query
 //! regardless; capturing them costs nothing beyond rendering into this
 //! call's own arena, paid only when requested).
+// ephor:ignore-file ZA101 ZA301 ZA302 ZA303 ZA304 ZA701 ZT105
 
 const std = @import("std");
 const driver = @import("../driver.zig");

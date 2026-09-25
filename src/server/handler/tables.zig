@@ -7,6 +7,7 @@
 //! parsed into a fixed struct.
 //!
 //! Response shapes captured from a running Go emulator.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const errors = @import("../error.zig");

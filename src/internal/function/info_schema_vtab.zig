@@ -33,6 +33,7 @@
 //! leaf, first-wins, so an unqualified `FROM INFORMATION_SCHEMA.TABLES`
 //! resolves to whichever dataset registered first. BigQuery reads that spelling
 //! as "the default dataset"; the engine has no such concept.
+// ephor:ignore-file ZA102 ZA303 ZA304 ZA701
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");

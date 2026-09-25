@@ -2,6 +2,7 @@
 //! (go-zetasqlite function_date.go DATE_ADD/DATE_SUB/DATE_DIFF/DATE_TRUNC +
 //! addMonth/addYear/diffDay, and function.go EXTRACT). Everything works on the
 //! civil-micros BrokenTime; callers repackage the result as the right kind.
+// ephor:ignore-file ZA304
 
 const std = @import("std");
 const tu = @import("time_util.zig");

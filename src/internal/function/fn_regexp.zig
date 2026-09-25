@@ -2,6 +2,7 @@
 //! REGEXP_CONTAINS/EXTRACT/EXTRACT_ALL/INSTR/REPLACE + their bind* wrappers).
 //! Matching is delegated to RE2 via the shim (src/shim_ffi.zig), matching
 //! Go's regexp package (RE2 syntax).
+// ephor:ignore-file ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");

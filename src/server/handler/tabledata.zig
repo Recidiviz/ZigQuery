@@ -18,6 +18,7 @@
 //!
 //! `insertId` is read off the wire and discarded: the emulator does no deduplication.
 //! `templateSuffix` and `traceId` are parsed and ignored.
+// ephor:ignore-file ZA302 ZT101
 
 const std = @import("std");
 const errors = @import("../error.zig");

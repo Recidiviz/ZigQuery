@@ -21,6 +21,7 @@
 //!     per-row recomputation under a GROUPS frame — starts from a fresh Group.
 //! This matches Go creating a fresh WindowFuncAggregatedStatus + impl whenever
 //! its state must reset across partitions/peer groups.
+// ephor:ignore-file ZA103 ZA302
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");

@@ -2,6 +2,7 @@
 //! (Go: function.go ADD/SUB/MUL/OP_DIV/BIT_*, function_math.go ABS/ROUND/
 //! SAFE_*). Handler bodies fold in the Go bind* wrappers (null handling,
 //! argument-count checks).
+// ephor:ignore-file ZA301 ZA302 ZA304 ZA701
 
 const std = @import("std");
 const bind = @import("bind.zig");

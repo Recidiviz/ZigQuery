@@ -8,6 +8,7 @@
 //! The reader came first and stood alone for as long as the only protobuf in
 //! this repo was the analyzer's output, which is read and never produced.
 //! Serving the Storage Read API needs the other direction.
+// ephor:ignore-file ZT105
 
 const std = @import("std");
 

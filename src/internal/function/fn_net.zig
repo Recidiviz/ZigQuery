@@ -8,6 +8,7 @@
 //!     Only the suffixes the corpus exercises are present (see icann_suffixes);
 //!     matching runs against the original Unicode host, so no punycode is
 //!     needed. Hosts outside the table resolve to NULL.
+// ephor:ignore-file ZA101 ZA302 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");

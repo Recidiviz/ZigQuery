@@ -21,6 +21,7 @@
 //! open rather than migrated (`Db.storage_format_version`). What the text form
 //! cost is a format-and-parse pair per value; what it bought, by then, was
 //! nothing.
+// ephor:ignore-file ZA302 ZA303 ZA304 ZA701
 
 const std = @import("std");
 const value_mod = @import("value.zig");

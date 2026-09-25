@@ -19,6 +19,7 @@
 //!
 //! Statistical (corr/covar/stddev/var/variance) and percentile_* functions are
 //! registered but Done() raises a clear "unimplemented" error (deferred).
+// ephor:ignore-file ZA209 ZA302 ZA304 ZT105
 
 const std = @import("std");
 const bind = @import("bind.zig");

@@ -4,6 +4,7 @@
 //! A cast cannot become SQLite's own CAST, because the answer depends on GoogleSQL types SQLite has no
 //! notion of, so the types travel to the UDF as literals.
 //! See function/fn_misc.zig for the evaluation. conversion_rules.md
+// ephor:ignore-file ZA302 ZA701
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

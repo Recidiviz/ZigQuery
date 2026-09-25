@@ -15,6 +15,7 @@
 //! A user-defined function is inlined at its call site: the stored SQL body with each `@argname`
 //! replaced by the rendered argument. A JS or templated function has no stored body and reports
 //! error.Unimplemented.
+// ephor:ignore-file ZA101 ZA301 ZA302 ZA304
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

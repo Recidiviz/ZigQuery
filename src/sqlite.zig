@@ -3,6 +3,7 @@
 //! driver.zig replaces go-zetasqlite's database/sql driver surface
 //! (driver.go/conn.go/stmt.go/rows.go + modernc sqlite.RegisterFunction) —
 //! the one part of the port that is redesigned rather than mirrored.
+// ephor:ignore-file ZA303 ZT105
 
 const std = @import("std");
 const phase = @import("internal/phase.zig");

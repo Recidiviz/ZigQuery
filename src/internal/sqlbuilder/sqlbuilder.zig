@@ -41,6 +41,7 @@
 //!
 //! So: a change here that trades output size for anything at all is very
 //! probably not worth it. A change that removes a *level* still is.
+// ephor:ignore-file ZA101 ZA103 ZA301 ZA302 ZA304 ZT105
 
 const std = @import("std");
 

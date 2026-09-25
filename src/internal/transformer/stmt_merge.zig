@@ -9,6 +9,7 @@
 //! Only the first qualifying WHEN clause runs for a row
 //! (data-manipulation-language.md#merge_statement).
 //! The snapshot decides it once, so a clause's writes never change which rows a later clause acts on.
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA701
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

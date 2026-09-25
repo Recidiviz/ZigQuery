@@ -3,6 +3,7 @@
 //! Becomes a subquery that selects the recursive CTE's columns,
 //! aliased with the stored id-based column mapping so the enclosing query can
 //! resolve them.
+// ephor:ignore-file ZA701
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

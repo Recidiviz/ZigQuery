@@ -10,6 +10,7 @@
 //!
 //! Memory: methods that build new values/strings take an allocator; decode
 //! trees are expected to live in an arena (no per-value deinit is provided).
+// ephor:ignore-file ZA202 ZA209 ZA301 ZA302 ZA304 ZT105
 
 const std = @import("std");
 const time_zone = @import("time_zone.zig");

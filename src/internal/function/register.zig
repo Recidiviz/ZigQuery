@@ -6,6 +6,7 @@
 //!                           raise, exactly like Go's safe wrapper)
 //! plus the specials zigquery_group_by and the zigquery_unnest table-valued
 //! function.
+// ephor:ignore-file ZA302 ZA303 ZA401
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");

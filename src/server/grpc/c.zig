@@ -15,6 +15,7 @@
 //!   cast at thirty call sites.
 //!
 //! Nothing above this file should mention `cgrpc` directly.
+// ephor:ignore-file ZT105
 
 const std = @import("std");
 

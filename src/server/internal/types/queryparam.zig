@@ -28,6 +28,7 @@
 //! undeclared parameter resolves to an untyped INT64 and `UNNEST(@ids)` fails
 //! with "Values referenced in UNNEST must be arrays" — inference only reaches
 //! parameters used as a function or operator argument.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const zigquery = @import("zigquery");

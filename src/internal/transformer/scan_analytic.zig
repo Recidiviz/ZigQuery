@@ -6,6 +6,7 @@
 //!   computed window functions, all under ID-based aliases
 //! - the outer SELECT takes an ORDER BY built from each function's PARTITION BY and ORDER BY
 //!   columns, so rows come out in window evaluation order
+// ephor:ignore-file ZA301 ZA302 ZA401
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

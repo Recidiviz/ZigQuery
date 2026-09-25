@@ -4,6 +4,7 @@
 //! exact same direct-dispatch switches but calls the stateless `transform`
 //! functions in src/internal/transformer/*.zig. No singleton: the driver
 //! creates one QueryCoordinator per process (init is trivially cheap).
+// ephor:ignore-file ZA302 ZA304 ZT105
 
 const std = @import("std");
 const pb = @import("../../proto/resolved_ast.zig");

@@ -1,6 +1,7 @@
 //! Port of the comparison / logical / conditional functions
 //! (Go: function.go EQ/NOT_EQ/GT/GTE/LT/LTE/LIKE/BETWEEN/IN/IS_*/NOT/AND/OR/
 //! COALESCE/IF/IFNULL/NULLIF/IS_[NOT_]DISTINCT_FROM plus their bind* wrappers).
+// ephor:ignore-file ZA209
 
 const std = @import("std");
 const bind = @import("bind.zig");

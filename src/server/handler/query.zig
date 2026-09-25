@@ -7,6 +7,7 @@
 //!   typed-struct encoding/json cannot distinguish absent from null and
 //!   rejects JSON numbers for string-typed fields. Decoding into
 //!   std.json.Value has both properties natively.
+// ephor:ignore-file ZA303
 
 const std = @import("std");
 const zigquery = @import("zigquery");

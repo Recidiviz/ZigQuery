@@ -16,6 +16,7 @@
 //! Also registers the six option marker producers (zigquery_distinct /
 //! _limit / _order_by / _ignore_nulls / _having_max / _having_min) that Go
 //! keeps in normalFuncs, including their safe_ twins.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");

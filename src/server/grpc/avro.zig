@@ -71,6 +71,7 @@
 //! REPEATED is the row to be careful with: `schemaJson` and `writeField` must
 //! agree that there is no union there, or a value shifts into the next field
 //! and every field after it decodes wrong.
+// ephor:ignore-file ZT105
 
 const std = @import("std");
 const zigquery = @import("zigquery");

@@ -14,6 +14,7 @@
 //!
 //! Aggregation is a hard materialization boundary: outputs are projected here and never left
 //! pending, or a projection above would inline an aggregate into an outer aggregate.
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

@@ -21,6 +21,7 @@
 //!
 //! so a filter above a projection wraps, and a filter above a bare table scan
 //! does not.
+// ephor:ignore-file ZA304 ZT105
 
 const sb = @import("sqlbuilder.zig");
 

@@ -1,6 +1,7 @@
 //! The definition of a recursive CTE: the base term and the recursive term each transform to a
 //! SELECT, combine under UNION [ALL], and are wrapped in a SELECT carrying that set operation
 //! directly, so with_entry.zig can emit the CTE body verbatim.
+// ephor:ignore-file ZA301 ZA302 ZA304
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

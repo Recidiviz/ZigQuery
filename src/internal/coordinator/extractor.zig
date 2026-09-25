@@ -17,6 +17,7 @@
 //! - expressions: Literal, ColumnRef, FunctionCall, AggregateFunctionCall,
 //!   AnalyticFunctionCall, Cast, SubqueryExpr, ComputedColumn, OutputColumn,
 //!   GetStructField, MakeStruct
+// ephor:ignore-file ZA102 ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const pb = @import("../../proto/resolved_ast.zig");

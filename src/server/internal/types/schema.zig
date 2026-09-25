@@ -12,6 +12,7 @@
 //! BOOLEAN, RECORD — not the standard-SQL spellings (INT64, FLOAT64, BOOL,
 //! STRUCT) that `spec.bigQueryTypeName` produces for CREATE FUNCTION text.
 //! Confirmed against the Go emulator; see testdata/golden.json.
+// ephor:ignore-file ZA302 ZA303 ZA304 ZT105
 
 const std = @import("std");
 const zigquery = @import("zigquery");

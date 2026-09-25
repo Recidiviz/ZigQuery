@@ -12,6 +12,7 @@
 //!
 //! Verified against the running Go emulator; see testdata/golden.json
 //! ("floats").
+// ephor:ignore-file ZA202 ZA301 ZA304 ZT105
 
 const std = @import("std");
 

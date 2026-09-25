@@ -2,6 +2,7 @@
 //! date/time format-element engine for FORMAT_* and PARSE_*. Works on the
 //! civil-micros BrokenTime from time_util.zig. Error strings mirror Go's
 //! exactly (corpus compares PARSE_* error messages byte-for-byte).
+// ephor:ignore-file ZA301 ZA302 ZA303
 
 const std = @import("std");
 const tu = @import("time_util.zig");

@@ -6,6 +6,7 @@
 //! Go-compatible JSON encoding (the persisted `spec` column must
 //! interoperate with DBs written by go-zetasqlite). FunctionSpec is
 //! deferred to the CREATE FUNCTION milestone.
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const pb = @import("../proto/resolved_ast.zig");

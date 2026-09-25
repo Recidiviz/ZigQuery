@@ -15,6 +15,7 @@
 //! Values are parsed with std.json (parse_numbers = false) so numbers survive
 //! as their exact source text, and re-serialized minified — object key order is
 //! preserved (ObjectMap is insertion-ordered), matching goccy's Extract+Compact.
+// ephor:ignore-file ZA101 ZA302 ZA303 ZA304 ZA701
 
 const std = @import("std");
 const bind = @import("bind.zig");

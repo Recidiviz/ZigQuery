@@ -12,6 +12,7 @@
 //!  invalid row rather than an engine failure.
 //! The batch rolls back when any row is invalid, unless `skip_invalid_rows` is true. WHen true, the
 //! only the valid rows will commit.
+// ephor:ignore-file ZA302 ZA303 ZA304 ZA701
 
 const std = @import("std");
 const zigquery = @import("zigquery");

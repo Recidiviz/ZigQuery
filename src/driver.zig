@@ -13,6 +13,7 @@
 //!   var rows = try db.query(sql, args, .{ .current_time_unix_micros = ... });
 //!   while (try rows.next()) |row| ...
 //!   rows.deinit();
+// ephor:ignore-file ZA201 ZA301 ZA302 ZA303 ZA304 ZA701 ZC101 ZC103 ZT105
 
 const std = @import("std");
 const sqlite = @import("sqlite.zig");

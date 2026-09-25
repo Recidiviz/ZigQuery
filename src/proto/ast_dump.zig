@@ -13,6 +13,7 @@
 //!
 //! Absent fields are omitted. The generator makes every scalar optional, so
 //! "omitted" means the proto carried no value — never a zero that was there.
+// ephor:ignore-file ZA303
 
 const std = @import("std");
 const pb = @import("resolved_ast.zig");

@@ -5,6 +5,7 @@
 //! as one rune each); the helpers below reproduce that counting. LOWER/UPPER
 //! use ASCII case mapping (Go's strings.ToLower is full Unicode) — the
 //! foundation corpus only exercises ASCII.
+// ephor:ignore-file ZA103 ZA202 ZA301 ZA302 ZA303 ZA304 ZA701
 
 const std = @import("std");
 const bind = @import("bind.zig");

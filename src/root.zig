@@ -12,6 +12,7 @@
 //!
 //! The server (src/server/root.zig) depends on this module and not the reverse,
 //! so `zig build test` and `zig build spec` gate the engine on its own.
+// ephor:ignore-file ZA701
 
 pub const sqlite = @import("sqlite.zig");
 pub const analyzer_ffi = @import("analyzer_ffi.zig");

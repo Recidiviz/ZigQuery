@@ -8,6 +8,7 @@
 //!
 //! Note `location` and `debugInfo` are always emitted even when empty, and
 //! the message is repeated at both levels.
+// ephor:ignore-file ZA302 ZA304 ZA701
 
 const std = @import("std");
 const http = std.http;

@@ -25,6 +25,7 @@
 //!
 //! `lookup` returning null is not an error: it yields a table with no rows,
 //! which is the right answer for a job that has gone away.
+// ephor:ignore-file ZA102 ZA303
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");

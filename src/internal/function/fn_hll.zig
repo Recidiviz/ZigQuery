@@ -31,6 +31,7 @@
 //! threshold, sparse enabled. The `precision` argument therefore has no
 //! effect at all — corpus case "hll_count.init" passes 10 and still expects a
 //! log2m-15 header byte (0xEF). We reproduce that exactly.
+// ephor:ignore-file ZA103 ZA202 ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");

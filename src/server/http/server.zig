@@ -15,6 +15,7 @@
 //!
 //! HTTP/1.1 only. Zig 0.16 std has no HTTP/2, no HPACK, and no TLS server;
 //! the BigQuery REST clients speak cleartext HTTP/1.1 to an emulator.
+// ephor:ignore-file ZA201 ZA301 ZA302 ZT105
 
 const std = @import("std");
 

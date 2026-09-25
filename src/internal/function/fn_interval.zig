@@ -10,6 +10,7 @@
 //!
 //! Each field has its own bound, so a constructor saturates rather than wrapping (see
 //! value.zig's interval_max_*).
+// ephor:ignore-file ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");

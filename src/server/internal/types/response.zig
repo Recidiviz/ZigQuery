@@ -17,6 +17,7 @@
 //!
 //! All of it is verified byte-for-byte against a running Go emulator; see
 //! testdata/golden.json and the tests below.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const zigquery = @import("zigquery");

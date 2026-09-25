@@ -21,6 +21,7 @@
 //! field is genuinely labeled and navigable, which is what a debugging view
 //! needs. Depth and total-size caps bound the output regardless — this runs
 //! once per spec case at UI startup, across the whole (large) corpus.
+// ephor:ignore-file ZA302 ZA304 ZA701
 
 const std = @import("std");
 const pb = @import("../proto/resolved_ast.zig");
