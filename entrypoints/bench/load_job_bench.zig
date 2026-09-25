@@ -52,14 +52,21 @@ pub fn main(init: std.process.Init) !void {
         .autodetect = true,
     };
 
-    // The two halves of the read, timed on their own before the whole, so the whole can be
-    // attributed rather than only measured.
+    const t_read = std.Io.Clock.awake.now(init.io);
+    const reading = try load_rows.read(arena, media, spec, null);
+    const read_ms = ms(t_read, init.io);
+    const arena_after_read = arena_state.queryCapacity();
+
+    // The read's two halves, run again to attribute it. A second measurement of the same work
+    // rather than a subdivision of the one above: these run with everything already warm, so
+    // they do not sum to it.
     const t_csv = std.Io.Clock.awake.now(init.io);
     const parsed = try csv.parse(arena, media, .{});
     const csv_ms = ms(t_csv, init.io);
 
-    const texts = try arena.alloc([]const []const u8, parsed.len);
-    for (parsed, texts) |row, *dst| {
+    const examined = @min(parsed.len, autodetect.sample_rows + 1);
+    const texts = try arena.alloc([]const []const u8, examined);
+    for (parsed[0..examined], texts) |row, *dst| {
         const cells = try arena.alloc([]const u8, row.len);
         for (row, cells) |field, *cell| cell.* = field.text;
         dst.* = cells;
@@ -68,13 +75,7 @@ pub fn main(init: std.process.Init) !void {
     const t_detect = std.Io.Clock.awake.now(init.io);
     const detection = try autodetect.detect(arena, texts, null);
     const detect_ms = ms(t_detect, init.io);
-
-    const arena_after_parse = arena_state.queryCapacity();
-
-    const t_read = std.Io.Clock.awake.now(init.io);
-    const reading = try load_rows.read(arena, media, spec, null);
-    const read_ms = ms(t_read, init.io);
-    const arena_after_read = arena_state.queryCapacity();
+    const second_parse_bytes = arena_state.queryCapacity() - arena_after_read;
 
     const t_ddl = std.Io.Clock.awake.now(init.io);
     try db.exec(
@@ -87,16 +88,22 @@ pub fn main(init: std.process.Init) !void {
     const before = db.allocStats();
     const t_write = std.Io.Clock.awake.now(init.io);
     var repo = contentdata.Repository{ .arena = arena, .db = db };
-    const result = try repo.addTableData(
-        "p",
-        "d",
-        "t",
-        reading.schema_fields,
-        reading.rows,
-        .{ .skip_invalid_rows = true },
-    );
+    var batcher = try load_rows.Batcher.init(arena, reading, spec);
+    var rejected: usize = 0;
+    var batches: usize = 0;
+    try db.rawExec("BEGIN", &.{});
+    while (try batcher.next()) |batch| {
+        const result = try repo.addTableData("p", "d", "t", reading.schema_fields, batch, .{
+            .skip_invalid_rows = true,
+            .manage_transaction = false,
+        });
+        rejected += result.invalid.len;
+        batches += 1;
+    }
+    try db.rawExec("COMMIT", &.{});
     const write_ms = ms(t_write, init.io);
     const after = db.allocStats();
+    const arena_after_write = arena_state.queryCapacity();
 
     const total = read_ms + ddl_ms + write_ms;
     try o.print(
@@ -107,14 +114,14 @@ pub fn main(init: std.process.Init) !void {
         \\{s:<26}{d:>10.1} ms  {d:>5.1}%
         \\{s:<26}{d:>10.1} ms
         \\
-        \\  of the read half:
+        \\  the same read again, warm, in halves:
         \\{s:<26}{d:>10.1} ms
         \\{s:<26}{d:>10.1} ms
         \\
     , .{
         detection.columns.len,
-        reading.rows.len,
-        result.invalid.len,
+        reading.rowCount(),
+        rejected + batcher.bad_records,
         "read (csv + detect + rows)",
         read_ms,
         pct(read_ms, total),
@@ -138,6 +145,7 @@ pub fn main(init: std.process.Init) !void {
         \\
         \\{s:<26}{d:>10.1} MB   ({d:.1}x the CSV, reserved)
         \\{s:<26}{d:>10.1} MB
+        \\{s:<26}{d:>10.1} MB
         \\
         \\{d:.2} us/row read, {d:.2} us/row written
         \\
@@ -145,10 +153,12 @@ pub fn main(init: std.process.Init) !void {
         "arena after read",
         mb(arena_after_read),
         @as(f64, @floatFromInt(arena_after_read)) / @as(f64, @floatFromInt(media.len)),
-        "  of which csv + detect",
-        mb(arena_after_parse),
-        usPerRow(read_ms, reading.rows.len),
-        usPerRow(write_ms, reading.rows.len),
+        "  a second parse costs",
+        mb(second_parse_bytes),
+        "arena after write",
+        mb(arena_after_write),
+        usPerRow(read_ms, reading.rowCount()),
+        usPerRow(write_ms, reading.rowCount()),
     });
 
     if (zigquery.sqlite.memStatsEnabled()) {

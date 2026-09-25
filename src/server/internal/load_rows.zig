@@ -28,9 +28,25 @@ pub const Reading = struct {
     schema_node: std.json.Value,
     /// The same fields, as `addTableData` takes them.
     schema_fields: []const std.json.Value,
-    /// One object per row, keyed by column name.
-    rows: []const std.json.Value,
+    columns: []const Column,
+    /// The rows as they were read, turned into objects a batch at a time by `Batcher`.
+    source: Source,
+    /// Records rejected before any row was built.
     bad_records: u64,
+
+    pub fn rowCount(r: Reading) usize {
+        return switch (r.source) {
+            .csv => |rows| rows.len,
+            .json => |rows| rows.len,
+        };
+    }
+};
+
+/// Rows in the shape their format produced. A CSV row is cells to be named and typed; a JSON
+/// line is already the object the content store takes.
+pub const Source = union(enum) {
+    csv: []const csv.Row,
+    json: []const std.json.Value,
 };
 
 const Column = struct {
@@ -124,8 +140,14 @@ fn readCsv(
         .allow_quoted_newlines = spec.allow_quoted_newlines,
     }) catch return error.MalformedCsv;
 
-    const texts = try arena.alloc([]const []const u8, parsed.len);
-    for (parsed, texts) |row, *dst| {
+    // Only the rows detection reads: it samples, so copying the cells of a whole file to hand
+    // it the first few hundred would cost more than the detection.
+    const examined = @min(
+        parsed.len,
+        (spec.skip_leading_rows orelse 0) + autodetect.sample_rows + 1,
+    );
+    const texts = try arena.alloc([]const []const u8, examined);
+    for (parsed[0..examined], texts) |row, *dst| {
         const cells = try arena.alloc([]const u8, row.len);
         for (row, cells) |field, *cell| cell.* = field.text;
         dst.* = cells;
@@ -153,45 +175,109 @@ fn readCsv(
     };
 
     const schema_node = try schemaNodeFrom(arena, columns);
-
-    var rows = std.json.Array.init(arena);
-    var bad: u64 = 0;
     const data = if (data_start < parsed.len) parsed[data_start..] else &.{};
-    for (data) |row| {
-        // A row with fewer fields than the schema is short; with more it is long. Each is a
-        // bad record unless the job asked for it to be tolerated.
-        if (row.len < columns.len and !spec.allow_jagged_rows) {
-            bad += 1;
-            continue;
-        }
-        if (row.len > columns.len and !spec.ignore_unknown_values) {
-            bad += 1;
-            continue;
-        }
-        var object: std.json.ObjectMap = .empty;
-        var row_ok = true;
-        for (columns, 0..) |column, i| {
-            const cell: ?csv.Field = if (i < row.len) row[i] else null;
-            const value = (try cellValue(arena, cell, column, spec)) orelse {
-                row_ok = false;
-                break;
-            };
-            try object.put(arena, column.name, value);
-        }
-        if (!row_ok) {
-            bad += 1;
-            continue;
-        }
-        try rows.append(.{ .object = object });
-    }
 
     return .{
         .schema_node = schema_node,
         .schema_fields = fieldsOf(schema_node),
-        .rows = rows.items,
-        .bad_records = bad,
+        .columns = columns,
+        .source = .{ .csv = data },
+        .bad_records = 0,
     };
 }
+
+/// Rows per call to the content store. Large enough that the per-call overhead disappears,
+/// small enough that the objects held at once do not scale with the file.
+pub const batch_size = 4096;
+
+/// Hands out one batch of rows at a time, reusing the objects it built for the last one.
+///
+/// A row is a `std.json.ObjectMap`, which allocates its own storage: one per row costs several
+/// hundred bytes whatever the row holds, and a file's worth of them is what made a load cost
+/// tens of times its own size. The maps here are cleared and refilled instead, so a load
+/// allocates `batch_size` of them however many rows it carries.
+pub const Batcher = struct {
+    arena: std.mem.Allocator,
+    reading: Reading,
+    spec: load_handler.LoadSpec,
+    pos: usize = 0,
+    /// Rows the engine was never asked to store, because they did not fit their columns.
+    bad_records: u64 = 0,
+    maps: []std.json.ObjectMap,
+    values: []std.json.Value,
+
+    pub fn init(
+        arena: std.mem.Allocator,
+        reading: Reading,
+        spec: load_handler.LoadSpec,
+    ) !Batcher {
+        const maps = try arena.alloc(std.json.ObjectMap, batch_size);
+        // `alloc` hands back uninitialised memory, and a map is cleared before it is filled.
+        for (maps) |*map| map.* = .empty;
+        return .{
+            .arena = arena,
+            .reading = reading,
+            .spec = spec,
+            .maps = maps,
+            .values = try arena.alloc(std.json.Value, batch_size),
+        };
+    }
+
+    /// The next batch, or null when the rows run out. The slice is valid until the next call.
+    pub fn next(b: *Batcher) !?[]const std.json.Value {
+        switch (b.reading.source) {
+            // A JSON line is already the object, so a batch is a window onto what was parsed.
+            .json => |rows| {
+                if (b.pos >= rows.len) return null;
+                const end = @min(b.pos + batch_size, rows.len);
+                const batch = rows[b.pos..end];
+                b.pos = end;
+                return batch;
+            },
+            .csv => |rows| {
+                var built: usize = 0;
+                while (b.pos < rows.len and built < batch_size) : (b.pos += 1) {
+                    const row = rows[b.pos];
+                    if (try b.build(row, &b.maps[built])) {
+                        b.values[built] = .{ .object = b.maps[built] };
+                        built += 1;
+                    }
+                }
+                return if (built == 0) null else b.values[0..built];
+            },
+        }
+    }
+
+    /// Fills one pooled map from one CSV row. False when the row is a bad record.
+    fn build(b: *Batcher, row: csv.Row, into: *std.json.ObjectMap) !bool {
+        const columns = b.reading.columns;
+        // A row with fewer fields than the schema is short; with more it is long. Each is a
+        // bad record unless the job asked for it to be tolerated.
+        if (row.len < columns.len and !b.spec.allow_jagged_rows) {
+            b.bad_records += 1;
+            return false;
+        }
+        if (row.len > columns.len and !b.spec.ignore_unknown_values) {
+            b.bad_records += 1;
+            return false;
+        }
+
+        into.clearRetainingCapacity();
+        // Sized once rather than grown a column at a time. The map reallocates without ever
+        // trying to extend in place, so each growth step abandons its previous buffer in the
+        // arena, and a map crossing eight entries also allocates a hash index mid-loop.
+        try into.ensureTotalCapacity(b.arena, columns.len);
+        for (columns, 0..) |column, i| {
+            const cell: ?csv.Field = if (i < row.len) row[i] else null;
+            const value = (try cellValue(b.arena, cell, column, b.spec)) orelse {
+                b.bad_records += 1;
+                return false;
+            };
+            try into.put(b.arena, column.name, value);
+        }
+        return true;
+    }
+};
 
 /// One cell as the JSON the content store expects, or null when it does not fit its column.
 fn cellValue(
@@ -269,7 +355,8 @@ fn readJson(
     return .{
         .schema_node = schema_node,
         .schema_fields = fieldsOf(schema_node),
-        .rows = objects.items,
+        .columns = columns,
+        .source = .{ .json = objects.items },
         .bad_records = bad,
     };
 }
@@ -326,6 +413,31 @@ fn readFrom(
     return read(arena, media, spec, null);
 }
 
+/// Every row the batcher yields, gathered so a test can look at them all at once. A deep copy,
+/// because the batcher reuses its objects between batches.
+const Collected = struct {
+    rows: []const std.json.Value,
+    bad_records: u64,
+};
+
+fn collect(
+    arena: std.mem.Allocator,
+    reading: Reading,
+    spec: load_handler.LoadSpec,
+) !Collected {
+    var batcher = try Batcher.init(arena, reading, spec);
+    var out = std.json.Array.init(arena);
+    while (try batcher.next()) |batch| {
+        for (batch) |row| {
+            var copy: std.json.ObjectMap = .empty;
+            var it = row.object.iterator();
+            while (it.next()) |entry| try copy.put(arena, entry.key_ptr.*, entry.value_ptr.*);
+            try out.append(.{ .object = copy });
+        }
+    }
+    return .{ .rows = out.items, .bad_records = reading.bad_records + batcher.bad_records };
+}
+
 fn columnTypes(arena: std.mem.Allocator, reading: Reading) ![]const []const u8 {
     const fields = reading.schema_fields;
     const out = try arena.alloc([]const u8, fields.len);
@@ -338,17 +450,19 @@ test "a detected CSV yields its columns and rows" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const reading = try readFrom(arena, "name,age\nAlice,30\nBob,25\n", .{
+    const spec = load_handler.LoadSpec{
         .destination = .{ .project_id = "p", .dataset_id = "d", .table_id = "t" },
         .autodetect = true,
-    });
+    };
+    const reading = try readFrom(arena, "name,age\nAlice,30\nBob,25\n", spec);
     try testing.expectEqualDeep(
         @as([]const []const u8, &.{ "STRING", "INTEGER" }),
         try columnTypes(arena, reading),
     );
-    try testing.expectEqual(@as(usize, 2), reading.rows.len);
-    try testing.expectEqualStrings("Alice", reading.rows[0].object.get("name").?.string);
-    try testing.expectEqual(@as(i64, 30), reading.rows[0].object.get("age").?.integer);
+    const got = try collect(arena, reading, spec);
+    try testing.expectEqual(@as(usize, 2), got.rows.len);
+    try testing.expectEqualStrings("Alice", got.rows[0].object.get("name").?.string);
+    try testing.expectEqual(@as(i64, 30), got.rows[0].object.get("age").?.integer);
 }
 
 test "an empty cell is null, a quoted empty cell is a string" {
@@ -356,12 +470,14 @@ test "an empty cell is null, a quoted empty cell is a string" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const reading = try readFrom(arena, "a,b\nx,\ny,\"\"\n", .{
+    const spec = load_handler.LoadSpec{
         .destination = .{ .project_id = "p", .dataset_id = "d", .table_id = "t" },
         .autodetect = true,
-    });
-    try testing.expectEqual(std.json.Value.null, reading.rows[0].object.get("b").?);
-    try testing.expectEqualStrings("", reading.rows[1].object.get("b").?.string);
+    };
+    const reading = try readFrom(arena, "a,b\nx,\ny,\"\"\n", spec);
+    const got = try collect(arena, reading, spec);
+    try testing.expectEqual(std.json.Value.null, got.rows[0].object.get("b").?);
+    try testing.expectEqualStrings("", got.rows[1].object.get("b").?.string);
 }
 
 test "a short row is bad unless the job allows jagged rows" {
@@ -369,20 +485,24 @@ test "a short row is bad unless the job allows jagged rows" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const strict = try readFrom(arena, "a,b\n1,2\n3\n", .{
+    const strict_spec = load_handler.LoadSpec{
         .destination = .{ .project_id = "p", .dataset_id = "d", .table_id = "t" },
         .autodetect = true,
-    });
-    try testing.expectEqual(@as(u64, 1), strict.bad_records);
-    try testing.expectEqual(@as(usize, 1), strict.rows.len);
+    };
+    const strict = try readFrom(arena, "a,b\n1,2\n3\n", strict_spec);
+    const strict_rows = try collect(arena, strict, strict_spec);
+    try testing.expectEqual(@as(u64, 1), strict_rows.bad_records);
+    try testing.expectEqual(@as(usize, 1), strict_rows.rows.len);
 
-    const lenient = try readFrom(arena, "a,b\n1,2\n3\n", .{
+    const lenient_spec = load_handler.LoadSpec{
         .destination = .{ .project_id = "p", .dataset_id = "d", .table_id = "t" },
         .autodetect = true,
         .allow_jagged_rows = true,
-    });
-    try testing.expectEqual(@as(u64, 0), lenient.bad_records);
-    try testing.expectEqual(@as(usize, 2), lenient.rows.len);
+    };
+    const lenient = try readFrom(arena, "a,b\n1,2\n3\n", lenient_spec);
+    const lenient_rows = try collect(arena, lenient, lenient_spec);
+    try testing.expectEqual(@as(u64, 0), lenient_rows.bad_records);
+    try testing.expectEqual(@as(usize, 2), lenient_rows.rows.len);
 }
 
 test "a value that does not fit its column is a bad record" {
@@ -394,13 +514,15 @@ test "a value that does not fit its column is a bad record" {
     var fields = [_]*pb.TableFieldSchema{&int_field};
     const schema = pb.TableSchema{ .fields = &fields };
 
-    const reading = try readFrom(arena, "1\nnot a number\n3\n", .{
+    const spec = load_handler.LoadSpec{
         .destination = .{ .project_id = "p", .dataset_id = "d", .table_id = "t" },
         .schema = &schema,
         .skip_leading_rows = 0,
-    });
-    try testing.expectEqual(@as(u64, 1), reading.bad_records);
-    try testing.expectEqual(@as(usize, 2), reading.rows.len);
+    };
+    const reading = try readFrom(arena, "1\nnot a number\n3\n", spec);
+    const got = try collect(arena, reading, spec);
+    try testing.expectEqual(@as(u64, 1), got.bad_records);
+    try testing.expectEqual(@as(usize, 2), got.rows.len);
 }
 
 test "newline-delimited JSON takes its columns from the values" {
@@ -421,7 +543,7 @@ test "newline-delimited JSON takes its columns from the values" {
         @as([]const []const u8, &.{ "STRING", "INTEGER" }),
         try columnTypes(arena, reading),
     );
-    try testing.expectEqual(@as(usize, 2), reading.rows.len);
+    try testing.expectEqual(@as(usize, 2), reading.rowCount());
 }
 
 test "a nested JSON value is refused rather than half read" {

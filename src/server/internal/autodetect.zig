@@ -225,6 +225,10 @@ pub fn columnName(arena: std.mem.Allocator, header: []const u8) ![]const u8 {
     return out;
 }
 
+/// Rows read to decide the columns. The reference samples up to this many and types the
+/// columns from them, so a value further down the file does not widen a column. schema-detect
+pub const sample_rows = 500;
+
 pub const Column = struct {
     name: []const u8,
     kind: Kind,
@@ -257,14 +261,16 @@ pub fn detect(
     var data_start: u32 = if (skip_leading_rows) |n| n else 0;
     if (candidate) |row_index| {
         if (row_index < rows.len) {
-            if (looksLikeHeader(rows[row_index], rows[row_index + 1 ..])) {
+            const rest = rows[row_index + 1 ..];
+            if (looksLikeHeader(rows[row_index], rest[0..@min(rest.len, sample_rows)])) {
                 header = rows[row_index];
             }
             data_start = row_index + 1;
         }
     }
 
-    const data = if (data_start < rows.len) rows[data_start..] else &.{};
+    const all_data = if (data_start < rows.len) rows[data_start..] else &.{};
+    const data = all_data[0..@min(all_data.len, sample_rows)];
 
     // The reference takes the column count from the rows having the most fields, so a jagged
     // row does not shorten the schema. schema-detect
@@ -486,4 +492,36 @@ test "the column count comes from the widest row" {
 
     const detection = try detectFrom(arena, "1,2\n3,4,5\n", 0);
     try testing.expectEqual(@as(usize, 3), detection.columns.len);
+}
+
+test "a value past the sample does not widen a column" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Integers for the whole sample, then text. BigQuery reads up to 500 rows and types the
+    // column from those, so the row after them does not make it a string.
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(testing.allocator);
+    // Not `n`: that is one of the boolean words, so a header row holding it is data.
+    try body.appendSlice(testing.allocator, "num\n");
+    for (0..sample_rows) |i| try body.print(testing.allocator, "{d}\n", .{i});
+    try body.appendSlice(testing.allocator, "not a number\n");
+
+    const detection = try detectFrom(arena, body.items, null);
+    try expectColumns(detection, &.{"num:INTEGER"});
+}
+
+test "the column count comes from the sample, not the whole file" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(testing.allocator);
+    for (0..sample_rows) |i| try body.print(testing.allocator, "{d},{d}\n", .{ i, i });
+    try body.appendSlice(testing.allocator, "1,2,3\n");
+
+    const detection = try detectFrom(arena, body.items, 0);
+    try testing.expectEqual(@as(usize, 2), detection.columns.len);
 }
