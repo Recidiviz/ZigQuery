@@ -38,7 +38,7 @@
 //!
 //! This lives in the library rather than the harness because it is pure and it
 //! is the only part of the spec pipeline that genuinely needs unit tests.
-// ephor:ignore-file ZA303 ZA304 ZA701 ZT105
+// ephor:ignore-file ZA303 ZA304 ZT105
 
 const std = @import("std");
 const Zoir = std.zig.Zoir;
@@ -46,7 +46,7 @@ const driver = @import("../driver.zig");
 const value_mod = @import("value.zig");
 
 pub const Corpus = enum {
-    /// testdata/specs/googlesql/** want values are the GoogleSQL reference docs' own published tables.
+    /// testdata/specs/googlesql/** want values are the GoogleSQL reference docs' own tables.
     bigquery_docs,
 
     /// testdata/specs/googlesql/compliance/**: want values follow ZetaSQL's
@@ -424,7 +424,12 @@ pub fn renderWant(gpa: std.mem.Allocator, zoir: Zoir, node: Zoir.Node.Index) Err
     return buf.toOwnedSlice(gpa);
 }
 
-fn writeWant(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), zoir: Zoir, node: Zoir.Node.Index) Error!void {
+fn writeWant(
+    gpa: std.mem.Allocator,
+    buf: *std.ArrayList(u8),
+    zoir: Zoir,
+    node: Zoir.Node.Index,
+) Error!void {
     switch (node.get(zoir)) {
         .null => try buf.appendSlice(gpa, "NULL"),
         .true => try buf.appendSlice(gpa, "true"),

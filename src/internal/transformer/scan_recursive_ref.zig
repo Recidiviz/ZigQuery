@@ -3,7 +3,6 @@
 //! Becomes a subquery that selects the recursive CTE's columns,
 //! aliased with the stored id-based column mapping so the enclosing query can
 //! resolve them.
-// ephor:ignore-file ZA701
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -32,7 +31,9 @@ pub fn transform(
     select_statement.from_clause = from_item;
 
     // Get stored column mappings from context for this recursive CTE.
-    const mapping = ctx.getWithEntryMapping(recursive_cte_name) orelse return error.ValidationFailed;
+    const mapping = ctx.getWithEntryMapping(recursive_cte_name) orelse {
+        return error.ValidationFailed;
+    };
     if (mapping.len != recursive_ref_scan.column_list.len) return error.ValidationFailed;
 
     // Leave each column pending, like scan_with_ref: the recursive CTE

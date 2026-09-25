@@ -8,8 +8,8 @@
 //!
 //! Only the first qualifying WHEN clause runs for a row
 //! (data-manipulation-language.md#merge_statement).
-//! The snapshot decides it once, so a clause's writes never change which rows a later clause acts on.
-// ephor:ignore-file ZA301 ZA302 ZA303 ZA701
+//! A clause's writes never change which rows a later clause acts on.
+// ephor:ignore-file ZA301 ZA302 ZA303
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -373,10 +373,7 @@ fn remapToMergedColumns(
         const mapped = entry.value_ptr.*;
         const ref = try alloc.create(types_data.ColumnRefData);
         ref.* = .{ .column_id = column.id };
-        const expr = try coord.transformExpression(.{
-            .type = .column,
-            .column = ref
-        }, ctx);
+        const expr = try coord.transformExpression(.{ .type = .column, .column = ref }, ctx);
         const needle = try expr.toString(alloc);
         const replacement = try std.fmt.allocPrint(alloc, "`{s}`", .{mapped});
         out = try replaceAll(alloc, out, needle, replacement);
@@ -747,7 +744,11 @@ fn replaceAll(
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     while (i < haystack.len) {
-        if (i + needle.len <= haystack.len and std.mem.eql(u8, haystack[i .. i + needle.len], needle)) {
+        if (i + needle.len <= haystack.len and std.mem.eql(
+            u8,
+            haystack[i .. i + needle.len],
+            needle,
+        )) {
             try out.appendSlice(alloc, replacement);
             i += needle.len;
         } else {

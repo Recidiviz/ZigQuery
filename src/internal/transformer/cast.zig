@@ -1,10 +1,11 @@
 //! CAST, lowered to `zigquery_cast(expr, <from type JSON>, <to type JSON>, return_null_on_err)`.
 //!
 //! The cast expression is transformed recursively and both types are JSON-encoded into the call.
-//! A cast cannot become SQLite's own CAST, because the answer depends on GoogleSQL types SQLite has no
-//! notion of, so the types travel to the UDF as literals.
+//! A cast cannot transform SQLite's native CAST, because the answer depends on GoogleSQL types
+//! that SQLite has no notion of, so the types travel to the UDF as literals.
+//!
 //! See function/fn_misc.zig for the evaluation. conversion_rules.md
-// ephor:ignore-file ZA302 ZA701
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

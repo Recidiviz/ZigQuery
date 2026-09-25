@@ -5,7 +5,7 @@
 //! as one rune each); the helpers below reproduce that counting. LOWER/UPPER
 //! use ASCII case mapping (Go's strings.ToLower is full Unicode) — the
 //! foundation corpus only exercises ASCII.
-// ephor:ignore-file ZA103 ZA202 ZA301 ZA302 ZA303 ZA304 ZA701
+// ephor:ignore-file ZA103 ZA202 ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -1066,7 +1066,12 @@ pub fn soundex(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 /// STRING and BYTES signatures share it: for STRING an element is a code
 /// point, which is what makes EDIT_DISTANCE('é','e') answer 1 rather than the
 /// 2 a byte-wise walk would give.
-fn levenshtein(alloc: std.mem.Allocator, comptime T: type, a: []const T, b: []const T) Error![]const usize {
+fn levenshtein(
+    alloc: std.mem.Allocator,
+    comptime T: type,
+    a: []const T,
+    b: []const T,
+) Error![]const usize {
     var prev = try alloc.alloc(usize, b.len + 1);
     var cur = try alloc.alloc(usize, b.len + 1);
     for (prev, 0..) |*p, j| p.* = j;

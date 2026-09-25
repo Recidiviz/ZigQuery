@@ -33,7 +33,7 @@
 //! leaf, first-wins, so an unqualified `FROM INFORMATION_SCHEMA.TABLES`
 //! resolves to whichever dataset registered first. BigQuery reads that spelling
 //! as "the default dataset"; the engine has no such concept.
-// ephor:ignore-file ZA102 ZA303 ZA304 ZA701
+// ephor:ignore-file ZA102 ZA303 ZA304
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");
@@ -219,7 +219,11 @@ fn matches(arena: std.mem.Allocator, table_spec: *const spec.TableSpec, filter: 
 /// SCHEMATA` has no dataset segment to narrow by). The two cannot collide: a
 /// project only ever equals a bare, project-less dataset's own name, which is
 /// itself the narrower, correct match either way.
-fn schemataMatches(arena: std.mem.Allocator, table_spec: *const spec.TableSpec, filter: Filter) bool {
+fn schemataMatches(
+    arena: std.mem.Allocator,
+    table_spec: *const spec.TableSpec,
+    filter: Filter,
+) bool {
     if (hidden(table_spec)) return false;
     const path = table_spec.name_path;
     if (path.len < 2) return false;
@@ -652,8 +656,14 @@ fn xFilter(
         next += 1;
     }
 
-    st.rows = st.ctx.view.build(alloc, st.ctx.state.info_schema, st.ctx.state.datasets, filter) catch
+    st.rows = st.ctx.view.build(
+        alloc,
+        st.ctx.state.info_schema,
+        st.ctx.state.datasets,
+        filter,
+    ) catch {
         return c.SQLITE_NOMEM;
+    };
     return c.SQLITE_OK;
 }
 
@@ -767,7 +777,12 @@ test "TABLES reports one row per table with its type" {
     try testing.expectEqualStrings("NO", rows[1][5].string);
 
     // No dataset constraint scans everything.
-    try testing.expectEqual(@as(usize, 3), (try buildTables(a, &specs, &.{}, .{ .prefix = "" })).len);
+    try testing.expectEqual(@as(usize, 3), (try buildTables(
+        a,
+        &specs,
+        &.{},
+        .{ .prefix = "" },
+    )).len);
 }
 
 test "COLUMNS numbers columns from one, in declaration order" {
@@ -839,7 +854,12 @@ test "a three-part path reports its project as the catalog" {
     try testing.expectEqualStrings("proj", rows[0][0].string);
     try testing.expectEqualStrings("ds", rows[0][1].string);
     // The bare dataset name is NOT the prefix here and must not match.
-    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, &.{}, .{ .prefix = "ds" })).len);
+    try testing.expectEqual(@as(usize, 0), (try buildTables(
+        a,
+        &specs,
+        &.{},
+        .{ .prefix = "ds" },
+    )).len);
 
     // A two-part path has no project to report.
     const short = [_]*spec.TableSpec{try testSpec(a, &.{ "ds", "t1" }, &.{"x"}, false)};
@@ -858,8 +878,18 @@ test "a dataset name containing an underscore is not mis-split" {
     const specs = [_]*spec.TableSpec{
         try testSpec(a, &.{ "demo_ds", "tbl_a" }, &.{"x"}, false),
     };
-    try testing.expectEqual(@as(usize, 1), (try buildTables(a, &specs, &.{}, .{ .prefix = "demo_ds" })).len);
-    try testing.expectEqual(@as(usize, 0), (try buildTables(a, &specs, &.{}, .{ .prefix = "ds" })).len);
+    try testing.expectEqual(@as(usize, 1), (try buildTables(
+        a,
+        &specs,
+        &.{},
+        .{ .prefix = "demo_ds" },
+    )).len);
+    try testing.expectEqual(@as(usize, 0), (try buildTables(
+        a,
+        &specs,
+        &.{},
+        .{ .prefix = "ds" },
+    )).len);
 }
 
 test "pushed-down table and schema filters agree with filtering afterwards" {

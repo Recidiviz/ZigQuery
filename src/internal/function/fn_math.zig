@@ -2,7 +2,7 @@
 //! (Go: function.go ADD/SUB/MUL/OP_DIV/BIT_*, function_math.go ABS/ROUND/
 //! SAFE_*). Handler bodies fold in the Go bind* wrappers (null handling,
 //! argument-count checks).
-// ephor:ignore-file ZA301 ZA302 ZA304 ZA701
+// ephor:ignore-file ZA301 ZA302 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -52,7 +52,7 @@ fn negate(alloc: std.mem.Allocator, v: Value) Error!Value {
             }
             return value_mod.numericFromUnscaled(alloc, -n.unscaled, n.is_bignumeric);
         },
-        // The seven fields carry independent signs, so negating the interval is negating each of them
+        // The seven fields carry independent signs, negating the interval is negating each of them
         .interval => |iv| return Value{ .interval = .{
             .years = -iv.years,
             .months = -iv.months,

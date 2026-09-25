@@ -15,7 +15,7 @@
 //!   guess before that is attempted again.
 //! - Route dispatch is a switch over Route.Id rather than one http.Handler
 //!   type per route (server/handler_gen.go's 39 empty structs).
-// ephor:ignore-file ZA101 ZA201 ZA301 ZA302 ZA303 ZA304 ZA403 ZA701 ZC103
+// ephor:ignore-file ZA101 ZA201 ZA301 ZA302 ZA303 ZA304 ZA403 ZC103
 
 const std = @import("std");
 const zigquery = @import("zigquery");
@@ -877,9 +877,15 @@ pub const Server = struct {
             },
             .range => |r| {
                 var range: std.json.ObjectMap = .empty;
-                try range.put(arena, "start", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.start}) });
-                try range.put(arena, "end", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.end}) });
-                try range.put(arena, "interval", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.interval}) });
+                try range.put(arena, "start", .{
+                    .string = try std.fmt.allocPrint(arena, "{d}", .{r.start}),
+                });
+                try range.put(arena, "end", .{
+                    .string = try std.fmt.allocPrint(arena, "{d}", .{r.end}),
+                });
+                try range.put(arena, "interval", .{
+                    .string = try std.fmt.allocPrint(arena, "{d}", .{r.interval}),
+                });
                 var rp: std.json.ObjectMap = .empty;
                 try rp.put(arena, "field", .{ .string = r.field });
                 try rp.put(arena, "range", .{ .object = range });
@@ -1166,7 +1172,11 @@ pub const Server = struct {
             for (result.invalid) |*e| e.row_index = posted[e.row_index];
         }
 
-        const invalid = try tabledata_handler.mergeInsertErrorsByRow(arena, unknown, result.invalid);
+        const invalid = try tabledata_handler.mergeInsertErrorsByRow(
+            arena,
+            unknown,
+            result.invalid,
+        );
         if (invalid.len > 0) {
             var out: std.ArrayList(u8) = .empty;
             try tabledata_handler.writeInsertErrors(
@@ -1245,7 +1255,12 @@ pub const Server = struct {
                 dst.dataset_id,
                 dst.table_id,
             )) |existing| existing.metadata else "";
-            const materialization_method = s.materializeInto(arena, dst, sql, params) catch |err| switch (err) {
+            const materialization_method = s.materializeInto(
+                arena,
+                dst,
+                sql,
+                params,
+            ) catch |err| switch (err) {
                 error.MaterializeFailed => return .{
                     .status = .bad_request,
                     .body = try errors.body(
@@ -3021,11 +3036,19 @@ test "DDL partitioning and descriptions survive a restart on a file-backed datab
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const db_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/partitioned.db", .{tmp.sub_path});
+    const db_path = try std.fmt.allocPrint(
+        arena,
+        ".zig-cache/tmp/{s}/partitioned.db",
+        .{tmp.sub_path},
+    );
 
     var before: []const u8 = "";
     {
-        var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .database = db_path, .dataset = "ds1" });
+        var s = try Server.init(testing.allocator, testing_io, .{
+            .project = "test",
+            .database = db_path,
+            .dataset = "ds1",
+        });
         defer s.deinit();
         try runQueryJob(
             s,
@@ -3039,7 +3062,11 @@ test "DDL partitioning and descriptions survive a restart on a file-backed datab
         try testing.expect(std.mem.indexOf(u8, before, "\"description\":\"col a\"") != null);
     }
     {
-        var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .database = db_path, .dataset = "ds1" });
+        var s = try Server.init(testing.allocator, testing_io, .{
+            .project = "test",
+            .database = db_path,
+            .dataset = "ds1",
+        });
         defer s.deinit();
         const after = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "");
         try testing.expectEqualStrings(before, after.body);

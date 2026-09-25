@@ -8,7 +8,7 @@
 //!
 //! Note `location` and `debugInfo` are always emitted even when empty, and
 //! the message is repeated at both levels.
-// ephor:ignore-file ZA302 ZA304 ZA701
+// ephor:ignore-file ZA302 ZA304
 
 const std = @import("std");
 const http = std.http;
@@ -111,7 +111,9 @@ pub fn writeJsonString(
                     try out.append(arena, ch);
                 } else {
                     const len = std.unicode.utf8ByteSequenceLength(ch) catch 0;
-                    if (len != 0 and i + len <= s.len and std.unicode.utf8ValidateSlice(s[i .. i + len])) {
+                    if (len != 0 and i + len <= s.len and
+                        std.unicode.utf8ValidateSlice(s[i .. i + len]))
+                    {
                         try out.appendSlice(arena, s[i .. i + len]);
                         // Increment to length - 1 (continue expression handles last 1)
                         i += len - 1;

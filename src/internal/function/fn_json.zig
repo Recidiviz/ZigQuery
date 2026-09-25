@@ -15,7 +15,7 @@
 //! Values are parsed with std.json (parse_numbers = false) so numbers survive
 //! as their exact source text, and re-serialized minified — object key order is
 //! preserved (ObjectMap is insertion-ordered), matching goccy's Extract+Compact.
-// ephor:ignore-file ZA101 ZA302 ZA303 ZA304 ZA701
+// ephor:ignore-file ZA101 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -765,7 +765,11 @@ fn appendMember(
     try vals.append(alloc, try val.toJson(alloc));
 }
 
-fn buildObject(alloc: std.mem.Allocator, keys: []const []const u8, vals: []const []const u8) Error!Value {
+fn buildObject(
+    alloc: std.mem.Allocator,
+    keys: []const []const u8,
+    vals: []const []const u8,
+) Error!Value {
     var out: std.ArrayList(u8) = .empty;
     try out.append(alloc, '{');
     for (keys, vals, 0..) |k, v, i| {
@@ -906,7 +910,8 @@ pub fn jsonRemove(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         if (path.nodes.len == 0)
             return bind.fail("The JSONPath cannot be '$'", .{}, error.UnsupportedOperation);
         const last = path.nodes[path.nodes.len - 1];
-        const parent = try slotFor(alloc, &root, path.nodes[0 .. path.nodes.len - 1], false) orelse continue;
+        const slice = path.nodes[0 .. path.nodes.len - 1];
+        const parent = try slotFor(alloc, &root, slice, false) orelse continue;
         switch (last) {
             .selector => |name| if (parent.* == .object) {
                 _ = parent.object.orderedRemove(name);
@@ -1006,7 +1011,9 @@ pub fn jsonArrayInsert(alloc: std.mem.Allocator, args: []const Value) Error!Valu
             .index => |idx| @as(usize, @intCast(idx)),
             .selector => continue,
         };
-        const slot = try slotFor(alloc, &root, path.nodes[0 .. path.nodes.len - 1], false) orelse continue;
+        const paths = path.nodes[0 .. path.nodes.len - 1];
+
+        const slot = try slotFor(alloc, &root, paths, false) orelse continue;
         if (slot.* == .null) slot.* = .{ .array = std.json.Array.init(alloc) };
         if (slot.* != .array) continue;
         // Past the end pads rather than refuses: '$[7]' on a four-element array
@@ -1100,7 +1107,11 @@ pub fn jsonKeys(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 
     const root = try jsonDoc(alloc, args[0], "JSON_KEYS") orelse return null_v;
     var keys: std.StringArrayHashMapUnmanaged(void) = .empty;
-    try (KeyWalk{ .alloc = alloc, .mode = mode, .keys = &keys }).walk(root, max_depth, "");
+    try (KeyWalk{
+        .alloc = alloc,
+        .mode = mode,
+        .keys = &keys,
+    }).walk(root, max_depth, "");
 
     const sorted = try alloc.dupe([]const u8, keys.keys());
     std.mem.sort([]const u8, sorted, {}, struct {
@@ -1120,7 +1131,10 @@ fn flattenInto(alloc: std.mem.Allocator, v: std.json.Value, out: *std.ArrayList(
     }
     // A JSON null becomes a NULL element, the same way the extract family
     // renders one; everything else keeps its own JSON text.
-    try out.append(alloc, if (v == .null) null_v else Value{ .json = try stringifyCompact(alloc, v) });
+    const value = if (v == .null) null_v else Value{
+        .json = try stringifyCompact(alloc, v),
+    };
+    try out.append(alloc, value);
 }
 
 /// Recursion stops at the first non-array, so `[[{"a":[1]}],2]` flattens to
@@ -1397,12 +1411,20 @@ test "jsonArray and jsonObject build key-sorted documents" {
     // A repeated key keeps its first value.
     try testing.expectEqualStrings(
         "{\"a\":1}",
-        (try jsonObject(a, &.{ strArg("a"), Value{ .int = 1 }, strArg("a"), Value{ .int = 2 } })).json,
+        (try jsonObject(a, &.{
+            strArg("a"),
+            Value{ .int = 1 },
+            strArg("a"),
+            Value{ .int = 2 },
+        })).json,
     );
     // The parallel-array signature.
     const ks = try value_mod.arrayValue(a, &.{ strArg("b"), strArg("a") });
     const vs = try value_mod.arrayValue(a, &.{ Value{ .int = 1 }, Value{ .int = 2 } });
-    try testing.expectEqualStrings("{\"a\":2,\"b\":1}", (try jsonObject(a, &.{ ks, vs })).json);
+    try testing.expectEqualStrings("{\"a\":2,\"b\":1}", (try jsonObject(a, &.{
+        ks,
+        vs,
+    })).json);
     // Nested objects are sorted too, since the result is re-serialized whole.
     try testing.expectEqualStrings(
         "{\"k\":{\"a\":2,\"b\":1}}",
@@ -1423,7 +1445,13 @@ test "jsonSet creates, pads and stops at scalars" {
     defer arena.deinit();
     const a = arena.allocator();
     const T = struct {
-        fn set(al: std.mem.Allocator, doc: []const u8, p: []const u8, v: Value, create: bool) ![]const u8 {
+        fn set(
+            al: std.mem.Allocator,
+            doc: []const u8,
+            p: []const u8,
+            v: Value,
+            create: bool,
+        ) ![]const u8 {
             return (try jsonSet(al, &.{ jsonArg(doc), strArg(p), v, boolArg(create) })).json;
         }
     };
@@ -1485,19 +1513,48 @@ test "jsonStripNulls cascades, and include_arrays only governs elements" {
     defer arena.deinit();
     const a = arena.allocator();
     const T = struct {
-        fn strip(al: std.mem.Allocator, doc: []const u8, p: []const u8, arrays: bool, empty: bool) ![]const u8 {
-            return (try jsonStripNulls(al, &.{ jsonArg(doc), strArg(p), boolArg(arrays), boolArg(empty) })).json;
+        fn strip(
+            al: std.mem.Allocator,
+            doc: []const u8,
+            p: []const u8,
+            arrays: bool,
+            empty: bool,
+        ) ![]const u8 {
+            return (try jsonStripNulls(al, &.{
+                jsonArg(doc),
+                strArg(p),
+                boolArg(arrays),
+                boolArg(empty),
+            })).json;
         }
     };
-    try testing.expectEqualStrings("{\"b\":1}", try T.strip(a, "{\"a\":null,\"b\":1}", "$", true, false));
-    try testing.expectEqualStrings("{\"a\":[1],\"b\":{}}", try T.strip(a, "{\"a\":[null,1],\"b\":{}}", "$", true, false));
+    try testing.expectEqualStrings(
+        "{\"b\":1}",
+        try T.strip(a, "{\"a\":null,\"b\":1}", "$", true, false),
+    );
+    try testing.expectEqualStrings(
+        "{\"a\":[1],\"b\":{}}",
+        try T.strip(a, "{\"a\":[null,1],\"b\":{}}", "$", true, false),
+    );
     // remove_empty cascades all the way out, so the document becomes JSON null.
-    try testing.expectEqualStrings("null", try T.strip(a, "{\"a\":{\"b\":null}}", "$", true, true));
-    try testing.expectEqualStrings("null", try T.strip(a, "{\"a\":[]}", "$", true, true));
+    try testing.expectEqualStrings(
+        "null",
+        try T.strip(a, "{\"a\":{\"b\":null}}", "$", true, true),
+    );
+    try testing.expectEqualStrings(
+        "null",
+        try T.strip(a, "{\"a\":[]}", "$", true, true),
+    );
     // include_arrays => FALSE keeps null *elements*, but still strips objects
     // nested inside the array.
-    try testing.expectEqualStrings("{\"a\":[null,1]}", try T.strip(a, "{\"a\":[null,1]}", "$", false, false));
-    try testing.expectEqualStrings("{\"a\":[{}]}", try T.strip(a, "{\"a\":[{\"b\":null}]}", "$", false, false));
+    try testing.expectEqualStrings(
+        "{\"a\":[null,1]}",
+        try T.strip(a, "{\"a\":[null,1]}", "$", false, false),
+    );
+    try testing.expectEqualStrings(
+        "{\"a\":[{}]}",
+        try T.strip(a, "{\"a\":[{\"b\":null}]}", "$", false, false),
+    );
     // A path confines the work to that subtree.
     try testing.expectEqualStrings(
         "{\"a\":null,\"b\":{}}",
@@ -1510,67 +1567,126 @@ test "jsonArrayAppend and jsonArrayInsert: vivify nulls, never create keys" {
     defer arena.deinit();
     const a = arena.allocator();
     const two = Value{ .int = 2 };
-    const pair = try value_mod.arrayValue(a, &.{ Value{ .int = 3 }, Value{ .int = 4 } });
+    const pair = try value_mod.arrayValue(
+        a,
+        &.{ Value{ .int = 3 }, Value{ .int = 4 } },
+    );
 
     // append_each_element spreads a SQL ARRAY...
     try testing.expectEqualStrings(
         "[1,2,3,4]",
-        (try jsonArrayAppend(a, &.{ jsonArg("[1,2]"), strArg("$"), pair, boolArg(true) })).json,
+        (try jsonArrayAppend(
+            a,
+            &.{ jsonArg("[1,2]"), strArg("$"), pair, boolArg(true) },
+        )).json,
     );
     try testing.expectEqualStrings(
         "[1,2,[3,4]]",
-        (try jsonArrayAppend(a, &.{ jsonArg("[1,2]"), strArg("$"), pair, boolArg(false) })).json,
+        (try jsonArrayAppend(
+            a,
+            &.{ jsonArg("[1,2]"), strArg("$"), pair, boolArg(false) },
+        )).json,
     );
     // ...but never a JSON array, which goes in whole either way.
     try testing.expectEqualStrings(
         "[1,[2,3]]",
-        (try jsonArrayAppend(a, &.{ jsonArg("[1]"), strArg("$"), jsonArg("[2,3]"), boolArg(true) })).json,
+        (try jsonArrayAppend(
+            a,
+            &.{ jsonArg("[1]"), strArg("$"), jsonArg("[2,3]"), boolArg(true) },
+        )).json,
     );
     // An existing JSON null becomes an array; a missing key does not.
     try testing.expectEqualStrings(
         "{\"a\":[1]}",
-        (try jsonArrayAppend(a, &.{ jsonArg("{\"a\":null}"), strArg("$.a"), Value{ .int = 1 }, boolArg(true) })).json,
+        (try jsonArrayAppend(a, &.{
+            jsonArg("{\"a\":null}"),
+            strArg("$.a"),
+            Value{ .int = 1 },
+            boolArg(true),
+        })).json,
     );
     try testing.expectEqualStrings(
         "{}",
-        (try jsonArrayAppend(a, &.{ jsonArg("{}"), strArg("$.a"), two, boolArg(true) })).json,
+        (try jsonArrayAppend(
+            a,
+            &.{ jsonArg("{}"), strArg("$.a"), two, boolArg(true) },
+        )).json,
     );
     try testing.expectEqualStrings(
         "{\"a\":1}",
-        (try jsonArrayAppend(a, &.{ jsonArg("{\"a\":1}"), strArg("$.a"), two, boolArg(true) })).json,
+        (try jsonArrayAppend(a, &.{
+            jsonArg("{\"a\":1}"),
+            strArg("$.a"),
+            two,
+            boolArg(true),
+        })).json,
     );
 
     // Insert pads up to the index rather than refusing it.
     try testing.expectEqualStrings(
         "[1,2,null,null,null,null,null,9]",
-        (try jsonArrayInsert(a, &.{ jsonArg("[1,2]"), strArg("$[7]"), Value{ .int = 9 }, boolArg(true) })).json,
+        (try jsonArrayInsert(a, &.{
+            jsonArg("[1,2]"),
+            strArg("$[7]"),
+            Value{ .int = 9 },
+            boolArg(true),
+        })).json,
     );
     try testing.expectEqualStrings(
         "{\"a\":[null,null,10]}",
-        (try jsonArrayInsert(a, &.{ jsonArg("{\"a\":null}"), strArg("$.a[2]"), Value{ .int = 10 }, boolArg(true) })).json,
+        (try jsonArrayInsert(a, &.{
+            jsonArg("{\"a\":null}"),
+            strArg("$.a[2]"),
+            Value{ .int = 10 },
+            boolArg(true),
+        })).json,
     );
     // The last step has to name a position: '$' and a selector are no-ops.
     try testing.expectEqualStrings(
         "[1,2]",
-        (try jsonArrayInsert(a, &.{ jsonArg("[1,2]"), strArg("$"), Value{ .int = 3 }, boolArg(true) })).json,
+        (try jsonArrayInsert(a, &.{
+            jsonArg("[1,2]"),
+            strArg("$"),
+            Value{ .int = 3 },
+            boolArg(true),
+        })).json,
     );
     try testing.expectEqualStrings(
         "{\"a\":[1]}",
-        (try jsonArrayInsert(a, &.{ jsonArg("{\"a\":[1]}"), strArg("$.a"), Value{ .int = 3 }, boolArg(true) })).json,
+        (try jsonArrayInsert(a, &.{
+            jsonArg("{\"a\":[1]}"),
+            strArg("$.a"),
+            Value{ .int = 3 },
+            boolArg(true),
+        })).json,
     );
     // Nothing is created on the way down, and a scalar root is left alone.
     try testing.expectEqualStrings(
         "{}",
-        (try jsonArrayInsert(a, &.{ jsonArg("{}"), strArg("$.a[0]"), Value{ .int = 1 }, boolArg(true) })).json,
+        (try jsonArrayInsert(a, &.{
+            jsonArg("{}"),
+            strArg("$.a[0]"),
+            Value{ .int = 1 },
+            boolArg(true),
+        })).json,
     );
     try testing.expectEqualStrings(
         "1",
-        (try jsonArrayInsert(a, &.{ jsonArg("1"), strArg("$[0]"), strArg("r1"), boolArg(true) })).json,
+        (try jsonArrayInsert(a, &.{
+            jsonArg("1"),
+            strArg("$[0]"),
+            strArg("r1"),
+            boolArg(true),
+        })).json,
     );
 }
 
 fn keysOf(alloc: std.mem.Allocator, doc: []const u8, depth: i64, mode: []const u8) ![]const u8 {
-    const v = try jsonKeys(alloc, &.{ jsonArg(doc), Value{ .int = depth }, strArg(mode) });
+    const v = try jsonKeys(alloc, &.{
+        jsonArg(doc),
+        Value{ .int = depth },
+        strArg(mode),
+    });
     return (try v.toJson(alloc));
 }
 
@@ -1579,26 +1695,97 @@ test "jsonKeys: dotted paths, sorted and deduplicated" {
     defer arena.deinit();
     const a = arena.allocator();
     const deep = std.math.maxInt(i64);
-    try testing.expectEqualStrings("[\"a\",\"a.b\",\"a.b.c\"]", try keysOf(a, "{\"a\":{\"b\":{\"c\":1}}}", deep, "strict"));
+    try testing.expectEqualStrings(
+        "[\"a\",\"a.b\",\"a.b.c\"]",
+        try keysOf(
+            a,
+            "{\"a\":{\"b\":{\"c\":1}}}",
+            deep,
+            "strict",
+        ),
+    );
     // Sorted on the whole path, not per level.
-    try testing.expectEqualStrings("[\"a\",\"a.c\",\"a.d\",\"b\"]", try keysOf(a, "{\"b\":1,\"a\":{\"d\":1,\"c\":2}}", deep, "strict"));
-    try testing.expectEqualStrings("[]", try keysOf(a, "[1,2]", deep, "strict"));
+    try testing.expectEqualStrings(
+        "[\"a\",\"a.c\",\"a.d\",\"b\"]",
+        try keysOf(
+            a,
+            "{\"b\":1,\"a\":{\"d\":1,\"c\":2}}",
+            deep,
+            "strict",
+        ),
+    );
+    try testing.expectEqualStrings(
+        "[]",
+        try keysOf(
+            a,
+            "[1,2]",
+            deep,
+            "strict",
+        ),
+    );
     // A key holding the separator comes back quoted.
-    try testing.expectEqualStrings("[\"\\\"a.b\\\"\"]", try keysOf(a, "{\"a.b\":1}", deep, "strict"));
+    try testing.expectEqualStrings(
+        "[\"\\\"a.b\\\"\"]",
+        try keysOf(
+            a,
+            "{\"a.b\":1}",
+            deep,
+            "strict",
+        ),
+    );
 
     // strict stops at arrays; lax unwraps one level; lax recursive keeps going.
-    try testing.expectEqualStrings("[\"a\"]", try keysOf(a, "{\"a\":[{\"b\":1}]}", deep, "strict"));
-    try testing.expectEqualStrings("[\"a\",\"a.b\",\"a.c\"]", try keysOf(a, "{\"a\":[{\"b\":1},{\"c\":2}]}", deep, "lax"));
-    try testing.expectEqualStrings("[\"a\"]", try keysOf(a, "{\"a\":[[{\"b\":1}]]}", deep, "lax"));
-    try testing.expectEqualStrings("[\"a\",\"a.b\"]", try keysOf(a, "{\"a\":[[{\"b\":1}]]}", deep, "lax recursive"));
+    try testing.expectEqualStrings(
+        "[\"a\"]",
+        try keysOf(
+            a,
+            "{\"a\":[{\"b\":1}]}",
+            deep,
+            "strict",
+        ),
+    );
+    try testing.expectEqualStrings("[\"a\",\"a.b\",\"a.c\"]", try keysOf(
+        a,
+        "{\"a\":[{\"b\":1},{\"c\":2}]}",
+        deep,
+        "lax",
+    ));
+    try testing.expectEqualStrings("[\"a\"]", try keysOf(
+        a,
+        "{\"a\":[[{\"b\":1}]]}",
+        deep,
+        "lax",
+    ));
+    try testing.expectEqualStrings("[\"a\",\"a.b\"]", try keysOf(
+        a,
+        "{\"a\":[[{\"b\":1}]]}",
+        deep,
+        "lax recursive",
+    ));
 
     // Only object descents spend depth, so an array hop is free.
-    try testing.expectEqualStrings("[\"a\",\"a.b\"]", try keysOf(a, "{\"a\":{\"b\":{\"c\":1}}}", 2, "strict"));
-    try testing.expectEqualStrings("[\"a\",\"a.b\"]", try keysOf(a, "{\"a\":[{\"b\":1}]}", 2, "lax"));
+    try testing.expectEqualStrings(
+        "[\"a\",\"a.b\"]",
+        try keysOf(a, "{\"a\":{\"b\":{\"c\":1}}}", 2, "strict"),
+    );
+    try testing.expectEqualStrings("[\"a\",\"a.b\"]", try keysOf(
+        a,
+        "{\"a\":[{\"b\":1}]}",
+        2,
+        "lax",
+    ));
 
-    try testing.expectError(error.UnsupportedOperation, keysOf(a, "{\"a\":1}", 0, "strict"));
+    try testing.expectError(
+        error.UnsupportedOperation,
+        keysOf(a, "{\"a\":1}", 0, "strict"),
+    );
     // A space, not an underscore.
-    try testing.expectError(error.UnsupportedOperation, keysOf(a, "{\"a\":1}", deep, "lax_recursive"));
+    try testing.expectError(error.UnsupportedOperation, keysOf(
+        a,
+        "{\"a\":1}",
+        deep,
+        "lax_recursive",
+    ));
 }
 
 test "jsonFlatten stops at the first non-array" {

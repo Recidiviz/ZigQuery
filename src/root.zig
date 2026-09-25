@@ -6,13 +6,12 @@
 //! and result cells are decoded back into GoogleSQL values (internal/value, internal/codec_*).
 //!
 //! SQLite supplies storage and the relational operators;
-//! everything BigQuery has and SQLite does not — type system, builtins, value encodings — live here
+//! everything BigQuery has and SQLite does not - type system, builtins, value encodings - live here
 //!
 //! sqlite.zig wraps the SQLite C API and driver.zig is the public surface over this pipeline.
 //!
 //! The server (src/server/root.zig) depends on this module and not the reverse,
 //! so `zig build test` and `zig build spec` gate the engine on its own.
-// ephor:ignore-file ZA701
 
 pub const sqlite = @import("sqlite.zig");
 pub const analyzer_ffi = @import("analyzer_ffi.zig");
