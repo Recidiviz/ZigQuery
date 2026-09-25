@@ -34,7 +34,6 @@ Bob,25,88.0,false
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.CSV,
-            skip_leading_rows=0,
             autodetect=True,
         )
 
@@ -52,7 +51,7 @@ Bob,25,88.0,false
         self.assertEqual(schema_dict["name"], "STRING")
         self.assertEqual(schema_dict["age"], "INTEGER")
         self.assertEqual(schema_dict["score"], "FLOAT")
-        self.assertEqual(schema_dict["active"], "BOOL")
+        self.assertEqual(schema_dict["active"], "BOOLEAN")
 
         # Verify data was loaded correctly
         self.run_query_test(
@@ -74,7 +73,6 @@ Anniversary,2024-12-31
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.CSV,
-            skip_leading_rows=0,
             autodetect=True,
         )
 
@@ -99,11 +97,12 @@ Anniversary,2024-12-31
             ],
         )
 
-    def test_autodetect_date_uk_format_becomes_string(self) -> None:
-        """Test UK date format (DD/MM/YYYY) is not auto-detected as DATE.
+    def test_autodetect_date_day_first_format(self) -> None:
+        """A day-first date is detected as DATE and stored normalised.
 
-        BigQuery only supports ISO 8601 format (YYYY-MM-DD) for DATE auto-detection.
-        UK format dates are treated as STRING.
+        Measured against real BigQuery (recidiviz-bigquery-sandbox, 2026-09-24): 15/01/2024
+        loads as 2024-01-15. The schema-detect page describes only YYYY-MM-DD, so this is
+        behaviour the reference does not cover.
         """
         csv_data = """event,event_date
 Birthday,15/01/2024
@@ -114,7 +113,6 @@ Anniversary,31/12/2024
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.CSV,
-            skip_leading_rows=0,
             autodetect=True,
         )
 
@@ -125,22 +123,25 @@ Anniversary,31/12/2024
         )
         load_job.result()
 
-        # Verify schema - UK format becomes STRING, not DATE
         table = self.client.get_table(table_ref)
         schema_dict = {f.name: f.field_type for f in table.schema}
-        self.assertEqual(schema_dict["event_date"], "STRING")
+        self.assertEqual(schema_dict["event_date"], "DATE")
 
-        # Verify data - kept as string values
         self.run_query_test(
             f"SELECT event, event_date FROM `{BQ_EMULATOR_PROJECT_ID}.test_dataset.test_table` ORDER BY event",
             expected_result=[
-                {"event": "Anniversary", "event_date": "31/12/2024"},
-                {"event": "Birthday", "event_date": "15/01/2024"},
+                {"event": "Anniversary", "event_date": date(2024, 12, 31)},
+                {"event": "Birthday", "event_date": date(2024, 1, 15)},
             ],
         )
 
     def test_autodetect_handles_nulls(self) -> None:
-        """Test that NULL values don't break type detection."""
+        """An empty field is null; the literal text `null` is not.
+
+        Measured against real BigQuery (recidiviz-bigquery-sandbox, 2026-09-24). The default
+        null marker is the empty string, so `null` is a four-character value, and its column
+        holds both numbers and that text -- which makes the column STRING.
+        """
         csv_data = """id,value,name
 1,100,Alice
 2,,Bob
@@ -152,7 +153,6 @@ Anniversary,31/12/2024
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.CSV,
-            skip_leading_rows=0,
             autodetect=True,
         )
 
@@ -163,21 +163,19 @@ Anniversary,31/12/2024
         )
         load_job.result()
 
-        # Verify schema - INTEGER type should be detected despite nulls
         table = self.client.get_table(table_ref)
         schema_dict = {f.name: f.field_type for f in table.schema}
         self.assertEqual(schema_dict["id"], "INTEGER")
-        self.assertEqual(schema_dict["value"], "INTEGER")
+        self.assertEqual(schema_dict["value"], "STRING")
         self.assertEqual(schema_dict["name"], "STRING")
 
-        # Verify data with nulls
         self.run_query_test(
             f"SELECT id, value, name FROM `{BQ_EMULATOR_PROJECT_ID}.test_dataset.test_table` ORDER BY id",
             expected_result=[
-                {"id": 1, "value": 100, "name": "Alice"},
+                {"id": 1, "value": "100", "name": "Alice"},
                 {"id": 2, "value": None, "name": "Bob"},
-                {"id": 3, "value": None, "name": "Charlie"},
-                {"id": 4, "value": 200, "name": None},
+                {"id": 3, "value": "null", "name": "Charlie"},
+                {"id": 4, "value": "200", "name": None},
             ],
         )
 
@@ -192,7 +190,6 @@ Anniversary,31/12/2024
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.CSV,
-            skip_leading_rows=0,
             autodetect=True,
         )
 
@@ -206,9 +203,9 @@ Anniversary,31/12/2024
         # Verify schema
         table = self.client.get_table(table_ref)
         schema_dict = {f.name: f.field_type for f in table.schema}
-        self.assertEqual(schema_dict["flag1"], "BOOL")
-        self.assertEqual(schema_dict["flag2"], "BOOL")
-        self.assertEqual(schema_dict["flag3"], "BOOL")
+        self.assertEqual(schema_dict["flag1"], "BOOLEAN")
+        self.assertEqual(schema_dict["flag2"], "BOOLEAN")
+        self.assertEqual(schema_dict["flag3"], "BOOLEAN")
 
         # Verify data - all should be converted to true/false
         self.run_query_test(
@@ -231,7 +228,6 @@ Anniversary,31/12/2024
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.CSV,
-            skip_leading_rows=0,
             autodetect=True,
         )
 
@@ -268,7 +264,6 @@ Bob,200
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.CSV,
-            skip_leading_rows=0,
             autodetect=True,  # Should be ignored since table exists
         )
 
@@ -300,7 +295,6 @@ Bob,200
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.CSV,
-            skip_leading_rows=0,
             autodetect=True,
         )
 
@@ -315,3 +309,49 @@ Bob,200
         table = self.client.get_table(table_ref)
         schema_dict = {f.name: f.field_type for f in table.schema}
         self.assertEqual(schema_dict["empty_col"], "STRING")
+
+    def test_skip_leading_rows_zero_states_there_is_no_header(self) -> None:
+        """`skipLeadingRows: 0` and an absent `skipLeadingRows` are different requests.
+
+        Measured against real BigQuery (recidiviz-bigquery-sandbox, 2026-09-24). Zero says
+        the data starts at the first row, so the header is loaded as data, every column holds
+        a name as well as its values, and the columns are named for the client.
+        rest/v2/Job#jobconfigurationload
+        """
+        csv_data = """name,age
+Alice,30
+Bob,25
+"""
+        self.client.create_dataset("test_dataset")
+        table_ref = self._get_table_ref("test_dataset", "test_table")
+
+        job_config = bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.CSV,
+            skip_leading_rows=0,
+            autodetect=True,
+        )
+
+        load_job = self.client.load_table_from_file(
+            io.StringIO(csv_data),
+            table_ref,
+            job_config=job_config,
+        )
+        load_job.result()
+
+        table = self.client.get_table(table_ref)
+        schema_dict = {f.name: f.field_type for f in table.schema}
+        self.assertEqual(
+            {"string_field_0": "STRING", "string_field_1": "STRING"},
+            schema_dict,
+        )
+
+        self.run_query_test(
+            f"SELECT string_field_0, string_field_1 "
+            f"FROM `{BQ_EMULATOR_PROJECT_ID}.test_dataset.test_table` "
+            f"ORDER BY string_field_0",
+            expected_result=[
+                {"string_field_0": "Alice", "string_field_1": "30"},
+                {"string_field_0": "Bob", "string_field_1": "25"},
+                {"string_field_0": "name", "string_field_1": "age"},
+            ],
+        )

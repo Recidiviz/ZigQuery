@@ -40,6 +40,10 @@ pub const Route = struct {
         jobs_query,
         jobs_get_query_results,
         jobs_insert,
+        /// A load job's configuration and its bytes, together.
+        upload_jobs_insert,
+        /// A resumable session's bytes, or a query for how many of them landed.
+        upload_jobs_resume,
         jobs_get,
         jobs_list,
         datasets_insert,
@@ -73,6 +77,30 @@ pub const routes = [_]Route{
     .{ .id = .jobs_insert, .method = .POST, .pattern = "/projects/*/jobs" },
     .{ .id = .jobs_list, .method = .GET, .pattern = "/projects/*/jobs" },
     .{ .id = .jobs_get, .method = .GET, .pattern = "/projects/*/jobs/*" },
+
+    // The media upload endpoint. The discovery document gives the resumable protocol its own
+    // `/resumable` prefix while the prose uses `/upload` with `uploadType=resumable`, so both
+    // spellings reach the same handlers. api-uploads
+    .{
+        .id = .upload_jobs_insert,
+        .method = .POST,
+        .pattern = "/upload/bigquery/v2/projects/*/jobs",
+    },
+    .{
+        .id = .upload_jobs_resume,
+        .method = .PUT,
+        .pattern = "/upload/bigquery/v2/projects/*/jobs",
+    },
+    .{
+        .id = .upload_jobs_insert,
+        .method = .POST,
+        .pattern = "/resumable/upload/bigquery/v2/projects/*/jobs",
+    },
+    .{
+        .id = .upload_jobs_resume,
+        .method = .PUT,
+        .pattern = "/resumable/upload/bigquery/v2/projects/*/jobs",
+    },
 
     .{ .id = .datasets_insert, .method = .POST, .pattern = "/projects/*/datasets" },
     .{ .id = .datasets_list, .method = .GET, .pattern = "/projects/*/datasets" },

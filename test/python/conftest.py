@@ -23,12 +23,7 @@ from utils.big_query_emulator_test_case import RESUMABLE_RETRYABLE_WITHOUT_500
 # Tests this emulator does not pass yet, by node ID prefix. Strict: a test that
 # starts passing fails the run until its entry is removed, so this list cannot
 # go stale in the permissive direction.
-KNOWN_FAILURES = {
-    "csv_autodetect_test.py::TestCSVAutodetect::": (
-        "load_table_from_file: the /upload/bigquery/v2 resumable upload "
-        "endpoint is not implemented"
-    ),
-}
+KNOWN_FAILURES: dict[str, str] = {}
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

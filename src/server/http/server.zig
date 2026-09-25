@@ -42,6 +42,22 @@ const write_buffer_len = 64 * 1024;
 /// none — but preventing a hostile client from exhausting the arena.
 pub const max_body_len = 64 * 1024 * 1024;
 
+/// The request headers a handler can read.
+///
+/// An allow-list rather than the whole set: the values have to be copied out of the head
+/// before the body read invalidates them, and duplicating every header on every request to
+/// serve the upload routes would charge each query for them. Adding one is a line here and a
+/// line in `headersFrom`.
+pub const Headers = struct {
+    /// `multipart/related; boundary=...` on a multipart upload.
+    content_type: ?[]const u8 = null,
+    /// `bytes 0-524287/2000000`, or `bytes */2000000` on a status query.
+    content_range: ?[]const u8 = null,
+    /// What a resumable upload says its bytes will be.
+    x_upload_content_type: ?[]const u8 = null,
+    x_upload_content_length: ?[]const u8 = null,
+};
+
 pub const Request = struct {
     method: http.Method,
     /// Path with the query string removed, percent-decoding NOT applied.
@@ -50,6 +66,7 @@ pub const Request = struct {
     query: []const u8,
     /// Decompressed request body. Empty when there is none.
     body: []const u8,
+    headers: Headers = .{},
     /// Per-request arena. Everything a handler allocates comes from here and
     /// dies when the request completes.
     arena: std.mem.Allocator,
@@ -78,6 +95,9 @@ pub const Response = struct {
     /// Serialized body. Owned by the request arena.
     body: []const u8 = "",
     content_type: []const u8 = "application/json; charset=UTF-8",
+    /// Headers beyond the content type. A resumable upload answers with `Location` when it
+    /// opens a session and `Range` when it accepts a chunk. api-uploads
+    extra_headers: []const http.Header = &.{},
 };
 
 /// A handler turns a request into a complete response. Returning an error
@@ -239,6 +259,28 @@ pub const Server = struct {
     }
 
     /// Returns whether the connection may be reused.
+    /// Copies the allow-listed headers out of the head, which only holds them until the body
+    /// is read. Names compare case-insensitively, as HTTP defines them.
+    fn headersFrom(request: *http.Server.Request, arena: std.mem.Allocator) !Headers {
+        var out: Headers = .{};
+        var it = request.iterateHeaders();
+        while (it.next()) |header| {
+            const slot: *?[]const u8 =
+                if (std.ascii.eqlIgnoreCase(header.name, "content-type"))
+                    &out.content_type
+                else if (std.ascii.eqlIgnoreCase(header.name, "content-range"))
+                    &out.content_range
+                else if (std.ascii.eqlIgnoreCase(header.name, "x-upload-content-type"))
+                    &out.x_upload_content_type
+                else if (std.ascii.eqlIgnoreCase(header.name, "x-upload-content-length"))
+                    &out.x_upload_content_length
+                else
+                    continue;
+            slot.* = try arena.dupe(u8, header.value);
+        }
+        return out;
+    }
+
     fn serveRequest(
         s: *Server,
         request: *http.Server.Request,
@@ -249,6 +291,7 @@ pub const Server = struct {
         // becomes a dangling pointer.
         const target = try arena.dupe(u8, request.head.target);
         const method = request.head.method;
+        const headers = try headersFrom(request, arena);
 
         const body = try readBody(request, arena);
 
@@ -258,6 +301,7 @@ pub const Server = struct {
             .path = if (q) |i| target[0..i] else target,
             .query = if (q) |i| target[i + 1 ..] else "",
             .body = body,
+            .headers = headers,
             .arena = arena,
         };
 
@@ -288,11 +332,16 @@ pub const Server = struct {
             break :blk out;
         };
 
+        var response_headers: std.ArrayList(http.Header) = .empty;
+        try response_headers.append(
+            arena,
+            .{ .name = "content-type", .value = res.content_type },
+        );
+        try response_headers.appendSlice(arena, res.extra_headers);
+
         try request.respond(res.body, .{
             .status = res.status,
-            .extra_headers = &.{
-                .{ .name = "content-type", .value = res.content_type },
-            },
+            .extra_headers = response_headers.items,
         });
         // respond() consumed the body already; discardBody reports whether
         // the connection survives.

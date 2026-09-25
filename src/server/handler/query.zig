@@ -117,7 +117,7 @@ pub fn parseResultsPage(arena: std.mem.Allocator, query: []const u8) Page {
 
 /// Which jobs.insert configuration produced a job. getQueryResults serves a query job and
 /// refuses the rest.
-pub const JobKind = enum { query, copy };
+pub const JobKind = enum { query, copy, load };
 
 /// A completed query, retained so jobs.get and getQueryResults can replay it.
 pub const Job = struct {
