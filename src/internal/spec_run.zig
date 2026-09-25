@@ -14,7 +14,7 @@
 //! `Capture` — the AST node and transformed SQL are computed on every query
 //! regardless; capturing them costs nothing beyond rendering into this
 //! call's own arena, paid only when requested).
-// ephor:ignore-file ZA101 ZA301 ZA302 ZA303 ZA304 ZT105
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304 ZT105
 
 const std = @import("std");
 const driver = @import("../driver.zig");
@@ -279,6 +279,7 @@ fn runSpecFile(
         .bigquery_docs;
 
     const path = try std.fs.path.join(arena, &.{ specs_root, entry.path });
+    // ephor:ignore ZA101 — the allocator is `arena`, in third position.
     const src = std.Io.Dir.cwd().readFileAllocOptions(
         io,
         path,

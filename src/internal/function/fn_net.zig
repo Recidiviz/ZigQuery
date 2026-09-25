@@ -8,7 +8,7 @@
 //!     Only the suffixes the corpus exercises are present (see icann_suffixes);
 //!     matching runs against the original Unicode host, so no punycode is
 //!     needed. Hosts outside the table resolve to NULL.
-// ephor:ignore-file ZA101 ZA302 ZA304
+// ephor:ignore-file ZA302 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -95,7 +95,8 @@ pub fn netIpTrunc(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return bind.fail("NET.IP_TRUNC: length of the first argument must be either 4 or 16", .{}, error.UnsupportedOperation);
     if (length < 0 or length > @as(i64, @intCast(b.len)) * 8)
         return bind.fail("NET.IP_TRUNC: length must be in the range from 0 to {d}", .{b.len * 8}, error.UnsupportedOperation);
-    const mask = try alloc.alloc(u8, b.len);
+    var mask_buf: [16]u8 = undefined;
+    const mask = mask_buf[0..b.len];
     fillMask(mask, @intCast(length));
     const out = try alloc.alloc(u8, b.len);
     for (b, mask, out) |x, m, *o| o.* = x & m;

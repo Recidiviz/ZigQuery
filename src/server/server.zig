@@ -15,7 +15,7 @@
 //!   guess before that is attempted again.
 //! - Route dispatch is a switch over Route.Id rather than one http.Handler
 //!   type per route (server/handler_gen.go's 39 empty structs).
-// ephor:ignore-file ZA101 ZA201 ZA301 ZA302 ZA303 ZA304 ZA403 ZC103
+// ephor:ignore-file ZA201 ZA301 ZA302 ZA303 ZA304 ZA403 ZC103
 
 const std = @import("std");
 const zigquery = @import("zigquery");
@@ -153,6 +153,7 @@ pub const Server = struct {
         }
 
         for (opts.data_from_json) |path| {
+            // ephor:ignore ZA101 — the allocator is `arena`, in third position.
             const bytes = try std.Io.Dir.cwd().readFileAlloc(
                 io,
                 path,

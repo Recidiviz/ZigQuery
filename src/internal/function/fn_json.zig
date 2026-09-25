@@ -15,7 +15,7 @@
 //! Values are parsed with std.json (parse_numbers = false) so numbers survive
 //! as their exact source text, and re-serialized minified — object key order is
 //! preserved (ObjectMap is insertion-ordered), matching goccy's Extract+Compact.
-// ephor:ignore-file ZA101 ZA302 ZA303 ZA304
+// ephor:ignore-file ZA302 ZA303 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -246,6 +246,7 @@ fn writeSorted(alloc: std.mem.Allocator, out: *std.ArrayList(u8), v: std.json.Va
     switch (v) {
         .object => |o| {
             const keys = try alloc.dupe([]const u8, o.keys());
+            defer alloc.free(keys);
             std.mem.sort([]const u8, keys, {}, struct {
                 fn lt(_: void, a: []const u8, b: []const u8) bool {
                     return std.mem.order(u8, a, b) == .lt;
@@ -1113,15 +1114,14 @@ pub fn jsonKeys(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         .keys = &keys,
     }).walk(root, max_depth, "");
 
-    const sorted = try alloc.dupe([]const u8, keys.keys());
-    std.mem.sort([]const u8, sorted, {}, struct {
-        fn lt(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.order(u8, a, b) == .lt;
-        }
-    }.lt);
-    const out = try alloc.alloc(Value, sorted.len);
-    for (sorted, out) |k, *dst| dst.* = Value{ .string = k };
+    const out = try alloc.alloc(Value, keys.count());
+    for (keys.keys(), out) |k, *dst| dst.* = Value{ .string = k };
+    std.mem.sort(Value, out, {}, stringValueLessThan);
     return value_mod.arrayValue(alloc, out);
+}
+
+fn stringValueLessThan(_: void, a: Value, b: Value) bool {
+    return std.mem.order(u8, a.string, b.string) == .lt;
 }
 
 fn flattenInto(alloc: std.mem.Allocator, v: std.json.Value, out: *std.ArrayList(Value)) Error!void {

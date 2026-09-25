@@ -240,7 +240,6 @@ fn castValue(alloc: std.mem.Allocator, t: std.json.Value, v: Value) Error!Value 
     }
 }
 
-
 /// An ARRAY input flattens into one struct by concatenating each element's fields;
 /// anything else is read as a struct and its fields are cast field-by-field,
 /// in the target type's field order.
