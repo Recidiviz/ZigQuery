@@ -13,7 +13,7 @@
 //!   var rows = try db.query(sql, args, .{ .current_time_unix_micros = ... });
 //!   while (try rows.next()) |row| ...
 //!   rows.deinit();
-// ephor:ignore-file ZA201 ZA301 ZA302 ZA303 ZA304 ZC101 ZC103 ZT105
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304 ZC101 ZC103 ZT105
 
 const std = @import("std");
 const sqlite = @import("sqlite.zig");
@@ -492,7 +492,7 @@ pub const Db = struct {
         db.sqlite_db.exec(std.fmt.comptimePrint(
             "PRAGMA user_version = {d}",
             .{storage_format_version},
-        )) catch {};
+        )) catch |err| std.log.info("storage format version not stamped: {t}", .{err});
     }
 
     fn hasCatalogTable(db: *Db) bool {
@@ -1552,13 +1552,27 @@ pub const Db = struct {
     }
 
     /// Drops the given temp tables/views and removes their catalog specs. Best-effort: errors
-    /// are ignored since cleanup runs after the query has already produced its result.
+    /// are logged, not returned, since cleanup runs after the query has already produced its
+    /// result.
     fn dropTempTables(db: *Db, arena: std.mem.Allocator, names: []const []const u8) void {
         for (names) |name| {
             const drop_sql = std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name}) catch continue;
-            _ = db.execSql(arena, drop_sql, &.{}) catch {};
-            db.unregisterTableSpec(name) catch {};
+            db.execCleanup(arena, drop_sql);
+            db.unregisterTableSpec(name) catch |err| switch (err) {
+                // The script dropped it itself.
+                error.TableNotFound => {},
+                else => std.log.warn("temp table {s} left in the catalog: {t}", .{ name, err }),
+            };
         }
+    }
+
+    /// Runs a cleanup statement whose failure must not replace the outcome it cleans up
+    /// after. A failure is logged and otherwise ignored.
+    fn execCleanup(db: *Db, arena: std.mem.Allocator, sql_text: []const u8) void {
+        _ = db.execSql(arena, sql_text, &.{}) catch |err| {
+            std.log.warn("cleanup failed: {s}: {t}", .{ sql_text, err });
+            return;
+        };
     }
 
     /// Prepares `sql_text`, binds `args`, and steps it to completion. Returns the number of
@@ -1686,7 +1700,7 @@ pub const Db = struct {
                 return db.failCatalog(err);
         if (fn_spec.is_temp) {
             if (db.temp_func_collector) |collector| {
-                collector.append(arena, try fn_spec.funcName(arena)) catch {};
+                try collector.append(arena, try fn_spec.funcName(arena));
             }
         }
     }
@@ -1878,7 +1892,7 @@ pub const Db = struct {
             else
                 try arena.dupe(u8, failure);
             const drop = try std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name});
-            _ = db.execSql(arena, drop, &.{}) catch {};
+            db.execCleanup(arena, drop);
             db.setLastError(message);
             return err;
         };
@@ -1930,7 +1944,7 @@ pub const Db = struct {
                 ), args);
             const consumed = built catch |err| {
                 // Leave the destination exactly as it was.
-                _ = db.execSql(arena, drop_scratch, &.{}) catch {};
+                db.execCleanup(arena, drop_scratch);
                 return err;
             };
 
@@ -1981,7 +1995,7 @@ pub const Db = struct {
         // query can re-create the name.
         if (table_spec.is_temp) {
             if (db.temp_collector) |collector| {
-                collector.append(arena, table_name) catch {};
+                try collector.append(arena, table_name);
             }
         }
 

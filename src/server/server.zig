@@ -15,7 +15,7 @@
 //!   guess before that is attempted again.
 //! - Route dispatch is a switch over Route.Id rather than one http.Handler
 //!   type per route (server/handler_gen.go's 39 empty structs).
-// ephor:ignore-file ZA201 ZA301 ZA302 ZA303 ZA304 ZA403 ZC103
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304 ZA403 ZC103
 
 const std = @import("std");
 const zigquery = @import("zigquery");
@@ -670,7 +670,8 @@ pub const Server = struct {
                     table_spec.name_path[2],
                 },
             );
-            s.db.exec(ddl, &.{}, .{}) catch {};
+            s.db.exec(ddl, &.{}, .{}) catch |err|
+                std.log.warn("dataset delete left {s} behind: {t}", .{ ddl, err });
         }
         try s.db.deleteDataset(arena, project_id, dataset_id);
         return .{ .body = "" };
