@@ -25,7 +25,7 @@
 //!
 //! `lookup` returning null is not an error: it yields a table with no rows,
 //! which is the right answer for a job that has gone away.
-// ephor:ignore-file ZA102 ZA303
+// ephor:ignore-file ZA303
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");
@@ -131,23 +131,7 @@ var module: c.sqlite3_module = blk: {
 
 /// Registers the module. `gpa` and `state` must outlive the connection.
 pub fn register(db: *sqlite.Db, gpa: std.mem.Allocator, state: *SharedState) !void {
-    const ctx = try gpa.create(ModuleCtx);
-    ctx.* = .{ .gpa = gpa, .state = state };
-    // No errdefer on `ctx`: create_module_v2 invokes the destructor itself on failure,
-    // so freeing here would be a double free.
-    const rc = c.sqlite3_create_module_v2(
-        db.handle,
-        module_name,
-        &module,
-        ctx,
-        destroyModuleCtx,
-    );
-    if (rc != c.SQLITE_OK) return error.SQLite;
-}
-
-fn destroyModuleCtx(p: ?*anyopaque) callconv(.c) void {
-    const ctx: *ModuleCtx = @ptrCast(@alignCast(p.?));
-    ctx.gpa.destroy(ctx);
+    try db.createModule(module_name, &module, ModuleCtx{ .gpa = gpa, .state = state });
 }
 
 /// `argv[3]` is the job id and `argv[4..]` the column names, as written in the `USING` clause.

@@ -17,7 +17,7 @@
 //! - expressions: Literal, ColumnRef, FunctionCall, AggregateFunctionCall,
 //!   AnalyticFunctionCall, Cast, SubqueryExpr, ComputedColumn, OutputColumn,
 //!   GetStructField, MakeStruct
-// ephor:ignore-file ZA102 ZA301 ZA302 ZA303 ZA304
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const pb = @import("../../proto/resolved_ast.zig");
@@ -2609,13 +2609,13 @@ const TestHarness = struct {
     ctx: *TransformContext,
     extractor: NodeExtractor = .{},
 
-    fn statementData(alloc: std.mem.Allocator, sql: [:0]const u8) !StatementData {
-        const analyzed = try analyzer_ffi.analyzeNextStatement(alloc, sql, 0, "{}");
-        const config = try alloc.create(context.TransformConfig);
+    fn statementData(arena: std.mem.Allocator, sql: [:0]const u8) !StatementData {
+        const analyzed = try analyzer_ffi.analyzeNextStatement(arena, sql, 0, "{}");
+        const config = try arena.create(context.TransformConfig);
         config.* = .{};
-        const ctx = try TransformContext.init(alloc, config);
+        const ctx = try TransformContext.init(arena, config);
         const extractor = NodeExtractor{};
-        return extractor.ExtractStatementData(alloc, analyzed.node, ctx);
+        return extractor.ExtractStatementData(arena, analyzed.node, ctx);
     }
 };
 

@@ -21,7 +21,7 @@
 //!     per-row recomputation under a GROUPS frame — starts from a fresh Group.
 //! This matches Go creating a fresh WindowFuncAggregatedStatus + impl whenever
 //! its state must reset across partitions/peer groups.
-// ephor:ignore-file ZA103 ZA302
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");
@@ -111,6 +111,7 @@ pub fn registerWindowFunctions(db: *sqlite.Db, state: *State) !void {
 
 fn decodeArgs(alloc: std.mem.Allocator, argv: [*c]?*c.sqlite3_value, n: usize) ![]Value {
     const args = try alloc.alloc(Value, n);
+    errdefer alloc.free(args);
     for (0..n) |i| {
         args[i] = switch (sqlite.valueType(argv[i])) {
             .null => Value.null,

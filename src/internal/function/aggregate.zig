@@ -154,6 +154,7 @@ fn decodeArgs(
     n: usize,
 ) ![]Value {
     const args = try alloc.alloc(Value, n);
+    errdefer alloc.free(args);
     for (0..n) |i| {
         args[i] = switch (sqlite.valueType(argv[i])) {
             .null => Value.null,

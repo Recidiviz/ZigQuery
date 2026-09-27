@@ -31,7 +31,7 @@
 //! threshold, sparse enabled. The `precision` argument therefore has no
 //! effect at all — corpus case "hll_count.init" passes 10 and still expects a
 //! log2m-15 header byte (0xEF). We reproduce that exactly.
-// ephor:ignore-file ZA103 ZA202 ZA301 ZA302 ZA303 ZA304
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -238,9 +238,9 @@ pub const Settings = struct {
 
 /// The settings go-zetasqlite installs via hll.Defaults in its package init:
 /// log2m 15, regwidth 8, auto explicit threshold, sparse enabled.
-pub fn defaultSettings() Settings {
-    return Settings.init(15, 8, auto_explicit_threshold, true) catch unreachable;
-}
+pub const default_settings: Settings =
+    Settings.init(15, 8, auto_explicit_threshold, true) catch |err|
+        @compileError("invalid default HLL settings: " ++ @errorName(err));
 
 fn divideBy8RoundUp(i: usize) usize {
     var result = i >> 3;
@@ -813,6 +813,7 @@ pub const Hll = struct {
         };
 
         const bytes = try alloc.alloc(u8, 3 + bytes_needed);
+        errdefer alloc.free(bytes);
         @memset(bytes, 0);
 
         bytes[0] = (1 << 4) | @as(u8, @backingInt(storage_type));
@@ -826,6 +827,7 @@ pub const Hll = struct {
                 // Per the storage spec the values are sorted as *signed* 64
                 // bit integers, ascending.
                 const sorted = try alloc.alloc(i64, set.count());
+                defer alloc.free(sorted);
                 var it = set.keyIterator();
                 var n: usize = 0;
                 while (it.next()) |k| : (n += 1) sorted[n] = @bitCast(k.*);
@@ -836,6 +838,7 @@ pub const Hll = struct {
             },
             .sparse => |map| {
                 const sorted = try alloc.alloc(i32, map.count());
+                defer alloc.free(sorted);
                 var it = map.keyIterator();
                 var n: usize = 0;
                 while (it.next()) |k| : (n += 1) sorted[n] = k.*;
@@ -991,7 +994,7 @@ pub const HLL_COUNT_INIT = struct {
             if (values[1] == .null) return;
             _ = try values[1].toInt64();
         }
-        if (f.hll == null) f.hll = Hll.init(defaultSettings());
+        if (f.hll == null) f.hll = Hll.init(default_settings);
         try f.hll.?.addRaw(alloc, try hashInput(alloc, values[0]));
     }
 
@@ -1089,7 +1092,7 @@ test "murmur3 Sum64 matches spaolacci/murmur3" {
 }
 
 test "default settings match hll.Defaults(15, 8, auto, sparse)" {
-    const s = defaultSettings();
+    const s = default_settings;
     try testing.expectEqual(@as(u8, 15), s.log2m);
     try testing.expectEqual(@as(u8, 8), s.regwidth);
     try testing.expect(s.explicit_auto);
@@ -1139,7 +1142,7 @@ test "sketch serialization matches go-hll across representations" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const s = defaultSettings();
+    const s = default_settings;
 
     const Case = struct { n: usize, card: u64, len: usize, typ: u8, fp: u64 };
     const cases = [_]Case{
@@ -1171,7 +1174,7 @@ test "union matches go-hll for every storage pairing" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const s = defaultSettings();
+    const s = default_settings;
 
     const Case = struct { a: [2]usize, b: [2]usize, card: u64, len: usize, typ: u8, fp: u64 };
     const cases = [_]Case{
@@ -1313,7 +1316,7 @@ test "corpus sketches: HLL_COUNT.INIT over customer ids" {
     };
 
     for (cases) |c| {
-        var h = Hll.init(defaultSettings());
+        var h = Hll.init(default_settings);
         for (c.ids) |id| try h.addRaw(alloc, murmur3Sum64(id));
         const b = try h.toBytes(alloc);
         const enc = std.base64.standard.Encoder;

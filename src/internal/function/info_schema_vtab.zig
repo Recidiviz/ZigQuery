@@ -33,7 +33,7 @@
 //! leaf, first-wins, so an unqualified `FROM INFORMATION_SCHEMA.TABLES`
 //! resolves to whichever dataset registered first. BigQuery reads that spelling
 //! as "the default dataset"; the engine has no such concept.
-// ephor:ignore-file ZA102 ZA303 ZA304
+// ephor:ignore-file ZA303 ZA304
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");
@@ -447,21 +447,7 @@ var module: c.sqlite3_module = blk: {
 /// the connection.
 pub fn register(db: *sqlite.Db, gpa: std.mem.Allocator, state: *SharedState) !void {
     for (&views) |*v| {
-        const ctx = try gpa.create(ModuleCtx);
-        ctx.* = .{ .gpa = gpa, .state = state, .view = v };
-        const decl = try declaredSchema(gpa, v);
-        defer gpa.free(decl);
-        // No errdefer on `ctx`: when create_module_v2 fails it has already
-        // invoked the destructor, so freeing here would be a double free.
-        // (unnest_vtab.register has exactly that bug; do not copy it.)
-        const rc = c.sqlite3_create_module_v2(
-            db.handle,
-            v.module.ptr,
-            &module,
-            ctx,
-            destroyModuleCtx,
-        );
-        if (rc != c.SQLITE_OK) return error.SQLite;
+        try db.createModule(v.module, &module, ModuleCtx{ .gpa = gpa, .state = state, .view = v });
     }
 }
 
@@ -476,11 +462,6 @@ fn declaredSchema(gpa: std.mem.Allocator, v: *const View) ![:0]u8 {
     }
     try buf.appendSlice(gpa, "`schema` HIDDEN)");
     return buf.toOwnedSliceSentinel(gpa, 0);
-}
-
-fn destroyModuleCtx(p: ?*anyopaque) callconv(.c) void {
-    const ctx: *ModuleCtx = @ptrCast(@alignCast(p.?));
-    ctx.gpa.destroy(ctx);
 }
 
 fn xConnect(

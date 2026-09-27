@@ -89,24 +89,7 @@ var module: c.sqlite3_module = blk: {
 /// (xCreate null, xConnect set), so it is usable as `FROM zigquery_unnest(x)`
 /// with no CREATE VIRTUAL TABLE.
 pub fn register(db: *sqlite.Db, gpa: std.mem.Allocator) !void {
-    const ctx = try gpa.create(ModuleCtx);
-    errdefer gpa.destroy(ctx);
-    ctx.* = .{ .gpa = gpa };
-    const rc = c.sqlite3_create_module_v2(
-        db.handle,
-        "zigquery_unnest",
-        &module,
-        ctx,
-        destroyModuleCtx,
-    );
-    // On failure SQLite has already invoked the destructor, so ctx is gone.
-    if (rc != c.SQLITE_OK) return error.SQLite;
-}
-
-fn destroyModuleCtx(p: ?*anyopaque) callconv(.c) void {
-    const ctx: *ModuleCtx = @ptrCast(@alignCast(p.?));
-    const gpa = ctx.gpa;
-    gpa.destroy(ctx);
+    try db.createModule("zigquery_unnest", &module, ModuleCtx{ .gpa = gpa });
 }
 
 fn xConnect(

@@ -5,7 +5,7 @@
 //! as one rune each); the helpers below reproduce that counting. LOWER/UPPER
 //! use ASCII case mapping (Go's strings.ToLower is full Unicode) — the
 //! foundation corpus only exercises ASCII.
-// ephor:ignore-file ZA103 ZA202 ZA301 ZA302 ZA303 ZA304
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");
@@ -243,15 +243,15 @@ fn decodeRunes(alloc: std.mem.Allocator, s: []const u8) Error![]u21 {
     return out.toOwnedSlice(alloc);
 }
 
+/// U+FFFD, which Go substitutes for any code point it cannot encode.
+const replacement_char = "\u{FFFD}";
+
 /// UTF-8 encodes a codepoint (Go string(rune)): invalid/surrogate -> U+FFFD.
 fn encodeRune(buf: *[4]u8, cp_in: i64) []const u8 {
     var cp: u21 = 0xFFFD;
     if (cp_in >= 0 and cp_in <= 0x10FFFF and !(cp_in >= 0xD800 and cp_in <= 0xDFFF))
         cp = @intCast(cp_in);
-    const n = std.unicode.utf8Encode(cp, buf) catch blk: {
-        const m = std.unicode.utf8Encode(0xFFFD, buf) catch unreachable;
-        break :blk m;
-    };
+    const n = std.unicode.utf8Encode(cp, buf) catch return replacement_char;
     return buf[0..n];
 }
 
@@ -276,13 +276,8 @@ fn mapRuneCase(
         return;
     }
     var buf: [4]u8 = undefined;
-    const n = std.unicode.utf8Encode(cp, &buf) catch {
-        try out.appendSlice(
-            alloc,
-            buf[0 .. std.unicode.utf8Encode(0xFFFD, &buf) catch unreachable],
-        );
-        return;
-    };
+    const n = std.unicode.utf8Encode(cp, &buf) catch
+        return out.appendSlice(alloc, replacement_char);
     const mapped = re.caseMap(alloc, to_upper, buf[0..n]) catch |e| return caseMapErr(e);
     try out.appendSlice(alloc, mapped);
 }
