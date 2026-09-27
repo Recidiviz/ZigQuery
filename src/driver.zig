@@ -73,7 +73,7 @@ pub const Cell = union(enum) {
     /// document does not want.
     json: []const u8,
     date: []const u8, // civil date rendered as YYYY-MM-DD
-    // Date/time kinds render as their API string forms: timestamp "sec.rem", datetime
+    // Date/time kinds render as their API string forms: timestamp decimal Unix seconds, datetime
     // "YYYY-MM-DDTHH:MM:SS.ffffff", time "HH:MM:SS.ffffff", interval canonical.
     timestamp: []const u8,
     datetime: []const u8,
@@ -3748,8 +3748,8 @@ test "query timestamp / datetime / time literals render as Go api strings" {
     defer rows.deinit();
 
     const row = (try rows.next()).?;
-    // Timestamp cell: "sec.microRemainder" (ToApiString), exactly like the
-    // corpus expects (e.g. "1136239445.0").
+    // Timestamp cell: decimal Unix seconds, one zero for a whole second, exactly
+    // like the corpus expects (e.g. "1136239445.0").
     try testing.expectEqualStrings("1136239445.0", row[0].timestamp);
     try testing.expectEqualStrings("2024-01-15T10:30:15.123456", row[1].datetime);
     try testing.expectEqualStrings("10:30:15", row[2].time);

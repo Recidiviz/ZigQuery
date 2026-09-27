@@ -1968,8 +1968,8 @@ test "getQueryResults 404s for an unpersisted jobs.query id" {
 // The probe must carry no rows. The client parses whatever rows the response
 // carries -- with the `rows` key present and no pageToken it considers the
 // page complete (table.py:1924-1928) and never asks again -- and
-// `CellDataParser.timestamp_to_py` applies a bare `int(value)`, so a "sec.rem"
-// cell raises
+// `CellDataParser.timestamp_to_py` applies a bare `int(value)`, so a
+// decimal-seconds cell raises
 //
 //   ValueError: invalid literal for int() with base 10: '1767268800.0'
 //

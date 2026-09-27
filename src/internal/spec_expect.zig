@@ -287,8 +287,8 @@ fn complianceStringMatch(
             if (std.mem.eql(u8, coerced, s)) return true;
             return numericStringMatch(want, s, opts);
         },
-        // ToApiString renders TIMESTAMP as "sec.microRemainder" (the
-        // BigQuery REST wire format) rather than a canonical display string;
+        // A TIMESTAMP result is decimal Unix seconds (formatTimestampApi)
+        // rather than a canonical display string;
         // the compliance corpus's want is the latter. Compare instants when
         // both sides parse as one, falling back to the plain/numeric text
         // comparison otherwise.
@@ -546,21 +546,21 @@ test "compliance corpus: a base64 STRING cell (BYTES rendering) matches a raw-by
 
 test "compliance corpus: a canonical timestamp want matches an API-format cell" {
     const opts: Options = .{ .corpus = .compliance };
-    // "sec.microRemainder" (the API form) vs. ZetaSQL's canonical text.
+    // Decimal Unix seconds (the result-cell form) vs. the canonical text.
     try testing.expect(try checkOpts(
         "\"2014-07-18 00:00:00.000013+00\"",
-        .{ .timestamp = "1405641600.13" },
+        .{ .timestamp = "1405641600.000013" },
         opts,
     ));
     try testing.expect(!try checkOpts(
         "\"2014-07-18 00:00:00.000014+00\"",
-        .{ .timestamp = "1405641600.13" },
+        .{ .timestamp = "1405641600.000013" },
         opts,
     ));
     // Not applied outside the compliance corpus.
     try testing.expect(!try check(
         "\"2014-07-18 00:00:00.000013+00\"",
-        .{ .timestamp = "1405641600.13" },
+        .{ .timestamp = "1405641600.000013" },
     ));
 }
 

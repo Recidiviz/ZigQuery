@@ -396,7 +396,8 @@ fn streamingPathSegments(
 /// Go zetasqlite.TimeFromTimestampValue (timestamp.go:12): epoch
 /// "seconds[.micros]" text. Reproduces its quirk of computing a zero-padded
 /// fraction and then parsing the *unpadded* one, so ".5" is 5 microseconds
-/// rather than 500000 — the inverse of the "sec.rem" form the emulator emits.
+/// rather than 500000. A result cell's six-digit fraction (".500000") reads
+/// back correctly.
 fn timeFromTimestampValue(s: []const u8) !i64 {
     const dot = std.mem.indexOfScalar(u8, s, '.');
     const sec_text = if (dot) |i| s[0..i] else s;
