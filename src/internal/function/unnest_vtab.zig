@@ -17,13 +17,12 @@
 //! the elements through a scalar function instead would duplicate the expression
 //! into the element column and re-evaluate it once per element, which turns
 //! `UNNEST(GENERATE_ARRAY(1, n))` into n array constructions.
-// ephor:ignore-file ZA303 ZA401
+// ephor:ignore-file ZA303
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");
 const codec = @import("../codec_binary.zig");
 const encoder = @import("../encoder.zig");
-const value_mod = @import("../value.zig");
 
 const c = sqlite.c;
 
