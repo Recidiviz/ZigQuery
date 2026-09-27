@@ -11,7 +11,6 @@
 //! The REST API uses BigQuery's **legacy** type names — INTEGER, FLOAT,
 //! BOOLEAN, RECORD — not the standard-SQL spellings (INT64, FLOAT64, BOOL,
 //! STRUCT) that `spec.bigQueryTypeName` produces for CREATE FUNCTION text.
-//! Confirmed against the Go emulator; see testdata/golden.json.
 // ephor:ignore-file ZA302 ZA303 ZA304 ZT105
 
 const std = @import("std");
@@ -46,9 +45,7 @@ pub fn legacyTypeName(k: pb.TypeKind) []const u8 {
 
 /// Emits one TableFieldSchema object.
 ///
-/// Keys are written in the order Go's encoding/json produces for
-/// bigqueryv2.TableFieldSchema — `fields, mode, name, type` — so responses
-/// compare byte-for-byte with the Go emulator.
+/// Keys are written in alphabetical order: `fields, mode, name, type`.
 pub fn writeField(
     arena: std.mem.Allocator,
     out: *std.ArrayList(u8),
@@ -233,7 +230,6 @@ test "scalar schema uses legacy type names" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // testdata/golden.json: scalar_int, scalar_bool, floats
     try testing.expectEqualStrings(
         \\{"fields":[{"name":"i","type":"INTEGER"}]}
     , try schemaOf(arena, "SELECT 1 AS i"));
@@ -250,7 +246,6 @@ test "ARRAY hoists its element type and marks the field REPEATED" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // testdata/golden.json: array_simple
     try testing.expectEqualStrings(
         \\{"fields":[{"mode":"REPEATED","name":"arr","type":"INTEGER"}]}
     , try schemaOf(arena, "SELECT [1,2,3] AS arr"));
@@ -261,7 +256,6 @@ test "STRUCT becomes RECORD with nested fields" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // testdata/golden.json: struct_simple
     try testing.expectEqualStrings(
         \\{"fields":[{"fields":[{"name":"a","type":"INTEGER"},{"name":"b","type":"STRING"}],"name":"s","type":"RECORD"}]}
     , try schemaOf(arena, "SELECT STRUCT(1 AS a, 'x' AS b) AS s"));
@@ -272,7 +266,6 @@ test "ARRAY<STRUCT> is REPEATED RECORD with the element's fields" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // testdata/golden.json: struct_nested
     try testing.expectEqualStrings(
         \\{"fields":[{"fields":[{"name":"a","type":"INTEGER"},{"fields":[{"name":"c","type":"INTEGER"}],"mode":"REPEATED","name":"b","type":"RECORD"}],"name":"s","type":"RECORD"}]}
     , try schemaOf(arena, "SELECT STRUCT(1 AS a, [STRUCT(2 AS c)] AS b) AS s"));
@@ -283,7 +276,6 @@ test "date, timestamp and bytes keep their own names" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // testdata/golden.json: types_mix
     try testing.expectEqualStrings(
         \\{"fields":[{"name":"d","type":"DATE"},{"name":"ts","type":"TIMESTAMP"},{"name":"raw","type":"BYTES"}]}
     , try schemaOf(arena, "SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts, b'ab' AS raw"));

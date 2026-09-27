@@ -13,8 +13,7 @@
 //! "GoogleSQL for BigQuery translates a NULL array into an empty array"
 //! (repository.go:271-274).
 //!
-//! All of it is verified against captured responses; see testdata/golden.json
-//! and the tests below.
+//! The tests below pin each shape.
 // ephor:ignore-file ZA302
 
 const std = @import("std");
@@ -308,92 +307,96 @@ fn responseOf(arena: std.mem.Allocator, sql: []const u8) ![]const u8 {
     return out.toOwnedSlice(arena);
 }
 
-/// Each expectation below is the Go emulator's actual response with the
-/// random jobId replaced by <JOBID> — see tools/capture_golden.py.
-fn expectGolden(sql: []const u8, expected: []const u8) !void {
+/// Each expectation is a full jobs.query response with the random jobId replaced by <JOBID>.
+fn expectResponse(sql: []const u8, expected: []const u8) !void {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    // Compared by value: a TableFieldSchema's keys follow the proto's field
-    // order, which is not the order Go's struct declaration produced.
+    // Compared by value: a TableFieldSchema's keys follow the proto's field order.
     try json_pb.expectJsonEqual(expected, try responseOf(arena_state.allocator(), sql));
 }
 
-test "scalar int matches the Go emulator byte for byte" {
-    try expectGolden("SELECT 1 AS i",
+test "a scalar int response" {
+    try expectResponse("SELECT 1 AS i",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"i","type":"INTEGER"}]},"rows":[{"f":[{"v":"1"}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "NULL emits \"v\":null rather than omitting the key" {
-    try expectGolden("SELECT NULL AS n",
+    try expectResponse("SELECT NULL AS n",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"n","type":"INTEGER"}]},"rows":[{"f":[{"v":null}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "booleans render as strings" {
-    try expectGolden("SELECT TRUE AS b, FALSE AS b2",
+    try expectResponse("SELECT TRUE AS b, FALSE AS b2",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"b","type":"BOOLEAN"},{"name":"b2","type":"BOOLEAN"}]},"rows":[{"f":[{"v":"true"},{"v":"false"}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "array elements are each wrapped in their own v" {
-    try expectGolden("SELECT [1,2,3] AS arr",
+    try expectResponse("SELECT [1,2,3] AS arr",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"mode":"REPEATED","name":"arr","type":"INTEGER"}]},"rows":[{"f":[{"v":[{"v":"1"},{"v":"2"},{"v":"3"}]}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "a NULL array becomes an empty array" {
-    try expectGolden("SELECT CAST(NULL AS ARRAY<INT64>) AS nullarr",
+    try expectResponse("SELECT CAST(NULL AS ARRAY<INT64>) AS nullarr",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"mode":"REPEATED","name":"nullarr","type":"INTEGER"}]},"rows":[{"f":[{"v":[]}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "struct becomes a nested f array" {
-    try expectGolden("SELECT STRUCT(1 AS a, 'x' AS b) AS s",
+    try expectResponse("SELECT STRUCT(1 AS a, 'x' AS b) AS s",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"fields":[{"name":"a","type":"INTEGER"},{"name":"b","type":"STRING"}],"name":"s","type":"RECORD"}]},"rows":[{"f":[{"v":{"f":[{"v":"1"},{"v":"x"}]}}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "nested struct with a repeated struct field" {
-    try expectGolden("SELECT STRUCT(1 AS a, [STRUCT(2 AS c)] AS b) AS s",
+    try expectResponse("SELECT STRUCT(1 AS a, [STRUCT(2 AS c)] AS b) AS s",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"fields":[{"name":"a","type":"INTEGER"},{"fields":[{"name":"c","type":"INTEGER"}],"mode":"REPEATED","name":"b","type":"RECORD"}],"name":"s","type":"RECORD"}]},"rows":[{"f":[{"v":{"f":[{"v":"1"},{"v":[{"v":{"f":[{"v":"2"}]}}]}]}}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "a NULL field inside a struct still emits null" {
-    try expectGolden("SELECT STRUCT(NULL AS a, 'x' AS b) AS s, CAST(NULL AS STRING) AS ns",
+    try expectResponse("SELECT STRUCT(NULL AS a, 'x' AS b) AS s, CAST(NULL AS STRING) AS ns",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"fields":[{"name":"a","type":"INTEGER"},{"name":"b","type":"STRING"}],"name":"s","type":"RECORD"},{"name":"ns","type":"STRING"}]},"rows":[{"f":[{"v":{"f":[{"v":null},{"v":"x"}]}},{"v":null}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "floats use BigQuery's spelling" {
     // Cell values: jobs.query, recidiviz-bigquery-sandbox, 2026-09-26.
-    try expectGolden("SELECT 1.5 AS f, 1e21 AS big, -0.0 AS negz, 1e-7 AS small",
+    try expectResponse("SELECT 1.5 AS f, 1e21 AS big, -0.0 AS negz, 1e-7 AS small",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"f","type":"FLOAT"},{"name":"big","type":"FLOAT"},{"name":"negz","type":"FLOAT"},{"name":"small","type":"FLOAT"}]},"rows":[{"f":[{"v":"1.5"},{"v":"1.0E21"},{"v":"-0.0"},{"v":"1.0E-7"}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "multiple rows and a string totalRows" {
-    try expectGolden("SELECT x FROM UNNEST([1,2,3]) AS x ORDER BY x",
+    try expectResponse("SELECT x FROM UNNEST([1,2,3]) AS x ORDER BY x",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"x","type":"INTEGER"}]},"rows":[{"f":[{"v":"1"}]},{"f":[{"v":"2"}]},{"f":[{"v":"3"}]}],"totalRows":"3","jobComplete":true}
     );
 }
 
-test "date, timestamp and bytes use Go's renderings" {
+test "date, timestamp and bytes renderings" {
     // TIMESTAMP is decimal Unix seconds; BYTES are base64.
-    try expectGolden("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts, b'ab' AS raw",
+    try expectResponse("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts, b'ab' AS raw",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"d","type":"DATE"},{"name":"ts","type":"TIMESTAMP"},{"name":"raw","type":"BYTES"}]},"rows":[{"f":[{"v":"2024-01-02"},{"v":"1704193445.0"},{"v":"YWI="}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
-test "strings are JSON-escaped" {
-    try expectGolden("SELECT 'a\"b' AS q, 'tab\there' AS t",
-        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"q","type":"STRING"},{"name":"t","type":"STRING"}]},"rows":[{"f":[{"v":"a\"b"},{"v":"tab\there"}]}],"totalRows":"1","jobComplete":true}
+test "strings are JSON-escaped and non-ASCII passes through" {
+    try expectResponse("SELECT 'a\"b' AS q, 'tab\there' AS t, 'é' AS uni",
+        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"q","type":"STRING"},{"name":"t","type":"STRING"},{"name":"uni","type":"STRING"}]},"rows":[{"f":[{"v":"a\"b"},{"v":"tab\there"},{"v":"é"}]}],"totalRows":"1","jobComplete":true}
+    );
+}
+
+test "an empty array literal is an empty REPEATED INTEGER" {
+    try expectResponse("SELECT [] AS e",
+        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"mode":"REPEATED","name":"e","type":"INTEGER"}]},"rows":[{"f":[{"v":[]}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "NUMERIC and BIGNUMERIC keep decimal text" {
-    try expectGolden("SELECT CAST('1.2345' AS NUMERIC) AS n, CAST(1 AS BIGNUMERIC) AS bn",
+    try expectResponse("SELECT CAST('1.2345' AS NUMERIC) AS n, CAST(1 AS BIGNUMERIC) AS bn",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"n","type":"NUMERIC"},{"name":"bn","type":"BIGNUMERIC"}]},"rows":[{"f":[{"v":"1.2345"},{"v":"1"}]}],"totalRows":"1","jobComplete":true}
     );
 }

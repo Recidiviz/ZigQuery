@@ -662,7 +662,7 @@ test "a body with no queryParameters has none" {
     , "")).params.len);
 }
 
-test "runQuery produces the Go emulator's response bytes" {
+test "runQuery produces a jobs.query response" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -672,8 +672,7 @@ test "runQuery produces the Go emulator's response bytes" {
 
     const res = try runQuery(arena, db, "test", "<JOBID>", "SELECT 1 AS i");
     try testing.expect(res.ok);
-    // Compared by value: jobReference and TableFieldSchema put their keys in
-    // proto field order, which is not the order Go's structs declared them in.
+    // Compared by value: jobReference and TableFieldSchema put their keys in proto field order.
     try json_pb.expectJsonEqual(
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"i","type":"INTEGER"}]},"rows":[{"f":[{"v":"1"}]}],"totalRows":"1","jobComplete":true}
     ,
@@ -762,17 +761,16 @@ test "the job-rows lookup hands the virtual table what the job holds" {
     );
 }
 
-test "engine errors get Go's wrapping prefixes" {
+test "engine errors are wrapped with analyze and parse prefixes" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // testdata/golden.json: error_table_not_found
     try testing.expectEqualStrings(
         "failed to analyze: Table not found: nonexistent_table_xyz [at 1:15]",
         try wrapEngineError(arena, "Table not found: nonexistent_table_xyz [at 1:15]"),
     );
-    // error_syntax: Go's parse path drops the position suffix.
+    // The parse path drops the position suffix.
     try testing.expectEqualStrings(
         "failed to parse statements: failed to parse statement: Syntax error: Unexpected end of statement",
         try wrapEngineError(arena, "Syntax error: Unexpected end of statement [at 1:11]"),

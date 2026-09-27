@@ -1,7 +1,6 @@
 //! Faithful port of bigquery-emulator server/error.go.
 //!
-//! The wire shape, verified byte-for-byte against the running Go emulator
-//! (testdata/golden.json):
+//! The wire shape:
 //!
 //!   {"error":{"errors":[{"reason":"...","location":"","debugInfo":"",
 //!             "message":"..."}],"code":404,"message":"..."}}
@@ -129,13 +128,11 @@ pub fn writeJsonString(
 
 const testing = std.testing;
 
-test "error envelope matches the Go emulator byte for byte" {
+test "the error envelope byte for byte" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Captured from the running Go emulator (testdata/golden.json,
-    // error_table_not_found).
     const got = try body(
         arena,
         .invalid_query,
