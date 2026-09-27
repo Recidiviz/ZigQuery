@@ -10,9 +10,10 @@
 //!
 //! Memory: methods that build new values/strings take an allocator; decode
 //! trees are expected to live in an arena (no per-value deinit is provided).
-// ephor:ignore-file ZA202 ZA209 ZA301 ZA302 ZA304 ZT105
+// ephor:ignore-file ZA209 ZA301 ZA302 ZA304 ZT105
 
 const std = @import("std");
+const builtin = @import("builtin");
 const time_zone = @import("time_zone.zig");
 
 pub const ValueError = error{
@@ -2354,81 +2355,88 @@ pub fn formatFloatGo(buf: []u8, f: f64) []const u8 {
     if (std.math.isNan(f)) return "NaN";
     if (std.math.isInf(f)) return if (f > 0) "+Inf" else "-Inf";
 
-    // Zig's {e} yields shortest round-trip (ryu) digits as [-]d[.ddd]e[-]dd;
-    // the digits match Go's shortest digits, so we only re-arrange.
-    var sci: [40]u8 = undefined;
-    const s = std.fmt.bufPrint(&sci, "{e}", .{f}) catch unreachable;
-    var i: usize = 0;
-    var neg = false;
-    if (s[0] == '-') {
-        neg = true;
-        i = 1;
-    }
-    var digits: [24]u8 = undefined;
-    var nd: usize = 0;
-    while (i < s.len and s[i] != 'e') : (i += 1) {
-        if (s[i] == '.') continue;
-        digits[nd] = s[i];
-        nd += 1;
-    }
-    const exp = std.fmt.parseInt(i32, s[i + 1 ..], 10) catch unreachable;
+    // The shortest digits that round-trip, which are the digits Go's shortest mode picks
+    // too, so only the layout below is Go's. `f` is `mantissa * 10^exponent`.
+    const float = std.fmt.float;
+    const d = float.binaryToDecimal(
+        u64,
+        @bitCast(f),
+        std.math.floatMantissaBits(f64),
+        std.math.floatExponentBits(f64),
+        false,
+        if (builtin.mode == .small) &float.Backend64_TablesSmall else &float.Backend64_TablesFull,
+    );
+    var digits: [20]u8 = undefined;
+    const len = std.fmt.printInt(&digits, d.mantissa, 10, .lower, .{});
+    // The power of ten of the first digit.
+    const exp: i32 = d.exponent + @as(i32, @intCast(len)) - 1;
+    // Go writes no trailing zeros after the last significant digit.
+    var nd = len;
+    while (nd > 1 and digits[nd - 1] == '0') nd -= 1;
 
-    var w: usize = 0;
-    if (neg) {
-        buf[w] = '-';
-        w += 1;
-    }
+    var out: Appender = .{ .b = buf };
+    if (d.sign) out.byte('-');
+
     if (exp < -4 or exp >= 6) {
-        // %e form: d[.ddd]e±XX
-        buf[w] = digits[0];
-        w += 1;
+        out.byte(digits[0]);
         if (nd > 1) {
-            buf[w] = '.';
-            w += 1;
-            @memcpy(buf[w .. w + nd - 1], digits[1..nd]);
-            w += nd - 1;
+            out.byte('.');
+            out.str(digits[1..nd]);
         }
-        buf[w] = 'e';
-        w += 1;
-        buf[w] = if (exp < 0) '-' else '+';
-        w += 1;
-        const ae: u32 = @abs(exp);
-        const tail = std.fmt.bufPrint(buf[w..], "{d:0>2}", .{ae}) catch unreachable;
-        w += tail.len;
+        out.byte('e');
+        out.byte(if (exp < 0) '-' else '+');
+        // Go always emits at least two exponent digits.
+        const abs: u32 = @abs(exp);
+        if (abs < 10) out.byte('0');
+        out.int(abs);
     } else {
-        // %f form; dp = position of the decimal point in the digit string.
+        // `dp` is the position of the decimal point within `digits`.
         const dp: i32 = exp + 1;
         if (dp <= 0) {
-            buf[w] = '0';
-            buf[w + 1] = '.';
-            w += 2;
-            var k: i32 = dp;
-            while (k < 0) : (k += 1) {
-                buf[w] = '0';
-                w += 1;
-            }
-            @memcpy(buf[w .. w + nd], digits[0..nd]);
-            w += nd;
-        } else if (dp >= @as(i32, @intCast(nd))) {
-            @memcpy(buf[w .. w + nd], digits[0..nd]);
-            w += nd;
-            var k: i32 = @intCast(nd);
-            while (k < dp) : (k += 1) {
-                buf[w] = '0';
-                w += 1;
-            }
+            out.str("0.");
+            out.repeat('0', @intCast(-dp));
+            out.str(digits[0..nd]);
+        } else if (@as(usize, @intCast(dp)) >= nd) {
+            out.str(digits[0..nd]);
+            out.repeat('0', @as(usize, @intCast(dp)) - nd);
         } else {
-            const udp: usize = @intCast(dp);
-            @memcpy(buf[w .. w + udp], digits[0..udp]);
-            w += udp;
-            buf[w] = '.';
-            w += 1;
-            @memcpy(buf[w .. w + nd - udp], digits[udp..nd]);
-            w += nd - udp;
+            const split: usize = @intCast(dp);
+            out.str(digits[0..split]);
+            out.byte('.');
+            out.str(digits[split..nd]);
         }
     }
-    return buf[0..w];
+    return out.written();
 }
+
+/// Appends into storage the caller has already sized.
+const Appender = struct {
+    b: []u8,
+    n: usize = 0,
+
+    fn byte(a: *Appender, c: u8) void {
+        a.b[a.n] = c;
+        a.n += 1;
+    }
+
+    fn str(a: *Appender, v: []const u8) void {
+        @memcpy(a.b[a.n..][0..v.len], v);
+        a.n += v.len;
+    }
+
+    fn repeat(a: *Appender, c: u8, k: usize) void {
+        @memset(a.b[a.n..][0..k], c);
+        a.n += k;
+    }
+
+    fn int(a: *Appender, v: u32) void {
+        a.n += std.fmt.printInt(a.b[a.n..], v, 10, .lower, .{});
+    }
+
+    fn written(a: *const Appender) []const u8 {
+        return a.b[0..a.n];
+    }
+};
 
 // ----------------------------------------------------------------------
 // Value ordering. This backed the zigquery_collate collation until the

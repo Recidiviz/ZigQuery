@@ -540,12 +540,12 @@ pub fn runQueryFormatted(
         .outcome = rows.outcome,
     };
 
-    // Go accumulates len() of each rendered cell string as
-    // totalBytesProcessed/Billed (convertValueToCell), so it has to be counted
-    // over the rendering rather than the storage form.
+    // totalBytesProcessed/Billed is the length of each rendered cell string,
+    // as the Go emulator counts it (convertValueToCell), so it has to be
+    // counted over the rendering rather than the storage form.
     const counter = try set.renderer(arena, false);
     for (0..total_rows) |row| {
-        total_bytes += response.renderedByteLen(arena, try counter.row(row)) catch 0;
+        total_bytes += response.renderedByteLen(try counter.row(row));
     }
 
     var out: std.ArrayList(u8) = .empty;

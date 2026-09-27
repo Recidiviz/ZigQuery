@@ -6,24 +6,31 @@ from the BigQuery Go structs that clients nonetheless depend on:
 
   - `"v": null` is emitted, never omitted
   - `totalRows` is a JSON *string*
-  - every scalar is rendered as a string, via Go's fmt.Sprint
-  - floats use strconv.FormatFloat(v, 'g', -1, 64): 1e+21, -0, 1e-07
+  - every scalar is rendered as a string (the Go emulator uses fmt.Sprint)
+  - a case with `rows_source` keeps the rows from the existing golden.json:
+    those cells were measured against BigQuery, whose FLOAT64 spelling
+    (1.0E21, -0.0) the server reproduces instead of the Go emulator's
   - a NULL ARRAY becomes [], not null
   - schema uses legacy type names: INTEGER/FLOAT/BOOLEAN, not INT64/FLOAT64/BOOL
   - ARRAY<T> is {"mode":"REPEATED", "type":<T>}; STRUCT is type RECORD + fields
-  - TIMESTAMP renders as Go's "sec.rem" ApiString, e.g. "1704193445.0"
+  - TIMESTAMP renders as decimal Unix seconds, e.g. "1704193445.0"; keep
+    captured instants on whole seconds: the server writes a sub-second
+    fraction as six digits (".001000"), the Go emulator unpadded (".1000")
   - BYTES render base64
 
 Usage:
     go build -o /tmp/bqemu ./cmd/bigquery-emulator   # in the Go repo
     /tmp/bqemu --project=test --database=:memory: --port=19050 \
         --grpc-port=19060 --log-level=error &
-    python3 tools/capture_golden.py > testdata/golden.json
+    python3 tools/capture_golden.py > testdata/golden.json.new
+    mv testdata/golden.json.new testdata/golden.json
 """
 import json
 import sys
 import urllib.request
+from pathlib import Path
 
+GOLDEN = Path(__file__).resolve().parent.parent / "testdata" / "golden.json"
 BASE = "http://127.0.0.1:19050"
 PROJECT = "test"
 
@@ -137,20 +144,22 @@ def normalize(obj):
 
 
 def main():
+    measured = {
+        c["name"]: c
+        for c in json.loads(GOLDEN.read_text())["cases"]
+        if "rows_source" in c
+    }
     cases = []
     for name, sql in CASES:
         status, body = post(
             f"/projects/{PROJECT}/queries",
             {"query": sql, "useLegacySql": False},
         )
-        cases.append(
-            {
-                "name": name,
-                "query": sql,
-                "status": status,
-                "response": normalize(body),
-            }
-        )
+        case = {"name": name, "query": sql, "status": status, "response": normalize(body)}
+        if name in measured:
+            case = {"name": name, "rows_source": measured[name]["rows_source"], **case}
+            case["response"]["rows"] = measured[name]["response"]["rows"]
+        cases.append(case)
 
     # jobs.query does not persist a job, so getQueryResults 404s for its id.
     status, body = post(f"/projects/{PROJECT}/queries", {"query": "SELECT 1 AS i", "useLegacySql": False})

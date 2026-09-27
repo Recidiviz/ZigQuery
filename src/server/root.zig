@@ -13,7 +13,6 @@ pub const router = @import("router.zig");
 pub const errors = @import("error.zig");
 pub const json_pb = @import("json_pb.zig");
 pub const debug_stats = @import("debug_stats.zig");
-pub const govalue = @import("internal/types/govalue.zig");
 pub const schema = @import("internal/types/schema.zig");
 pub const rowvalue = @import("internal/types/rowvalue.zig");
 pub const queryparam = @import("internal/types/queryparam.zig");

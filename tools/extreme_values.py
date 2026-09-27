@@ -9,8 +9,8 @@ this keeps the cases and drops the scaffolding, in the shape `storage_probe.py`
 already uses: point it at a running emulator, or at real BigQuery.
 
 A value can survive one path and not the other, which is what this checks for.
-The REST path renders every cell to text through Go's `fmt.Sprint` and parses
-it back; the Storage path writes an Arrow buffer with a declared type. A
+The REST path renders every cell to text and parses it back; the Storage path
+writes an Arrow buffer with a declared type. A
 TIMESTAMP of year 1 is the case that separates them — it is nowhere near the
 int64 micros range a naive encoder assumes, and it round-trips through text
 differently than through a fixed-width buffer.
