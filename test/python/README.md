@@ -60,13 +60,6 @@ run: when a change fixes one, remove its entry.
 
 ## Differences from upstream
 
-- **`copy_job_test.py` and `load_job_test.py` are this repo's own**, not ports.
-  Upstream covers neither job kind, so a re-sync will not carry them.
-- **`csv_autodetect_test.py` asserts BigQuery's behaviour**, measured in
-  `recidiviz-bigquery-sandbox` on 2026-09-24. Upstream sent `skipLeadingRows: 0`,
-  which states that a file has no header and so turns schema detection off; the
-  expectations that followed from it were the Go emulator's, not the service's.
-  `tools/load_autodetect_probe.py` is what measured them and re-measures them.
 - **Launching.** `utils/big_query_emulator_container.py` gains
   `BigQueryEmulatorProcess` and a `create_emulator()` factory, which the
   fixtures and `BigQueryEmulatorTestCase` use instead of constructing the
