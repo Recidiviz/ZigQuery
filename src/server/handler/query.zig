@@ -115,8 +115,13 @@ pub fn parseResultsPage(arena: std.mem.Allocator, query: []const u8) Page {
     };
 }
 
+/// Which jobs.insert configuration produced a job. getQueryResults serves a query job and
+/// refuses the rest.
+pub const JobKind = enum { query, copy };
+
 /// A completed query, retained so jobs.get and getQueryResults can replay it.
 pub const Job = struct {
+    kind: JobKind = .query,
     /// Owns everything below. See `JobStore`.
     ///
     /// Behind a pointer, not by value: an `ArenaAllocator`'s `allocator()`
@@ -160,6 +165,7 @@ pub const JobStore = struct {
         s: *JobStore,
         project_id: []const u8,
         job_id: []const u8,
+        kind: JobKind,
         set: ResultSet,
         resource: []const u8,
     ) !void {
@@ -173,6 +179,7 @@ pub const JobStore = struct {
 
         const job = Job{
             .arena = arena_ptr,
+            .kind = kind,
             .project_id = try arena.dupe(u8, project_id),
             .job_id = try arena.dupe(u8, job_id),
             .set = try set.cloneInto(arena),
@@ -714,7 +721,7 @@ test "job store round-trips and replaces on duplicate id" {
     var types = [_]*spec.Type{&int_t};
     var names = [_][]const u8{"n"};
 
-    try store.put("test", "job1", .{
+    try store.put("test", "job1", .query, .{
         .names = &names,
         .types = &types,
         .cells = &.{.{ .int = 1 }},
@@ -726,7 +733,7 @@ test "job store round-trips and replaces on duplicate id" {
     try testing.expectEqualStrings("n", store.get("job1").?.set.names[0]);
     try testing.expect(store.get("job1").?.set.types[0] != &int_t);
 
-    try store.put("test", "job1", .{
+    try store.put("test", "job1", .query, .{
         .names = &names,
         .types = &types,
         .cells = &.{.{ .int = 2 }},
@@ -743,7 +750,7 @@ test "the job-rows lookup hands the virtual table what the job holds" {
     var str_t: spec.Type = .{ .kind = @backingInt(zigquery.pb.TypeKind.TYPE_STRING) };
     var types = [_]*spec.Type{&str_t};
     var names = [_][]const u8{"s"};
-    try store.put("test", "job2", .{
+    try store.put("test", "job2", .query, .{
         .names = &names,
         .types = &types,
         .cells = &.{ .{ .blob = "ab" }, .null },
