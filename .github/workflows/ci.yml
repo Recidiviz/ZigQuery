@@ -141,6 +141,54 @@ jobs:
       # 0, so it cannot collide with anything else on the runner.
       - run: zig build grpc-smoke -Drelease=true -Dshim-dylib=${{ steps.shim.outputs.path }}
 
+  # The Python client suite ported from Recidiviz/bigquery-emulator, run the
+  # way downstream fixtures consume the emulator: testcontainers against the
+  # Docker image, built here from the same static `dist` binary a release
+  # ships. No other job builds the image before a tag, so this is also what
+  # catches a Dockerfile or ENTRYPOINT that no longer starts.
+  python-integration:
+    name: python integration (Docker image)
+    needs: shim
+    runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+    steps:
+      - uses: runs-on/action@v2
+      - uses: actions/checkout@v4
+      - id: shim
+        uses: ./.github/actions/shim
+        with:
+          platform: linux-x64
+      - uses: ./.github/actions/zig
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # Staged outside the checkout: the Dockerfile copies dist/bin/, and a
+      # context rooted at the repo would also carry dist/shim/ (~150 MB of
+      # cached shim) to the daemon.
+      - name: build image
+        run: |
+          set -euo pipefail
+          ctx="$RUNNER_TEMP/image"
+          zig build dist -Drelease=true \
+            -Dshim-dylib=${{ steps.shim.outputs.path }} \
+            -Dshim-static-obj=${{ steps.shim.outputs.static-path }} \
+            --prefix "$ctx/dist"
+          docker build -f Dockerfile -t zigquery-emulator:ci "$ctx"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          working-directory: test/python
+          enable-cache: true
+          cache-dependency-glob: test/python/uv.lock
+
+      - name: pytest
+        working-directory: test/python
+        env:
+          BIGQUERY_EMULATOR_REPOSITORY: zigquery-emulator
+          BIGQUERY_EMULATOR_VERSION: ci
+        run: |
+          uv sync --locked
+          uv run pytest -n 4 -v -rxX
+
   # Both generated codecs come from committed .fdsets and are easy to forget
   # when one of them moves. gen-proto is a host tool that does not link the
   # engine, so no shim.
