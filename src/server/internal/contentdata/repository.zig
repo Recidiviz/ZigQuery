@@ -33,6 +33,9 @@ pub const Options = struct {
     skip_invalid_rows: bool = false,
     /// Drop a member the schema does not declare; without it the row is marked invalid.
     ignore_unknown_values: bool = false,
+    /// Whether this call owns the transaction. A load job holds one across the DDL that
+    /// shapes the destination and the rows that fill it, and SQLite has no nested BEGIN.
+    manage_transaction: bool = true,
 };
 
 /// What `addTableData` reports back.
@@ -90,8 +93,12 @@ pub const Repository = struct {
         // Go runs the whole batch in one transaction and rolls back on any
         // failure (conn.Begin + defer RollbackIfNotCommitted). It is also what
         // keeps this to a single fsync under WAL.
-        r.db.rawExec("BEGIN", &.{}) catch return r.failEngine();
-        errdefer r.db.rawExec("ROLLBACK", &.{}) catch {};
+        if (options.manage_transaction) {
+            r.db.rawExec("BEGIN", &.{}) catch return r.failEngine();
+        }
+        errdefer if (options.manage_transaction) {
+            r.db.rawExec("ROLLBACK", &.{}) catch {};
+        };
 
         var batch = Batch{
             .repo = r,
@@ -102,10 +109,12 @@ pub const Repository = struct {
         };
         for (rows, 0..) |row, row_index| try batch.add(row, @intCast(row_index));
 
-        if (batch.invalid.items.len > 0 and !options.skip_invalid_rows) {
-            r.db.rawExec("ROLLBACK", &.{}) catch return r.failEngine();
-        } else {
-            r.db.rawExec("COMMIT", &.{}) catch return r.failEngine();
+        if (options.manage_transaction) {
+            if (batch.invalid.items.len > 0 and !options.skip_invalid_rows) {
+                r.db.rawExec("ROLLBACK", &.{}) catch return r.failEngine();
+            } else {
+                r.db.rawExec("COMMIT", &.{}) catch return r.failEngine();
+            }
         }
         return .{ .invalid = batch.invalid.items };
     }

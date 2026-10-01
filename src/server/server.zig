@@ -31,6 +31,10 @@ const query_handler = @import("handler/query.zig");
 const discovery = @import("discovery.zig");
 const jobs_handler = @import("handler/jobs.zig");
 const copy_handler = @import("handler/jobs.copy.zig");
+const pb = @import("proto/bigquery.zig");
+const upload = @import("upload.zig");
+const load_handler = @import("handler/jobs.load.zig");
+const load_rows = @import("internal/load_rows.zig");
 const datasets_handler = @import("handler/datasets.zig");
 const tables_handler = @import("handler/tables.zig");
 const tabledata_handler = @import("handler/tabledata.zig");
@@ -47,6 +51,11 @@ fn nowSeed() u64 {
     var tv: std.c.timeval = undefined;
     _ = std.c.gettimeofday(&tv, null);
     return @bitCast(@as(i64, @intCast(tv.sec)) *% 1_000_000 +% @as(i64, @intCast(tv.usec)));
+}
+
+/// Wall clock in milliseconds, for the deadlines an upload session carries.
+fn nowMillis() i64 {
+    return @divFloor(@as(i64, @bitCast(nowSeed())), 1_000);
 }
 
 pub const Options = struct {
@@ -79,6 +88,8 @@ pub const Server = struct {
     /// The Io `engine_mutex` is taken with. Read only under contention.
     io: std.Io,
     jobs: query_handler.JobStore,
+    /// Resumable uploads this process is part way through.
+    uploads: upload.SessionStore,
     /// Per-route timing, indexed by Route.Id.
     route_stats: std.enums.EnumArray(router.Route.Id, stats_mod.RouteStats) =
         std.enums.EnumArray(router.Route.Id, stats_mod.RouteStats).initFill(.{}),
@@ -100,6 +111,7 @@ pub const Server = struct {
             .project = undefined,
             .db = undefined,
             .jobs = .{ .gpa = gpa },
+            .uploads = .{ .gpa = gpa },
             // Seeded from the clock: job ids only need to be unique within a
             // run, and Go's randomID is likewise not cryptographic. Zig 0.16
             // moved wall-clock reads behind std.Io, so read libc directly —
@@ -204,6 +216,7 @@ pub const Server = struct {
         s.db.udf_state.job_rows = .{};
         s.db.close();
         s.jobs.deinit();
+        s.uploads.deinit();
         s.arena_state.deinit();
         s.gpa.destroy(s);
     }
@@ -269,6 +282,8 @@ pub const Server = struct {
                 m.captures.get(1),
             ),
             .jobs_insert => s.handleJobsInsert(req, m.captures.get(0)),
+            .upload_jobs_insert => s.handleUploadInsert(req, m.captures.get(0)),
+            .upload_jobs_resume => s.handleUploadResume(req, m.captures.get(0)),
             .jobs_get => s.handleJobsGet(req, m.captures.get(0), m.captures.get(1)),
             // Listing needs the jobs metadata table; deferred.
             .jobs_list => .{
@@ -1214,14 +1229,435 @@ pub const Server = struct {
             return badRequest(arena, "failed to decode request body");
         };
 
-        // --- COPY job ---
-        const copy_spec = copy_handler.parse(arena, job) catch |err| switch (err) {
+        return switch (jobConfigKind(job)) {
+            .query => s.handleQueryJob(arena, req, project_id, job),
+            .copy => s.handleCopyConfig(arena, project_id, job),
+            .load => s.handleLoadConfig(arena, req, project_id, job),
+            .extract => badRequest(arena, "configuration.extract is not supported"),
+            .none => badRequest(
+                arena,
+                "configuration must carry one of query, copy or load",
+            ),
+        };
+    }
+
+    /// Which `configuration.*` member a jobs.insert body carries. `jobType` is output only, so
+    /// the kind is whichever member is set.
+    const JobConfigKind = enum { query, copy, load, extract, none };
+
+    fn jobConfigKind(job: *const pb.Job) JobConfigKind {
+        const cfg = job.configuration orelse return .none;
+        if (cfg.copy != null) return .copy;
+        if (cfg.load != null) return .load;
+        if (cfg.extract != null) return .extract;
+        if (cfg.query != null) return .query;
+        return .none;
+    }
+
+    fn handleCopyConfig(
+        s: *Server,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        job: *const pb.Job,
+    ) !http_server.Response {
+        const parsed = copy_handler.parse(arena, job) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => return badRequest(arena, copy_handler.parseErrorMessage(err)),
         };
-        if (copy_spec) |copy| return s.handleCopyJob(arena, project_id, copy);
+        const copy = parsed orelse return badRequest(arena, "configuration.copy is required");
+        return s.handleCopyJob(arena, project_id, copy);
+    }
 
-        // --- QUERY job ---
+    /// A load job posted to `/jobs` rather than to the upload endpoint, so it names its data
+    /// rather than carrying it.
+    fn handleLoadConfig(
+        s: *Server,
+        arena: std.mem.Allocator,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        job: *const pb.Job,
+    ) !http_server.Response {
+        _ = s;
+        _ = req;
+        _ = project_id;
+        const cfg = job.configuration.?.load.?;
+        if (cfg.source_uris.len != 0) {
+            return badRequest(
+                arena,
+                "configuration.load.sourceUris is not supported: upload the data instead",
+            );
+        }
+        return badRequest(arena, "configuration.load requires the upload endpoint");
+    }
+
+    // ---- the media upload endpoint ----
+
+    /// `POST /upload/...`, which either carries the whole job or opens a resumable session.
+    fn handleUploadInsert(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        s.db.default_project = project_id;
+        defer s.db.default_project = s.project;
+
+        const upload_type = if (req.queryParam("uploadType")) |text|
+            upload.UploadType.parse(text)
+        else
+            null;
+
+        if (upload_type == .resumable) return s.openUploadSession(req, project_id);
+
+        const content_type = req.headers.content_type orelse "";
+        const boundary = upload.boundaryFrom(content_type) orelse {
+            return badRequest(arena, "a multipart upload needs a boundary in its Content-Type");
+        };
+        const parts = upload.parseMultipart(req.body, boundary) catch {
+            return badRequest(arena, "the upload body is not two multipart/related parts");
+        };
+        return s.runLoadJob(arena, project_id, parts.metadata, parts.media);
+    }
+
+    /// The initiating request of a resumable upload. Answers with the session URI the bytes
+    /// are sent to. api-uploads
+    fn openUploadSession(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        const now = nowMillis();
+        s.uploads.sweep(now);
+
+        const declared: ?u64 = if (req.headers.x_upload_content_length) |text|
+            std.fmt.parseInt(u64, text, 10) catch null
+        else
+            null;
+
+        const id = try query_handler.randomId(arena, &s.rng);
+        _ = s.uploads.create(id, project_id, req.body, declared, now) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+        };
+
+        return .{
+            .status = .ok,
+            .body = "",
+            .extra_headers = try arena.dupe(std.http.Header, &.{.{
+                .name = "location",
+                .value = try std.fmt.allocPrint(
+                    arena,
+                    "http://{s}/upload/bigquery/v2/projects/{s}/jobs" ++
+                        "?uploadType=resumable&upload_id={s}",
+                    .{ s.endpoint, project_id, id },
+                ),
+            }}),
+        };
+    }
+
+    /// `PUT` to a session URI: another chunk, or a question about how many bytes landed.
+    fn handleUploadResume(
+        s: *Server,
+        req: *const http_server.Request,
+        project_id: []const u8,
+    ) !http_server.Response {
+        const arena = req.arena;
+        s.db.default_project = project_id;
+        defer s.db.default_project = s.project;
+
+        const id = req.queryParam("upload_id") orelse {
+            return badRequest(arena, "a resumable upload needs its upload_id");
+        };
+        // A session the server no longer holds cannot be resumed, and the client is expected
+        // to start again. api-uploads
+        const session = s.uploads.get(id) orelse return .{
+            .status = .not_found,
+            .body = try errors.body(arena, .not_found, "upload session not found"),
+        };
+
+        const range: ?upload.ContentRange = if (req.headers.content_range) |text|
+            upload.parseContentRange(text) catch {
+                return badRequest(arena, "malformed Content-Range");
+            }
+        else
+            null;
+
+        if (range) |r| {
+            if (r.isStatusQuery()) return incompleteUpload(arena, session.received());
+            s.uploads.append(session, r, req.body, nowMillis()) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                error.TooLarge => return badRequest(arena, "upload exceeds the size this " ++
+                    "emulator accepts"),
+                error.RangeMismatch => return badRequest(
+                    arena,
+                    "Content-Range does not continue this upload",
+                ),
+                else => return badRequest(arena, "malformed Content-Range"),
+            };
+            if (!session.isComplete(r)) return incompleteUpload(arena, session.received());
+        } else {
+            // No Content-Range: the whole body in one request.
+            s.uploads.append(session, .{}, req.body, nowMillis()) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return badRequest(arena, "upload could not be accepted"),
+            };
+        }
+
+        const metadata = try arena.dupe(u8, session.metadata);
+        const media = try arena.dupe(u8, session.bytes.items);
+        // The bytes have been read out; the session has no further use for its copy.
+        s.uploads.finish(id);
+
+        // 200 with the job resource, which is what the client accepts from a completed
+        // resumable upload alongside the 308 it takes between chunks.
+        return s.runLoadJob(arena, project_id, metadata, media);
+    }
+
+    /// Reads `media` under the configuration in `metadata` and writes the rows it yields.
+    ///
+    /// Everything settled without writing a row answers the upload request; a failure found
+    /// while reading rows completes the job and rides in status.errorResult. docs/adr/0002
+    fn runLoadJob(
+        s: *Server,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        metadata: []const u8,
+        media: []const u8,
+    ) !http_server.Response {
+        const job = jobs_handler.parseInsert(arena, metadata) catch {
+            return badRequest(arena, "failed to decode the upload's job configuration");
+        };
+        const parsed = load_handler.parse(job) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return badRequest(arena, load_handler.parseErrorMessage(err)),
+        };
+        const spec = parsed orelse
+            return badRequest(arena, "the upload carries no configuration.load");
+
+        const dst = spec.destination;
+        if (!try s.db.datasetExists(arena, dst.project_id, dst.dataset_id)) {
+            return datasetNotFound(arena, dst.project_id, dst.dataset_id);
+        }
+
+        const existing = try s.db.catalogTable(
+            arena,
+            dst.project_id,
+            dst.dataset_id,
+            dst.table_id,
+        );
+
+        const job_id = try query_handler.randomId(arena, &s.rng);
+        const unix_seconds = @divFloor(@as(i64, @bitCast(nowSeed())), 1_000_000);
+
+        // CREATE_NEVER reports a missing destination in the job result.
+        // rest/v2/Job#jobconfigurationload
+        if (existing == null and !spec.mayCreateDestination()) {
+            return s.storeLoadJob(arena, project_id, job_id, spec, unix_seconds, .{
+                .failed = .{
+                    .reason = "notFound",
+                    .message = try std.fmt.allocPrint(
+                        arena,
+                        "Not found: Table {s}",
+                        .{try dst.display(arena)},
+                    ),
+                },
+            });
+        }
+        if (existing != null and spec.refusesOccupiedDestination()) {
+            if (try s.tableRowCount(arena, existing.?) > 0) {
+                return s.storeLoadJob(arena, project_id, job_id, spec, unix_seconds, .{
+                    .failed = .{
+                        .reason = "duplicate",
+                        .message = try std.fmt.allocPrint(
+                            arena,
+                            "Already Exists: Table {s}",
+                            .{try dst.display(arena)},
+                        ),
+                    },
+                });
+            }
+        }
+
+        const read = load_rows.read(arena, media, spec, existing) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return badRequest(arena, load_rows.readErrorMessage(err)),
+        };
+
+        const tooManyBadRecords = struct {
+            fn response(
+                server: *Server,
+                a: std.mem.Allocator,
+                p: []const u8,
+                id: []const u8,
+                sp: load_handler.LoadSpec,
+                seconds: i64,
+            ) !http_server.Response {
+                return server.storeLoadJob(a, p, id, sp, seconds, .{
+                    .failed = .{
+                        .reason = "invalid",
+                        .message = "Error while reading data, error message: " ++
+                            "CSV processing encountered too many errors, giving up.",
+                    },
+                });
+            }
+        }.response;
+
+        if (read.bad_records > spec.max_bad_records) {
+            return tooManyBadRecords(s, arena, project_id, job_id, spec, unix_seconds);
+        }
+
+        // One transaction: a load that turns out to carry too many bad records leaves the
+        // destination as it was. rest/v2/Job#jobconfigurationload
+        try s.db.rawExec("BEGIN", &.{});
+        var committed = false;
+        defer if (!committed) s.db.rawExec("ROLLBACK", &.{}) catch {};
+
+        const rejected = s.writeLoadedRows(arena, spec, read, existing != null) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return internalError(arena, s.db.lastError());
+        };
+
+        // A row the reader accepted can still be one the engine will not store.
+        const bad_records = read.bad_records + rejected;
+        if (bad_records > spec.max_bad_records) {
+            s.db.rawExec("ROLLBACK", &.{}) catch {};
+            committed = true; // the deferred rollback has nothing left to undo
+            // The rollback returns SQLite to where it was, but a table the load created is
+            // also in the analyzer's catalog, which the transaction does not cover. A job
+            // that wrote nothing must not leave a destination behind.
+            if (existing == null) {
+                s.db.exec(try std.fmt.allocPrint(
+                    arena,
+                    "DROP TABLE IF EXISTS `{s}.{s}.{s}`",
+                    .{ dst.project_id, dst.dataset_id, dst.table_id },
+                ), &.{}, .{}) catch {};
+            }
+            return tooManyBadRecords(s, arena, project_id, job_id, spec, unix_seconds);
+        }
+
+        try s.db.rawExec("COMMIT", &.{});
+        committed = true;
+
+        return s.storeLoadJob(arena, project_id, job_id, spec, unix_seconds, .{
+            .loaded = .{
+                .input_file_bytes = media.len,
+                .output_rows = read.rowCount() - rejected,
+                .bad_records = bad_records,
+            },
+        });
+    }
+
+    /// Brings the destination into the shape the load decided on, writes the rows, and answers
+    /// with how many of them the engine would not store.
+    fn writeLoadedRows(
+        s: *Server,
+        arena: std.mem.Allocator,
+        spec: load_handler.LoadSpec,
+        read: load_rows.Reading,
+        destination_exists: bool,
+    ) !u64 {
+        const dst = spec.destination;
+        if (!destination_exists or spec.replacesDestination()) {
+            const ddl = try schema_mod.createTableDdl(
+                arena,
+                dst.project_id,
+                dst.dataset_id,
+                dst.table_id,
+                read.schema_node,
+            );
+            if (spec.replacesDestination() and destination_exists) {
+                try s.db.exec(try std.fmt.allocPrint(
+                    arena,
+                    "DROP TABLE IF EXISTS `{s}.{s}.{s}`",
+                    .{ dst.project_id, dst.dataset_id, dst.table_id },
+                ), &.{}, .{});
+            }
+            try s.db.exec(ddl, &.{}, .{});
+            var metadata_json: std.ArrayList(u8) = .empty;
+            try tables_handler.writeMetadata(arena, &metadata_json, read.schema_node);
+            s.db.setTableMetadata(
+                arena,
+                dst.project_id,
+                dst.dataset_id,
+                dst.table_id,
+                metadata_json.items,
+            ) catch {};
+        }
+
+        if (read.rowCount() == 0) return 0;
+        var repo = contentdata.Repository{ .arena = arena, .db = s.db };
+        var batcher = try load_rows.Batcher.init(arena, read, spec);
+        var rejected: u64 = 0;
+        while (try batcher.next()) |batch| {
+            // Rows are skipped rather than rolled back, so the ones that failed can be
+            // counted against maxBadRecords.
+            const result = try repo.addTableData(
+                dst.project_id,
+                dst.dataset_id,
+                dst.table_id,
+                read.schema_fields,
+                batch,
+                .{
+                    .skip_invalid_rows = true,
+                    .ignore_unknown_values = spec.ignore_unknown_values,
+                    .manage_transaction = false,
+                },
+            );
+            rejected += result.invalid.len;
+        }
+        return rejected + batcher.bad_records;
+    }
+
+    fn storeLoadJob(
+        s: *Server,
+        arena: std.mem.Allocator,
+        project_id: []const u8,
+        job_id: []const u8,
+        spec: load_handler.LoadSpec,
+        unix_seconds: i64,
+        outcome: load_handler.Outcome,
+    ) !http_server.Response {
+        var resource: std.ArrayList(u8) = .empty;
+        try load_handler.writeJobResource(arena, &resource, .{
+            .project_id = project_id,
+            .job_id = job_id,
+            .endpoint = s.endpoint,
+            .unix_seconds = unix_seconds,
+            .load = spec,
+            .outcome = outcome,
+        });
+        try s.jobs.put(project_id, job_id, .load, .{
+            .names = &.{},
+            .types = &.{},
+            .cells = &.{},
+            .total_rows = 0,
+        }, resource.items);
+        return .{ .body = resource.items };
+    }
+
+    /// 308 with what the session holds so far, which is how a resumable upload reports both a
+    /// partial chunk and a status query. api-uploads
+    fn incompleteUpload(arena: std.mem.Allocator, received: u64) !http_server.Response {
+        return .{
+            .status = .permanent_redirect,
+            .body = "",
+            .extra_headers = try arena.dupe(std.http.Header, &.{.{
+                .name = "range",
+                .value = if (received == 0)
+                    "bytes=0-0"
+                else
+                    try std.fmt.allocPrint(arena, "bytes=0-{d}", .{received - 1}),
+            }}),
+        };
+    }
+
+    fn handleQueryJob(
+        s: *Server,
+        arena: std.mem.Allocator,
+        req: *const http_server.Request,
+        project_id: []const u8,
+        job: *const pb.Job,
+    ) !http_server.Response {
         const sql = jobs_handler.queryFromJobConfig(job) orelse {
             return badRequest(arena, "configuration.query.query is required");
         };

@@ -626,6 +626,25 @@ pub fn build(b: *std.Build) void {
     b.step("insert-bench", "Profile a tabledata.insertAll request body")
         .dependOn(&run_insertbench.step);
 
+    // Where a load job's time and memory go, on a generated body.
+    const loadjobbench_exe = b.addExecutable(.{
+        .name = "load-job-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("entrypoints/bench/load_job_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "bqserver", .module = server_mod },
+                .{ .name = "zigquery", .module = mod },
+            },
+        }),
+    });
+    if (maybe_bazel) |bz| loadjobbench_exe.step.dependOn(&bz.step);
+    const run_loadjobbench = b.addRunArtifact(loadjobbench_exe);
+    run_loadjobbench.addPassthruArgs();
+    b.step("load-job-bench", "Profile a load job's read, DDL and write")
+        .dependOn(&run_loadjobbench.step);
+
     // Round-trips a real gRPC call against the Storage Read transport.
     //
     // Not in `test-server`, and not a benchmark: gRPC's shutdown checks abort
