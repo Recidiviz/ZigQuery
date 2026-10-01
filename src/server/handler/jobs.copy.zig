@@ -237,9 +237,40 @@ pub const AppendMismatch = union(enum) {
     /// The destination has no column of this name.
     cannot_add_field: []const u8,
     /// A column exists on both sides with a different mode.
-    mode_changed: struct { field: []const u8, from: []const u8, to: []const u8 },
+    mode_changed: Change,
     /// A column exists on both sides with a different type.
-    type_changed: struct { field: []const u8, from: []const u8, to: []const u8 },
+    type_changed: Change,
+
+    /// `from` is the destination's, `to` the source's.
+    pub const Change = struct { field: []const u8, from: []const u8, to: []const u8 };
+
+    fn cannotAddField(field: []const u8) AppendMismatch {
+        return .{ .cannot_add_field = field };
+    }
+
+    fn modeChanged(
+        source: *const spec.ColumnSpec,
+        destination: *const spec.ColumnSpec,
+    ) AppendMismatch {
+        const change: Change = .{
+            .field = source.name,
+            .from = modeName(destination.is_not_null),
+            .to = modeName(source.is_not_null),
+        };
+        return .{ .mode_changed = change };
+    }
+
+    fn typeChanged(
+        source: *const spec.ColumnSpec,
+        destination: *const spec.ColumnSpec,
+    ) AppendMismatch {
+        const change: Change = .{
+            .field = source.name,
+            .from = schema.legacyTypeName(destination.type.typeKind()),
+            .to = schema.legacyTypeName(source.type.typeKind()),
+        };
+        return .{ .type_changed = change };
+    }
 };
 
 fn modeName(is_not_null: bool) []const u8 {
@@ -255,21 +286,9 @@ pub fn appendMismatch(
 ) ?AppendMismatch {
     for (source.columns) |sc| {
         const dc = columnNamed(destination.columns, sc.name) orelse
-            return .{ .cannot_add_field = sc.name };
-        if (sc.is_not_null != dc.is_not_null) {
-            return .{ .mode_changed = .{
-                .field = sc.name,
-                .from = modeName(dc.is_not_null),
-                .to = modeName(sc.is_not_null),
-            } };
-        }
-        if (!typesEqual(sc.type, dc.type)) {
-            return .{ .type_changed = .{
-                .field = sc.name,
-                .from = schema.legacyTypeName(dc.type.typeKind()),
-                .to = schema.legacyTypeName(sc.type.typeKind()),
-            } };
-        }
+            return .cannotAddField(sc.name);
+        if (sc.is_not_null != dc.is_not_null) return .modeChanged(sc, dc);
+        if (!typesEqual(sc.type, dc.type)) return .typeChanged(sc, dc);
     }
     return null;
 }
@@ -358,69 +377,11 @@ pub fn writeJobResource(
     out: *std.ArrayList(u8),
     j: JobResource,
 ) !void {
-    var dest = pb.TableReference{
-        .project_id = j.copy.destination.project_id,
-        .dataset_id = j.copy.destination.dataset_id,
-        .table_id = j.copy.destination.table_id,
+    var cfg = pb.JobConfiguration{
+        .job_type = "COPY",
+        .copy = try copyConfiguration(arena, j.copy, j.outcome),
     };
-
-    const refs = try arena.alloc(pb.TableReference, j.copy.sources.len);
-    const ref_ptrs = try arena.alloc(*pb.TableReference, j.copy.sources.len);
-    for (j.copy.sources, refs, ref_ptrs) |src, *ref, *ptr| {
-        ref.* = .{
-            .project_id = src.project_id,
-            .dataset_id = src.dataset_id,
-            .table_id = src.table_id,
-        };
-        ptr.* = ref;
-    }
-
-    var cfg_copy = pb.JobConfigurationTableCopy{
-        .destination_table = &dest,
-        .write_disposition = if (j.copy.submitted.write_disposition) |wd| @tagName(wd) else null,
-        .create_disposition = if (j.copy.submitted.create_disposition) |cd| @tagName(cd) else null,
-        .operation_type = switch (j.outcome) {
-            .copied => .COPY,
-            .failed => null,
-        },
-    };
-    if (j.copy.submitted.plural_sources) {
-        cfg_copy.source_tables = ref_ptrs;
-    } else {
-        cfg_copy.source_table = ref_ptrs[0];
-    }
-
-    var cfg = pb.JobConfiguration{ .job_type = "COPY", .copy = &cfg_copy };
     var job_ref = pb.JobReference{ .project_id = j.project_id, .job_id = j.job_id };
-
-    var copied = pb.Int64Value{ .value = switch (j.outcome) {
-        .copied => |rows| rows,
-        .failed => 0,
-    } };
-    var stats_copy = pb.CopyJobStatistics{ .copied_rows = &copied };
-    var stats = pb.JobStatistics{
-        .creation_time = j.unix_seconds,
-        .start_time = j.unix_seconds,
-        .end_time = j.unix_seconds,
-        .copy = switch (j.outcome) {
-            .copied => &stats_copy,
-            .failed => null,
-        },
-    };
-
-    var err_proto = pb.ErrorProto{};
-    var err_list = [_]*pb.ErrorProto{&err_proto};
-    var status = pb.JobStatus{ .state = "DONE" };
-    switch (j.outcome) {
-        .copied => {},
-        .failed => |failure| {
-            err_proto = .{ .reason = failure.reason, .message = failure.message };
-            status.error_result = &err_proto;
-            // `errors` repeats the errorResult verbatim.
-            status.errors = &err_list;
-        },
-    }
-
     const job = pb.Job{
         .kind = "bigquery#job",
         .self_link = try std.fmt.allocPrint(
@@ -430,10 +391,82 @@ pub fn writeJobResource(
         ),
         .configuration = &cfg,
         .job_reference = &job_ref,
-        .statistics = &stats,
-        .status = &status,
+        .statistics = try statistics(arena, j.unix_seconds, j.outcome),
+        .status = try status(arena, j.outcome),
     };
     try out.appendSlice(arena, try std.json.Stringify.valueAlloc(arena, job, .{}));
+}
+
+fn tableReference(arena: std.mem.Allocator, t: TableRef) !*pb.TableReference {
+    const ref = try arena.create(pb.TableReference);
+    ref.* = .{ .project_id = t.project_id, .dataset_id = t.dataset_id, .table_id = t.table_id };
+    return ref;
+}
+
+/// `configuration.copy`: the sources in the form the client sent them.
+fn copyConfiguration(
+    arena: std.mem.Allocator,
+    copy: CopySpec,
+    outcome: Outcome,
+) !*pb.JobConfigurationTableCopy {
+    const sources = try arena.alloc(*pb.TableReference, copy.sources.len);
+    for (copy.sources, sources) |src, *ref| ref.* = try tableReference(arena, src);
+
+    const cfg = try arena.create(pb.JobConfigurationTableCopy);
+    cfg.* = .{
+        .destination_table = try tableReference(arena, copy.destination),
+        .write_disposition = if (copy.submitted.write_disposition) |wd| @tagName(wd) else null,
+        .create_disposition = if (copy.submitted.create_disposition) |cd| @tagName(cd) else null,
+        .operation_type = switch (outcome) {
+            .copied => .COPY,
+            .failed => null,
+        },
+    };
+    if (copy.submitted.plural_sources) {
+        cfg.source_tables = sources;
+    } else {
+        cfg.source_table = sources[0];
+    }
+    return cfg;
+}
+
+/// `statistics`, with `statistics.copy` on a job that copied rows.
+fn statistics(
+    arena: std.mem.Allocator,
+    unix_seconds: i64,
+    outcome: Outcome,
+) !*pb.JobStatistics {
+    const stats = try arena.create(pb.JobStatistics);
+    stats.* = .{
+        .creation_time = unix_seconds,
+        .start_time = unix_seconds,
+        .end_time = unix_seconds,
+    };
+    const rows = switch (outcome) {
+        .copied => |rows| rows,
+        .failed => return stats,
+    };
+    const copied = try arena.create(pb.Int64Value);
+    copied.* = .{ .value = rows };
+    const stats_copy = try arena.create(pb.CopyJobStatistics);
+    stats_copy.* = .{ .copied_rows = copied };
+    stats.copy = stats_copy;
+    return stats;
+}
+
+fn status(arena: std.mem.Allocator, outcome: Outcome) !*pb.JobStatus {
+    const st = try arena.create(pb.JobStatus);
+    st.* = .{ .state = "DONE" };
+    const failure = switch (outcome) {
+        .copied => return st,
+        .failed => |failure| failure,
+    };
+    const err = try arena.create(pb.ErrorProto);
+    err.* = .{ .reason = failure.reason, .message = failure.message };
+    st.error_result = err;
+    // `errors` repeats the errorResult verbatim.
+    st.errors = try arena.dupe(*pb.ErrorProto, &.{err});
+    return st;
 }
 
 const testing = std.testing;
@@ -813,4 +846,40 @@ test "the incompatible-sources message names every source and ends in a period" 
         "Incompatible table schemata between tables: p:d.s0, p:d.s1.",
         msg,
     );
+}
+
+test "refusesOccupiedDestination - only true for write_empty" {
+    for (std.enums.values(WriteDisposition)) |disposition| {
+        const refused = CopySpec.refusesOccupiedDestination(.{
+            .sources = &[_]TableRef{},
+            .destination = .{
+                .project_id = "test",
+                .dataset_id = "test",
+                .table_id = "test",
+            },
+            .write_disposition = disposition,
+        });
+        try testing.expect(if (disposition == .WRITE_EMPTY) refused else !refused);
+    }
+}
+
+test "mayCreateDestination - cannot create when never specified" {
+    for (std.enums.values(CreateDisposition)) |disposition| {
+        const mayCreate = CopySpec.mayCreateDestination(.{
+            .sources = &[_]TableRef{},
+            .destination = .{
+                .project_id = "test",
+                .dataset_id = "test",
+                .table_id = "test",
+            },
+            .create_disposition = disposition,
+        });
+        try testing.expect(if (disposition == .CREATE_NEVER) !mayCreate else mayCreate);
+    }
+}
+
+test "parseErrorMessage" {
+    for (std.meta.tags(ParseError)) |err| {
+        try testing.expect(!std.mem.eql(u8, parseErrorMessage(err), ""));
+    }
 }

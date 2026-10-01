@@ -4657,7 +4657,7 @@ test "a copy job creates the destination and reports the rows it copied" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
 
@@ -4684,7 +4684,7 @@ test "a copy job is replayable through jobs.get and refused by getQueryResults" 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
 
@@ -4718,7 +4718,7 @@ test "WRITE_EMPTY refuses a destination holding rows and leaves it alone" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
     _ = try request(s, arena, .POST, "/projects/test/jobs",
@@ -4753,7 +4753,7 @@ test "WRITE_EMPTY accepts a destination that exists and is empty" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
     _ = try request(s, arena, .POST, "/projects/test/jobs",
@@ -4776,7 +4776,7 @@ test "CREATE_NEVER will not bring a destination into existence" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
 
@@ -4798,7 +4798,7 @@ test "a source table that is not there is refused before a job exists" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
 
@@ -4816,7 +4816,7 @@ test "a dataset that is not there is refused before a job exists" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
 
@@ -4837,7 +4837,7 @@ test "WRITE_APPEND adds to the destination rather than rebuilding it" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
     _ = try request(s, arena, .POST, "/projects/test/jobs",
@@ -4867,7 +4867,7 @@ test "sources whose schemas disagree are refused before the destination is touch
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
     _ = try request(s, arena, .POST, "/projects/test/jobs",
@@ -4897,7 +4897,7 @@ test "several sources concatenate into one destination" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
     _ = try request(s, arena, .POST, "/projects/test/jobs",
@@ -4928,7 +4928,7 @@ test "a view named as a source is refused" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
     _ = try request(s, arena, .POST, "/projects/test/jobs",
@@ -4953,7 +4953,7 @@ test "an unsupported operation type never becomes a job" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
 
@@ -4972,7 +4972,7 @@ test "a truncating copy keeps the destination's description" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     try copyFixture(s, arena);
 
