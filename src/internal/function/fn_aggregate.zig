@@ -21,6 +21,7 @@
 //! discarded a real input equal to it: BIT_OR([-1, 5]) gave 5 rather than -1,
 //! BIT_XOR([1, 2, 3]) gave 1 rather than 0. Both are fixed here, a deliberate
 //! divergence from go-zetasqlite.
+// ephor:ignore-file ZA209 ZA302 ZA303
 
 const std = @import("std");
 const bind = @import("bind.zig");

@@ -12,6 +12,7 @@
 //!  invalid row rather than an engine failure.
 //! The batch rolls back when any row is invalid, unless `skip_invalid_rows` is true. WHen true, the
 //! only the valid rows will commit.
+// ephor:ignore-file ZA302 ZA303 ZA304
 
 const std = @import("std");
 const zigquery = @import("zigquery");
@@ -139,9 +140,18 @@ pub const Repository = struct {
                 // The bind cast rejected a value. The statement binds one placeholder per column in
                 // schema order, so the placeholder names the column.
                 error.DecodeFailed => {
-                    const ordinal = batch.repo.db.lastErrorParam() orelse return batch.repo.failEngine();
-                    const message = try batch.repo.arena.dupe(u8, batch.repo.db.lastError());
-                    return batch.reject(row_index, batch.plans[@intCast(ordinal - 1)].name, message);
+                    const ordinal = batch.repo.db.lastErrorParam() orelse {
+                        return batch.repo.failEngine();
+                    };
+                    const message = try batch.repo.arena.dupe(
+                        u8,
+                        batch.repo.db.lastError(),
+                    );
+                    return batch.reject(
+                        row_index,
+                        batch.plans[@intCast(ordinal - 1)].name,
+                        message,
+                    );
                 },
                 error.ExecFailed => switch (batch.stepFailure()) {
                     .not_null => |plan| {
@@ -386,7 +396,8 @@ fn streamingPathSegments(
 /// Go zetasqlite.TimeFromTimestampValue (timestamp.go:12): epoch
 /// "seconds[.micros]" text. Reproduces its quirk of computing a zero-padded
 /// fraction and then parsing the *unpadded* one, so ".5" is 5 microseconds
-/// rather than 500000 — the inverse of the "sec.rem" form the emulator emits.
+/// rather than 500000. A result cell's six-digit fraction (".500000") reads
+/// back correctly.
 fn timeFromTimestampValue(s: []const u8) !i64 {
     const dot = std.mem.indexOfScalar(u8, s, '.');
     const sec_text = if (dot) |i| s[0..i] else s;

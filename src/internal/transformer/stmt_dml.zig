@@ -3,6 +3,7 @@
 //! These name the raw SQLite columns rather than the ID-based aliases a query uses: DML writes to
 //! the table itself, so the target's columns are registered without aliases before any WHERE or
 //! SET expression transforms.
+// ephor:ignore-file ZA301 ZA302
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

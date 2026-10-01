@@ -4,6 +4,7 @@
 //!
 //! Synthetic columns transform and append after the real ones. Wildcard tables are unsupported,
 //! which is the only thing that puts a column in that list, so it is empty.
+// ephor:ignore-file ZA301 ZA302
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

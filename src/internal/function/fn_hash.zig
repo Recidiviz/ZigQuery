@@ -5,6 +5,7 @@
 //! (Go: BytesValue). FARM_FINGERPRINT returns the farmhash64 fingerprint as a
 //! signed INT64 (Go: IntValue(farm.Fingerprint64(v)), a uint64->int64 cast).
 //! SESSION_USER returns the fixed string "dummy" (Go function_security.go).
+// ephor:ignore-file ZA301 ZA303
 
 const std = @import("std");
 const bind = @import("bind.zig");

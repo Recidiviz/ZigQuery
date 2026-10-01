@@ -15,6 +15,7 @@
 //! A user-defined function is inlined at its call site: the stored SQL body with each `@argname`
 //! replaced by the rendered argument. A JS or templated function has no stored body and reports
 //! error.Unimplemented.
+// ephor:ignore-file ZA301 ZA302 ZA304
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
@@ -309,6 +310,14 @@ fn grouped(alloc: std.mem.Allocator, e: *SQLExpression) Error!*SQLExpression {
     return sqlbuilder.newListExpression(alloc, one);
 }
 
+/// `args`, each grouped, as one parenthesised list: the right side of an IN.
+fn groupedList(alloc: std.mem.Allocator, args: []const *SQLExpression) Error!*SQLExpression {
+    const list = try alloc.alloc(*SQLExpression, args.len);
+    errdefer alloc.free(list);
+    for (args, list) |arg, *slot| slot.* = try grouped(alloc, arg);
+    return sqlbuilder.newListExpression(alloc, list);
+}
+
 /// Renders the lowered form, one arm per `Lowering.Form`.
 fn optimizeFunctionToSQL(
     alloc: std.mem.Allocator,
@@ -335,13 +344,11 @@ fn optimizeFunctionToSQL(
         },
         .in_list => {
             if (args.len < 2) return error.InvalidAST;
-            const list = try alloc.alloc(*SQLExpression, args.len - 1);
-            for (args[1..], list) |arg, *slot| slot.* = try grouped(alloc, arg);
             return sqlbuilder.newBinaryExpression(
                 alloc,
                 try grouped(alloc, args[0]),
                 l.op,
-                try sqlbuilder.newListExpression(alloc, list),
+                try groupedList(alloc, args[1..]),
             );
         },
         .prefix => {

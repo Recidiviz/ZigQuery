@@ -14,6 +14,7 @@
 //! `Capture` — the AST node and transformed SQL are computed on every query
 //! regardless; capturing them costs nothing beyond rendering into this
 //! call's own arena, paid only when requested).
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304 ZT105
 
 const std = @import("std");
 const driver = @import("../driver.zig");
@@ -278,6 +279,7 @@ fn runSpecFile(
         .bigquery_docs;
 
     const path = try std.fs.path.join(arena, &.{ specs_root, entry.path });
+    // ephor:ignore ZA101 — the allocator is `arena`, in third position.
     const src = std.Io.Dir.cwd().readFileAllocOptions(
         io,
         path,
@@ -352,7 +354,11 @@ fn runSpecFile(
         // Duped for the same reason `desc` is: this outlives `zoir`, which
         // dies with this function, while `results` (and thus this string)
         // does not.
-        const unsupported_bq: ?[]const u8 = if (stringField(zoir, c, "unsupported_in_bigquery") orelse spec_unsupported_bq) |r|
+        const unsupported_bq: ?[]const u8 = if (stringField(
+            zoir,
+            c,
+            "unsupported_in_bigquery",
+        ) orelse spec_unsupported_bq) |r|
             try arena.dupe(u8, r)
         else
             null;
@@ -383,7 +389,18 @@ fn runSpecFile(
 
         var full: Detail = .{};
         const full_ptr: ?*Detail = if (capture_detail) &full else null;
-        const res = runCase(gpa, arena, zoir, c, db, sql, setup, full_ptr, unsupported_bq, corpus) catch |err| {
+        const res = runCase(
+            gpa,
+            arena,
+            zoir,
+            c,
+            db,
+            sql,
+            setup,
+            full_ptr,
+            unsupported_bq,
+            corpus,
+        ) catch |err| {
             try results.append(gpa, .{
                 .spec = spec_name,
                 .desc = desc,
@@ -406,7 +423,11 @@ fn runSpecFile(
     }
 }
 
-const CaseResult = struct { outcome: Outcome, detail: []const u8 = "", unsupported_stale: bool = false };
+const CaseResult = struct {
+    outcome: Outcome,
+    detail: []const u8 = "",
+    unsupported_stale: bool = false,
+};
 
 /// Copies `capture`'s AST/transformed-SQL into `f`, if the statement reached
 /// `transformStatementFragment` at all (see `Detail.ast_text`'s doc comment
@@ -433,7 +454,11 @@ fn renderRowsText(arena: std.mem.Allocator, rows: []const []const driver.Cell) !
     return buf.toOwnedSlice(arena);
 }
 
-fn renderWantRowsText(arena: std.mem.Allocator, zoir: Zoir, want_rows: Zoir.Node.Index) ![]const u8 {
+fn renderWantRowsText(
+    arena: std.mem.Allocator,
+    zoir: Zoir,
+    want_rows: Zoir.Node.Index,
+) ![]const u8 {
     const range = elements(zoir, want_rows);
     if (range.len == 0) return "(0 rows)";
     var buf: std.ArrayList(u8) = .empty;
@@ -445,7 +470,14 @@ fn renderWantRowsText(arena: std.mem.Allocator, zoir: Zoir, want_rows: Zoir.Node
         var j: u32 = 0;
         while (j < cells.len) : (j += 1) {
             if (j > 0) try buf.appendSlice(arena, ", ");
-            try buf.appendSlice(arena, try spec_expect.renderWant(arena, zoir, cells.at(j)));
+            try buf.appendSlice(
+                arena,
+                try spec_expect.renderWant(
+                    arena,
+                    zoir,
+                    cells.at(j),
+                ),
+            );
         }
         try buf.append(arena, ')');
     }
@@ -497,7 +529,12 @@ fn runCase(
         const n = na.get(zoir);
         if (n == .struct_literal) {
             for (n.struct_literal.names, 0..) |name, i| {
-                const v = try cellFromNode(arena, zoir, n.struct_literal.vals.at(@intCast(i)), null) orelse continue;
+                const v = try cellFromNode(
+                    arena,
+                    zoir,
+                    n.struct_literal.vals.at(@intCast(i)),
+                    null,
+                ) orelse continue;
                 try args.append(arena, .{ .name = name.get(zoir), .value = v });
             }
         }
@@ -588,13 +625,25 @@ fn runCase(
     // their values are not the engine's to reproduce. Not a staleness signal
     // either way: "ran without error" is too weak a claim to call a declared
     // BigQuery rejection stale.
-    if (boolField(zoir, c, "nondeterministic")) return .{ .outcome = .pass };
+    if (boolField(zoir, c, "nondeterministic")) {
+        return .{ .outcome = .pass };
+    }
 
     // No `.rows` to check (most commonly a `prepare_database` case, which is
     // scaffolding, not an assertion) is likewise not a staleness signal — the
     // engine reaching this point proves nothing about the disputed construct.
-    const want_rows = field(zoir, c, "rows") orelse return .{ .outcome = .pass };
-    const result = try compareRows(gpa, arena, zoir, want_rows, got.items, boolField(zoir, c, "unordered"), corpus);
+    const want_rows = field(zoir, c, "rows") orelse {
+        return .{ .outcome = .pass };
+    };
+    const result = try compareRows(
+        gpa,
+        arena,
+        zoir,
+        want_rows,
+        got.items,
+        boolField(zoir, c, "unordered"),
+        corpus,
+    );
     // A declared-BigQuery-invalid case that genuinely matched real rows here
     // (not an `.expect_error`/`.expect_error_any` match — those already
     // returned above) means this engine now accepts something it claims

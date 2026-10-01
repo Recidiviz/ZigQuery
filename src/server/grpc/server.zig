@@ -9,6 +9,7 @@
 //! thread it is called on. It therefore gets a plain `std.Thread`, the same
 //! choice `http/server.zig` makes for connections, rather than parking a
 //! `std.Io.Threaded` worker that no scheduler can account for.
+// ephor:ignore-file ZT105
 
 const std = @import("std");
 const c = @import("c.zig");

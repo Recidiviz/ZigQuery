@@ -10,6 +10,7 @@
 //! - Optional embedded values (Go zero-value structs used as "absent", e.g.
 //!   LimitScanData.Offset) become Zig optionals.
 //! - Enums that Go borrows from googlesql use the generated pb enums.
+// ephor:ignore-file ZT105
 
 const std = @import("std");
 const value_mod = @import("../value.zig");

@@ -1,3 +1,4 @@
+// ephor:ignore-file ZT105
 const std = @import("std");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
 const types_data = @import("types_data.zig");

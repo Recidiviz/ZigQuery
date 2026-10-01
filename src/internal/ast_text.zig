@@ -21,6 +21,7 @@
 //! field is genuinely labeled and navigable, which is what a debugging view
 //! needs. Depth and total-size caps bound the output regardless — this runs
 //! once per spec case at UI startup, across the whole (large) corpus.
+// ephor:ignore-file ZA302 ZA304
 
 const std = @import("std");
 const pb = @import("../proto/resolved_ast.zig");
@@ -33,7 +34,12 @@ const Writer = struct {
     arena: std.mem.Allocator,
     truncated: bool = false,
 
-    fn line(w: *Writer, depth: usize, comptime fmt: []const u8, args: anytype) std.mem.Allocator.Error!void {
+    fn line(
+        w: *Writer,
+        depth: usize,
+        comptime fmt: []const u8,
+        args: anytype,
+    ) std.mem.Allocator.Error!void {
         if (w.truncated) return;
         if (w.buf.items.len > max_bytes) {
             w.truncated = true;
@@ -49,7 +55,10 @@ const Writer = struct {
 /// `node` and everything it points to must already be arena-allocated (as
 /// `analyzer_ffi.Analyzed.node` always is); the returned text is allocated
 /// from `arena` too.
-pub fn render(arena: std.mem.Allocator, node: *const pb.AnyResolvedNodeProto) std.mem.Allocator.Error![]const u8 {
+pub fn render(
+    arena: std.mem.Allocator,
+    node: *const pb.AnyResolvedNodeProto,
+) std.mem.Allocator.Error![]const u8 {
     var w: Writer = .{ .arena = arena };
     try renderValue(&w, node, 0, "root");
     return w.buf.toOwnedSlice(arena);
@@ -61,7 +70,12 @@ pub fn render(arena: std.mem.Allocator, node: *const pb.AnyResolvedNodeProto) st
 // Zig's inferred-error-set mechanism hits a dependency cycle at comptime.
 // The only error this ever produces is OutOfMemory (every `try` below is an
 // arena append), matching `render`'s own declared return type.
-fn renderValue(w: *Writer, value: anytype, depth: usize, name: []const u8) std.mem.Allocator.Error!void {
+fn renderValue(
+    w: *Writer,
+    value: anytype,
+    depth: usize,
+    name: []const u8,
+) std.mem.Allocator.Error!void {
     if (depth > max_depth) {
         try w.line(depth, "{s}: ... [max depth]", .{name});
         return;

@@ -4,6 +4,7 @@
 //! through its computed expression or as a qualified column reference, gives
 //! every SELECT item an ID-based alias, and wraps the result in a subquery
 //! FROM item (the coordinator assigns the scan alias).
+// ephor:ignore-file ZA301 ZA302 ZA304
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

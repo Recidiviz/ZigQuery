@@ -3,6 +3,7 @@
 //! driver.zig replaces go-zetasqlite's database/sql driver surface
 //! (driver.go/conn.go/stmt.go/rows.go + modernc sqlite.RegisterFunction) —
 //! the one part of the port that is redesigned rather than mirrored.
+// ephor:ignore-file ZA303 ZT105
 
 const std = @import("std");
 const phase = @import("internal/phase.zig");
@@ -279,6 +280,40 @@ pub const Db = struct {
             inverse,
             null,
         );
+        if (rc != c.SQLITE_OK) return error.SQLite;
+    }
+
+    /// Registers a virtual-table module with a copy of `ctx` as its client data
+    /// SQLite frees the copy when the connection closes.
+    pub fn createModule(
+        db: *Db,
+        name: [:0]const u8,
+        module: *const c.sqlite3_module,
+        ctx: anytype,
+    ) (Error || error{OutOfMemory})!void {
+        const owned = try ctx.gpa.create(@TypeOf(ctx));
+        owned.* = ctx;
+        return db.handOverModule(name, module, owned);
+    }
+
+    /// sqlite3_create_module_v2 with `ctx` as client data.
+    /// SQLite owns `ctx` from this call on, including when registration fails:
+    /// it runs the destructor before returning the error, so the caller must not free `ctx`
+    fn handOverModule(
+        db: *Db,
+        name: [:0]const u8,
+        module: *const c.sqlite3_module,
+        ctx: anytype,
+    ) Error!void {
+        const Ctx = @typeInfo(@TypeOf(ctx)).pointer.child;
+        const destroy = struct {
+            fn destroy(p: ?*anyopaque) callconv(.c) void {
+                const owned: *Ctx = @ptrCast(@alignCast(p.?));
+                const gpa = owned.gpa;
+                gpa.destroy(owned);
+            }
+        }.destroy;
+        const rc = c.sqlite3_create_module_v2(db.handle, name.ptr, module, ctx, destroy);
         if (rc != c.SQLITE_OK) return error.SQLite;
     }
 

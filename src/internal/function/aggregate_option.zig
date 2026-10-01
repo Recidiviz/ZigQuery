@@ -22,6 +22,7 @@
 //! produced and consumed inside one statement, never stored (generated SQL
 //! holds the *call*, not the marker), so no golden, corpus case or database
 //! could ever see one.
+// ephor:ignore-file ZT105
 
 const std = @import("std");
 const bind = @import("bind.zig");

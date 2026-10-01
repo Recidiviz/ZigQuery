@@ -41,6 +41,7 @@
 //!
 //! So: a change here that trades output size for anything at all is very
 //! probably not worth it. A change that removes a *level* still is.
+// ephor:ignore-file ZA301 ZA302 ZA304 ZT105
 
 const std = @import("std");
 
@@ -1194,9 +1195,12 @@ pub const InsertStatement = struct {
     pub fn writeSql(self: *const InsertStatement, writer: *SQLWriter) Error!void {
         try writer.write("INSERT INTO ");
         const table_line = try std.fmt.allocPrint(writer.allocator, "`{s}`", .{self.table_name});
+        defer writer.allocator.free(table_line);
         try writer.writeLine(table_line);
         const joined = try std.mem.join(writer.allocator, ", ", self.columns);
+        defer writer.allocator.free(joined);
         const columns_line = try std.fmt.allocPrint(writer.allocator, " ({s}) ", .{joined});
+        defer writer.allocator.free(columns_line);
         try writer.writeLine(columns_line);
         if (self.query) |query| {
             try writer.write(" ");

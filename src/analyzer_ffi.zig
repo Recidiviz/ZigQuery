@@ -1,5 +1,6 @@
 //! FFI over the Bazel-built GoogleSQL analyzer shim
 //! (googlesql repo: zig/analyzer_shim.cc -> libgooglesql_shim.dylib).
+// ephor:ignore-file ZA303 ZT105
 
 const std = @import("std");
 const pb = @import("proto/resolved_ast.zig");

@@ -31,7 +31,9 @@ pub fn transform(
     select_statement.from_clause = from_item;
 
     // Get stored column mappings from context for this recursive CTE.
-    const mapping = ctx.getWithEntryMapping(recursive_cte_name) orelse return error.ValidationFailed;
+    const mapping = ctx.getWithEntryMapping(recursive_cte_name) orelse {
+        return error.ValidationFailed;
+    };
     if (mapping.len != recursive_ref_scan.column_list.len) return error.ValidationFailed;
 
     // Leave each column pending, like scan_with_ref: the recursive CTE

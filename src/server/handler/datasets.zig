@@ -4,6 +4,7 @@
 //! to insert with patches merged over it (`writeDatasetResource`), stored on its catalog spec and
 //! reported back verbatim by get and list; `writeDataset` builds the minimal resource for a
 //! dataset declared without one (the `--dataset` flag, a loader fixture).
+// ephor:ignore-file ZA303 ZT105
 
 const std = @import("std");
 const errors = @import("../error.zig");

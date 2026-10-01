@@ -7,21 +7,18 @@
 //!   1. `"v": null` is EMITTED, never omitted. Go redefines TableCell purely
 //!      for this (internal/types/types.go:50-51).
 //!   2. `totalRows` is a JSON **string** (`json:"totalRows,string"`).
-//!   3. Every scalar is rendered as a string via Go's fmt.Sprint
-//!      (internal/contentdata/repository.go convertValueToCell) — see
-//!      govalue.zig for the float rules that follow from this.
+//!   3. Every scalar is rendered as a string (tablerow.zig).
 //!
 //! Plus one from the query path: a NULL ARRAY is coerced to `[]`, because
 //! "GoogleSQL for BigQuery translates a NULL array into an empty array"
 //! (repository.go:271-274).
 //!
-//! All of it is verified byte-for-byte against a running Go emulator; see
-//! testdata/golden.json and the tests below.
+//! The tests below pin each shape.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const zigquery = @import("zigquery");
 const driver = zigquery.driver;
-const govalue = @import("govalue.zig");
 const schema = @import("schema.zig");
 const spec = zigquery.spec;
 const value_mod = zigquery.value;
@@ -68,42 +65,45 @@ pub fn coerceNullArrays(
 
 /// Total length of a row's rendered cell strings.
 ///
-/// Go accumulates this while converting values and reports it as
-/// totalBytesProcessed / totalBytesBilled (contentdata/repository.go
-/// convertValueToCell). NULLs and container brackets contribute nothing —
-/// only the scalar text does.
-pub fn renderedByteLen(
-    arena: std.mem.Allocator,
-    row: []const driver.Cell,
-) std.mem.Allocator.Error!usize {
+/// Reported as totalBytesProcessed / totalBytesBilled, as the Go emulator
+/// does (contentdata/repository.go convertValueToCell). NULLs and container
+/// brackets contribute nothing — only the scalar text does, with a FLOAT64 in
+/// BigQuery's spelling (`1.0` is 3 bytes).
+pub fn renderedByteLen(row: []const driver.Cell) usize {
     var n: usize = 0;
-    for (row) |cell| n += try cellByteLen(arena, cell);
+    for (row) |cell| n += cellByteLen(cell);
     return n;
 }
 
-fn cellByteLen(arena: std.mem.Allocator, cell: driver.Cell) std.mem.Allocator.Error!usize {
+fn cellByteLen(cell: driver.Cell) usize {
     return switch (cell) {
         .null => 0,
-        .int => |v| (try govalue.formatInt(arena, v)).len,
-        .float => |v| (try govalue.formatFloat(arena, v)).len,
-        .bool => |v| govalue.formatBool(v).len,
+        .int => |v| blk: {
+            var buf: [tablerow.int_buf_len]u8 = undefined;
+            break :blk tablerow.formatInt(&buf, v).len;
+        },
+        .float => |v| blk: {
+            var buf: [tablerow.float_buf_len]u8 = undefined;
+            break :blk tablerow.formatFloat(&buf, v).len;
+        },
+        .bool => |v| tablerow.formatBool(v).len,
         .string, .bytes, .json, .date, .timestamp, .datetime, .time, .interval, .range => |v| v.len,
         .array => |items| blk: {
             var n: usize = 0;
-            for (items) |it| n += try cellByteLen(arena, it);
+            for (items) |it| n += cellByteLen(it);
             break :blk n;
         },
         .struct_ => |fields| blk: {
             var n: usize = 0;
-            for (fields) |f| n += try cellByteLen(arena, f.value);
+            for (fields) |f| n += cellByteLen(f.value);
             break :blk n;
         },
     };
 }
 
 /// Go internal/types.Format: under `formatOptions.useInt64Timestamp`, a
-/// TIMESTAMP cell is re-rendered as int64 microseconds instead of the
-/// "sec.microRemainder" form.
+/// TIMESTAMP cell is re-rendered as int64 microseconds instead of decimal
+/// seconds.
 ///
 /// Every depth, not just the top level. google-cloud-bigquery asks for this
 /// format on every read and parses a TIMESTAMP cell with `int()`, so a cell
@@ -307,91 +307,96 @@ fn responseOf(arena: std.mem.Allocator, sql: []const u8) ![]const u8 {
     return out.toOwnedSlice(arena);
 }
 
-/// Each expectation below is the Go emulator's actual response with the
-/// random jobId replaced by <JOBID> — see tools/capture_golden.py.
-fn expectGolden(sql: []const u8, expected: []const u8) !void {
+/// Each expectation is a full jobs.query response with the random jobId replaced by <JOBID>.
+fn expectResponse(sql: []const u8, expected: []const u8) !void {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    // Compared by value: a TableFieldSchema's keys follow the proto's field
-    // order, which is not the order Go's struct declaration produced.
+    // Compared by value: a TableFieldSchema's keys follow the proto's field order.
     try json_pb.expectJsonEqual(expected, try responseOf(arena_state.allocator(), sql));
 }
 
-test "scalar int matches the Go emulator byte for byte" {
-    try expectGolden("SELECT 1 AS i",
+test "a scalar int response" {
+    try expectResponse("SELECT 1 AS i",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"i","type":"INTEGER"}]},"rows":[{"f":[{"v":"1"}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "NULL emits \"v\":null rather than omitting the key" {
-    try expectGolden("SELECT NULL AS n",
+    try expectResponse("SELECT NULL AS n",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"n","type":"INTEGER"}]},"rows":[{"f":[{"v":null}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "booleans render as strings" {
-    try expectGolden("SELECT TRUE AS b, FALSE AS b2",
+    try expectResponse("SELECT TRUE AS b, FALSE AS b2",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"b","type":"BOOLEAN"},{"name":"b2","type":"BOOLEAN"}]},"rows":[{"f":[{"v":"true"},{"v":"false"}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "array elements are each wrapped in their own v" {
-    try expectGolden("SELECT [1,2,3] AS arr",
+    try expectResponse("SELECT [1,2,3] AS arr",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"mode":"REPEATED","name":"arr","type":"INTEGER"}]},"rows":[{"f":[{"v":[{"v":"1"},{"v":"2"},{"v":"3"}]}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "a NULL array becomes an empty array" {
-    try expectGolden("SELECT CAST(NULL AS ARRAY<INT64>) AS nullarr",
+    try expectResponse("SELECT CAST(NULL AS ARRAY<INT64>) AS nullarr",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"mode":"REPEATED","name":"nullarr","type":"INTEGER"}]},"rows":[{"f":[{"v":[]}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "struct becomes a nested f array" {
-    try expectGolden("SELECT STRUCT(1 AS a, 'x' AS b) AS s",
+    try expectResponse("SELECT STRUCT(1 AS a, 'x' AS b) AS s",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"fields":[{"name":"a","type":"INTEGER"},{"name":"b","type":"STRING"}],"name":"s","type":"RECORD"}]},"rows":[{"f":[{"v":{"f":[{"v":"1"},{"v":"x"}]}}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "nested struct with a repeated struct field" {
-    try expectGolden("SELECT STRUCT(1 AS a, [STRUCT(2 AS c)] AS b) AS s",
+    try expectResponse("SELECT STRUCT(1 AS a, [STRUCT(2 AS c)] AS b) AS s",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"fields":[{"name":"a","type":"INTEGER"},{"fields":[{"name":"c","type":"INTEGER"}],"mode":"REPEATED","name":"b","type":"RECORD"}],"name":"s","type":"RECORD"}]},"rows":[{"f":[{"v":{"f":[{"v":"1"},{"v":[{"v":{"f":[{"v":"2"}]}}]}]}}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "a NULL field inside a struct still emits null" {
-    try expectGolden("SELECT STRUCT(NULL AS a, 'x' AS b) AS s, CAST(NULL AS STRING) AS ns",
+    try expectResponse("SELECT STRUCT(NULL AS a, 'x' AS b) AS s, CAST(NULL AS STRING) AS ns",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"fields":[{"name":"a","type":"INTEGER"},{"name":"b","type":"STRING"}],"name":"s","type":"RECORD"},{"name":"ns","type":"STRING"}]},"rows":[{"f":[{"v":{"f":[{"v":null},{"v":"x"}]}},{"v":null}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
-test "floats use Go's shortest-g formatting" {
-    try expectGolden("SELECT 1.5 AS f, 1e21 AS big, -0.0 AS negz, 1e-7 AS small",
-        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"f","type":"FLOAT"},{"name":"big","type":"FLOAT"},{"name":"negz","type":"FLOAT"},{"name":"small","type":"FLOAT"}]},"rows":[{"f":[{"v":"1.5"},{"v":"1e+21"},{"v":"-0"},{"v":"1e-07"}]}],"totalRows":"1","jobComplete":true}
+test "floats use BigQuery's spelling" {
+    // Cell values: jobs.query, recidiviz-bigquery-sandbox, 2026-09-26.
+    try expectResponse("SELECT 1.5 AS f, 1e21 AS big, -0.0 AS negz, 1e-7 AS small",
+        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"f","type":"FLOAT"},{"name":"big","type":"FLOAT"},{"name":"negz","type":"FLOAT"},{"name":"small","type":"FLOAT"}]},"rows":[{"f":[{"v":"1.5"},{"v":"1.0E21"},{"v":"-0.0"},{"v":"1.0E-7"}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "multiple rows and a string totalRows" {
-    try expectGolden("SELECT x FROM UNNEST([1,2,3]) AS x ORDER BY x",
+    try expectResponse("SELECT x FROM UNNEST([1,2,3]) AS x ORDER BY x",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"x","type":"INTEGER"}]},"rows":[{"f":[{"v":"1"}]},{"f":[{"v":"2"}]},{"f":[{"v":"3"}]}],"totalRows":"3","jobComplete":true}
     );
 }
 
-test "date, timestamp and bytes use Go's renderings" {
-    // TIMESTAMP is Go's "sec.rem" ApiString; BYTES are base64.
-    try expectGolden("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts, b'ab' AS raw",
+test "date, timestamp and bytes renderings" {
+    // TIMESTAMP is decimal Unix seconds; BYTES are base64.
+    try expectResponse("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts, b'ab' AS raw",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"d","type":"DATE"},{"name":"ts","type":"TIMESTAMP"},{"name":"raw","type":"BYTES"}]},"rows":[{"f":[{"v":"2024-01-02"},{"v":"1704193445.0"},{"v":"YWI="}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
-test "strings are JSON-escaped" {
-    try expectGolden("SELECT 'a\"b' AS q, 'tab\there' AS t",
-        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"q","type":"STRING"},{"name":"t","type":"STRING"}]},"rows":[{"f":[{"v":"a\"b"},{"v":"tab\there"}]}],"totalRows":"1","jobComplete":true}
+test "strings are JSON-escaped and non-ASCII passes through" {
+    try expectResponse("SELECT 'a\"b' AS q, 'tab\there' AS t, 'é' AS uni",
+        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"q","type":"STRING"},{"name":"t","type":"STRING"},{"name":"uni","type":"STRING"}]},"rows":[{"f":[{"v":"a\"b"},{"v":"tab\there"},{"v":"é"}]}],"totalRows":"1","jobComplete":true}
+    );
+}
+
+test "an empty array literal is an empty REPEATED INTEGER" {
+    try expectResponse("SELECT [] AS e",
+        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"mode":"REPEATED","name":"e","type":"INTEGER"}]},"rows":[{"f":[{"v":[]}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
 test "NUMERIC and BIGNUMERIC keep decimal text" {
-    try expectGolden("SELECT CAST('1.2345' AS NUMERIC) AS n, CAST(1 AS BIGNUMERIC) AS bn",
+    try expectResponse("SELECT CAST('1.2345' AS NUMERIC) AS n, CAST(1 AS BIGNUMERIC) AS bn",
         \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"n","type":"NUMERIC"},{"name":"bn","type":"BIGNUMERIC"}]},"rows":[{"f":[{"v":"1.2345"},{"v":"1"}]}],"totalRows":"1","jobComplete":true}
     );
 }
@@ -434,11 +439,10 @@ test "useInt64Timestamp reaches a TIMESTAMP inside a bare ARRAY" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // The text is Go's `sec.microRemainder`, so the part after the dot is a
-    // count of microseconds rather than a decimal fraction: ".5" is 5µs.
+    // The text is decimal seconds with a six-digit fraction: 5µs is ".000005".
     var items = [_]driver.Cell{
         .{ .timestamp = "1768003200.0" },
-        .{ .timestamp = "1768003200.5" },
+        .{ .timestamp = "1768003200.000005" },
         .{ .timestamp = "1768003200.500000" },
     };
     const row = try formatInt64Timestamps(arena, &.{.{ .array = &items }});

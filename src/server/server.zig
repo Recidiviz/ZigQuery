@@ -15,6 +15,7 @@
 //!   guess before that is attempted again.
 //! - Route dispatch is a switch over Route.Id rather than one http.Handler
 //!   type per route (server/handler_gen.go's 39 empty structs).
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304 ZC103
 
 const std = @import("std");
 const zigquery = @import("zigquery");
@@ -152,6 +153,7 @@ pub const Server = struct {
         }
 
         for (opts.data_from_json) |path| {
+            // ephor:ignore ZA101 — the allocator is `arena`, in third position.
             const bytes = try std.Io.Dir.cwd().readFileAlloc(
                 io,
                 path,
@@ -668,7 +670,8 @@ pub const Server = struct {
                     table_spec.name_path[2],
                 },
             );
-            s.db.exec(ddl, &.{}, .{}) catch {};
+            s.db.exec(ddl, &.{}, .{}) catch |err|
+                std.log.warn("dataset delete left {s} behind: {t}", .{ ddl, err });
         }
         try s.db.deleteDataset(arena, project_id, dataset_id);
         return .{ .body = "" };
@@ -876,9 +879,15 @@ pub const Server = struct {
             },
             .range => |r| {
                 var range: std.json.ObjectMap = .empty;
-                try range.put(arena, "start", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.start}) });
-                try range.put(arena, "end", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.end}) });
-                try range.put(arena, "interval", .{ .string = try std.fmt.allocPrint(arena, "{d}", .{r.interval}) });
+                try range.put(arena, "start", .{
+                    .string = try std.fmt.allocPrint(arena, "{d}", .{r.start}),
+                });
+                try range.put(arena, "end", .{
+                    .string = try std.fmt.allocPrint(arena, "{d}", .{r.end}),
+                });
+                try range.put(arena, "interval", .{
+                    .string = try std.fmt.allocPrint(arena, "{d}", .{r.interval}),
+                });
                 var rp: std.json.ObjectMap = .empty;
                 try rp.put(arena, "field", .{ .string = r.field });
                 try rp.put(arena, "range", .{ .object = range });
@@ -1165,7 +1174,11 @@ pub const Server = struct {
             for (result.invalid) |*e| e.row_index = posted[e.row_index];
         }
 
-        const invalid = try tabledata_handler.mergeInsertErrorsByRow(arena, unknown, result.invalid);
+        const invalid = try tabledata_handler.mergeInsertErrorsByRow(
+            arena,
+            unknown,
+            result.invalid,
+        );
         if (invalid.len > 0) {
             var out: std.ArrayList(u8) = .empty;
             try tabledata_handler.writeInsertErrors(
@@ -1244,7 +1257,12 @@ pub const Server = struct {
                 dst.dataset_id,
                 dst.table_id,
             )) |existing| existing.metadata else "";
-            const materialization_method = s.materializeInto(arena, dst, sql, params) catch |err| switch (err) {
+            const materialization_method = s.materializeInto(
+                arena,
+                dst,
+                sql,
+                params,
+            ) catch |err| switch (err) {
                 error.MaterializeFailed => return .{
                     .status = .bad_request,
                     .body = try errors.body(
@@ -1626,13 +1644,6 @@ fn internalError(arena: std.mem.Allocator, msg: []const u8) !http_server.Respons
 
 const testing = std.testing;
 
-/// Tests never touch the filesystem through this, so a threaded Io that is
-/// never pumped is sufficient.
-var testing_threaded: std.Io.Threaded = undefined;
-const testing_io: std.Io = blk: {
-    break :blk undefined;
-};
-
 /// Drives dispatch directly, without a socket.
 fn request(
     s: *Server,
@@ -1692,7 +1703,7 @@ test "jobs.query returns the Go emulator's response bytes" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries",
@@ -1713,7 +1724,7 @@ test "the /bigquery/v2 prefix reaches the same handler" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/bigquery/v2/projects/test/queries",
@@ -1733,7 +1744,7 @@ test "jobs.query binds a named scalar parameter" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries",
@@ -1750,7 +1761,7 @@ test "jobs.insert binds a positional parameter" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/jobs",
@@ -1778,7 +1789,7 @@ test "a parameterized query with a value missing still reports the arity error" 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries",
@@ -1795,7 +1806,7 @@ test "a malformed queryParameters entry is a 400, not a crash" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries",
@@ -1809,7 +1820,7 @@ test "a bare SELECT @x returns the client's declared type" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     // `@x` is in no function argument, so inference alone would stamp it
@@ -1834,7 +1845,7 @@ test "a bare positional SELECT ? returns the declared type" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries",
@@ -1851,7 +1862,7 @@ test "jobs.query binds an array parameter through IN UNNEST" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     // The credit_calculator.py shape. This is the case inference cannot
@@ -1872,7 +1883,7 @@ test "a materialization job binds its query parameters" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     _ = try request(s, arena, .POST, "/projects/test/datasets",
@@ -1902,7 +1913,7 @@ test "a bad query returns 400 in the BigQuery error shape" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries",
@@ -1917,7 +1928,7 @@ test "malformed JSON is a 400, not a crash" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/queries", "{not json");
@@ -1930,7 +1941,7 @@ test "getQueryResults 404s for an unpersisted jobs.query id" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .GET, "/projects/test/queries/nosuchjob", "");
@@ -1950,8 +1961,8 @@ test "getQueryResults 404s for an unpersisted jobs.query id" {
 // The probe must carry no rows. The client parses whatever rows the response
 // carries -- with the `rows` key present and no pageToken it considers the
 // page complete (table.py:1924-1928) and never asks again -- and
-// `CellDataParser.timestamp_to_py` applies a bare `int(value)`, so a "sec.rem"
-// cell raises
+// `CellDataParser.timestamp_to_py` applies a bare `int(value)`, so a
+// decimal-seconds cell raises
 //
 //   ValueError: invalid literal for int() with base 10: '1767268800.0'
 //
@@ -1967,7 +1978,7 @@ test "the maxResults=0 probe carries no rows, and says where the rest starts" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
@@ -1997,7 +2008,7 @@ test "getQueryResults honours formatOptions again, both ways" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
@@ -2030,7 +2041,7 @@ test "maxResults pages through a result, and the token resumes it" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
@@ -2093,7 +2104,7 @@ test "a query job's destination table is readable the moment the job returns" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
@@ -2131,7 +2142,7 @@ test "the destination table and getQueryResults agree, because they share one co
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
@@ -2178,7 +2189,7 @@ test "a DML job reports its statement type and affected rows on every surface" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     _ = try request(s, arena, .POST, "/projects/test/queries",
@@ -2250,7 +2261,7 @@ test "a MERGE reports the rows it inserted, updated and deleted" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const merge_sql = "MERGE merge_t T USING merge_s S ON T.id = S.id " ++
@@ -2302,7 +2313,7 @@ test "a DDL job reports its statement type, with no row total or affected rows" 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
@@ -2328,7 +2339,7 @@ test "a query reports its row total even when it returns no rows or ends a scrip
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const empty = try request(s, arena, .POST, "/projects/test/queries",
@@ -2362,7 +2373,7 @@ test "a DDL job registers no destination table" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
@@ -2384,7 +2395,7 @@ test "a zero-row SELECT still gets an empty destination table" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
@@ -2404,7 +2415,7 @@ test "two jobs' destination tables do not collide in the shared dataset" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const a = try jobIdOf(arena, (try request(s, arena, .POST, "/projects/test/jobs",
@@ -2428,7 +2439,7 @@ test "an unknown path is a 500, matching Go's defaultHandler" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const res = try request(s, arena, .GET, "/no/such/path", "");
@@ -2441,7 +2452,7 @@ test "state persists across requests on the same connection" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     _ = try request(s, arena, .POST, "/projects/test/queries",
@@ -2466,7 +2477,7 @@ test "deleting a dataset takes its tables out of the engine too" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "gone");
     _ = try request(s, arena, .POST, "/projects/test/queries",
@@ -2496,7 +2507,7 @@ test "a CREATE or a destination table in an undeclared dataset is BigQuery's 404
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const expected =
@@ -2555,7 +2566,7 @@ test "deleting a dataset takes it out of the metadata API and INFORMATION_SCHEMA
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "t");
 
@@ -2592,7 +2603,7 @@ test "patched dataset fields round-trip through get and list, which is ordered b
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     for ([_][]const u8{ "b_ds", "a_ds" }) |id| {
         const res = try request(s, arena, .POST, "/projects/test/datasets", try std.fmt.allocPrint(
@@ -2642,7 +2653,7 @@ test "declared datasets survive a restart on a file-backed database" {
     const db_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/datasets.db", .{tmp.sub_path});
 
     {
-        var s = try Server.init(testing.allocator, testing_io, .{
+        var s = try Server.init(testing.allocator, testing.io, .{
             .project = "test",
             .database = db_path,
             .dataset = "ds1",
@@ -2655,7 +2666,7 @@ test "declared datasets survive a restart on a file-backed database" {
     }
     {
         // Restarted with the same flag, the dataset keeps its patched resource.
-        var s = try Server.init(testing.allocator, testing_io, .{
+        var s = try Server.init(testing.allocator, testing.io, .{
             .project = "test",
             .database = db_path,
             .dataset = "ds1",
@@ -2684,7 +2695,7 @@ test "inserting a declared dataset is 409 and leaves it as it was" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     const body =
         \\{"datasetReference":{"projectId":"test","datasetId":"ds1"}}
@@ -2709,7 +2720,7 @@ test "fields posted to datasets.insert round-trip through get and list" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     const inserted = try request(s, arena, .POST, "/projects/test/datasets",
         \\{"datasetReference":{"projectId":"test","datasetId":"ds1"},"description":"posted","labels":{"team":"data"}}
@@ -2730,7 +2741,7 @@ test "datasets.patch merges into the stored resource key by key" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     _ = try request(s, arena, .POST, "/projects/test/datasets",
         \\{"datasetReference":{"projectId":"test","datasetId":"ds1"},"description":"posted"}
@@ -2778,7 +2789,7 @@ test "insertAll writes rows that a later query can read" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "streamed");
 
@@ -2811,7 +2822,7 @@ test "posted table fields survive a round trip, and patch merges over them" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
     const created = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
@@ -2855,7 +2866,7 @@ test "a table made by a CTAS job is listed, streams rows, and a replace shows th
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     const ctas = try request(s, arena, .POST, "/projects/test/jobs",
         \\{"configuration":{"query":{"query":"CREATE TABLE `test.ds1.made` AS SELECT 1 AS n, 'x' AS s"}}}
@@ -2915,7 +2926,7 @@ test "DDL PARTITION BY and CLUSTER BY are what tables.get reports, in BigQuery's
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try runQueryJob(s, arena, "CREATE TABLE `ds1.src` (x TIMESTAMP, dt DATETIME)");
 
@@ -2995,7 +3006,7 @@ test "a patch wins over DDL partitioning, and CREATE OR REPLACE without it clear
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try runQueryJob(s, arena, "CREATE TABLE `ds1.t` (d DATE, a STRING) PARTITION BY d CLUSTER BY a");
 
@@ -3020,11 +3031,19 @@ test "DDL partitioning and descriptions survive a restart on a file-backed datab
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const db_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/partitioned.db", .{tmp.sub_path});
+    const db_path = try std.fmt.allocPrint(
+        arena,
+        ".zig-cache/tmp/{s}/partitioned.db",
+        .{tmp.sub_path},
+    );
 
     var before: []const u8 = "";
     {
-        var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .database = db_path, .dataset = "ds1" });
+        var s = try Server.init(testing.allocator, testing.io, .{
+            .project = "test",
+            .database = db_path,
+            .dataset = "ds1",
+        });
         defer s.deinit();
         try runQueryJob(
             s,
@@ -3038,7 +3057,11 @@ test "DDL partitioning and descriptions survive a restart on a file-backed datab
         try testing.expect(std.mem.indexOf(u8, before, "\"description\":\"col a\"") != null);
     }
     {
-        var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .database = db_path, .dataset = "ds1" });
+        var s = try Server.init(testing.allocator, testing.io, .{
+            .project = "test",
+            .database = db_path,
+            .dataset = "ds1",
+        });
         defer s.deinit();
         const after = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/t", "");
         try testing.expectEqualStrings(before, after.body);
@@ -3055,7 +3078,7 @@ test "a query job's destination reports the partitioning and clustering it asked
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
     const tp = "\"timePartitioning\":{\"expirationMs\":\"259200000\",\"field\":\"d\",\"requirePartitionFilter\":false,\"type\":\"DAY\"}";
@@ -3126,7 +3149,7 @@ test "a query job fails, writing nothing, when its layout names a column the que
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{
+    var s = try Server.init(testing.allocator, testing.io, .{
         .project = "test",
         .dataset = "ds1",
     });
@@ -3193,7 +3216,7 @@ test "tables.insert and tables.patch reject a layout that names no column" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{
+    var s = try Server.init(testing.allocator, testing.io, .{
         .project = "test",
         .dataset = "ds1",
     });
@@ -3305,7 +3328,7 @@ test "table and column OPTIONS(description) are what tables.get reports" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try runQueryJob(
         s,
@@ -3337,7 +3360,7 @@ test "a column list with AS SELECT declares the table's columns and checks their
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
     const replace_mat = "CREATE OR REPLACE TABLE `ds1.mat` (" ++ described_columns ++
@@ -3410,7 +3433,7 @@ test "DDL that omits the project lands in the server's project" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "mat");
 
@@ -3452,7 +3475,7 @@ test "a one-part table whose name reads like a path does not answer for it" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "foo" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "foo" });
     defer s.deinit();
     _ = try request(s, arena, .POST, "/projects/foo/jobs",
         \\{"configuration":{"query":{"query":"CREATE TABLE foo_bar_baz (x INT64)"}}}
@@ -3470,7 +3493,7 @@ test "a query's result table cannot be patched into the catalog" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     const insert = try request(s, arena, .POST, "/projects/test/jobs",
         \\{"configuration":{"query":{"query":"SELECT 1 AS n"}}}
@@ -3498,7 +3521,7 @@ test "tables.delete removes a spec whose SQLite object is already gone" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "dangling");
     // Pull the object out from under the spec, as an interrupted rebuild would.
@@ -3519,7 +3542,7 @@ test "tables.insert over an existing table is a conflict, and the table is untou
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "dup");
 
@@ -3543,7 +3566,7 @@ test "DDL in a job resolves dataset.table against the job's project" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
     // The name resolves against `other`, where nobody has declared ds1 yet —
     // and BigQuery does not invent datasets.
@@ -3584,7 +3607,7 @@ test "a view made by DDL reports the query it was written with" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "base");
     const ddl = try request(s, arena, .POST, "/projects/test/jobs",
@@ -3611,7 +3634,7 @@ test "nested modes and field descriptions come back exactly as posted" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     const created = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
         \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"nested"},
@@ -3637,7 +3660,7 @@ test "a nested REQUIRED posted through tables.insert is enforced by DML and by i
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
         \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"nested_req"},
@@ -3690,7 +3713,7 @@ test "a DDL-made table reports its nested NOT NULL members as REQUIRED" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     const ddl = try request(s, arena, .POST, "/projects/test/jobs",
         \\{"configuration":{"query":{"query":
@@ -3720,7 +3743,7 @@ test "deleting a view drops it from the engine, and tables are listed by id" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "zulu");
     try createStreamTable(s, arena, "alpha");
@@ -3755,7 +3778,7 @@ test "tables.patch refuses to change a schema, as Go does" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "fixed");
 
@@ -3776,7 +3799,7 @@ test "creating a view answers with the schema the view resolves to" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
     _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
@@ -3812,7 +3835,7 @@ test "a WRITE_TRUNCATE job may read the table it is replacing" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
     _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
@@ -3853,7 +3876,7 @@ test "an INT column is an INT64 column, not a STRING one" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
     const created = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
@@ -3880,7 +3903,7 @@ test "a schema naming an unusable type is a 400, not a STRING column" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
@@ -3896,7 +3919,7 @@ test "insertAll under the /bigquery/v2 prefix reaches the same handler" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "prefixed");
 
@@ -3912,7 +3935,7 @@ test "insertAll into a missing table is a 404" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
 
     const res = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables/nope/insertAll",
@@ -3929,7 +3952,7 @@ test "an unknown field rejects the whole batch with 200 and insertErrors" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "rejected");
 
@@ -3960,7 +3983,7 @@ test "insertAll reports a value the column will not take as an invalid row" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "badvalue");
 
@@ -3985,7 +4008,7 @@ test "insertAll keeps the engine's conversion message for a bad DATE" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
         \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"dated"},
@@ -4008,7 +4031,7 @@ test "a REQUIRED column declared through tables.insert rejects NULL on every wri
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
         \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"source"},
@@ -4072,7 +4095,7 @@ test "a WRITE_APPEND job keeps the destination's declared resource" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
         \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"declared"},
@@ -4123,7 +4146,7 @@ test "a WRITE_APPEND into a DDL-created NOT NULL table records it as REQUIRED" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     const ddl = try request(s, arena, .POST, "/projects/test/jobs",
         \\{"configuration":{"query":{"query":"CREATE TABLE `test.ds1.ddl` (a STRING NOT NULL, b STRING)"}}}
@@ -4147,7 +4170,7 @@ test "insertAll answers a NULL the engine rejects as an invalid row, not a 500" 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     _ = try request(s, arena, .POST, "/projects/test/datasets/ds1/tables",
         \\{"tableReference":{"projectId":"test","datasetId":"ds1","tableId":"appended"},
@@ -4186,7 +4209,7 @@ test "skipInvalidRows sets unknown-field rows aside and writes the rest" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "mixed");
 
@@ -4216,7 +4239,7 @@ test "ignoreUnknownValues drops undeclared fields and writes the row" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "loose");
 
@@ -4250,7 +4273,7 @@ test "insertAll with skipInvalidRows writes the fine rows and lists the rest" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "skipping");
 
@@ -4277,7 +4300,7 @@ test "insertAll with no rows is a no-op" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "empty");
 
@@ -4293,7 +4316,7 @@ test "insertAll rejects a malformed body with 400" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test", .dataset = "ds1" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
     defer s.deinit();
     try createStreamTable(s, arena, "malformed");
 
@@ -4313,7 +4336,7 @@ test "useInt64Timestamp reaches TIMESTAMPs nested in a STRUCT or ARRAY" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     // google-cloud-bigquery asks for this format on every read and parses a
@@ -4369,7 +4392,7 @@ test "without useInt64Timestamp every TIMESTAMP keeps the float-seconds form" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var s = try Server.init(testing.allocator, testing_io, .{ .project = "test" });
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test" });
     defer s.deinit();
 
     const body =

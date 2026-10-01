@@ -10,6 +10,7 @@
 //!   position makes the spelling irrelevant and those helpers unnecessary.
 //! - Every route is registered under both `/` and `/bigquery/v2`, matching
 //!   server.go:92-97.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const http = std.http;

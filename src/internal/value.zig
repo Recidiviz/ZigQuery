@@ -10,8 +10,10 @@
 //!
 //! Memory: methods that build new values/strings take an allocator; decode
 //! trees are expected to live in an arena (no per-value deinit is provided).
+// ephor:ignore-file ZA209 ZA301 ZA302 ZA304 ZT105
 
 const std = @import("std");
+const builtin = @import("builtin");
 const time_zone = @import("time_zone.zig");
 
 pub const ValueError = error{
@@ -583,7 +585,7 @@ pub const Value = union(enum) {
     /// seconds), ToString => "YYYY-MM-DD").
     date: i64,
     /// TIMESTAMP: unix microseconds, UTC (Go stores time.Time; ToInt64 =>
-    /// Unix() seconds, codec => fixed64 UnixMicro, ToApiString => "sec.rem").
+    /// Unix() seconds, codec => fixed64 UnixMicro, toApiString => decimal seconds).
     timestamp: i64,
     /// DATETIME: civil microseconds since 1970-01-01T00:00:00 treated as UTC
     /// (a wall-clock instant with no zone). ToString "2006-01-02 15:04:05.999999".
@@ -1270,7 +1272,7 @@ pub const Value = union(enum) {
                 var buf: [32]u8 = undefined;
                 return alloc.dupe(u8, formatDateDays(&buf, days));
             },
-            // TimestampValue.ToApiString: "sec.microrem" (see formatTimestampApi).
+            // Decimal Unix seconds, the form a result cell carries (formatTimestampApi).
             .timestamp => |m| {
                 var buf: [40]u8 = undefined;
                 return alloc.dupe(u8, formatTimestampApi(&buf, m));
@@ -1688,22 +1690,51 @@ fn writeCivilPrefix(buf: []u8, d: Decomposed, sep: u8) usize {
     return w;
 }
 
-/// TimestampValue.ToApiString: fmt.Sprintf("%d.%d", sec, microRemainder)
-/// where sec = unixMicro/1e6 (truncated) — a "seconds.remainder" form with
-/// the remainder printed unpadded (e.g. 1136239445 micros => "1136239445.0").
+/// A TIMESTAMP result cell: Unix seconds as decimal text, with the fraction to the
+/// microsecond, e.g. "1704193445.001000". A whole second keeps one zero ("1704193445.0"),
+/// and an instant before the epoch carries a leading sign ("-0.500000").
 pub fn formatTimestampApi(buf: []u8, micros: i64) []const u8 {
-    const sec = @divTrunc(micros, second_micros);
-    const rem = micros - sec * second_micros;
-    return std.fmt.bufPrint(buf, "{d}.{d}", .{ sec, rem }) catch unreachable;
+    const abs = @abs(micros);
+    const unit: u64 = second_micros;
+    const sec = abs / unit;
+    const rem = abs % unit;
+    var n: usize = 0;
+    if (micros < 0) {
+        buf[0] = '-';
+        n = 1;
+    }
+    n += std.fmt.printInt(buf[n..], sec, 10, .lower, .{});
+    buf[n] = '.';
+    n += 1;
+    if (rem == 0) {
+        buf[n] = '0';
+        return buf[0 .. n + 1];
+    }
+    n += std.fmt.printInt(buf[n..], rem, 10, .lower, .{ .width = 6, .fill = '0' });
+    return buf[0..n];
 }
 
-/// Inverse of formatTimestampApi ("sec.microRemainder" -> unix micros). Used
-/// to round-trip a timestamp result cell back into a bound parameter value.
+/// Inverse of formatTimestampApi: decimal Unix seconds, at most six fractional digits,
+/// to Unix microseconds. Used to round-trip a timestamp result cell back into a bound
+/// parameter value.
 pub fn parseTimestampApi(s: []const u8) ValueError!i64 {
-    const dot = std.mem.indexOfScalar(u8, s, '.') orelse return error.FailedConversion;
-    const sec = std.fmt.parseInt(i64, s[0..dot], 10) catch return error.FailedConversion;
-    const rem = std.fmt.parseInt(i64, s[dot + 1 ..], 10) catch return error.FailedConversion;
-    return sec *% second_micros +% rem;
+    const neg = s.len > 0 and s[0] == '-';
+    const unsigned = s[@intFromBool(neg)..];
+    const dot = std.mem.indexOfScalar(u8, unsigned, '.') orelse return error.FailedConversion;
+    const whole = unsigned[0..dot];
+    const frac = unsigned[dot + 1 ..];
+    if (whole.len == 0 or frac.len == 0 or frac.len > 6) return error.FailedConversion;
+    for (whole) |ch| if (!std.ascii.isDigit(ch)) return error.FailedConversion;
+    for (frac) |ch| if (!std.ascii.isDigit(ch)) return error.FailedConversion;
+    const sec = std.fmt.parseInt(i64, whole, 10) catch return error.FailedConversion;
+    var rem = std.fmt.parseInt(i64, frac, 10) catch return error.FailedConversion;
+    for (frac.len..6) |_| rem *= 10;
+    const magnitude = std.math.mul(i64, sec, second_micros) catch return error.FailedConversion;
+    const micros = if (neg)
+        std.math.sub(i64, -magnitude, rem)
+    else
+        std.math.add(i64, magnitude, rem);
+    return micros catch error.FailedConversion;
 }
 
 /// TimestampValue.Interface(): time.RFC3339 = "2006-01-02T15:04:05Z" for UTC
@@ -1857,7 +1888,7 @@ pub fn formatInterval(buf: []u8, iv_in: Interval) []const u8 {
 ///
 /// The TIMESTAMP row is the one that diverges from every existing renderer:
 /// formatTimestampString drops the fraction entirely on a whole second
-/// (writeFracMicros returns 0), and toApiString gives "sec.remainder". A
+/// (writeFracMicros returns 0), and toApiString gives decimal seconds. A
 /// range prints all six digits regardless, so it needs its own writer.
 fn writeRangeBound(buf: []u8, elem: Range.ElemKind, bound: ?i64) usize {
     const n = bound orelse {
@@ -2353,81 +2384,88 @@ pub fn formatFloatGo(buf: []u8, f: f64) []const u8 {
     if (std.math.isNan(f)) return "NaN";
     if (std.math.isInf(f)) return if (f > 0) "+Inf" else "-Inf";
 
-    // Zig's {e} yields shortest round-trip (ryu) digits as [-]d[.ddd]e[-]dd;
-    // the digits match Go's shortest digits, so we only re-arrange.
-    var sci: [40]u8 = undefined;
-    const s = std.fmt.bufPrint(&sci, "{e}", .{f}) catch unreachable;
-    var i: usize = 0;
-    var neg = false;
-    if (s[0] == '-') {
-        neg = true;
-        i = 1;
-    }
-    var digits: [24]u8 = undefined;
-    var nd: usize = 0;
-    while (i < s.len and s[i] != 'e') : (i += 1) {
-        if (s[i] == '.') continue;
-        digits[nd] = s[i];
-        nd += 1;
-    }
-    const exp = std.fmt.parseInt(i32, s[i + 1 ..], 10) catch unreachable;
+    // The shortest digits that round-trip, which are the digits Go's shortest mode picks
+    // too, so only the layout below is Go's. `f` is `mantissa * 10^exponent`.
+    const float = std.fmt.float;
+    const d = float.binaryToDecimal(
+        u64,
+        @bitCast(f),
+        std.math.floatMantissaBits(f64),
+        std.math.floatExponentBits(f64),
+        false,
+        if (builtin.mode == .small) &float.Backend64_TablesSmall else &float.Backend64_TablesFull,
+    );
+    var digits: [20]u8 = undefined;
+    const len = std.fmt.printInt(&digits, d.mantissa, 10, .lower, .{});
+    // The power of ten of the first digit.
+    const exp: i32 = d.exponent + @as(i32, @intCast(len)) - 1;
+    // Go writes no trailing zeros after the last significant digit.
+    var nd = len;
+    while (nd > 1 and digits[nd - 1] == '0') nd -= 1;
 
-    var w: usize = 0;
-    if (neg) {
-        buf[w] = '-';
-        w += 1;
-    }
+    var out: Appender = .{ .b = buf };
+    if (d.sign) out.byte('-');
+
     if (exp < -4 or exp >= 6) {
-        // %e form: d[.ddd]e±XX
-        buf[w] = digits[0];
-        w += 1;
+        out.byte(digits[0]);
         if (nd > 1) {
-            buf[w] = '.';
-            w += 1;
-            @memcpy(buf[w .. w + nd - 1], digits[1..nd]);
-            w += nd - 1;
+            out.byte('.');
+            out.str(digits[1..nd]);
         }
-        buf[w] = 'e';
-        w += 1;
-        buf[w] = if (exp < 0) '-' else '+';
-        w += 1;
-        const ae: u32 = @abs(exp);
-        const tail = std.fmt.bufPrint(buf[w..], "{d:0>2}", .{ae}) catch unreachable;
-        w += tail.len;
+        out.byte('e');
+        out.byte(if (exp < 0) '-' else '+');
+        // Go always emits at least two exponent digits.
+        const abs: u32 = @abs(exp);
+        if (abs < 10) out.byte('0');
+        out.int(abs);
     } else {
-        // %f form; dp = position of the decimal point in the digit string.
+        // `dp` is the position of the decimal point within `digits`.
         const dp: i32 = exp + 1;
         if (dp <= 0) {
-            buf[w] = '0';
-            buf[w + 1] = '.';
-            w += 2;
-            var k: i32 = dp;
-            while (k < 0) : (k += 1) {
-                buf[w] = '0';
-                w += 1;
-            }
-            @memcpy(buf[w .. w + nd], digits[0..nd]);
-            w += nd;
-        } else if (dp >= @as(i32, @intCast(nd))) {
-            @memcpy(buf[w .. w + nd], digits[0..nd]);
-            w += nd;
-            var k: i32 = @intCast(nd);
-            while (k < dp) : (k += 1) {
-                buf[w] = '0';
-                w += 1;
-            }
+            out.str("0.");
+            out.repeat('0', @intCast(-dp));
+            out.str(digits[0..nd]);
+        } else if (@as(usize, @intCast(dp)) >= nd) {
+            out.str(digits[0..nd]);
+            out.repeat('0', @as(usize, @intCast(dp)) - nd);
         } else {
-            const udp: usize = @intCast(dp);
-            @memcpy(buf[w .. w + udp], digits[0..udp]);
-            w += udp;
-            buf[w] = '.';
-            w += 1;
-            @memcpy(buf[w .. w + nd - udp], digits[udp..nd]);
-            w += nd - udp;
+            const split: usize = @intCast(dp);
+            out.str(digits[0..split]);
+            out.byte('.');
+            out.str(digits[split..nd]);
         }
     }
-    return buf[0..w];
+    return out.written();
 }
+
+/// Appends into storage the caller has already sized.
+const Appender = struct {
+    b: []u8,
+    n: usize = 0,
+
+    fn byte(a: *Appender, c: u8) void {
+        a.b[a.n] = c;
+        a.n += 1;
+    }
+
+    fn str(a: *Appender, v: []const u8) void {
+        @memcpy(a.b[a.n..][0..v.len], v);
+        a.n += v.len;
+    }
+
+    fn repeat(a: *Appender, c: u8, k: usize) void {
+        @memset(a.b[a.n..][0..k], c);
+        a.n += k;
+    }
+
+    fn int(a: *Appender, v: u32) void {
+        a.n += std.fmt.printInt(a.b[a.n..], v, 10, .lower, .{});
+    }
+
+    fn written(a: *const Appender) []const u8 {
+        return a.b[0..a.n];
+    }
+};
 
 // ----------------------------------------------------------------------
 // Value ordering. This backed the zigquery_collate collation until the
@@ -2851,7 +2889,7 @@ test "safe value swallows errors" {
 
 test "timestamp api/string formatting matches Go" {
     var buf: [48]u8 = undefined;
-    // ToApiString: "sec.microRemainder" (unpadded remainder).
+    // Result cells: decimal seconds, the fraction to six digits unless it is zero.
     try std.testing.expectEqualStrings("1136239445.0", formatTimestampApi(&buf, 1136239445_000000));
     try std.testing.expectEqualStrings("1705314615.500000", formatTimestampApi(&buf, 1705314615_500000));
     // ToString: "...-07" zone verb => "+00" (fractional trimmed).
@@ -2862,6 +2900,30 @@ test "timestamp api/string formatting matches Go" {
     // Round trip: parse (space + "+00") back to unix micros.
     try std.testing.expectEqual(@as(i64, 1136239445_000000), try parseTimestampMicros("2006-01-02 22:04:05+00"));
     try std.testing.expectEqual(@as(i64, 1136239445_000000), try parseTimestampApi("1136239445.0"));
+}
+
+test "a timestamp cell keeps sub-second and pre-epoch instants" {
+    var buf: [48]u8 = undefined;
+    const cases = [_]struct { micros: i64, text: []const u8 }{
+        .{ .micros = 1704193445_001000, .text = "1704193445.001000" },
+        .{ .micros = 1704193445_000001, .text = "1704193445.000001" },
+        .{ .micros = 1704193445_999999, .text = "1704193445.999999" },
+        .{ .micros = 0, .text = "0.0" },
+        .{ .micros = -500000, .text = "-0.500000" },
+        .{ .micros = -1_500000, .text = "-1.500000" },
+        .{ .micros = -1_000000, .text = "-1.0" },
+        .{ .micros = std.math.maxInt(i64), .text = "9223372036854.775807" },
+        .{ .micros = std.math.minInt(i64), .text = "-9223372036854.775808" },
+    };
+    for (cases) |c| {
+        try std.testing.expectEqualStrings(c.text, formatTimestampApi(&buf, c.micros));
+        try std.testing.expectEqual(c.micros, try parseTimestampApi(c.text));
+    }
+    // A shorter fraction is still a decimal fraction.
+    try std.testing.expectEqual(@as(i64, 1_500000), try parseTimestampApi("1.5"));
+    for ([_][]const u8{ "1", ".5", "1.", "1.1234567", "1.-5", "-", "1e9.0" }) |bad| {
+        try std.testing.expectError(error.FailedConversion, parseTimestampApi(bad));
+    }
 }
 
 test "timestamp parse accepts every Go layout" {
@@ -3325,7 +3387,7 @@ test "range renders each element kind the way the reference docs print it" {
 
     // TIMESTAMP: six fractional digits *always*, plus the UTC offset. This is
     // the one that diverges from every other renderer — formatTimestampString
-    // drops ".000000" entirely, and toApiString gives "sec.remainder".
+    // drops ".000000" entirely, and toApiString gives decimal seconds.
     const ts = rangeValue(.timestamp, oct1 + hms(21, 53, 27), oct1 + hms(23, 0, 0));
     try std.testing.expectEqualStrings(
         "[2022-10-01 21:53:27.000000+00, 2022-10-01 23:00:00.000000+00)",

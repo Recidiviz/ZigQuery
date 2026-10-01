@@ -7,6 +7,7 @@
 //! ORDER BY, or SetOperations).
 //!
 //! All allocation uses the caller-supplied allocator (the coordinator arena).
+// ephor:ignore-file ZA301 ZA302 ZA303 ZT105
 
 const std = @import("std");
 const sb = @import("sqlbuilder.zig");

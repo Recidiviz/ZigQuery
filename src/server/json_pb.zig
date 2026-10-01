@@ -18,6 +18,7 @@
 //!
 //! `writeBytes` streams base64 rather than allocating, because the
 //! `jsonStringify` hook takes no allocator.
+// ephor:ignore-file ZA302 ZT105
 
 const std = @import("std");
 

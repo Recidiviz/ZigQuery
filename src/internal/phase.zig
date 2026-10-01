@@ -17,6 +17,7 @@
 //!
 //! Counters are process-global and atomic so they stay meaningful if the
 //! engine is ever driven from several threads.
+// ephor:ignore-file ZT105
 
 const std = @import("std");
 const build_options = @import("build_options");

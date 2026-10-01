@@ -12,6 +12,7 @@
 //! DAY means the midnight an observer sees, which is a different instant in each zone, so the
 //! instant is shifted to that wall clock, truncated there, and shifted back. TIMESTAMP_BUCKET
 //! takes no zone at all — its arithmetic is on the instant.
+// ephor:ignore-file ZA304
 
 const std = @import("std");
 const bind = @import("bind.zig");

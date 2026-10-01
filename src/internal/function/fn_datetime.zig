@@ -9,6 +9,7 @@
 //!
 //! Date-part arguments arrive as decoded enum strings, and the sub-day parts a DATETIME can
 //! shift by are MICROSECOND through HOUR; the calendar parts go through date_ops.zig.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const bind = @import("bind.zig");

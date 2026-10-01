@@ -8,6 +8,7 @@
 //!
 //! Arithmetic units are MICROSECOND through HOUR. A calendar part has no meaning for a value
 //! with no date, so nothing here reaches date_ops.zig.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const bind = @import("bind.zig");

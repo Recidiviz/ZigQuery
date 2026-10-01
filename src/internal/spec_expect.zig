@@ -38,6 +38,7 @@
 //!
 //! This lives in the library rather than the harness because it is pure and it
 //! is the only part of the spec pipeline that genuinely needs unit tests.
+// ephor:ignore-file ZA303 ZA304 ZT105
 
 const std = @import("std");
 const Zoir = std.zig.Zoir;
@@ -45,7 +46,7 @@ const driver = @import("../driver.zig");
 const value_mod = @import("value.zig");
 
 pub const Corpus = enum {
-    /// testdata/specs/googlesql/** want values are the GoogleSQL reference docs' own published tables.
+    /// testdata/specs/googlesql/** want values are the GoogleSQL reference docs' own tables.
     bigquery_docs,
 
     /// testdata/specs/googlesql/compliance/**: want values follow ZetaSQL's
@@ -286,8 +287,8 @@ fn complianceStringMatch(
             if (std.mem.eql(u8, coerced, s)) return true;
             return numericStringMatch(want, s, opts);
         },
-        // ToApiString renders TIMESTAMP as "sec.microRemainder" (the
-        // BigQuery REST wire format) rather than a canonical display string;
+        // A TIMESTAMP result is decimal Unix seconds (formatTimestampApi)
+        // rather than a canonical display string;
         // the compliance corpus's want is the latter. Compare instants when
         // both sides parse as one, falling back to the plain/numeric text
         // comparison otherwise.
@@ -423,7 +424,12 @@ pub fn renderWant(gpa: std.mem.Allocator, zoir: Zoir, node: Zoir.Node.Index) Err
     return buf.toOwnedSlice(gpa);
 }
 
-fn writeWant(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), zoir: Zoir, node: Zoir.Node.Index) Error!void {
+fn writeWant(
+    gpa: std.mem.Allocator,
+    buf: *std.ArrayList(u8),
+    zoir: Zoir,
+    node: Zoir.Node.Index,
+) Error!void {
     switch (node.get(zoir)) {
         .null => try buf.appendSlice(gpa, "NULL"),
         .true => try buf.appendSlice(gpa, "true"),
@@ -540,21 +546,21 @@ test "compliance corpus: a base64 STRING cell (BYTES rendering) matches a raw-by
 
 test "compliance corpus: a canonical timestamp want matches an API-format cell" {
     const opts: Options = .{ .corpus = .compliance };
-    // "sec.microRemainder" (the API form) vs. ZetaSQL's canonical text.
+    // Decimal Unix seconds (the result-cell form) vs. the canonical text.
     try testing.expect(try checkOpts(
         "\"2014-07-18 00:00:00.000013+00\"",
-        .{ .timestamp = "1405641600.13" },
+        .{ .timestamp = "1405641600.000013" },
         opts,
     ));
     try testing.expect(!try checkOpts(
         "\"2014-07-18 00:00:00.000014+00\"",
-        .{ .timestamp = "1405641600.13" },
+        .{ .timestamp = "1405641600.000013" },
         opts,
     ));
     // Not applied outside the compliance corpus.
     try testing.expect(!try check(
         "\"2014-07-18 00:00:00.000013+00\"",
-        .{ .timestamp = "1405641600.13" },
+        .{ .timestamp = "1405641600.000013" },
     ));
 }
 

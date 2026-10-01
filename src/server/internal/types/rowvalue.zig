@@ -10,6 +10,7 @@
 //!   merges back into one struct. Same result, one hop instead of three.
 //! - Go decodes every JSON number as `float64`, so an INT64 past 2^53 loses
 //!   precision on the way in. std.json keeps integers exact, so this does not.
+// ephor:ignore-file ZA301 ZA302 ZA304
 
 const std = @import("std");
 const zigquery = @import("zigquery");

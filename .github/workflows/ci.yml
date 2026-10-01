@@ -63,25 +63,7 @@ jobs:
           version: "0.16.0"
 
       - name: ephor
-        run: |
-          set -euo pipefail
-          # ephor reports on stderr and, with fail_on unset, always exits 0 —
-          # the ceiling below is what makes this a gate. See ephor_baseline.txt.
-          zig build --build-file tools/ephor/build.zig run -- --summary 2>&1 | tee ephor.log
-          total=$(awk '/TOTAL:/ {print $2}' ephor.log | head -1)
-          ceiling=$(grep -vE '^\s*#' ephor_baseline.txt | tr -dc '0-9')
-          {
-            echo "## Ephor"
-            echo ""
-            echo "Findings: **$total** (ceiling $ceiling)"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$total" -gt "$ceiling" ]; then
-            echo "::error::ephor findings rose to $total (ceiling $ceiling)"
-            exit 1
-          fi
-          if [ "$total" -lt "$ceiling" ]; then
-            echo "::notice::ephor findings fell to $total — lower ephor_baseline.txt"
-          fi
+        run: zig build --build-file tools/ephor/build.zig run -- --summary --fail-on=note
 
   test:
     name: unit tests

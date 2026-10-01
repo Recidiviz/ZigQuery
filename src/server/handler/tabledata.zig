@@ -18,6 +18,7 @@
 //!
 //! `insertId` is read off the wire and discarded: the emulator does no deduplication.
 //! `templateSuffix` and `traceId` are parsed and ignored.
+// ephor:ignore-file ZA302
 
 const std = @import("std");
 const errors = @import("../error.zig");
@@ -436,7 +437,7 @@ test "mixed valid and invalid rows: invalid first, then stopped" {
     , out.items);
 }
 
-test "a skipInvalidRows response lists only the invalid rows" {
+test "skip invalid row's response lists only the invalid rows" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();

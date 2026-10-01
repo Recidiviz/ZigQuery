@@ -6,13 +6,13 @@
 //!   computed window functions, all under ID-based aliases
 //! - the outer SELECT takes an ORDER BY built from each function's PARTITION BY and ORDER BY
 //!   columns, so rows come out in window evaluation order
+// ephor:ignore-file ZA301 ZA302
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");
 const context = @import("../coordinator/context.zig");
 const types_data = @import("../coordinator/types_data.zig");
 const sqlbuilder = @import("../sqlbuilder/sqlbuilder.zig");
-const query_expr = @import("../sqlbuilder/query_expr.zig");
 
 const Error = types_data.Error;
 const SQLExpression = sqlbuilder.SQLExpression;

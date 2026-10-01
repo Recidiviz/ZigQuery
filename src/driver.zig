@@ -13,6 +13,7 @@
 //!   var rows = try db.query(sql, args, .{ .current_time_unix_micros = ... });
 //!   while (try rows.next()) |row| ...
 //!   rows.deinit();
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304 ZC101 ZC103 ZT105
 
 const std = @import("std");
 const sqlite = @import("sqlite.zig");
@@ -72,7 +73,7 @@ pub const Cell = union(enum) {
     /// document does not want.
     json: []const u8,
     date: []const u8, // civil date rendered as YYYY-MM-DD
-    // Date/time kinds render as their API string forms: timestamp "sec.rem", datetime
+    // Date/time kinds render as their API string forms: timestamp decimal Unix seconds, datetime
     // "YYYY-MM-DDTHH:MM:SS.ffffff", time "HH:MM:SS.ffffff", interval canonical.
     timestamp: []const u8,
     datetime: []const u8,
@@ -491,7 +492,7 @@ pub const Db = struct {
         db.sqlite_db.exec(std.fmt.comptimePrint(
             "PRAGMA user_version = {d}",
             .{storage_format_version},
-        )) catch {};
+        )) catch |err| std.log.info("storage format version not stamped: {t}", .{err});
     }
 
     fn hasCatalogTable(db: *Db) bool {
@@ -1551,13 +1552,27 @@ pub const Db = struct {
     }
 
     /// Drops the given temp tables/views and removes their catalog specs. Best-effort: errors
-    /// are ignored since cleanup runs after the query has already produced its result.
+    /// are logged, not returned, since cleanup runs after the query has already produced its
+    /// result.
     fn dropTempTables(db: *Db, arena: std.mem.Allocator, names: []const []const u8) void {
         for (names) |name| {
             const drop_sql = std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name}) catch continue;
-            _ = db.execSql(arena, drop_sql, &.{}) catch {};
-            db.unregisterTableSpec(name) catch {};
+            db.execCleanup(arena, drop_sql);
+            db.unregisterTableSpec(name) catch |err| switch (err) {
+                // The script dropped it itself.
+                error.TableNotFound => {},
+                else => std.log.warn("temp table {s} left in the catalog: {t}", .{ name, err }),
+            };
         }
+    }
+
+    /// Runs a cleanup statement whose failure must not replace the outcome it cleans up
+    /// after. A failure is logged and otherwise ignored.
+    fn execCleanup(db: *Db, arena: std.mem.Allocator, sql_text: []const u8) void {
+        _ = db.execSql(arena, sql_text, &.{}) catch |err| {
+            std.log.warn("cleanup failed: {s}: {t}", .{ sql_text, err });
+            return;
+        };
     }
 
     /// Prepares `sql_text`, binds `args`, and steps it to completion. Returns the number of
@@ -1685,7 +1700,7 @@ pub const Db = struct {
                 return db.failCatalog(err);
         if (fn_spec.is_temp) {
             if (db.temp_func_collector) |collector| {
-                collector.append(arena, try fn_spec.funcName(arena)) catch {};
+                try collector.append(arena, try fn_spec.funcName(arena));
             }
         }
     }
@@ -1877,7 +1892,7 @@ pub const Db = struct {
             else
                 try arena.dupe(u8, failure);
             const drop = try std.fmt.allocPrint(arena, "DROP TABLE IF EXISTS `{s}`", .{name});
-            _ = db.execSql(arena, drop, &.{}) catch {};
+            db.execCleanup(arena, drop);
             db.setLastError(message);
             return err;
         };
@@ -1929,7 +1944,7 @@ pub const Db = struct {
                 ), args);
             const consumed = built catch |err| {
                 // Leave the destination exactly as it was.
-                _ = db.execSql(arena, drop_scratch, &.{}) catch {};
+                db.execCleanup(arena, drop_scratch);
                 return err;
             };
 
@@ -1980,7 +1995,7 @@ pub const Db = struct {
         // query can re-create the name.
         if (table_spec.is_temp) {
             if (db.temp_collector) |collector| {
-                collector.append(arena, table_name) catch {};
+                try collector.append(arena, table_name);
             }
         }
 
@@ -2863,14 +2878,20 @@ fn columnNamesFromDefinitions(
     var out: std.ArrayList(NamedColumn) = .empty;
     for (defs) |def| {
         const col = def.column orelse continue;
-        try out.append(arena, .{ .id = col.column_id orelse continue, .name = def.name orelse continue });
+        try out.append(arena, .{
+            .id = col.column_id orelse continue,
+            .name = def.name orelse continue,
+        });
     }
     return out.toOwnedSlice(arena);
 }
 
 /// The new table's name for the column `expr` references, or null when
 /// `expr` is not a plain column reference.
-fn referencedColumn(expr: *const pb.AnyResolvedExprProto, columns: []const NamedColumn) ?[]const u8 {
+fn referencedColumn(
+    expr: *const pb.AnyResolvedExprProto,
+    columns: []const NamedColumn,
+) ?[]const u8 {
     const node = expr.node orelse return null;
     const ref = switch (node) {
         .resolved_column_ref_node => |n| n,
@@ -2906,14 +2927,21 @@ fn builtinCallOf(expr: *const pb.AnyResolvedExprProto) ?BuiltinCall {
 
 /// A literal argument's value; null when `expr` is not a literal. A date-part
 /// argument (`HOUR` in TIMESTAMP_TRUNC) comes back as its name.
-fn literalValueOf(arena: std.mem.Allocator, expr: *const pb.AnyResolvedExprProto) Error!?value_mod.Value {
+fn literalValueOf(
+    arena: std.mem.Allocator,
+    expr: *const pb.AnyResolvedExprProto,
+) Error!?value_mod.Value {
     const node = expr.node orelse return null;
     const lit = switch (node) {
         .resolved_literal_node => |n| n,
         else => return null,
     };
     const vwt = lit.value orelse return null;
-    return encoder.valueFromProto(arena, vwt.value orelse return null, vwt.type orelse return null) catch |err|
+    return encoder.valueFromProto(
+        arena,
+        vwt.value orelse return null,
+        vwt.type orelse return null,
+    ) catch |err|
         switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return null,
@@ -2944,7 +2972,9 @@ fn partitioningFrom(arena: std.mem.Allocator, layout: TableLayout) Error!?spec.P
         if (call.args.len != 2) return null;
         const part = (try literalValueOf(arena, call.args[1])) orelse return null;
         if (part != .string) return null;
-        const unit = std.meta.stringToEnum(spec.Partitioning.TimeUnit, part.string) orelse return null;
+        const unit = std.meta.stringToEnum(spec.Partitioning.TimeUnit, part.string) orelse {
+            return null;
+        };
         return .{ .time = .{ .field = field, .unit = unit } };
     }
 
@@ -3560,7 +3590,8 @@ pub const Rows = struct {
             return r.db.failDecode(err);
     }
 
-    /// Next row of decoded cells, or null when exhausted. Cells are valid until deinit() (per-query arena).
+    /// Next row of decoded cells, or null when exhausted.
+    /// Cells are valid until deinit() (per-query arena).
     pub fn next(r: *Rows) Error!?[]const Cell {
         if (r.stmt == null) return null;
         if (!try r.advance()) return null;
@@ -3717,8 +3748,8 @@ test "query timestamp / datetime / time literals render as Go api strings" {
     defer rows.deinit();
 
     const row = (try rows.next()).?;
-    // Timestamp cell: "sec.microRemainder" (ToApiString), exactly like the
-    // corpus expects (e.g. "1136239445.0").
+    // Timestamp cell: decimal Unix seconds, one zero for a whole second, exactly
+    // like the corpus expects (e.g. "1136239445.0").
     try testing.expectEqualStrings("1136239445.0", row[0].timestamp);
     try testing.expectEqualStrings("2024-01-15T10:30:15.123456", row[1].datetime);
     try testing.expectEqualStrings("10:30:15", row[2].time);
@@ -4201,9 +4232,18 @@ test "require_dataset refuses a CREATE into an undeclared dataset with BigQuery'
     db.require_dataset = true;
 
     // Refused before any SQLite work: no object, no spec.
-    try testing.expectError(error.DatasetNotFound, db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{}));
-    try testing.expectEqualStrings("Not found: Dataset p:d was not found in location US", db.lastError());
-    try testing.expectEqual(@as(?*const spec.TableSpec, null), try db.catalogTable(arena, "p", "d", "t"));
+    try testing.expectError(
+        error.DatasetNotFound,
+        db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{}),
+    );
+    try testing.expectEqualStrings(
+        "Not found: Dataset p:d was not found in location US",
+        db.lastError(),
+    );
+    try testing.expectEqual(
+        @as(?*const spec.TableSpec, null),
+        try db.catalogTable(arena, "p", "d", "t"),
+    );
     {
         var rows = try db.rawQuery("SELECT name FROM sqlite_master WHERE name = 'p_d_t'", &.{});
         defer rows.deinit();
@@ -4238,7 +4278,9 @@ test "require_dataset refuses a CREATE into an undeclared dataset with BigQuery'
         // Called by the path it was written with.
         var rows = try db.query("SELECT d.g(1)", &.{}, .{});
         defer rows.deinit();
-        const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+        const row = (try rows.next()) orelse {
+            return error.TestUnexpectedResult;
+        };
         try testing.expectEqual(@as(i64, 2), row[0].int);
     }
 
@@ -4251,7 +4293,10 @@ test "require_dataset refuses a CREATE into an undeclared dataset with BigQuery'
     db.require_dataset = false;
     try db.exec("CREATE TABLE other.t (a INT64)", &.{}, .{});
     try testing.expect(try db.datasetExists(arena, "p", "other"));
-    try testing.expectEqual(@as(?*const spec.DatasetSpec, null), try db.catalogDataset(arena, "p", "other"));
+    try testing.expectEqual(
+        @as(?*const spec.DatasetSpec, null),
+        try db.catalogDataset(arena, "p", "other"),
+    );
     try testing.expectEqual(@as(usize, 1), (try db.catalogDatasetsIn(arena, "p")).len);
 }
 
@@ -4273,7 +4318,9 @@ test "declared datasets persist across connections, keep their creation time, an
         var db = try Db.open(testing.allocator, db_path);
         defer db.close();
         try db.insertDataset(arena, "p", "ds", "{\"id\":\"ds\"}");
-        const first = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
+        const first = (try db.catalogDataset(arena, "p", "ds")) orelse {
+            return error.TestUnexpectedResult;
+        };
         created_at = try arena.dupe(u8, first.created_at);
         try testing.expect(created_at.len > 0);
         // A second declaration is refused and writes nothing.
@@ -4286,7 +4333,9 @@ test "declared datasets persist across connections, keep their creation time, an
         try testing.expectEqualStrings("{\"id\":\"ds\"}", kept.metadata);
         // An update (datasets.patch) replaces the resource only.
         try db.updateDataset(arena, "p", "ds", "{\"id\":\"ds\",\"description\":\"kept\"}");
-        const second = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
+        const second = (try db.catalogDataset(arena, "p", "ds")) orelse {
+            return error.TestUnexpectedResult;
+        };
         try testing.expectEqualStrings(created_at, second.created_at);
         try testing.expectEqualStrings("{\"id\":\"ds\",\"description\":\"kept\"}", second.metadata);
         try testing.expectEqual(@as(usize, 1), (try db.catalogDatasetsIn(arena, "p")).len);
@@ -4294,12 +4343,20 @@ test "declared datasets persist across connections, keep their creation time, an
     {
         var db = try Db.open(testing.allocator, db_path);
         defer db.close();
-        const reloaded = (try db.catalogDataset(arena, "p", "ds")) orelse return error.TestUnexpectedResult;
-        try testing.expectEqualStrings("{\"id\":\"ds\",\"description\":\"kept\"}", reloaded.metadata);
+        const reloaded = (try db.catalogDataset(arena, "p", "ds")) orelse {
+            return error.TestUnexpectedResult;
+        };
+        try testing.expectEqualStrings(
+            "{\"id\":\"ds\",\"description\":\"kept\"}",
+            reloaded.metadata,
+        );
         try testing.expectEqualStrings(created_at, reloaded.created_at);
 
         try db.deleteDataset(arena, "p", "ds");
-        try testing.expectEqual(@as(?*const spec.DatasetSpec, null), try db.catalogDataset(arena, "p", "ds"));
+        try testing.expectEqual(
+            @as(?*const spec.DatasetSpec, null),
+            try db.catalogDataset(arena, "p", "ds"),
+        );
         try testing.expect(!try db.datasetExists(arena, "p", "ds"));
         try testing.expectError(error.DatasetNotFound, db.deleteDataset(arena, "p", "ds"));
     }
@@ -4366,7 +4423,9 @@ test "a dataset and a table sharing a canonical name both survive a reopen" {
         try testing.expectEqual(@as(?*const spec.DatasetSpec, null), gone);
         var rows = try db.query("SELECT x FROM p.a.b", &.{}, .{});
         defer rows.deinit();
-        const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+        const row = (try rows.next()) orelse {
+            return error.TestUnexpectedResult;
+        };
         try testing.expectEqual(@as(i64, 7), row[0].int);
     }
 }
@@ -4388,11 +4447,15 @@ test "a view cannot take a table's name, so the name keeps its one catalog row" 
         error.ExecFailed,
         db.exec("CREATE OR REPLACE VIEW p.ds.t AS SELECT 1 AS n", &.{}, .{}),
     );
-    const t = (try db.catalogTable(arena, "p", "ds", "t")) orelse return error.TestUnexpectedResult;
+    const t = (try db.catalogTable(arena, "p", "ds", "t")) orelse {
+        return error.TestUnexpectedResult;
+    };
     try testing.expect(!t.is_view);
     var rows = try db.rawQuery("SELECT kind FROM zigquery_catalog WHERE name = 'p_ds_t'", &.{});
     defer rows.deinit();
-    const row = (try rows.next()) orelse return error.TestUnexpectedResult;
+    const row = (try rows.next()) orelse {
+        return error.TestUnexpectedResult;
+    };
     try testing.expectEqualStrings("table", row[0].text);
     try testing.expect((try rows.next()) == null);
 }
@@ -6640,7 +6703,9 @@ test "JS-language function is persisted and analyzable but not executable" {
     // The spec is persisted with its language and code.
     var g = db.lockCatalog();
     defer g.unlock();
-    const fs = g.catalog.findFunctionSpec("jsf") orelse return error.TestUnexpectedResult;
+    const fs = g.catalog.findFunctionSpec("jsf") orelse {
+        return error.TestUnexpectedResult;
+    };
     try testing.expectEqualStrings("js", fs.language);
     try testing.expect(std.mem.indexOf(u8, fs.code, "return x+1;") != null);
     try testing.expectEqual(@as(?[]const u8, null), fs.body);

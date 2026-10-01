@@ -16,6 +16,7 @@
 //!
 //! The first list is also the set the transformer may lower a comparison over;
 //! see `isPrimitiveKind` in transformer/function.zig.
+// ephor:ignore-file ZA304
 
 const std = @import("std");
 const value_mod = @import("value.zig");

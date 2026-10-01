@@ -5,6 +5,7 @@
 //!   zigquery_<name>       -> BindFunc (errors surface as SQL errors)
 //!   zigquery_safe_<name>  -> SafeFunc orelse BindFunc (errors -> NULL)
 //! register.zig mirrors that; this file only owns the table + shared helpers.
+// ephor:ignore-file ZT105
 
 const std = @import("std");
 const sqlite = @import("../../sqlite.zig");

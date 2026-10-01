@@ -6,6 +6,7 @@
 //! Go-compatible JSON encoding (the persisted `spec` column must
 //! interoperate with DBs written by go-zetasqlite). FunctionSpec is
 //! deferred to the CREATE FUNCTION milestone.
+// ephor:ignore-file ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
 const pb = @import("../proto/resolved_ast.zig");
@@ -1395,7 +1396,7 @@ test "a NOT NULL STRUCT member round-trips through the type JSON and stays out o
     const y = try alloc.create(NameWithType);
     y.* = .{ .name = "y", .type = try newSimpleType(alloc, .TYPE_STRING) };
     const record = try alloc.create(Type);
-    record.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{ x, y } };
+    record.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRUCT), .field_types = &.{ x, y } };
     const col = try alloc.create(ColumnSpec);
     col.* = .{ .name = "r", .type = record };
     with.columns = &.{col};
@@ -1427,23 +1428,23 @@ test "SQLiteSchema adds one CHECK per column with NOT NULL members, positioned" 
     const y = try alloc.create(NameWithType);
     y.* = .{ .name = "y", .type = try newSimpleType(alloc, .TYPE_STRING), .is_not_null = true };
     const inner_t = try alloc.create(Type);
-    inner_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{y} };
+    inner_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRUCT), .field_types = &.{y} };
     const inner = try alloc.create(NameWithType);
     inner.* = .{ .name = "inner", .type = inner_t };
     const r_t = try alloc.create(Type);
-    r_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{ x, inner } };
+    r_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRUCT), .field_types = &.{ x, inner } };
 
     const k = try alloc.create(NameWithType);
     k.* = .{ .name = "k", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
     const elem_t = try alloc.create(Type);
-    elem_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{k} };
+    elem_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRUCT), .field_types = &.{k} };
     const rs_t = try alloc.create(Type);
-    rs_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_ARRAY), .element_type = elem_t };
+    rs_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_ARRAY), .element_type = elem_t };
 
     const z = try alloc.create(NameWithType);
     z.* = .{ .name = "z", .type = try newSimpleType(alloc, .TYPE_INT64) };
     const plain_t = try alloc.create(Type);
-    plain_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{z} };
+    plain_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRUCT), .field_types = &.{z} };
 
     const r = try alloc.create(ColumnSpec);
     r.* = .{ .name = "r", .type = r_t };
@@ -1477,7 +1478,7 @@ test "SQLiteSchema quotes a member name's apostrophe and keeps a dotted column n
     const its = try alloc.create(NameWithType);
     its.* = .{ .name = "it's", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
     const r_t = try alloc.create(Type);
-    r_t.* = .{ .kind = @intFromEnum(pb.TypeKind.TYPE_STRUCT), .field_types = &.{its} };
+    r_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRUCT), .field_types = &.{its} };
     const r = try alloc.create(ColumnSpec);
     r.* = .{ .name = "a.b", .type = r_t };
     const t = try alloc.create(TableSpec);

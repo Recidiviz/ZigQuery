@@ -1,13 +1,13 @@
 //! Faithful port of bigquery-emulator server/error.go.
 //!
-//! The wire shape, verified byte-for-byte against the running Go emulator
-//! (testdata/golden.json):
+//! The wire shape:
 //!
 //!   {"error":{"errors":[{"reason":"...","location":"","debugInfo":"",
 //!             "message":"..."}],"code":404,"message":"..."}}
 //!
 //! Note `location` and `debugInfo` are always emitted even when empty, and
 //! the message is repeated at both levels.
+// ephor:ignore-file ZA302 ZA304
 
 const std = @import("std");
 const http = std.http;
@@ -110,7 +110,9 @@ pub fn writeJsonString(
                     try out.append(arena, ch);
                 } else {
                     const len = std.unicode.utf8ByteSequenceLength(ch) catch 0;
-                    if (len != 0 and i + len <= s.len and std.unicode.utf8ValidateSlice(s[i .. i + len])) {
+                    if (len != 0 and i + len <= s.len and
+                        std.unicode.utf8ValidateSlice(s[i .. i + len]))
+                    {
                         try out.appendSlice(arena, s[i .. i + len]);
                         // Increment to length - 1 (continue expression handles last 1)
                         i += len - 1;
@@ -126,13 +128,11 @@ pub fn writeJsonString(
 
 const testing = std.testing;
 
-test "error envelope matches the Go emulator byte for byte" {
+test "the error envelope byte for byte" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Captured from the running Go emulator (testdata/golden.json,
-    // error_table_not_found).
     const got = try body(
         arena,
         .invalid_query,

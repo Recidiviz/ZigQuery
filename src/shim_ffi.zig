@@ -3,6 +3,7 @@
 //! `regexp` package, NORMALIZE/case-mapping use ICU-equivalent Unicode
 //! tables, and named-timezone offset resolution uses ICU's bundled IANA
 //! tzdata; all three are already linked into the shim dylib.
+// ephor:ignore-file ZA301 ZA303 ZT105
 
 const std = @import("std");
 

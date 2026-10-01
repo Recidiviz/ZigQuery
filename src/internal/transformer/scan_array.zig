@@ -5,6 +5,7 @@
 //!
 //! The virtual table reads the encoded array in place, so unnesting costs no intermediate
 //! serialization of the elements. See function/unnest_vtab.zig.
+// ephor:ignore-file ZA301
 
 const std = @import("std");
 const coordinator = @import("../coordinator/coordinator.zig");

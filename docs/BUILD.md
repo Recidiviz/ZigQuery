@@ -174,7 +174,7 @@ zig build dist -Drelease=true -Dcpu=baseline \
 | Step            | What it does                                                                                                                                                                                                               |
 |-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `gen-proto`     | Regenerate the protobuf codecs from the committed `.fdset` files, then `zig fmt` them. Run when the googlesql submodule or a descriptor moves; never part of `test`. CI fails if the outputs drift from what is committed. |
-| `ephor`         | Run ephor static analysis over the tree. Arguments after `--` go to ephor; `-- --summary` prints the TOTAL. CI fails when TOTAL exceeds the ceiling in `ephor_baseline.txt`, so lower the ceiling when you fix findings.   |
+| `ephor`         | Run ephor static analysis over the tree. Arguments after `--` go to ephor; `-- --summary` prints the TOTAL. CI fails on any finding; suppress an accepted one with an `// ephor:ignore` directive. |
 | `ephor-upgrade` | Upgrade the ephor tool to its latest version.                                                                                                                                                                              |
 
 `gen-proto` writes three files:

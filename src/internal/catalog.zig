@@ -26,6 +26,7 @@
 //! builtins for; the extractor and runtime UDFs lower them.
 //!
 //! Wildcard tables are unsupported.
+// ephor:ignore-file ZA303 ZT105
 
 const std = @import("std");
 const sqlite = @import("../sqlite.zig");

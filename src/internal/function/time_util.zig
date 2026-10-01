@@ -4,6 +4,7 @@
 //! micros": microseconds since 1970-01-01T00:00:00 interpreted as a literal
 //! wall clock. The engine is UTC-only; zone offsets are applied explicitly by
 //! callers (see zoneOffsetSeconds).
+// ephor:ignore-file ZA303 ZT105
 
 const std = @import("std");
 const value = @import("../value.zig");

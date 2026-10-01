@@ -6,7 +6,7 @@
 //! and result cells are decoded back into GoogleSQL values (internal/value, internal/codec_*).
 //!
 //! SQLite supplies storage and the relational operators;
-//! everything BigQuery has and SQLite does not — type system, builtins, value encodings — live here
+//! everything BigQuery has and SQLite does not - type system, builtins, value encodings - live here
 //!
 //! sqlite.zig wraps the SQLite C API and driver.zig is the public surface over this pipeline.
 //!

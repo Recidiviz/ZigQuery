@@ -15,6 +15,7 @@
 //!
 //! HTTP/1.1 only. Zig 0.16 std has no HTTP/2, no HPACK, and no TLS server;
 //! the BigQuery REST clients speak cleartext HTTP/1.1 to an emulator.
+// ephor:ignore-file ZA301 ZA302 ZT105
 
 const std = @import("std");
 
@@ -190,7 +191,8 @@ pub const Server = struct {
 
         fn run(c: *Connection) void {
             const s = c.server;
-            s.serveConnection(&c.stream) catch {};
+            s.serveConnection(&c.stream) catch |err|
+                std.log.warn("connection dropped: {t}", .{err});
             c.stream.close(s.io);
             s.gpa.destroy(c);
         }

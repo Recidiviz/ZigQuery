@@ -213,7 +213,7 @@ def render_artifact(a, b):
     """Whether two cells differ only in how BigQuery's client renders a value.
 
     A NULL ARRAY comes back as `[]` rather than None -- the REST surface has no
-    other spelling for it, which `tools/capture_golden.py` records as well. And
+    other spelling for it. And
     an INTERVAL arrives as a dateutil relativedelta, whose repr has nothing to
     do with the canonical `Y-M D H:M:S` text.
     """
