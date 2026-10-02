@@ -172,6 +172,7 @@ jobs:
             -Dshim-dylib=${{ steps.shim.outputs.path }} \
             -Dshim-static-obj=${{ steps.shim.outputs.static-path }} \
             --prefix "$ctx/dist"
+          cp LICENSE NOTICE THIRD_PARTY_NOTICES "$ctx/dist/"
           docker build -f Dockerfile -t zigquery-emulator:ci "$ctx"
 
       - uses: astral-sh/setup-uv@v6

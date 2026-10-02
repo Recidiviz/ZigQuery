@@ -19,9 +19,16 @@
 # Expected context layout, matching `zig build dist -Dshim-static-obj=...`
 # (see release.yml):
 #   dist/bin/{bigquery-emulator,zigquery}
+#   dist/{LICENSE,NOTICE,THIRD_PARTY_NOTICES}
 FROM gcr.io/distroless/cc-debian13:nonroot
 
 COPY dist/bin/ /usr/local/bin/
+# The binaries statically link the libraries THIRD_PARTY_NOTICES lists, and
+# their licenses require the notices to ship with them.
+COPY dist/LICENSE dist/NOTICE dist/THIRD_PARTY_NOTICES /usr/share/doc/zigquery/
+
+LABEL org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/Recidiviz/zigquery"
 
 # REST and the (flag-only, not yet served) gRPC port, matching the Go
 # emulator's defaults so existing fixtures need no changes.

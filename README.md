@@ -9,6 +9,7 @@
 <img type="image/svg+xml" src="./docs/bench/emubench.svg">
 
 ## Usage
+
 ```
 docker pull ghcr.io/recidiviz/zigquery:latest
 ```
@@ -38,7 +39,6 @@ Options:
 
 [See docs/BUILD.md](./docs/BUILD.md) for environment setup and build commands.
 
-
 ## Why Zig?
 
 [GoogleSQL](https://github.com/google/googlesql)'s query analyzer powers the core of the emulator.
@@ -49,16 +49,25 @@ Intentional, explicit control over memory allocation improves process stability.
 
 ## CI & releases
 
-| Workflow | Trigger | What it does |
-|---|---|---|
-| `ci.yml` | PR, push | ephor + `zig fmt`, unit tests, the spec corpus under `--strict`, the concurrency harnesses, and a `gen-proto` drift check |
-| `bench.yml` | push, `bench` label, manual | `gsql-bench --json` charted by github-action-benchmark on the `benchmarks` branch |
-| `release.yml` | `v*.*.*` tag | four platform tarballs, a multi-arch GHCR image, and a GitHub release |
+| Workflow      | Trigger                     | What it does                                                                                                              |
+|---------------|-----------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| `ci.yml`      | PR, push                    | ephor + `zig fmt`, unit tests, the spec corpus under `--strict`, the concurrency harnesses, and a `gen-proto` drift check |
+| `bench.yml`   | push, `bench` label, manual | `gsql-bench --json` charted by github-action-benchmark on the `benchmarks` branch                                         |
+| `release.yml` | `v*.*.*` tag                | four platform tarballs, a multi-arch GHCR image, and a GitHub release                                                     |
 
 Runners are powered by [RunsOn](https://runs-on.com) on EC2 (see `.github/runs-on.yml`).
-Release builds for darwin run on GitHub-hosted larger runners: arm64 and x64 built and smoke-tested natively rather than cross-compiled.
+Release builds for darwin run on GitHub-hosted larger runners: arm64 and x64 built and smoke-tested
+natively rather than cross-compiled.
 
+## License
+
+`zigquery` is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+Release binaries statically link third-party libraries whose licenses are collected
+in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
+`zigquery` is not affiliated with or endorsed by Google. BigQuery is a trademark of Google LLC.
 
 # Addendum
-The architecture comes from our work on the fork of [@goccy](https://github.com/goccy)'s original implementation.
+
+The architecture comes from our work on the fork of [@goccy](https://github.com/goccy)'s original
+implementation.
 We are very grateful for his contributions to open source software.
