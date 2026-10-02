@@ -6,7 +6,7 @@
     // Together with name, this represents a globally unique package identifier.
     .fingerprint = 0xb1f226137bbd21ea, // Changing this has security and trust implications.
     // Tracks the earliest Zig version that the package considers to be a supported use case.
-    .minimum_zig_version = "0.17.0-dev.2131+d08989840",
+    .minimum_zig_version = "0.17.0",
     // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
     // Once all dependencies are fetched, `zig build` no longer requires internet connectivity.
     .dependencies = .{
@@ -21,6 +21,10 @@
         .nanoarrow = .{
             .url = "https://github.com/apache/arrow-nanoarrow/releases/download/apache-arrow-nanoarrow-0.9.0/apache-arrow-nanoarrow-0.9.0.tar.gz",
             .hash = "N-V-__8AAFJGjQDdZ-YxRe6QxscL234tcAjhWstwErQVToB4",
+        },
+        .translate_c = .{
+            .url = "git+https://codeberg.org/ziglang/translate-c#875969d3493e245e01bf5d7860f792d8f3eb9ef5",
+            .hash = "translate_c-0.0.0-Q_BUWoFOBwAhz77Zd15HCVuhTKzdUKc94kezmCeJ7IC_",
         },
     },
     .paths = .{

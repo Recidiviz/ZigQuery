@@ -83,7 +83,7 @@ pub const Error = error{OutOfMemory};
 /// True when the expected value at `node` describes `got`.
 pub fn matches(
     gpa: std.mem.Allocator,
-    zoir: Zoir,
+    zoir: *const Zoir,
     node: Zoir.Node.Index,
     got: driver.Cell,
     opts: Options,
@@ -184,7 +184,7 @@ pub fn matches(
 /// The value of `name` in a ZON struct literal. Linear because these are
 /// STRUCT field lists — a handful of entries, never enough to index.
 fn fieldNamed(
-    zoir: Zoir,
+    zoir: *const Zoir,
     lit: @FieldType(Zoir.Node, "struct_literal"),
     name: []const u8,
 ) ?Zoir.Node.Index {
@@ -417,7 +417,7 @@ fn writeCell(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), cell: driver.Cell)
 /// ("a struct rendered by the docs as a positional list") — there is no way
 /// to tell which from the ZON literal alone, without the got-cell it would
 /// be matched against.
-pub fn renderWant(gpa: std.mem.Allocator, zoir: Zoir, node: Zoir.Node.Index) Error![]u8 {
+pub fn renderWant(gpa: std.mem.Allocator, zoir: *const Zoir, node: Zoir.Node.Index) Error![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(gpa);
     try writeWant(gpa, &buf, zoir, node);
@@ -427,7 +427,7 @@ pub fn renderWant(gpa: std.mem.Allocator, zoir: Zoir, node: Zoir.Node.Index) Err
 fn writeWant(
     gpa: std.mem.Allocator,
     buf: *std.ArrayList(u8),
-    zoir: Zoir,
+    zoir: *const Zoir,
     node: Zoir.Node.Index,
 ) Error!void {
     switch (node.get(zoir)) {
@@ -467,10 +467,10 @@ fn checkOpts(src: [:0]const u8, got: driver.Cell, opts: Options) !bool {
     const gpa = testing.allocator;
     var ast = try std.zig.Ast.parse(gpa, src, .{ .mode = .zon });
     defer ast.deinit(gpa);
-    var zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
+    const zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
     defer zoir.deinit(gpa);
     try testing.expect(zoir.compile_errors.len == 0);
-    return matches(gpa, zoir, .root, got, opts);
+    return matches(gpa, &zoir, .root, got, opts);
 }
 
 fn check(src: [:0]const u8, got: driver.Cell) !bool {
