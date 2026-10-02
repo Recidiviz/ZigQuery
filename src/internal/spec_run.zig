@@ -173,7 +173,7 @@ pub fn run(
 
 /// The value of struct field `name`, or null. ZON struct field order is source
 /// order, so a linear scan is both correct and cheap at these sizes.
-fn field(zoir: Zoir, node: Zoir.Node.Index, name: []const u8) ?Zoir.Node.Index {
+fn field(zoir: *const Zoir, node: Zoir.Node.Index, name: []const u8) ?Zoir.Node.Index {
     const n = node.get(zoir);
     if (n != .struct_literal) return null;
     for (n.struct_literal.names, 0..) |field_name, i| {
@@ -184,19 +184,19 @@ fn field(zoir: Zoir, node: Zoir.Node.Index, name: []const u8) ?Zoir.Node.Index {
     return null;
 }
 
-fn stringField(zoir: Zoir, node: Zoir.Node.Index, name: []const u8) ?[]const u8 {
+fn stringField(zoir: *const Zoir, node: Zoir.Node.Index, name: []const u8) ?[]const u8 {
     const f = field(zoir, node, name) orelse return null;
     const n = f.get(zoir);
     return if (n == .string_literal) n.string_literal else null;
 }
 
-fn boolField(zoir: Zoir, node: Zoir.Node.Index, name: []const u8) bool {
+fn boolField(zoir: *const Zoir, node: Zoir.Node.Index, name: []const u8) bool {
     const f = field(zoir, node, name) orelse return false;
     return f.get(zoir) == .true;
 }
 
 /// Elements of an array literal; `.{}` reads as empty rather than absent.
-fn elements(zoir: Zoir, node: Zoir.Node.Index) Zoir.Node.Index.Range {
+fn elements(zoir: *const Zoir, node: Zoir.Node.Index) Zoir.Node.Index.Range {
     return switch (node.get(zoir)) {
         .array_literal => |r| r,
         else => .{ .start = @fromBackingInt(0), .len = 0 },
@@ -209,7 +209,7 @@ fn elements(zoir: Zoir, node: Zoir.Node.Index) Zoir.Node.Index.Range {
 /// Identifies the empty array literal and empty struct literal `.{}`
 fn cellFromNode(
     arena: std.mem.Allocator,
-    zoir: Zoir,
+    zoir: *const Zoir,
     node: Zoir.Node.Index,
     type_text: ?[]const u8,
 ) !?driver.Cell {
@@ -252,7 +252,7 @@ fn cellFromNode(
 
 /// The `.arg_types` entry at `i` — the GoogleSQL type text a case declares for
 /// its `i`th positional argument, as `queryParameters.parameterType` would.
-fn argType(zoir: Zoir, c: Zoir.Node.Index, i: u32) ?[]const u8 {
+fn argType(zoir: *const Zoir, c: Zoir.Node.Index, i: u32) ?[]const u8 {
     const f = field(zoir, c, "arg_types") orelse return null;
     const r = elements(zoir, f);
     if (i >= r.len) return null;
@@ -301,7 +301,8 @@ fn runSpecFile(
 
     var ast = try std.zig.Ast.parse(gpa, src, .{ .mode = .zon });
     defer ast.deinit(gpa);
-    var zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
+    const zoir_owned = try std.zig.ZonGen.generate(gpa, ast, .{});
+    const zoir = &zoir_owned;
     defer zoir.deinit(gpa);
     if (zoir.compile_errors.len > 0) {
         try results.append(gpa, .{
@@ -456,7 +457,7 @@ fn renderRowsText(arena: std.mem.Allocator, rows: []const []const driver.Cell) !
 
 fn renderWantRowsText(
     arena: std.mem.Allocator,
-    zoir: Zoir,
+    zoir: *const Zoir,
     want_rows: Zoir.Node.Index,
 ) ![]const u8 {
     const range = elements(zoir, want_rows);
@@ -487,7 +488,7 @@ fn renderWantRowsText(
 fn runCase(
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
-    zoir: Zoir,
+    zoir: *const Zoir,
     c: Zoir.Node.Index,
     db: *driver.Db,
     sql: []const u8,
@@ -657,7 +658,7 @@ fn runCase(
 fn compareRows(
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
-    zoir: Zoir,
+    zoir: *const Zoir,
     want_rows: Zoir.Node.Index,
     got: []const []const driver.Cell,
     unordered: bool,
@@ -726,7 +727,7 @@ fn renderRow(arena: std.mem.Allocator, row: []const driver.Cell) ![]const u8 {
 
 fn rowMatches(
     gpa: std.mem.Allocator,
-    zoir: Zoir,
+    zoir: *const Zoir,
     want_row: Zoir.Node.Index,
     got_row: []const driver.Cell,
     corpus: spec_expect.Corpus,

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Translator = @import("translate_c").Translator;
 
 /// nanoarrow's C sources: the common core, the IPC reader/writer, and the flatcc runtime the IPC layer is generated against.
 const nanoarrow_sources = [_][]const u8{
@@ -56,6 +57,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const opts: std.Build.StandardOptimizeOptionOptions = .{ .preferred_optimize_mode = .fast };
     const optimize = b.standardOptimizeOption(opts);
+
+    const translate_c = b.dependency("translate_c", .{});
 
     // The shim (//shim) and the googlesql submodule (//third_party/googlesql)
     // both live in this repo now, so Bazel roots here and the library lands in
@@ -155,11 +158,12 @@ pub fn build(b: *std.Build) void {
     });
     sqlite.root_module.addIncludePath(sqlite_headers);
     // Zig bindings for sqlite3.h, shared with the coverage tree like the library.
-    const sqlite_c = b.addTranslateC(.{
-        .root_source_file = sqlite_dep.path("sqlite3.h"),
+    const sqlite_c_translator: Translator = .init(translate_c, .{
+        .c_source_file = sqlite_dep.path("sqlite3.h"),
         .target = target,
         .optimize = .fast,
-    }).createModule();
+    });
+    const sqlite_c = sqlite_c_translator.mod;
 
     // gRPC core, for the Storage API transport
     // Built once and shared by every consumer of serverModule, always at
@@ -246,11 +250,12 @@ pub fn build(b: *std.Build) void {
     });
     nanoarrow.root_module.addIncludePath(b.path("src/server/grpc"));
     // Only the shim header: Zig never sees nanoarrow's own.
-    const nanoarrow_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/server/grpc/nanoarrow_shim.h"),
+    const nanoarrow_c_translator: Translator = .init(translate_c, .{
+        .c_source_file = b.path("src/server/grpc/nanoarrow_shim.h"),
         .target = target,
         .optimize = .fast,
-    }).createModule();
+    });
+    const nanoarrow_c = nanoarrow_c_translator.mod;
 
     const server_deps: ServerDeps = .{
         .target = target,
