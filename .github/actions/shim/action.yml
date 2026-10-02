@@ -151,12 +151,6 @@ runs:
         chmod u+w "dist/shim/${{ steps.vars.outputs.lib }}" \
                   "dist/shim/${{ steps.vars.outputs.static_lib }}"
 
-        # googlesql is Apache-2.0 and is linked into both outputs, so its
-        # license is staged with them and lands in the same cache entry —
-        # release.yml ships it beside the dylib, and only the miss path here
-        # has the submodule checked out to copy it from.
-        cp -f third_party/googlesql/LICENSE dist/shim/LICENSE.googlesql
-
     - shell: bash
       run: |
         set -euo pipefail

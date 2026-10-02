@@ -25,6 +25,17 @@ License.
 The Spanner dialect (118 upstream specs) is not imported; this engine targets
 BigQuery.
 
+googlesql/compliance/ is the exception within googlesql/: it is imported from
+GoogleSQL's own compliance test suite,
+
+    https://github.com/google/googlesql
+    googlesql/compliance/testdata/*.test, at the commit third_party/googlesql
+    is pinned to
+
+which is licensed under the Apache License 2.0, Copyright Google LLC. The SQL
+and expected results are reproduced from it, converted to ZON and filtered to
+the cases this engine supports.
+
 zigquery/ is not covered by any of the above. It is this engine's own
 regression suite, with its own NOTICE; spec_import.py neither writes it nor
 counts it as drift.

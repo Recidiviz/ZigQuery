@@ -107,19 +107,11 @@ jobs:
           cp "${{ steps.shim.outputs.path }}" "$stage/"
           echo "${{ steps.shim.outputs.key }}" > "$stage/SHIM_KEY"
 
-          # googlesql is Apache-2.0 and is linked into this dylib along with
-          # ICU, RE2, abseil and protobuf, so its license travels with the
-          # binary. The shim action stages it next to the outputs, which keeps
-          # it in the same cache entry; a cache saved before that step predates
-          # the file, so fall back to the pinned submodule commit rather than
-          # publishing the binary bare.
-          if [ -f dist/shim/LICENSE.googlesql ]; then
-            cp dist/shim/LICENSE.googlesql "$stage/"
-          else
-            sha=$(git rev-parse HEAD:third_party/googlesql)
-            curl -fsSL -o "$stage/LICENSE.googlesql" \
-              "https://raw.githubusercontent.com/google/googlesql/$sha/LICENSE"
-          fi
+          # googlesql, ICU, RE2, abseil, protobuf and the rest are linked into
+          # the shim, and their licenses require the notices to travel with
+          # it. THIRD_PARTY_NOTICES covers every component of the binaries,
+          # the shim's included. A plain cp, so a missing file fails the job.
+          cp LICENSE NOTICE THIRD_PARTY_NOTICES "$stage/"
 
           tar -C "$stage" -czf "$name.tar.gz" .
           if command -v sha256sum >/dev/null 2>&1; then
@@ -196,8 +188,10 @@ jobs:
           set -euo pipefail
           # Named for the product and the repo (Recidiviz/zigquery).
           name="zigquery-${{ needs.version.outputs.version }}-${{ matrix.platform }}"
-          cp README.md stage/
-          [ -f LICENSE ] && cp LICENSE stage/ || true
+          # A plain cp, so a missing license file fails the release rather
+          # than shipping binaries without the notices their dependencies'
+          # licenses require.
+          cp README.md LICENSE NOTICE THIRD_PARTY_NOTICES stage/
           tar -C stage -czf "$name.tar.gz" .
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
@@ -271,7 +265,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           tar -C dist -xzf zigquery-*.tar.gz
-          rm -f dist/README.md dist/LICENSE
+          # The license files stay: the Dockerfile copies them into the image.
+          rm -f dist/README.md
           find dist -type f
 
       - id: meta

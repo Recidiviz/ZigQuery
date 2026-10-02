@@ -1,0 +1,16 @@
+zigquery
+Copyright 2026 Recidiviz, Inc.
+
+This product includes software developed at Recidiviz (https://www.recidiviz.org/).
+
+Portions of this software are derived from go-zetasqlite and bigquery-emulator
+by Masaaki Goshima (https://github.com/goccy), by way of Recidiviz's forks of
+both. They are MIT licensed, Copyright (c) 2022 Masaaki Goshima.
+
+Release binaries statically link third-party libraries, including GoogleSQL,
+Abseil, Protocol Buffers, RE2, ICU, BoringSSL, gRPC, c-ares, zlib and Apache
+Arrow nanoarrow. Their licenses, and the MIT license above in full, are in
+THIRD_PARTY_NOTICES.
+
+The test data under testdata/specs carries its own provenance and licensing;
+see testdata/specs/NOTICE.
