@@ -5090,6 +5090,62 @@ test "a MERGE reports the rows all of its WHEN clauses changed" {
     );
 }
 
+test "a MERGE that fails does not block the next MERGE" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec(
+        \\CREATE TABLE d.t (id INT64, n INT64);
+        \\CREATE TABLE d.s (id INT64, v STRING);
+        \\INSERT INTO d.t (id, n) VALUES (1, 1);
+        \\INSERT INTO d.s (id, v) VALUES (1, 'not a number');
+    , &.{}, .{});
+    try testing.expect(std.meta.isError(db.exec(
+        \\MERGE d.t T USING d.s S ON T.id = S.id
+        \\WHEN MATCHED THEN UPDATE SET n = CAST(S.v AS INT64)
+    , &.{}, .{})));
+
+    try db.exec("UPDATE d.s SET v = '2' WHERE TRUE", &.{}, .{});
+    try db.exec(
+        \\MERGE d.t T USING d.s S ON T.id = S.id
+        \\WHEN MATCHED THEN UPDATE SET n = CAST(S.v AS INT64)
+    , &.{}, .{});
+
+    var rows = try db.query("SELECT n FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 2), (try rows.next()).?[0].int);
+}
+
+test "a MERGE whose later WHEN clause fails keeps none of its earlier clauses' writes" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec(
+        \\CREATE TABLE d.t (id INT64, n INT64);
+        \\CREATE TABLE d.s (id INT64, v STRING);
+        \\INSERT INTO d.t (id, n) VALUES (1, 1), (2, 2);
+        \\INSERT INTO d.s (id, v) VALUES (1, '5'), (3, 'not a number');
+    , &.{}, .{});
+    // The UPDATE for id 1 succeeds before the INSERT for id 3 fails.
+    try testing.expect(std.meta.isError(db.exec(
+        \\MERGE d.t T USING d.s S ON T.id = S.id
+        \\WHEN MATCHED THEN UPDATE SET n = CAST(S.v AS INT64)
+        \\WHEN NOT MATCHED THEN INSERT (id, n) VALUES (S.id, CAST(S.v AS INT64))
+    , &.{}, .{})));
+
+    var rows = try db.query("SELECT id, n FROM `p.d.t` ORDER BY id", &.{}, .{});
+    defer rows.deinit();
+    const first = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 1), first[0].int);
+    try testing.expectEqual(@as(i64, 1), first[1].int);
+    const second = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 2), second[0].int);
+    try testing.expectEqual(@as(i64, 2), second[1].int);
+    try testing.expect((try rows.next()) == null);
+}
+
 test "a statement that is not DML reports its type and no row count" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
