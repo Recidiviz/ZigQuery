@@ -64,9 +64,10 @@ pub fn transform(
         if (args.items.len != 2) return error.InvalidAST;
         const when = try alloc.create(sqlbuilder.WhenClause);
         when.* = .{
+            // Grouped, or `a AND b IS NULL` reads back as `a AND (b IS NULL)`.
             .condition = try sqlbuilder.newBinaryExpression(
                 alloc,
-                args.items[0],
+                try grouped(alloc, args.items[0]),
                 "IS",
                 try sqlbuilder.newLiteralExpression(alloc, "NULL"),
             ),
