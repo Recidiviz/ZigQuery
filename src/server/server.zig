@@ -458,6 +458,8 @@ pub const Server = struct {
                 .literalMs = debug_stats.msFromNs(phase.totalNs(.codec_literal), ms1),
                 .literalCount = phase.count(.codec_literal),
             },
+            .viewRefreshMs = debug_stats.msFromNs(phase.totalNs(.view_refresh), ms1),
+            .viewRefreshCount = phase.count(.view_refresh),
             .analysisFraction = .{
                 .v = if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
             },

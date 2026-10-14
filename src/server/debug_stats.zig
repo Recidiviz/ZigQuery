@@ -64,6 +64,9 @@ pub const Phases = struct {
     codecMs: Ms1,
     codecCount: u64,
     codec: Codec,
+    /// Re-analyzing views whose tables changed shape. Compare across `ZQL_VIEW_REFRESH` settings.
+    viewRefreshMs: Ms1,
+    viewRefreshCount: u64,
     /// Measured against total handle time, so the remainder is HTTP, JSON and
     /// glue. Wall time under N parallel analyzers is bounded by (1-f) + f/N.
     analysisFraction: Frac3,
@@ -176,6 +179,8 @@ test "the snapshot serializes in wire order at the documented precisions" {
                 .literalMs = .{ .v = 0.0 },
                 .literalCount = 0,
             },
+            .viewRefreshMs = .{ .v = 0.0 },
+            .viewRefreshCount = 0,
             .analysisFraction = .{ .v = 0.55 },
             .sqliteFraction = .{ .v = 0.2 },
         },
@@ -215,6 +220,6 @@ test "the snapshot serializes in wire order at the documented precisions" {
     defer testing.allocator.free(got);
 
     try testing.expectEqualStrings(
-        \\{"uptimeSeconds":42,"contention":{"requests":3,"totalWaitMs":1.3,"totalHandleMs":10.0,"meanWaitMs":0.333,"meanHandleMs":2.000,"waitFraction":0.111,"maxWaiters":2,"waitersNow":0},"phases":{"analyzeMs":5.0,"analyzeCount":1,"transformMs":0.5,"transformCount":1,"sqliteMs":2.0,"sqlite":{"prepareMs":1.0,"prepareCount":1,"stepMs":0.5,"stepCount":2,"execMs":0.5,"execCount":1,"engineMs":1.5,"catalogMs":0.5,"metadataMs":0.0,"catalogPrepareMs":0.3,"catalogPrepareCount":1,"catalogStepMs":0.3},"preparedSqlBytes":128,"codecMs":0.0,"codecCount":0,"codec":{"timersEnabled":false,"encodeMs":0.0,"encodeCount":0,"decodeMs":0.0,"decodeCount":0,"literalMs":0.0,"literalCount":0},"analysisFraction":0.550,"sqliteFraction":0.200},"sqliteAlloc":{"memoryUsedBytes":1024,"memoryUsedPeakBytes":2048,"mallocsOutstanding":10,"mallocsOutstandingPeak":20,"largestAllocBytes":512,"schemaBytes":64,"stmtBytes":32,"pagerCacheBytes":16,"lookaside":{"hit":100,"missSize":1,"missFull":0,"hitRate":0.9676,"slotsInUse":3,"slotsPeak":7}},"routes":[{"route":"jobs_query","count":3,"meanMs":1.500,"minMs":1.000,"p50Ms":1.000,"p90Ms":2.000,"p99Ms":2.000,"maxMs":2.000,"totalMs":4.5}],"slowQueries":[{"ms":2.000,"sql":"SELECT \"a\""}]}
+        \\{"uptimeSeconds":42,"contention":{"requests":3,"totalWaitMs":1.3,"totalHandleMs":10.0,"meanWaitMs":0.333,"meanHandleMs":2.000,"waitFraction":0.111,"maxWaiters":2,"waitersNow":0},"phases":{"analyzeMs":5.0,"analyzeCount":1,"transformMs":0.5,"transformCount":1,"sqliteMs":2.0,"sqlite":{"prepareMs":1.0,"prepareCount":1,"stepMs":0.5,"stepCount":2,"execMs":0.5,"execCount":1,"engineMs":1.5,"catalogMs":0.5,"metadataMs":0.0,"catalogPrepareMs":0.3,"catalogPrepareCount":1,"catalogStepMs":0.3},"preparedSqlBytes":128,"codecMs":0.0,"codecCount":0,"codec":{"timersEnabled":false,"encodeMs":0.0,"encodeCount":0,"decodeMs":0.0,"decodeCount":0,"literalMs":0.0,"literalCount":0},"viewRefreshMs":0.0,"viewRefreshCount":0,"analysisFraction":0.550,"sqliteFraction":0.200},"sqliteAlloc":{"memoryUsedBytes":1024,"memoryUsedPeakBytes":2048,"mallocsOutstanding":10,"mallocsOutstandingPeak":20,"largestAllocBytes":512,"schemaBytes":64,"stmtBytes":32,"pagerCacheBytes":16,"lookaside":{"hit":100,"missSize":1,"missFull":0,"hitRate":0.9676,"slotsInUse":3,"slotsPeak":7}},"routes":[{"route":"jobs_query","count":3,"meanMs":1.500,"minMs":1.000,"p50Ms":1.000,"p90Ms":2.000,"p99Ms":2.000,"maxMs":2.000,"totalMs":4.5}],"slowQueries":[{"ms":2.000,"sql":"SELECT \"a\""}]}
     , got);
 }

@@ -505,6 +505,18 @@ pub fn datasetSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Erro
     return ds;
 }
 
+/// A table or view that a view's query reads.
+pub const ViewDependency = struct {
+    /// Canonical ("_"-joined) name.
+    name: []const u8,
+    /// The dependency's `catalog.shapeFingerprint` when the view was last analyzed, or
+    /// `missing_fingerprint` when it did not exist then.
+    fingerprint: u64,
+};
+
+/// The fingerprint of a name the catalog does not hold.
+pub const missing_fingerprint: u64 = 0;
+
 /// A representation of a table in BigQuery
 pub const TableSpec = struct {
     is_temp: bool = false,
@@ -539,9 +551,26 @@ pub const TableSpec = struct {
     /// holds the SQLite translation the engine runs; the metadata API reports
     /// this one. Serialised only when non-empty.
     source_sql: []const u8 = "",
+    /// A view's columns as its query analyzes against the tables it reads today, once a refresh
+    /// has re-analyzed it. BigQuery binds a view's query late, so a query through the view sees
+    /// these, while the metadata API and INFORMATION_SCHEMA keep reporting `columns`, the schema
+    /// the view was created with. Empty until a refresh changes them. Serialised only when set.
+    analysis_columns: []const *ColumnSpec = &.{},
+    /// Why a view's query no longer analyzes, worded as BigQuery reports it to a query that reads
+    /// the view. Empty while it analyzes. Serialised only when set.
+    invalid_reason: []const u8 = "",
+    /// The tables and views a view's query read when it was last analyzed, each with the shape it
+    /// had then. Empty for a table. Serialised only when non-empty.
+    dependencies: []const ViewDependency = &.{},
     /// Registered for the analyzer only, never persisted: a job's result table
     /// or an INFORMATION_SCHEMA view. Runtime state, not part of the JSON.
     is_synthetic: bool = false,
+
+    /// The columns the analyzer resolves this table or view against: `analysis_columns` once a
+    /// refresh has set them, `columns` otherwise.
+    pub fn analyzedColumns(self: *const TableSpec) []const *ColumnSpec {
+        return if (self.analysis_columns.len > 0) self.analysis_columns else self.columns;
+    }
 
     /// Go TableSpec.Column.
     pub fn column(self: *const TableSpec, name: []const u8) ?*ColumnSpec {
@@ -736,6 +765,26 @@ pub const TableSpec = struct {
         try appendStringFieldIfSet(&out, alloc, "description", self.description);
         try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
         try appendStringFieldIfSet(&out, alloc, "sourceSql", self.source_sql);
+        if (self.analysis_columns.len > 0) {
+            try out.appendSlice(alloc, ",\"analysisColumns\":[");
+            for (self.analysis_columns, 0..) |col, i| {
+                if (i > 0) try out.append(alloc, ',');
+                try appendColumnSpecJson(&out, alloc, col);
+            }
+            try out.append(alloc, ']');
+        }
+        try appendStringFieldIfSet(&out, alloc, "invalidReason", self.invalid_reason);
+        if (self.dependencies.len > 0) {
+            try out.appendSlice(alloc, ",\"dependencies\":[");
+            for (self.dependencies, 0..) |dependency, i| {
+                if (i > 0) try out.append(alloc, ',');
+                try out.appendSlice(alloc, "{\"name\":");
+                try appendJsonString(&out, alloc, dependency.name);
+                // A string, because a u64 does not survive JSON's integers.
+                try out.print(alloc, ",\"fingerprint\":\"{x}\"}}", .{dependency.fingerprint});
+            }
+            try out.append(alloc, ']');
+        }
         try out.append(alloc, '}');
         return out.toOwnedSlice(alloc);
     }
@@ -922,6 +971,34 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
     }
     if (obj.get("sourceSql")) |v| {
         if (v == .string) table_spec.source_sql = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("analysisColumns")) |v| {
+        if (v == .array) {
+            const cols = try alloc.alloc(*ColumnSpec, v.array.items.len);
+            for (v.array.items, 0..) |item, i| {
+                cols[i] = try columnSpecFromValue(alloc, item);
+            }
+            table_spec.analysis_columns = cols;
+        }
+    }
+    if (obj.get("invalidReason")) |v| {
+        if (v == .string) table_spec.invalid_reason = try alloc.dupe(u8, v.string);
+    }
+    if (obj.get("dependencies")) |v| {
+        if (v != .array) return error.InvalidType;
+        const dependencies = try alloc.alloc(ViewDependency, v.array.items.len);
+        for (v.array.items, 0..) |item, i| {
+            if (item != .object) return error.InvalidType;
+            const name = item.object.get("name") orelse return error.InvalidType;
+            const fingerprint = item.object.get("fingerprint") orelse return error.InvalidType;
+            if (name != .string or fingerprint != .string) return error.InvalidType;
+            dependencies[i] = .{
+                .name = try alloc.dupe(u8, name.string),
+                .fingerprint = std.fmt.parseInt(u64, fingerprint.string, 16) catch
+                    return error.InvalidType,
+            };
+        }
+        table_spec.dependencies = dependencies;
     }
     return table_spec;
 }
@@ -1533,6 +1610,39 @@ test "metadata and source SQL round-trip through JSON and stay out of it when em
     const decoded = try tableSpecFromJson(alloc, encoded);
     try testing.expectEqualStrings(with.metadata, decoded.metadata);
     try testing.expectEqualStrings(with.source_sql, decoded.source_sql);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+}
+
+test "TableSpec JSON round-trips a view's refresh state, and omits it until set" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const bare_json = try (try makeGoShapeSpec(alloc)).toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"analysisColumns\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"invalidReason\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"dependencies\"") == null);
+
+    const with = try makeGoShapeSpec(alloc);
+    const col = try alloc.create(ColumnSpec);
+    col.* = .{ .name = "a", .type = try newSimpleType(alloc, .TYPE_STRING) };
+    const analysis_columns = [_]*ColumnSpec{col};
+    with.analysis_columns = &analysis_columns;
+    with.invalid_reason = "Unrecognized name: b; failed to parse view 'd.v'";
+    const dependencies = [_]ViewDependency{
+        .{ .name = "p_d_t", .fingerprint = std.math.maxInt(u64) },
+        .{ .name = "p_d_gone", .fingerprint = missing_fingerprint },
+    };
+    with.dependencies = &dependencies;
+
+    const encoded = try with.toJson(alloc);
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expectEqualStrings("a", decoded.analyzedColumns()[0].name);
+    try testing.expectEqualStrings(with.invalid_reason, decoded.invalid_reason);
+    try testing.expectEqual(@as(usize, 2), decoded.dependencies.len);
+    try testing.expectEqualStrings("p_d_t", decoded.dependencies[0].name);
+    try testing.expectEqual(std.math.maxInt(u64), decoded.dependencies[0].fingerprint);
+    try testing.expectEqual(missing_fingerprint, decoded.dependencies[1].fingerprint);
     try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 

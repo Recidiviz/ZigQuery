@@ -95,6 +95,11 @@ const delete_catalog_query =
     \\
 ;
 const load_query = "SELECT name, kind, spec FROM zigquery_catalog";
+const select_table_spec_query =
+    \\
+    \\SELECT spec FROM zigquery_catalog WHERE name = @name AND kind IN ('table', 'view')
+    \\
+;
 
 const catalog_name = "zigquery";
 
@@ -174,6 +179,14 @@ pub const Catalog = struct {
     /// that several consumers — one per analyzer catalog handle, i.e. one per
     /// pooled connection — can each replay from their own position.
     changes: std.ArrayList(Change),
+    /// Canonical table name -> `shapeFingerprint` of the spec registered under it. Kept for every
+    /// name registered through `addTableSpecToMemory`, so checking whether a view is due for a
+    /// refresh is a lookup per dependency rather than a render.
+    fingerprints: std.StringHashMap(u64),
+    /// Canonical names of every table and view whose `zigquery_catalog` row was written or
+    /// deleted, in order. Append-only, like `changes`. A connection that rolls back a transaction
+    /// reads back the rows of the names written since it began; see `resyncTableSpecs`.
+    written_table_names: std.ArrayList([]const u8),
 
     /// Bumped by any change that cannot be expressed as a table delta.
     ///
@@ -320,6 +333,8 @@ pub const Catalog = struct {
             .datasets = .empty,
             .dataset_map = std.StringHashMap(usize).init(gpa),
             .changes = .empty,
+            .fingerprints = std.StringHashMap(u64).init(gpa),
+            .written_table_names = .empty,
         };
         errdefer c.deinit();
         // Signatures the shim's GoogleSQL has no builtin for: memory only, never persisted.
@@ -340,6 +355,8 @@ pub const Catalog = struct {
         c.datasets.deinit(c.gpa);
         c.dataset_map.deinit();
         c.changes.deinit(c.gpa);
+        c.fingerprints.deinit();
+        c.written_table_names.deinit(c.gpa);
         c.arena_state.deinit();
         c.gpa.destroy(c);
     }
@@ -475,12 +492,14 @@ pub const Catalog = struct {
         defer stmt.finalize();
         // Named-parameter indices in first-occurrence order: @name, @kind,
         // @spec, @updatedAt, @createdAt (the DO UPDATE reuses 3 and 4).
-        try stmt.bindText(1, try table_spec.tableName(arena));
+        const name = try table_spec.tableName(arena);
+        try stmt.bindText(1, name);
         try stmt.bindText(2, @tagName(tableSpecKind(table_spec)));
         try stmt.bindText(3, encoded);
         try stmt.bindText(4, now.sql);
         try stmt.bindText(5, now.sql);
         _ = try stmt.step();
+        try c.written_table_names.append(c.gpa, name);
     }
 
     /// The `kind` a table spec's row is stored under, and so half its key.
@@ -505,6 +524,7 @@ pub const Catalog = struct {
         // A mapped slot is never a tombstone.
         const removed = c.tables.items[entry.value].?;
         try c.changes.append(c.gpa, .{ .table_removed = entry.key });
+        _ = c.fingerprints.remove(entry.key);
         // Tombstone rather than compact: no index shifts, so no reindex.
         c.tables.items[entry.value] = null;
         return removed;
@@ -521,6 +541,30 @@ pub const Catalog = struct {
         try stmt.bindText(1, name);
         try stmt.bindText(2, @tagName(tableSpecKind(removed)));
         _ = try stmt.step();
+        try c.written_table_names.append(c.gpa, try c.arena_state.allocator().dupe(u8, name));
+    }
+
+    /// Makes the entries for `names` match their `zigquery_catalog` rows again, for a transaction
+    /// that wrote those rows and then rolled back. The rollback restored the rows but not memory:
+    /// a name with a row gets that row's spec back, and one without is forgotten.
+    pub fn resyncTableSpecs(c: *Catalog, db: *sqlite.Db, names: []const []const u8) Error!void {
+        var scope = phase.SourceScope.begin(.catalog);
+        defer scope.end();
+        var resynced = std.StringHashMap(void).init(c.gpa);
+        defer resynced.deinit();
+        var stmt = try db.prepare(select_table_spec_query);
+        defer stmt.finalize();
+        for (names) |name| {
+            if ((try resynced.getOrPut(name)).found_existing) continue;
+            stmt.reset();
+            try stmt.bindText(1, name);
+            if (try stmt.step()) {
+                // Copy out of SQLite's row buffer before the next step.
+                try c.loadTableSpec(try c.arena_state.allocator().dupe(u8, stmt.columnText(0)));
+                continue;
+            }
+            if (c.table_map.contains(name)) _ = try c.forgetTableSpec(name);
+        }
     }
 
     /// Number of registered (non-deleted) table specs. Counts live slots, so
@@ -532,6 +576,114 @@ pub const Catalog = struct {
     pub fn findTableSpec(c: *const Catalog, name: []const u8) ?*spec.TableSpec {
         const idx = c.table_map.get(name) orelse return null;
         return c.tables.items[idx];
+    }
+
+    /// `shapeFingerprint` of the spec registered under `name`, or `spec.missing_fingerprint`.
+    pub fn fingerprint(c: *const Catalog, name: []const u8) u64 {
+        return c.fingerprints.get(name) orelse spec.missing_fingerprint;
+    }
+
+    /// Each dependency as it stands now, for a view whose query reads `names`.
+    pub fn currentDependencies(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        names: []const []const u8,
+    ) error{OutOfMemory}![]spec.ViewDependency {
+        var out: std.ArrayList(spec.ViewDependency) = .empty;
+        for (names) |name| {
+            for (out.items) |seen| {
+                if (std.mem.eql(u8, seen.name, name)) break;
+            } else try out.append(alloc, .{ .name = name, .fingerprint = c.fingerprint(name) });
+        }
+        return out.items;
+    }
+
+    /// Whether a refreshable view reads something whose shape is not what it was when the view
+    /// was last analyzed.
+    pub fn dependenciesChanged(c: *const Catalog, view: *const spec.TableSpec) bool {
+        for (view.dependencies) |dependency| {
+            if (c.fingerprint(dependency.name) != dependency.fingerprint) return true;
+        }
+        return false;
+    }
+
+    /// The canonical names of every refreshable view that is stale: it reads something whose
+    /// shape changed since it was last analyzed, or it reads a view that is stale. A view over a
+    /// stale view is listed too, because refreshing the view beneath changes the shape it reads.
+    pub fn staleViewNames(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+    ) error{OutOfMemory}![]const []const u8 {
+        var is_stale_by_name: std.StringHashMapUnmanaged(bool) = .empty;
+        defer is_stale_by_name.deinit(alloc);
+        var names: std.ArrayList([]const u8) = .empty;
+        for (c.tables.items) |maybe| {
+            const table_spec = maybe orelse continue;
+            if (!isRefreshableView(table_spec)) continue;
+            const name = try table_spec.tableName(alloc);
+            if (try c.isStale(alloc, &is_stale_by_name, name, table_spec)) try names.append(alloc, name);
+        }
+        return names.items;
+    }
+
+    /// Whether the refreshable view `view`, registered as `name`, is stale through any chain of
+    /// views it reads. Each answer is kept in `is_stale_by_name`, so a view read by many is
+    /// worked out once.
+    fn isStale(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        is_stale_by_name: *std.StringHashMapUnmanaged(bool),
+        name: []const u8,
+        view: *const spec.TableSpec,
+    ) error{OutOfMemory}!bool {
+        const entry = try is_stale_by_name.getOrPut(alloc, name);
+        if (entry.found_existing) return entry.value_ptr.*;
+        // Recorded before recursing, so a cycle of views ends here; querying the cycle fails.
+        entry.value_ptr.* = false;
+        const is_stale = c.dependenciesChanged(view) or for (view.dependencies) |dependency| {
+            const read = c.findTableSpec(dependency.name) orelse continue;
+            if (!isRefreshableView(read)) continue;
+            if (try c.isStale(alloc, is_stale_by_name, dependency.name, read)) break true;
+        } else false;
+        // Not through `entry`: the recursion may have grown the map.
+        try is_stale_by_name.put(alloc, name, is_stale);
+        return is_stale;
+    }
+
+    /// Whether a query that reads `name` can run as the catalog stands, following views that
+    /// read other views.
+    pub fn viewStatus(
+        c: *const Catalog,
+        alloc: std.mem.Allocator,
+        name: []const u8,
+    ) error{OutOfMemory}!ViewStatus {
+        var visited = std.StringHashMap(void).init(alloc);
+        return c.viewStatusVisiting(&visited, name);
+    }
+
+    fn viewStatusVisiting(
+        c: *const Catalog,
+        visited: *std.StringHashMap(void),
+        name: []const u8,
+    ) error{OutOfMemory}!ViewStatus {
+        const view = c.findTableSpec(name) orelse return .fresh;
+        if (!isRefreshableView(view)) return .fresh;
+        if ((try visited.getOrPut(name)).found_existing) return .fresh;
+        if (c.dependenciesChanged(view)) return .stale;
+
+        var dependency_invalid_reason: ?[]const u8 = null;
+        for (view.dependencies) |dependency| {
+            switch (try c.viewStatusVisiting(visited, dependency.name)) {
+                .fresh => {},
+                .stale => return .stale,
+                .invalid => |reason| {
+                    if (dependency_invalid_reason == null) dependency_invalid_reason = reason;
+                },
+            }
+        }
+        if (view.invalid_reason.len > 0) return .{ .invalid = view.invalid_reason };
+        if (dependency_invalid_reason) |reason| return .{ .invalid = reason };
+        return .fresh;
     }
 
     // ------------------------------------------------------------------
@@ -706,6 +858,7 @@ pub const Catalog = struct {
     fn addTableSpecToMemory(c: *Catalog, table_spec: *spec.TableSpec) Error!void {
         const arena = c.arena_state.allocator();
         const table_name = try table_spec.tableName(arena);
+        try c.fingerprints.put(table_name, try shapeFingerprint(arena, table_spec));
         if (c.table_map.get(table_name)) |idx| {
             // Replacement in place. The entry count does not change, so this
             // is invisible to an append-only delta: record it as a remove
@@ -1319,6 +1472,49 @@ fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.Functio
     return out;
 }
 
+/// Whether a query through the view `name` can run as the catalog stands.
+pub const ViewStatus = union(enum) {
+    /// Its query and everything it reads analyzed against what they read now.
+    fresh,
+    /// It, or a view it reads, reads something whose shape changed since it was last analyzed.
+    stale,
+    /// It, or a view it reads, no longer analyzes; the reason is BigQuery's wording.
+    invalid: []const u8,
+};
+
+/// Whether `table_spec` is a view whose query can be analyzed again: a persistent view that kept
+/// the GoogleSQL it was created from.
+pub fn isRefreshableView(table_spec: *const spec.TableSpec) bool {
+    return table_spec.is_view and table_spec.source_sql.len > 0;
+}
+
+/// A hash of a spec's analyzed column names and types:
+/// what a view's query sees when it reads the
+/// spec. Two specs with the same columns fingerprint alike, so dropping a table and recreating it
+/// with the same columns, which is how a view is materialized, leaves the views over it fresh.
+/// Never `spec.missing_fingerprint`.
+pub fn shapeFingerprint(
+    alloc: std.mem.Allocator,
+    table_spec: *const spec.TableSpec,
+) error{ OutOfMemory, InvalidSpec }!u64 {
+    return columnsFingerprint(alloc, table_spec.analyzedColumns());
+}
+
+/// `shapeFingerprint` of a spec whose analyzed columns are `columns`.
+pub fn columnsFingerprint(
+    alloc: std.mem.Allocator,
+    columns: []const *spec.ColumnSpec,
+) error{ OutOfMemory, InvalidSpec }!u64 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    for (columns) |col| {
+        try spec.appendJsonString(&out, alloc, col.name);
+        try appendTypeProtoJson(&out, alloc, col.type);
+    }
+    const hash = std.hash.Wyhash.hash(0, out.items);
+    return if (hash == spec.missing_fingerprint) 1 else hash;
+}
+
 fn appendTableJson(
     out: *std.ArrayList(u8),
     alloc: std.mem.Allocator,
@@ -1331,7 +1527,7 @@ fn appendTableJson(
         try spec.appendJsonString(out, alloc, entry.registered);
     }
     try out.appendSlice(alloc, ",\"column\":[");
-    for (entry.table_spec.columns, 0..) |col, i| {
+    for (entry.table_spec.analyzedColumns(), 0..) |col, i| {
         if (i > 0) try out.append(alloc, ',');
         try out.appendSlice(alloc, "{\"name\":");
         try spec.appendJsonString(out, alloc, col.name);
@@ -1511,6 +1707,54 @@ fn testTableSpec(alloc: std.mem.Allocator, name_path: []const []const u8) !*spec
         .created_at = "2024-01-02T03:04:05Z",
     };
     return ts;
+}
+
+test "staleViewNames lists the views over a stale view, through every chain and either dependency" {
+    var db = try sqlite.Db.open(":memory:");
+    defer db.close();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    var c = try Catalog.init(testing.allocator);
+    defer c.deinit();
+    try c.createCatalogTablesIfNotExist(&db);
+
+    const Read = struct {
+        fn view(catalog: *Catalog, arena: std.mem.Allocator, name: []const u8, reads: []const []const u8) !*spec.TableSpec {
+            const view_spec = try testTableSpec(arena, try arena.dupe([]const u8, &.{name}));
+            view_spec.is_view = true;
+            view_spec.source_sql = "SELECT a, b FROM t";
+            const dependencies = try arena.alloc(spec.ViewDependency, reads.len);
+            for (reads, 0..) |read, i| dependencies[i] = .{ .name = read, .fingerprint = catalog.fingerprint(read) };
+            view_spec.dependencies = dependencies;
+            return view_spec;
+        }
+    };
+    // t <- v1 <- v2 <- v3; `other` <- fresh; (other, v2) <- second, stale only through v2.
+    try c.addNewTableSpec(&db, try testTableSpec(alloc, &.{"t"}));
+    try c.addNewTableSpec(&db, try testTableSpec(alloc, &.{"other"}));
+    try c.addNewTableSpec(&db, try Read.view(c, alloc, "v1", &.{"t"}));
+    try c.addNewTableSpec(&db, try Read.view(c, alloc, "v2", &.{"v1"}));
+    try c.addNewTableSpec(&db, try Read.view(c, alloc, "v3", &.{"v2"}));
+    try c.addNewTableSpec(&db, try Read.view(c, alloc, "fresh", &.{"other"}));
+    try c.addNewTableSpec(&db, try Read.view(c, alloc, "second", &.{ "other", "v2" }));
+    try testing.expectEqual(@as(usize, 0), (try c.staleViewNames(alloc)).len);
+
+    const reshaped = try testTableSpec(alloc, &.{"t"});
+    reshaped.columns = reshaped.columns[0..1];
+    try c.addNewTableSpec(&db, reshaped);
+
+    const names = try alloc.dupe([]const u8, try c.staleViewNames(alloc));
+    std.mem.sort([]const u8, names, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lessThan);
+    try testing.expectEqual(@as(usize, 4), names.len);
+    for ([_][]const u8{ "second", "v1", "v2", "v3" }, names) |expected, actual| {
+        try testing.expectEqualStrings(expected, actual);
+    }
 }
 
 test "timestamp formatting" {
