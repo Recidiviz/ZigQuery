@@ -160,5 +160,55 @@
                 .{ false, true },
             },
         },
+        // NOT binds looser than IS, IN, BETWEEN and the comparisons, so a NOT operand of one keeps
+        // its parentheses. Each case picks values where `NOT (n OP ...)` answers the opposite.
+        .{
+            .desc = "not as the operand of is null keeps its grouping",
+            // NOT FALSE is TRUE, which is not NULL.
+            .sql = "SELECT (NOT n) IS NULL FROM (SELECT false AS n)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "not as the operand of in keeps its grouping",
+            // NOT FALSE is TRUE, which is in the list.
+            .sql = "SELECT (NOT n) IN (TRUE, FALSE) FROM (SELECT false AS n)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "not as the operand of between keeps its grouping",
+            // NOT FALSE is TRUE, which is between FALSE and TRUE.
+            .sql = "SELECT (NOT n) BETWEEN FALSE AND TRUE FROM (SELECT false AS n)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "not as the operand of less than keeps its grouping",
+            // NOT FALSE is TRUE, and TRUE < FALSE is FALSE.
+            .sql = "SELECT (NOT n) < m FROM (SELECT false AS n, false AS m)",
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "not as the operand of is distinct from keeps its grouping",
+            // NOT NULL is NULL, which is distinct from TRUE.
+            .sql = "SELECT (NOT n) IS DISTINCT FROM m FROM (SELECT CAST(NULL AS BOOL) AS n, true AS m)",
+            .rows = .{
+                .{true},
+            },
+        },
+        .{
+            .desc = "not as the operand of is not distinct from keeps its grouping",
+            // NOT NULL is NULL, which is distinct from TRUE.
+            .sql = "SELECT (NOT n) IS NOT DISTINCT FROM m FROM (SELECT CAST(NULL AS BOOL) AS n, true AS m)",
+            .rows = .{
+                .{false},
+            },
+        },
     },
 }

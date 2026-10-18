@@ -287,14 +287,24 @@ fn canOptimizeFunction(function: *const types_data.FunctionCallData) bool {
     return true;
 }
 
-/// Parenthesises a binary operand, whose precedence against its parent
+/// Parenthesises a binary or NOT operand, whose precedence against its parent
 /// `BinaryExpression` is otherwise whatever SQLite's grammar assigns: the
 /// builder renders `left OP right` bare, so nesting an OR under an AND reads
-/// back as `a OR (b AND c)`. Every other expression kind self-delimits.
+/// back as `a OR (b AND c)`, and NOT binds looser than IS, IN, BETWEEN and the
+/// comparisons, so `NOT (a) IS NULL` reads back as `NOT ((a) IS NULL)`. A new
+/// expression kind is classified in the switch below.
 ///
 /// A one-element `ListExpression` renders as `(expr)`.
 fn grouped(alloc: std.mem.Allocator, e: *SQLExpression) Error!*SQLExpression {
-    if (e.type != .binary) return e;
+    const self_delimiting = switch (e.type) {
+        // `left OP right` and `NOT (x)` render bare.
+        .binary, .unary => false,
+        // A name, a value, `f(...)`, `(...)`, `CASE ... END`, `EXISTS (...)`, `*`.
+        .column, .literal, .parameter, .function, .list, .subquery, .case, .exists, .star => true,
+        // Renders nothing (SQLExpression.writeSql).
+        .cast => true,
+    };
+    if (self_delimiting) return e;
     const one = try alloc.alloc(*SQLExpression, 1);
     one[0] = e;
     return sqlbuilder.newListExpression(alloc, one);
