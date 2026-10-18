@@ -228,7 +228,6 @@ pub const func_table = [_]FuncInfo{
     .{ .name = "or", .handler = cmp.@"or" },
     .{ .name = "coalesce", .handler = cmp.coalesce },
     .{ .name = "if", .handler = cmp.@"if" },
-    .{ .name = "ifnull", .handler = cmp.ifnull },
     .{ .name = "nullif", .handler = cmp.nullif },
     .{ .name = "length", .handler = str.length },
     // Args 1 and 2 are the from/to type documents, SQL literals that cast()

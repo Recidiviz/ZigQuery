@@ -1,6 +1,6 @@
 //! Port of the comparison / logical / conditional functions
 //! (Go: function.go EQ/NOT_EQ/GT/GTE/LT/LTE/LIKE/BETWEEN/IN/IS_*/NOT/AND/OR/
-//! COALESCE/IF/IFNULL/NULLIF/IS_[NOT_]DISTINCT_FROM plus their bind* wrappers).
+//! COALESCE/IF/NULLIF/IS_[NOT_]DISTINCT_FROM plus their bind* wrappers).
 // ephor:ignore-file ZA209
 
 const std = @import("std");
@@ -209,7 +209,7 @@ pub fn @"or"(alloc: std.mem.Allocator, args: []const Value) Error!Value {
 }
 
 // ---------------------------------------------------------------------
-// COALESCE / IF / IFNULL / NULLIF
+// COALESCE / IF / NULLIF
 // ---------------------------------------------------------------------
 
 pub fn coalesce(alloc: std.mem.Allocator, args: []const Value) Error!Value {
@@ -230,14 +230,6 @@ pub fn @"if"(alloc: std.mem.Allocator, args: []const Value) Error!Value {
         return bind.fail("IF: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
     if (args[0] == .null) return args[2];
     return if (try args[0].toBool()) args[1] else args[2];
-}
-
-pub fn ifnull(alloc: std.mem.Allocator, args: []const Value) Error!Value {
-    _ = alloc;
-    if (args.len != 2)
-        return bind.fail("IFNULL: invalid argument num {d}", .{args.len}, error.UnsupportedOperation);
-    if (args[0] == .null) return args[1];
-    return args[0];
 }
 
 pub fn nullif(alloc: std.mem.Allocator, args: []const Value) Error!Value {

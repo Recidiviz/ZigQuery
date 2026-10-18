@@ -3,7 +3,7 @@
 //! - arguments transform recursively through the coordinator
 //! - a CURRENT_* call takes a literal instant only when one was supplied; otherwise the UDF
 //!   reads the clock when it runs
-//! - `zigquery_ifnull`, `zigquery_if` and `zigquery_case_*` become CASE expression objects
+//! - `zigquery_if` and `zigquery_case_*` become CASE expression objects
 //! - a windowed call carries its PARTITION BY, ORDER BY and frame
 //! - a comparison or logical function lowers to a native SQL operator where it can
 //!
@@ -59,24 +59,7 @@ pub fn transform(
     }
 
     // Handle special ZetaSQL functions that need transformation.
-    if (std.mem.eql(u8, function.name, "zigquery_ifnull")) {
-        // IFNULL(a, b) => CASE WHEN a IS NULL THEN b ELSE a END
-        if (args.items.len != 2) return error.InvalidAST;
-        const when = try alloc.create(sqlbuilder.WhenClause);
-        when.* = .{
-            // Grouped, or `a AND b IS NULL` reads back as `a AND (b IS NULL)`.
-            .condition = try sqlbuilder.newBinaryExpression(
-                alloc,
-                try grouped(alloc, args.items[0]),
-                "IS",
-                try sqlbuilder.newLiteralExpression(alloc, "NULL"),
-            ),
-            .result = args.items[1],
-        };
-        const whens = try alloc.alloc(*sqlbuilder.WhenClause, 1);
-        whens[0] = when;
-        return sqlbuilder.newCaseExpression(alloc, whens, args.items[0]);
-    } else if (std.mem.eql(u8, function.name, "zigquery_if")) {
+    if (std.mem.eql(u8, function.name, "zigquery_if")) {
         // IF(cond, then, else) => CASE WHEN cond THEN then ELSE else END
         if (args.items.len != 3) return error.InvalidAST;
         const when = try alloc.create(sqlbuilder.WhenClause);
@@ -245,6 +228,8 @@ const Lowering = struct {
         is_null,
         /// `a BETWEEN b AND c`.
         between,
+        /// `OP(a, b, ...)`; a single argument renders as itself.
+        call,
     };
 
     const Operands = enum {
@@ -277,6 +262,10 @@ const lowerings = std.StaticStringMap(Lowering).initComptime(.{
     .{ "zigquery_not", Lowering{ .op = "NOT", .form = .prefix, .min_args = 1, .max_args = 1 } },
     // Lowers over ARRAY and STRUCT too, by the .any operand rule.
     .{ "zigquery_is_null", Lowering{ .op = "IS NULL", .form = .is_null, .min_args = 1, .max_args = 1, .operands = .any } },
+    // Arguments after the first non-NULL one are not evaluated. conditional_expressions.md#coalesce;
+    .{ "zigquery_coalesce", Lowering{ .op = "COALESCE", .form = .call, .min_args = 1, .operands = .any } },
+    // IFNULL is COALESCE's two-argument synonym, conditional_expressions.md#ifnull
+    .{ "zigquery_ifnull", Lowering{ .op = "COALESCE", .form = .call, .min_args = 2, .max_args = 2, .operands = .any } },
 });
 
 /// Whether the call can be lowered: the name maps to an operator, the argument
@@ -382,6 +371,12 @@ fn optimizeFunctionToSQL(
                 l.op,
                 bounds,
             );
+        },
+        .call => {
+            if (args.len == 0) return error.InvalidAST;
+            // SQLite's coalesce() takes two or more arguments.
+            if (args.len == 1) return args[0];
+            return sqlbuilder.newFunctionExpression(alloc, l.op, args);
         },
     }
 }
@@ -500,7 +495,7 @@ fn literalExprData(alloc: std.mem.Allocator, v: types_data.Value) !ExpressionDat
     return .{ .type = .literal, .literal = lit };
 }
 
-test "zigquery_ifnull rewrites to CASE" {
+test "zigquery_ifnull and zigquery_coalesce lower to COALESCE" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -510,13 +505,15 @@ test "zigquery_ifnull rewrites to CASE" {
     const fn_args = try a.alloc(ExpressionData, 2);
     fn_args[0] = try literalExprData(a, .null);
     fn_args[1] = try literalExprData(a, .{ .int = 2 });
-    const data = try types_data.newFunctionCallExpressionData(a, "zigquery_ifnull", fn_args);
+    for ([_][]const u8{ "zigquery_ifnull", "zigquery_coalesce" }) |name| {
+        const data = try types_data.newFunctionCallExpressionData(a, name, fn_args);
+        const expr = try transform(&coord, data, ctx);
+        try testing.expectEqualStrings("COALESCE(null, 2)", try expr.toString(a));
+    }
 
+    const data = try types_data.newFunctionCallExpressionData(a, "zigquery_coalesce", fn_args[1..]);
     const expr = try transform(&coord, data, ctx);
-    try testing.expectEqualStrings(
-        "CASE WHEN null IS NULL THEN 2 ELSE null END",
-        try expr.toString(a),
-    );
+    try testing.expectEqualStrings("2", try expr.toString(a));
 }
 
 test "zigquery_if and case rewrites" {
