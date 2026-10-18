@@ -628,7 +628,10 @@ pub const Db = struct {
                 if (opts.catalog_scope == .none) return db.errorAfterRefresh(err);
                 var arena_state = std.heap.ArenaAllocator.init(db.gpa);
                 defer arena_state.deinit();
-                const has_refreshed = db.refreshViewsForRetry(arena_state.allocator(), null) catch |refresh_err|
+                const has_refreshed = db.refreshViewsForRetry(
+                    arena_state.allocator(),
+                    null,
+                ) catch |refresh_err|
                     return db.errorAfterRefresh(refresh_err);
                 if (!has_refreshed) return db.errorAfterRefresh(err);
                 return db.prepareOnce(sql, opts) catch |retry_err| db.errorAfterRefresh(retry_err);
@@ -1140,7 +1143,10 @@ pub const Db = struct {
         try db.rawExec("ROLLBACK", &.{});
         var g = db.lockCatalog();
         defer g.unlock();
-        g.catalog.resyncTableSpecs(&db.sqlite_db, g.catalog.written_table_names.items[start..]) catch |err|
+        g.catalog.resyncTableSpecs(
+            &db.sqlite_db,
+            g.catalog.written_table_names.items[start..],
+        ) catch |err|
             return db.failCatalog(err);
     }
 
@@ -1611,13 +1617,25 @@ pub const Db = struct {
         mode: Mode,
     ) Error!StatementRun {
         var diagnostics: StatementDiagnostics = .{};
-        return db.runStatement(arena, sqlz, cursor, opts, options_json, decls, mode, &diagnostics) catch |err|
+        return db.runStatement(
+            arena,
+            sqlz,
+            cursor,
+            opts,
+            options_json,
+            decls,
+            mode,
+            &diagnostics,
+        ) catch |err|
             switch (err) {
                 error.StaleViews, error.AnalyzeFailed => {
                     if (opts.catalog_scope == .none) return db.errorAfterRefresh(err);
-                    const stale_views = if (err == error.StaleViews) diagnostics.stale_views else null;
-                    const has_refreshed = db.refreshViewsForRetry(arena, stale_views) catch |refresh_err|
+                    const has_refreshed = db.refreshViewsForRetry(
+                        arena,
+                        if (err == error.StaleViews) diagnostics.stale_views else null,
+                    ) catch |refresh_err|
                         return db.errorAfterRefresh(refresh_err);
+
                     if (!has_refreshed) return db.errorAfterRefresh(err);
                     var retry_diagnostics: StatementDiagnostics = .{};
                     return db.runStatement(
@@ -2372,8 +2390,7 @@ pub const Db = struct {
         /// What the query reads, each with its shape now.
         dependencies: []const spec.ViewDependency,
 
-        /// Analyzes nothing; transforms an analyzed CREATE VIEW and reads off its columns and what it
-        /// reads.
+        /// Transforms an analyzed CREATE VIEW into a ViewDefinition
         fn buildFromProto(
             db: *Db,
             statement: AnalyzedStatement,
@@ -2567,7 +2584,10 @@ pub const Db = struct {
         refreshed.invalid_reason = "";
         refreshed.dependencies = definition.dependencies;
         refreshed.analysis_columns = definition.columns;
-        const analyzed_fingerprint = catalog_mod.columnsFingerprint(arena, definition.columns) catch |err|
+        const analyzed_fingerprint = catalog_mod.columnsFingerprint(
+            arena,
+            definition.columns,
+        ) catch |err|
             switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.InvalidSpec => return error.TransformFailed,
@@ -3131,7 +3151,10 @@ fn transformStatementFragment(
     }
 
     var coordinator = coordinator_mod.QueryCoordinator.init(arena);
-    const fragment = coordinator.transformStatementNode(statement.node, ctx) catch |err| switch (err) {
+    const fragment = coordinator.transformStatementNode(
+        statement.node,
+        ctx,
+    ) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Unimplemented => return error.Unimplemented,
         error.UnsupportedFunction => {
@@ -3657,13 +3680,22 @@ pub fn translateOn(
     var offset: usize = 0;
     while (true) {
         var diagnostics: Db.StatementDiagnostics = .{};
-        const translated = translateStatementOn(db, arena, sqlz, offset, opts, &diagnostics) catch |err|
+        const translated = translateStatementOn(
+            db,
+            arena,
+            sqlz,
+            offset,
+            opts,
+            &diagnostics,
+        ) catch |err|
             switch (err) {
                 // As `runStatementRefreshingViews` does: refresh the views and translate once more.
                 error.StaleViews, error.AnalyzeFailed => retry: {
                     if (opts.catalog_scope == .none) return db.errorAfterRefresh(err);
-                    const stale_views = if (err == error.StaleViews) diagnostics.stale_views else null;
-                    const has_refreshed = db.refreshViewsForRetry(arena, stale_views) catch |refresh_err|
+                    const has_refreshed = db.refreshViewsForRetry(
+                        arena,
+                        if (err == error.StaleViews) diagnostics.stale_views else null,
+                    ) catch |refresh_err|
                         return db.errorAfterRefresh(refresh_err);
                     if (!has_refreshed) return db.errorAfterRefresh(err);
                     var retry_diagnostics: Db.StatementDiagnostics = .{};
@@ -3762,7 +3794,7 @@ fn queryStmtOf(node: *const pb.AnyResolvedNodeProto) ?*const pb.ResolvedQueryStm
     }
 }
 
-/// Output column specs — name plus resolved type — from a query's or a view's output column list.
+/// `OutputColumn` specs from a query's or a view's output column list
 fn outputColumns(
     arena: std.mem.Allocator,
     output_column_list: []const *pb.ResolvedOutputColumnProto,

@@ -621,7 +621,16 @@ pub const Catalog = struct {
             const table_spec = maybe orelse continue;
             if (!isRefreshableView(table_spec)) continue;
             const name = try table_spec.tableName(alloc);
-            if (try c.isStale(alloc, &is_stale_by_name, name, table_spec)) try names.append(alloc, name);
+            const is_stale = try c.isStale(
+                alloc,
+                &is_stale_by_name,
+                name,
+                table_spec,
+            );
+
+            if (is_stale) {
+                try names.append(alloc, name);
+            }
         }
         return names.items;
     }
