@@ -4294,6 +4294,37 @@ test "a view made by DDL reports the query it was written with" {
     );
 }
 
+test "a view with a column list reports the listed names and descriptions" {
+    // recidiviz-bigquery-sandbox, 2026-10-19: tables.get reports the listed names, each listed
+    // description, and view.query without the list.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "base");
+    const ddl = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE VIEW `test.ds1.v` (who OPTIONS(description='the name'), years) AS SELECT name, age FROM `test.ds1.base`"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ddl.status);
+
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/v", "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got.body,
+        \\"schema":{"fields":[{"description":"the name","name":"who","type":"STRING"},{"name":"years","type":"INTEGER"}]}
+        ,
+    ) != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got.body,
+        \\"view":{"query":"SELECT name, age FROM `test.ds1.base`","useLegacySql":false}
+        ,
+    ) != null);
+}
+
 test "nested modes and field descriptions come back exactly as posted" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();

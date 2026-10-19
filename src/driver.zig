@@ -2386,7 +2386,7 @@ pub const Db = struct {
     const ViewDefinition = struct {
         /// The CREATE VIEW the transformer produced, its view named as written.
         statement: *const sqlbuilder.CreateViewStatement,
-        /// The query's output columns.
+        /// The view's columns: the query's output columns, names, and options
         columns: []const *spec.ColumnSpec,
         /// What the query reads, each with its shape now.
         dependencies: []const spec.ViewDependency,
@@ -2403,12 +2403,10 @@ pub const Db = struct {
                 .create_view_statement => |c| c,
                 else => return error.TransformFailed,
             };
-            const output_columns = try outputColumns(arena, base.output_column_list);
-            const columns = try arena.alloc(*spec.ColumnSpec, output_columns.len);
-            for (output_columns, columns) |output_column, *column| {
-                column.* = try arena.create(spec.ColumnSpec);
-                column.*.* = .{ .name = output_column.name, .type = output_column.type };
-            }
+            const columns = if (base.has_explicit_columns orelse false)
+                try columnSpecsFromDefs(arena, base.column_definition_list)
+            else
+                try queryColumns(arena, base.output_column_list);
             const dependencies = blk: {
                 var g = db.lockCatalog();
                 defer g.unlock();
@@ -2422,6 +2420,19 @@ pub const Db = struct {
             };
         }
     };
+
+    fn queryColumns(
+        arena: std.mem.Allocator,
+        list: []const *pb.ResolvedOutputColumnProto,
+    ) Error![]const *spec.ColumnSpec {
+        const output_columns = try outputColumns(arena, list);
+        const columns = try arena.alloc(*spec.ColumnSpec, output_columns.len);
+        for (output_columns, columns) |output_column, *column| {
+            column.* = try arena.create(spec.ColumnSpec);
+            column.*.* = .{ .name = output_column.name, .type = output_column.type };
+        }
+        return columns;
+    }
 
     /// Creates the SQLite view `name` runs as, replacing any view of that name first.
     fn installSqliteView(
@@ -2469,7 +2480,8 @@ pub const Db = struct {
         else
             try db.qualifyPath(arena, create.name_path);
         const create_mode = create.create_mode orelse .CREATE_DEFAULT;
-        // IF NOT EXISTS over an existing view leaves its definition, SQLite view and schema as they are.
+
+        // IF NOT EXISTS over an existing view no-ops
         if (create_mode == .CREATE_IF_NOT_EXISTS and
             db.tableSpecExists(try spec.formatPath(arena, name_path)))
         {
@@ -2493,6 +2505,7 @@ pub const Db = struct {
             .options = try optionSpecsFrom(arena, base.option_list),
             .description = try stringOption(arena, base.option_list, "description"),
             .source_sql = base.sql orelse "",
+            .explicit_columns = base.has_explicit_columns orelse false,
             .dependencies = definition.dependencies,
         };
         if (!is_temp) try db.requireDataset(arena, table_spec.name_path);
@@ -2554,10 +2567,7 @@ pub const Db = struct {
     /// Re-runs `view`'s CREATE VIEW against the catalog as it stands, replacing its SQLite view and
     /// its analyzed columns. Its reported schema, options and timestamps stay as created.
     fn reanalyzeView(db: *Db, arena: std.mem.Allocator, view: *const spec.TableSpec) Error!void {
-        const sql = try std.fmt.allocPrintSentinel(arena, "CREATE OR REPLACE VIEW `{s}` AS {s}", .{
-            try std.mem.join(arena, ".", view.name_path),
-            view.source_sql,
-        }, 0);
+        const sql = try refreshStatementSql(arena, view);
         // As in BigQuery, a view never sees the TEMP tables of the script that reads it.
         const analyzed = if (db.temps.tableCount() == 0)
             try db.analyzeOne(arena, sql, 0, .{}, "{}", null)
@@ -3210,6 +3220,39 @@ fn createViewBaseOf(node: *const pb.AnyResolvedNodeProto) ?*const pb.ResolvedCre
     };
 }
 
+/// `CREATE OR REPLACE VIEW` for a view's refresh: its query as the client wrote it, under the
+/// column names it listed, if it listed any.
+fn refreshStatementSql(arena: std.mem.Allocator, view: *const spec.TableSpec) Error![:0]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.print(arena, "CREATE OR REPLACE VIEW `{s}` ", .{
+        try std.mem.join(arena, ".", view.name_path),
+    });
+    if (view.explicit_columns) {
+        try out.append(arena, '(');
+        for (view.columns, 0..) |column, i| {
+            if (i > 0) try out.appendSlice(arena, ", ");
+            try appendQuotedIdentifier(arena, &out, column.name);
+        }
+        try out.appendSlice(arena, ") ");
+    }
+    try out.print(arena, "AS {s}", .{view.source_sql});
+    return out.toOwnedSliceSentinel(arena, 0);
+}
+
+/// A GoogleSQL quoted identifier: backticks, with `\` and `` ` `` escaped.
+fn appendQuotedIdentifier(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    name: []const u8,
+) error{OutOfMemory}!void {
+    try out.append(arena, '`');
+    for (name) |c| {
+        if (c == '`' or c == '\\') try out.append(arena, '\\');
+        try out.append(arena, c);
+    }
+    try out.append(arena, '`');
+}
+
 /// What BigQuery tells a query that reads `view` when the view's query no longer analyzes, given
 /// the analyzer's `message` from re-analyzing it.
 fn bigQueryViewError(
@@ -3226,6 +3269,7 @@ fn bigQueryViewError(
     if (std.mem.indexOf(u8, without_position, view_parse_error_marker) != null) {
         return arena.dupe(u8, without_position);
     }
+    if (try columnCountError(arena, view, without_position)) |reworded| return reworded;
     const table_not_found = "Table not found: ";
     if (std.mem.startsWith(u8, without_position, table_not_found)) {
         const written = std.mem.trim(u8, without_position[table_not_found.len..], "`");
@@ -3241,17 +3285,41 @@ fn bigQueryViewError(
             );
         }
     }
-    // BigQuery names the view by dataset and name. A view with no dataset, as an engine test
-    // creates without a default project, goes by its name alone.
-    const path = view.name_path;
-    const view_name = if (path.len < 2)
-        path[path.len - 1]
-    else
-        try std.fmt.allocPrint(arena, "{s}.{s}", .{ path[path.len - 2], path[path.len - 1] });
     return std.fmt.allocPrint(
         arena,
         "{s}; " ++ view_parse_error_marker ++ " '{s}'",
-        .{ without_position, view_name },
+        .{ without_position, try viewErrorName(arena, view) },
+    );
+}
+
+/// BigQuery names a view in its errors by dataset and name. A view with no dataset, as an engine
+/// test creates without a default project, goes by its name alone.
+fn viewErrorName(
+    arena: std.mem.Allocator,
+    view: *const spec.TableSpec,
+) error{OutOfMemory}![]const u8 {
+    const path = view.name_path;
+    if (path.len < 2) return path[path.len - 1];
+    return std.fmt.allocPrint(arena, "{s}.{s}", .{ path[path.len - 2], path[path.len - 1] });
+}
+
+/// A view whose column list no longer has as many names as its query has columns.
+fn columnCountError(
+    arena: std.mem.Allocator,
+    view: *const spec.TableSpec,
+    message: []const u8,
+) error{OutOfMemory}!?[]const u8 {
+    const prefix = "The number of view column names (";
+    const middle = ") must be equal to the number of columns from the view query (";
+    if (!std.mem.startsWith(u8, message, prefix) or !std.mem.endsWith(u8, message, ")")) {
+        return null;
+    }
+    const counts = message[prefix.len .. message.len - 1];
+    const at = std.mem.indexOf(u8, counts, middle) orelse return null;
+    return try std.fmt.allocPrint(
+        arena,
+        "Invalid view definition for {s} with {s} columns vs. {s} columns from view query",
+        .{ try viewErrorName(arena, view), counts[0..at], counts[at + middle.len ..] },
     );
 }
 
@@ -4874,9 +4942,54 @@ test "a default project qualifies two-part DDL names" {
     try db.exec("CREATE TEMP TABLE scratch (a INT64); DROP TABLE scratch; SELECT 1", &.{}, .{});
 }
 
-// TODO(#79): Support view column lists. A refresh rebuilds the view from `source_sql`, which
-// holds only the query, so `reanalyzeView` must keep the list or a refreshed view loses its names.
-test "CREATE VIEW with a column list is rejected until the analyzer supports it" {
+// The expectations in the view column list tests were measured in recidiviz-bigquery-sandbox on
+// 2026-10-19.
+
+test "a view with a column list reads by the listed names" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v (x, y) AS SELECT a, b FROM d.t", &.{}, .{});
+
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqualStrings("x", v.columns[0].name);
+    try testing.expectEqualStrings("y", v.columns[1].name);
+    // The metadata API's view.query is the query alone.
+    try testing.expectEqualStrings("SELECT a, b FROM d.t", v.source_sql);
+
+    var rows = try db.query("SELECT x, y FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 1), row[0].int);
+    try testing.expectEqual(@as(i64, 2), row[1].int);
+}
+
+test "a view's column list carries each column's description" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec(
+        "CREATE VIEW d.v (x OPTIONS(description='dx'), y) AS SELECT a, b FROM d.t",
+        &.{},
+        .{},
+    );
+
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqualStrings("dx", v.columns[0].description);
+    try testing.expectEqualStrings("", v.columns[1].description);
+}
+
+test "a view column list must name every column of the query once" {
     var db = try Db.open(testing.allocator, ":memory:");
     defer db.close();
     db.default_project = "p";
@@ -4884,13 +4997,64 @@ test "CREATE VIEW with a column list is rejected until the analyzer supports it"
     try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
     try testing.expectError(
         error.AnalyzeFailed,
-        db.exec("CREATE VIEW d.v (x, y) AS SELECT a, b FROM d.t", &.{}, .{}),
+        db.exec("CREATE VIEW d.v (x) AS SELECT a, b FROM d.t", &.{}, .{}),
     );
     try testing.expect(std.mem.startsWith(
         u8,
         db.lastError(),
-        "CREATE VIEW with explicit column list is not supported",
+        "The number of view column names (1) must be equal to the number of columns from the " ++
+            "view query (2)",
     ));
+    try testing.expectError(
+        error.AnalyzeFailed,
+        db.exec("CREATE VIEW d.v (x, X) AS SELECT a, b FROM d.t", &.{}, .{}),
+    );
+    try testing.expect(std.mem.startsWith(
+        u8,
+        db.lastError(),
+        "CREATE VIEW has columns with duplicate name X",
+    ));
+}
+
+test "a view's column list survives a refresh after its table's column type changes" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v (x, y) AS SELECT a, b FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'one' AS a, 2 AS b", &.{}, .{});
+    {
+        var rows = try db.query("SELECT x, y FROM `p.d.v`", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqualStrings("one", row[0].string);
+        try testing.expectEqual(@as(i64, 2), row[1].int);
+    }
+
+    // The metadata keeps the names and types the view was created with.
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqualStrings("x", v.columns[0].name);
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, v.columns[0].type.typeKind());
+}
+
+test "a view whose column list no longer matches its query's columns is invalid" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v (x, y) AS SELECT * FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'one' AS a, 2 AS b, 3 AS c", &.{}, .{});
+
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT x, y FROM `p.d.v`", &.{}, .{}));
+    try testing.expectEqualStrings(
+        "Invalid view definition for d.v with 2 columns vs. 3 columns from view query",
+        db.lastError(),
+    );
 }
 
 test "translateOn translates a statement over a view whose table changed, as query would run it" {

@@ -43,8 +43,7 @@
 #include "googlesql/resolved_ast/resolved_ast.pb.h"
 
 namespace {
-
-constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
+  constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     googlesql::FEATURE_ANALYTIC_FUNCTIONS,
     googlesql::FEATURE_NAMED_ARGUMENTS,
     googlesql::FEATURE_NUMERIC_TYPE,
@@ -54,6 +53,10 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     googlesql::FEATURE_CREATE_TABLE_FIELD_ANNOTATIONS,
     // Column definition list on CREATE TABLE AS SELECT (data-definition-language.md#create_table).
     googlesql::FEATURE_CREATE_TABLE_AS_SELECT_COLUMN_LIST,
+    // Column name list on CREATE VIEW (data-definition-language.md#create_view).
+    googlesql::FEATURE_CREATE_VIEW_WITH_COLUMN_LIST,
+    // Per-column OPTIONS on CREATE VIEW (data-definition-language.md#create_view).
+    googlesql::FEATURE_CREATE_VIEWS_WITH_COLUMN_OPTIONS,
     // `PRIMARY KEY ... NOT ENFORCED`, which is the only form BigQuery accepts:
     // there a primary key is optimizer metadata (join elimination), never a
     // uniqueness guarantee. Without this the analyzer rejects the syntax
@@ -229,43 +232,43 @@ constexpr googlesql::LanguageFeature kEnabledFeatures[] = {
     // EDIT_DISTANCE('abc', b'abc') is "Unable to coerce type BYTES to expected
     // type STRING". Checked with the bq CLI, 2026-08-04.
     googlesql::FEATURE_ENABLE_EDIT_DISTANCE_BYTES,
-};
+  };
 
-// Deliberately absent, because BigQuery does not have them. Each was enabled,
-// measured, and reverted; the engine emulates BigQuery, and accepting a query
-// production would refuse is the one failure direction an emulator must not
-// have — you would get a green local run and a broken deploy.
-//
-// Checked against real BigQuery (bq CLI, 2026-08-04), which answers:
-//
-//   FEATURE_ARRAY_ZIP               "Function not found: ARRAY_ZIP"
-//   FEATURE_INLINE_LAMBDA_ARGUMENT  "Function not found: ARRAY_TRANSFORM"
-//                                   "Function not found: ARRAY_FILTER"
-//   FEATURE_PIPE_IF                 "Pipe IF not supported"
-//   FEATURE_ORDER_BY_COLLATE        "COLLATE is not supported"
-//
-// The first three work here when enabled — ARRAY_ZIP resolves through the
-// rewriter with correct PAD/TRUNCATE/STRICT modes and field naming, and lambdas
-// inline — so those are scope decisions, not gaps. The spec corpus keeps the
-// cases and asserts the refusal (`.expect_error`), so the day BigQuery grows any
-// of them the fixture says so rather than going quiet.
-//
-// FEATURE_ORDER_BY_COLLATE is a different animal, and the reason it was removed
-// rather than never added: it was inherited from go-zetasqlite's feature list
-// and it did not merely widen what we accept, it made us answer wrongly.
-// `ORDER BY x COLLATE 'und:ci'` parsed, and then the collation was dropped on
-// the floor and the rows came back in raw memcomparable byte order —
-// ['a','Z','b'] sorted to Z,a,b where BigQuery refuses the syntax outright. No
-// spec case and no corpus case used it, which is precisely why nothing caught
-// it. COLLATE() the *function* is unaffected: BigQuery has it, this engine does
-// not answer it, and it stays in the ledger as a gap (see
-// docs/SPEC_UNSUPPORTED.md).
-//
-// FEATURE_PIPES and FEATURE_TYPEOF_FUNCTION above were checked the same way and
-// *are* in BigQuery, which is why they stayed.
+  // Deliberately absent, because BigQuery does not have them. Each was enabled,
+  // measured, and reverted; the engine emulates BigQuery, and accepting a query
+  // production would refuse is the one failure direction an emulator must not
+  // have — you would get a green local run and a broken deploy.
+  //
+  // Checked against real BigQuery (bq CLI, 2026-08-04), which answers:
+  //
+  //   FEATURE_ARRAY_ZIP               "Function not found: ARRAY_ZIP"
+  //   FEATURE_INLINE_LAMBDA_ARGUMENT  "Function not found: ARRAY_TRANSFORM"
+  //                                   "Function not found: ARRAY_FILTER"
+  //   FEATURE_PIPE_IF                 "Pipe IF not supported"
+  //   FEATURE_ORDER_BY_COLLATE        "COLLATE is not supported"
+  //
+  // The first three work here when enabled — ARRAY_ZIP resolves through the
+  // rewriter with correct PAD/TRUNCATE/STRICT modes and field naming, and lambdas
+  // inline — so those are scope decisions, not gaps. The spec corpus keeps the
+  // cases and asserts the refusal (`.expect_error`), so the day BigQuery grows any
+  // of them the fixture says so rather than going quiet.
+  //
+  // FEATURE_ORDER_BY_COLLATE is a different animal, and the reason it was removed
+  // rather than never added: it was inherited from go-zetasqlite's feature list
+  // and it did not merely widen what we accept, it made us answer wrongly.
+  // `ORDER BY x COLLATE 'und:ci'` parsed, and then the collation was dropped on
+  // the floor and the rows came back in raw memcomparable byte order —
+  // ['a','Z','b'] sorted to Z,a,b where BigQuery refuses the syntax outright. No
+  // spec case and no corpus case used it, which is precisely why nothing caught
+  // it. COLLATE() the *function* is unaffected: BigQuery has it, this engine does
+  // not answer it, and it stays in the ledger as a gap (see
+  // docs/SPEC_UNSUPPORTED.md).
+  //
+  // FEATURE_PIPES and FEATURE_TYPEOF_FUNCTION above were checked the same way and
+  // *are* in BigQuery, which is why they stayed.
 
-// Ported verbatim from internal/analyzer.go `supportedStatementKinds`.
-const std::set<googlesql::ResolvedNodeKind> kSupportedStatementKinds = {
+  // Ported verbatim from internal/analyzer.go `supportedStatementKinds`.
+  const std::set<googlesql::ResolvedNodeKind> kSupportedStatementKinds = {
     googlesql::RESOLVED_BEGIN_STMT,
     googlesql::RESOLVED_COMMIT_STMT,
     googlesql::RESOLVED_MERGE_STMT,
@@ -284,47 +287,45 @@ const std::set<googlesql::ResolvedNodeKind> kSupportedStatementKinds = {
     googlesql::RESOLVED_DROP_FUNCTION_STMT,
     googlesql::RESOLVED_DROP_ROW_ACCESS_POLICY_STMT,
     googlesql::RESOLVED_CREATE_ROW_ACCESS_POLICY_STMT,
-};
+  };
 
-absl::Status BuildLanguageOptions(googlesql::LanguageOptions* lang) {
-  lang->set_name_resolution_mode(googlesql::NAME_RESOLUTION_DEFAULT);
-  lang->set_product_mode(googlesql::PRODUCT_INTERNAL);
-  for (googlesql::LanguageFeature f : kEnabledFeatures) {
-    lang->EnableLanguageFeature(f);
+  absl::Status BuildLanguageOptions(googlesql::LanguageOptions *lang) {
+    lang->set_name_resolution_mode(googlesql::NAME_RESOLUTION_DEFAULT);
+    lang->set_product_mode(googlesql::PRODUCT_INTERNAL);
+    for (googlesql::LanguageFeature f: kEnabledFeatures) {
+      lang->EnableLanguageFeature(f);
+    }
+    lang->SetSupportedStatementKinds(kSupportedStatementKinds);
+    // Enable QUALIFY without WHERE. https://github.com/google/zetasql/issues/124
+    return lang->EnableReservableKeyword("QUALIFY", /*reserved=*/true);
   }
-  lang->SetSupportedStatementKinds(kSupportedStatementKinds);
-  // Enable QUALIFY without WHERE. https://github.com/google/zetasql/issues/124
-  return lang->EnableReservableKeyword("QUALIFY", /*reserved=*/true);
-}
 
-// BigQuery's INT64 aliases. data-types.md#integer_types
-//
-// SimpleCatalog::FindType consults these named types before the simple-type
-// name table, which spells only INT64. Registered once per freshly built catalog.
-// AddType raises on a duplicate name.
-void AddBigQueryTypeAliases(googlesql::SimpleCatalog* catalog) {
-  for (const char* name :
-       {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"}) {
-    catalog->AddType(name, googlesql::types::Int64Type());
+  // BigQuery's INT64 aliases. data-types.md#integer_types
+  //
+  // SimpleCatalog::FindType consults these named types before the simple-type
+  // name table, which spells only INT64. Registered once per freshly built catalog.
+  // AddType raises on a duplicate name.
+  void AddBigQueryTypeAliases(googlesql::SimpleCatalog *catalog) {
+    for (const char *name:
+         {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"}) {
+      catalog->AddType(name, googlesql::types::Int64Type());
+    }
   }
-}
 
-// Copies `payload` into a malloc'd NUL-terminated buffer.
-uint8_t* CopyToMalloc(const std::string& payload) {
-  auto* buf = static_cast<uint8_t*>(std::malloc(payload.size() + 1));
-  std::memcpy(buf, payload.data(), payload.size());
-  buf[payload.size()] = '\0';
-  return buf;
-}
+  // Copies `payload` into a malloc'd NUL-terminated buffer.
+  uint8_t *CopyToMalloc(const std::string &payload) {
+    auto *buf = static_cast<uint8_t *>(std::malloc(payload.size() + 1));
+    std::memcpy(buf, payload.data(), payload.size());
+    buf[payload.size()] = '\0';
+    return buf;
+  }
 
-char* ErrorToMalloc(const absl::Status& status) {
-  return reinterpret_cast<char*>(CopyToMalloc(std::string(status.message())));
-}
-
-}  // namespace
+  char *ErrorToMalloc(const absl::Status &status) {
+    return reinterpret_cast<char *>(CopyToMalloc(std::string(status.message())));
+  }
+} // namespace
 
 extern "C" {
-
 // ---------------------------------------------------------------------------
 // Persistent catalog handle.
 //
@@ -344,173 +345,171 @@ extern "C" {
 // ---------------------------------------------------------------------------
 
 namespace {
+  struct CatalogHandle {
+    googlesql::LanguageOptions lang;
+    googlesql::TypeFactory type_factory;
+    std::unique_ptr<googlesql::SimpleCatalog> catalog;
+    // Query-parameter type text -> resolved type, cached for this connection.
+    // Saves a type-grammar parse per statement, and bounds the TypeFactory:
+    // it interns array types but allocates a fresh StructType on every
+    // MakeStructType, so a connection re-declaring the same struct parameter
+    // would otherwise accumulate one per statement for its whole lifetime.
+    std::map<std::string, const googlesql::Type *> declared_types;
+  };
 
-struct CatalogHandle {
-  googlesql::LanguageOptions lang;
-  googlesql::TypeFactory type_factory;
-  std::unique_ptr<googlesql::SimpleCatalog> catalog;
-  // Query-parameter type text -> resolved type, cached for this connection.
-  // Saves a type-grammar parse per statement, and bounds the TypeFactory:
-  // it interns array types but allocates a fresh StructType on every
-  // MakeStructType, so a connection re-declaring the same struct parameter
-  // would otherwise accumulate one per statement for its whole lifetime.
-  std::map<std::string, const googlesql::Type*> declared_types;
-};
+  // Declares query-parameter types on `options` from the parallel arrays the
+  // caller passed across the FFI. `names[i]` is null for a positional entry;
+  // `types[i]` is GoogleSQL type text ("STRING", "ARRAY<STRING>").
+  //
+  // Best-effort by design: a type text this build cannot resolve is left to the
+  // analyzer's own inference rather than failing the query. Inference is what
+  // every parameter got before declarations existed, so a client naming a type
+  // we do not model is never worse off than one naming none.
+  //
+  // `memo` may be null (the stateless entry point owns a local TypeFactory, so
+  // there is nothing to cache across).
+  void DeclareQueryParameters(
+    googlesql::AnalyzerOptions *options, const googlesql::LanguageOptions &lang,
+    googlesql::Catalog *catalog, googlesql::TypeFactory *type_factory,
+    const char *const*names, const char *const*types, size_t count,
+    std::map<std::string, const googlesql::Type *> *memo) {
+    if (count == 0 || types == nullptr) return;
 
-// Declares query-parameter types on `options` from the parallel arrays the
-// caller passed across the FFI. `names[i]` is null for a positional entry;
-// `types[i]` is GoogleSQL type text ("STRING", "ARRAY<STRING>").
-//
-// Best-effort by design: a type text this build cannot resolve is left to the
-// analyzer's own inference rather than failing the query. Inference is what
-// every parameter got before declarations existed, so a client naming a type
-// we do not model is never worse off than one naming none.
-//
-// `memo` may be null (the stateless entry point owns a local TypeFactory, so
-// there is nothing to cache across).
-void DeclareQueryParameters(
-    googlesql::AnalyzerOptions* options, const googlesql::LanguageOptions& lang,
-    googlesql::Catalog* catalog, googlesql::TypeFactory* type_factory,
-    const char* const* names, const char* const* types, size_t count,
-    std::map<std::string, const googlesql::Type*>* memo) {
-  if (count == 0 || types == nullptr) return;
+    // Resolve against a pristine options object: AnalyzeType validates the
+    // options it is handed, and `options` is mid-mutation here.
+    const googlesql::AnalyzerOptions type_options(lang);
 
-  // Resolve against a pristine options object: AnalyzeType validates the
-  // options it is handed, and `options` is mid-mutation here.
-  const googlesql::AnalyzerOptions type_options(lang);
+    std::vector<const googlesql::Type *> resolved(count, nullptr);
+    size_t resolved_count = 0;
+    for (size_t i = 0; i < count; ++i) {
+      if (types[i] == nullptr || types[i][0] == '\0') continue;
+      const std::string text(types[i]);
 
-  std::vector<const googlesql::Type*> resolved(count, nullptr);
-  size_t resolved_count = 0;
-  for (size_t i = 0; i < count; ++i) {
-    if (types[i] == nullptr || types[i][0] == '\0') continue;
-    const std::string text(types[i]);
+      if (memo != nullptr) {
+        auto it = memo->find(text);
+        if (it != memo->end()) {
+          resolved[i] = it->second;
+          ++resolved_count;
+          continue;
+        }
+      }
 
-    if (memo != nullptr) {
-      auto it = memo->find(text);
-      if (it != memo->end()) {
-        resolved[i] = it->second;
-        ++resolved_count;
+      const googlesql::Type *type = nullptr;
+      if (!googlesql::AnalyzeType(text, type_options, catalog, type_factory,
+                                  &type)
+          .ok() ||
+          type == nullptr || !type->IsSupportedType(lang)) {
         continue;
       }
+      if (memo != nullptr) (*memo)[text] = type;
+      resolved[i] = type;
+      ++resolved_count;
     }
+    if (resolved_count == 0) return;
 
-    const googlesql::Type* type = nullptr;
-    if (!googlesql::AnalyzeType(text, type_options, catalog, type_factory,
-                                &type)
-             .ok() ||
-        type == nullptr || !type->IsSupportedType(lang)) {
-      continue;
-    }
-    if (memo != nullptr) (*memo)[text] = type;
-    resolved[i] = type;
-    ++resolved_count;
-  }
-  if (resolved_count == 0) return;
-
-  if (options->parameter_mode() == googlesql::PARAMETER_POSITIONAL) {
-    // All or nothing. Declaring even one positional type means turning
-    // undeclared inference off for the whole statement — AnalyzerOptions
-    // rejects the two together — which would then reject every `?` left
-    // undeclared. Partial declaration is strictly worse than none.
-    if (resolved_count != count) return;
-    options->set_allow_undeclared_parameters(false);
-    for (const googlesql::Type* type : resolved) {
-      if (!options->AddPositionalQueryParameter(type).ok()) {
-        // Unreachable: every entry was pre-checked above. Undo rather than
-        // analyze against a half-declared list.
-        options->clear_positional_query_parameters();
-        options->set_allow_undeclared_parameters(true);
-        return;
+    if (options->parameter_mode() == googlesql::PARAMETER_POSITIONAL) {
+      // All or nothing. Declaring even one positional type means turning
+      // undeclared inference off for the whole statement — AnalyzerOptions
+      // rejects the two together — which would then reject every `?` left
+      // undeclared. Partial declaration is strictly worse than none.
+      if (resolved_count != count) return;
+      options->set_allow_undeclared_parameters(false);
+      for (const googlesql::Type *type: resolved) {
+        if (!options->AddPositionalQueryParameter(type).ok()) {
+          // Unreachable: every entry was pre-checked above. Undo rather than
+          // analyze against a half-declared list.
+          options->clear_positional_query_parameters();
+          options->set_allow_undeclared_parameters(true);
+          return;
+        }
       }
+      return;
     }
-    return;
-  }
 
-  // Named mode. Declared types and undeclared inference coexist by design:
-  // the resolver looks a name up in query_parameters() first and only falls
-  // through to an untyped INT64 when it is absent. So a name that failed to
-  // resolve, and any parameter the client did not send at all, behave exactly
-  // as they did before.
-  for (size_t i = 0; i < count; ++i) {
-    if (resolved[i] == nullptr) continue;
-    if (names == nullptr || names[i] == nullptr || names[i][0] == '\0') continue;
-    // Errors only on a duplicate name, where the first declaration wins.
-    // Not worth failing a query over.
-    (void)options->AddQueryParameter(names[i], resolved[i]);
-  }
-}
-
-// Merges `proto`'s tables and sub-catalogs into `into`, recursively.
-// Entries already present are left alone, so re-sending a table is harmless.
-absl::Status MergeCatalogProto(const googlesql::SimpleCatalogProto& proto,
-                               googlesql::SimpleCatalog* into,
-                               googlesql::TypeFactory* type_factory) {
-  const googlesql::TypeDeserializer deserializer(type_factory);
-
-  for (const googlesql::SimpleTableProto& tp : proto.table()) {
-    // A table registered under an alias carries name_in_catalog; that is the
-    // name it resolves under.
-    const std::string& registered =
-        tp.has_name_in_catalog() ? tp.name_in_catalog() : tp.name();
-
-    const googlesql::Table* existing = nullptr;
-    absl::Status lookup = into->GetTable(registered, &existing);
-    if (lookup.ok() && existing != nullptr) continue;
-
-    auto table = googlesql::SimpleTable::Deserialize(tp, deserializer);
-    if (!table.ok()) return table.status();
-    into->AddOwnedTableIfNotPresent(registered, std::move(table).value());
-  }
-
-  // Custom functions (the emulator seeds a few, and CREATE FUNCTION adds
-  // more). Without these the handle would silently lack them.
-  for (const googlesql::FunctionProto& fp : proto.custom_function()) {
-    const std::string registered =
-        fp.name_path_size() > 0 ? fp.name_path(fp.name_path_size() - 1) : "";
-    if (registered.empty()) continue;
-
-    const googlesql::Function* existing = nullptr;
-    absl::Status lookup = into->GetFunction(registered, &existing);
-    if (lookup.ok() && existing != nullptr) continue;
-
-    auto fn = googlesql::Function::Deserialize(fp, deserializer);
-    if (!fn.ok()) return fn.status();
-    into->AddOwnedFunction(registered, std::move(fn).value());
-  }
-
-  for (const googlesql::SimpleCatalogProto& cp : proto.catalog()) {
-    googlesql::Catalog* found = nullptr;
-    absl::Status lookup = into->GetCatalog(cp.name(), &found);
-    googlesql::SimpleCatalog* sub = nullptr;
-    if (lookup.ok() && found != nullptr) {
-      sub = static_cast<googlesql::SimpleCatalog*>(found);
-    } else {
-      sub = into->MakeOwnedSimpleCatalog(cp.name());
+    // Named mode. Declared types and undeclared inference coexist by design:
+    // the resolver looks a name up in query_parameters() first and only falls
+    // through to an untyped INT64 when it is absent. So a name that failed to
+    // resolve, and any parameter the client did not send at all, behave exactly
+    // as they did before.
+    for (size_t i = 0; i < count; ++i) {
+      if (resolved[i] == nullptr) continue;
+      if (names == nullptr || names[i] == nullptr || names[i][0] == '\0') continue;
+      // Errors only on a duplicate name, where the first declaration wins.
+      // Not worth failing a query over.
+      (void) options->AddQueryParameter(names[i], resolved[i]);
     }
-    absl::Status merged = MergeCatalogProto(cp, sub, type_factory);
-    if (!merged.ok()) return merged;
   }
-  return absl::OkStatus();
-}
 
-// Removes every table registered under `name` from `cat` and, recursively,
-// from its sub-catalogs.
-//
-// The single-argument RemoveTables also deallocates the owned tables. That is
-// safe here because the merge above deserializes a distinct SimpleTable per
-// proto entry, so a table registered under several names owns a separate
-// object for each.
-int RemoveTableEverywhere(googlesql::SimpleCatalog* cat, absl::string_view name) {
-  int removed = cat->RemoveTables(
-      [&](const googlesql::Table* t) { return t->Name() == name; });
-  for (googlesql::Catalog* sub : cat->catalogs()) {
-    auto* simple = dynamic_cast<googlesql::SimpleCatalog*>(sub);
-    if (simple != nullptr) removed += RemoveTableEverywhere(simple, name);
+  // Merges `proto`'s tables and sub-catalogs into `into`, recursively.
+  // Entries already present are left alone, so re-sending a table is harmless.
+  absl::Status MergeCatalogProto(const googlesql::SimpleCatalogProto &proto,
+                                 googlesql::SimpleCatalog *into,
+                                 googlesql::TypeFactory *type_factory) {
+    const googlesql::TypeDeserializer deserializer(type_factory);
+
+    for (const googlesql::SimpleTableProto &tp: proto.table()) {
+      // A table registered under an alias carries name_in_catalog; that is the
+      // name it resolves under.
+      const std::string &registered =
+          tp.has_name_in_catalog() ? tp.name_in_catalog() : tp.name();
+
+      const googlesql::Table *existing = nullptr;
+      absl::Status lookup = into->GetTable(registered, &existing);
+      if (lookup.ok() && existing != nullptr) continue;
+
+      auto table = googlesql::SimpleTable::Deserialize(tp, deserializer);
+      if (!table.ok()) return table.status();
+      into->AddOwnedTableIfNotPresent(registered, std::move(table).value());
+    }
+
+    // Custom functions (the emulator seeds a few, and CREATE FUNCTION adds
+    // more). Without these the handle would silently lack them.
+    for (const googlesql::FunctionProto &fp: proto.custom_function()) {
+      const std::string registered =
+          fp.name_path_size() > 0 ? fp.name_path(fp.name_path_size() - 1) : "";
+      if (registered.empty()) continue;
+
+      const googlesql::Function *existing = nullptr;
+      absl::Status lookup = into->GetFunction(registered, &existing);
+      if (lookup.ok() && existing != nullptr) continue;
+
+      auto fn = googlesql::Function::Deserialize(fp, deserializer);
+      if (!fn.ok()) return fn.status();
+      into->AddOwnedFunction(registered, std::move(fn).value());
+    }
+
+    for (const googlesql::SimpleCatalogProto &cp: proto.catalog()) {
+      googlesql::Catalog *found = nullptr;
+      absl::Status lookup = into->GetCatalog(cp.name(), &found);
+      googlesql::SimpleCatalog *sub = nullptr;
+      if (lookup.ok() && found != nullptr) {
+        sub = static_cast<googlesql::SimpleCatalog *>(found);
+      } else {
+        sub = into->MakeOwnedSimpleCatalog(cp.name());
+      }
+      absl::Status merged = MergeCatalogProto(cp, sub, type_factory);
+      if (!merged.ok()) return merged;
+    }
+    return absl::OkStatus();
   }
-  return removed;
-}
 
-}  // namespace
+  // Removes every table registered under `name` from `cat` and, recursively,
+  // from its sub-catalogs.
+  //
+  // The single-argument RemoveTables also deallocates the owned tables. That is
+  // safe here because the merge above deserializes a distinct SimpleTable per
+  // proto entry, so a table registered under several names owns a separate
+  // object for each.
+  int RemoveTableEverywhere(googlesql::SimpleCatalog *cat, absl::string_view name) {
+    int removed = cat->RemoveTables(
+      [&](const googlesql::Table *t) { return t->Name() == name; });
+    for (googlesql::Catalog *sub: cat->catalogs()) {
+      auto *simple = dynamic_cast<googlesql::SimpleCatalog *>(sub);
+      if (simple != nullptr) removed += RemoveTableEverywhere(simple, name);
+    }
+    return removed;
+  }
+} // namespace
 
 // Removes a table from the handle's catalog by its canonical name.
 //
@@ -521,10 +520,10 @@ int RemoveTableEverywhere(googlesql::SimpleCatalog* cat, absl::string_view name)
 //
 // Returns 0 always (removing something absent is not an error); *out_error is
 // set only on a null handle.
-int GoogleSQL_CatalogRemoveTable(void* handle_ptr, const char* name,
-                                 char** out_error) {
+int GoogleSQL_CatalogRemoveTable(void *handle_ptr, const char *name,
+                                 char **out_error) {
   *out_error = nullptr;
-  auto* handle = static_cast<CatalogHandle*>(handle_ptr);
+  auto *handle = static_cast<CatalogHandle *>(handle_ptr);
   if (handle == nullptr || name == nullptr) {
     *out_error =
         ErrorToMalloc(absl::InvalidArgumentError("null catalog handle or name"));
@@ -536,7 +535,7 @@ int GoogleSQL_CatalogRemoveTable(void* handle_ptr, const char* name,
 
 // Creates a catalog handle holding the builtin functions. Returns nullptr and
 // sets *out_error on failure. Destroy with GoogleSQL_CatalogDestroy.
-void* GoogleSQL_CatalogCreate(char** out_error) {
+void *GoogleSQL_CatalogCreate(char **out_error) {
   *out_error = nullptr;
   auto handle = std::make_unique<CatalogHandle>();
   if (absl::Status s = BuildLanguageOptions(&handle->lang); !s.ok()) {
@@ -544,24 +543,24 @@ void* GoogleSQL_CatalogCreate(char** out_error) {
     return nullptr;
   }
   handle->catalog = std::make_unique<googlesql::SimpleCatalog>(
-      "zigquery", &handle->type_factory);
+    "zigquery", &handle->type_factory);
   AddBigQueryTypeAliases(handle->catalog.get());
   handle->catalog->AddBuiltinFunctions(
-      googlesql::BuiltinFunctionOptions(handle->lang));
+    googlesql::BuiltinFunctionOptions(handle->lang));
   return handle.release();
 }
 
-void GoogleSQL_CatalogDestroy(void* handle) {
-  delete static_cast<CatalogHandle*>(handle);
+void GoogleSQL_CatalogDestroy(void *handle) {
+  delete static_cast<CatalogHandle *>(handle);
 }
 
 // Merges a SimpleCatalogProto (protobuf JSON) into the handle's catalog.
 // Only new entries are added, so callers may send either a delta or the whole
 // catalog. Returns 0 on success, 1 with *out_error on failure.
-int GoogleSQL_CatalogAddTables(void* handle_ptr, const char* catalog_json,
-                               char** out_error) {
+int GoogleSQL_CatalogAddTables(void *handle_ptr, const char *catalog_json,
+                               char **out_error) {
   *out_error = nullptr;
-  auto* handle = static_cast<CatalogHandle*>(handle_ptr);
+  auto *handle = static_cast<CatalogHandle *>(handle_ptr);
   if (handle == nullptr || catalog_json == nullptr ||
       catalog_json[0] == '\0' || std::strcmp(catalog_json, "{}") == 0) {
     return 0;
@@ -572,7 +571,7 @@ int GoogleSQL_CatalogAddTables(void* handle_ptr, const char* catalog_json,
       google::protobuf::util::JsonStringToMessage(catalog_json, &proto);
   if (!json_status.ok()) {
     *out_error = ErrorToMalloc(absl::InvalidArgumentError(
-        std::string("bad catalog_json: ") + std::string(json_status.message())));
+      std::string("bad catalog_json: ") + std::string(json_status.message())));
     return 1;
   }
 
@@ -596,16 +595,16 @@ int GoogleSQL_CatalogAddTables(void* handle_ptr, const char* catalog_json,
 // 1..param_count in order. param_count == 0 is exactly the old behaviour:
 // nothing is declared and every parameter is inferred.
 int GoogleSQL_AnalyzeNextStatementWithCatalogParams(
-    void* handle_ptr, const char* sql, size_t* resume_offset,
-    const char* options_json, const char* const* param_names,
-    const char* const* param_types, size_t param_count, uint8_t** out_proto,
-    size_t* out_len, int* out_is_end, char** out_error) {
+  void *handle_ptr, const char *sql, size_t *resume_offset,
+  const char *options_json, const char *const*param_names,
+  const char *const*param_types, size_t param_count, uint8_t **out_proto,
+  size_t *out_len, int *out_is_end, char **out_error) {
   *out_proto = nullptr;
   *out_len = 0;
   *out_is_end = 0;
   *out_error = nullptr;
 
-  auto* handle = static_cast<CatalogHandle*>(handle_ptr);
+  auto *handle = static_cast<CatalogHandle *>(handle_ptr);
   if (handle == nullptr) {
     *out_error = ErrorToMalloc(absl::InvalidArgumentError("null catalog handle"));
     return 1;
@@ -626,7 +625,7 @@ int GoogleSQL_AnalyzeNextStatementWithCatalogParams(
                          &handle->type_factory, param_names, param_types,
                          param_count, &handle->declared_types);
   options.set_parse_location_record_type(
-      googlesql::PARSE_LOCATION_RECORD_FULL_NODE_SCOPE);
+    googlesql::PARSE_LOCATION_RECORD_FULL_NODE_SCOPE);
 
   googlesql::ParseResumeLocation location =
       googlesql::ParseResumeLocation::FromStringView(sql);
@@ -635,8 +634,8 @@ int GoogleSQL_AnalyzeNextStatementWithCatalogParams(
   std::unique_ptr<const googlesql::AnalyzerOutput> output;
   bool at_end_of_input = false;
   absl::Status status = googlesql::AnalyzeNextStatement(
-      &location, options, handle->catalog.get(), &handle->type_factory,
-      &output, &at_end_of_input);
+    &location, options, handle->catalog.get(), &handle->type_factory,
+    &output, &at_end_of_input);
   if (!status.ok()) {
     *out_error = ErrorToMalloc(status);
     return 1;
@@ -661,13 +660,13 @@ int GoogleSQL_AnalyzeNextStatementWithCatalogParams(
 // Same contract as GoogleSQL_AnalyzeNextStatement, but analyzes against a
 // handle's persistent catalog instead of rebuilding one from JSON.
 int GoogleSQL_AnalyzeNextStatementWithCatalog(
-    void* handle_ptr, const char* sql, size_t* resume_offset,
-    const char* options_json, uint8_t** out_proto, size_t* out_len,
-    int* out_is_end, char** out_error) {
+  void *handle_ptr, const char *sql, size_t *resume_offset,
+  const char *options_json, uint8_t **out_proto, size_t *out_len,
+  int *out_is_end, char **out_error) {
   return GoogleSQL_AnalyzeNextStatementWithCatalogParams(
-      handle_ptr, sql, resume_offset, options_json, /*param_names=*/nullptr,
-      /*param_types=*/nullptr, /*param_count=*/0, out_proto, out_len,
-      out_is_end, out_error);
+    handle_ptr, sql, resume_offset, options_json, /*param_names=*/nullptr,
+    /*param_types=*/nullptr, /*param_count=*/0, out_proto, out_len,
+    out_is_end, out_error);
 }
 
 // Analyzes the next statement of `sql` starting at *resume_offset (bytes).
@@ -683,10 +682,10 @@ int GoogleSQL_AnalyzeNextStatementWithCatalog(
 // Returns 1 on error: *out_error holds a malloc'd NUL-terminated message.
 // Free all returned buffers with GoogleSQL_Free.
 int GoogleSQL_AnalyzeNextStatementParams(
-    const char* sql, size_t* resume_offset, const char* catalog_json,
-    const char* options_json, const char* const* param_names,
-    const char* const* param_types, size_t param_count, uint8_t** out_proto,
-    size_t* out_len, int* out_is_end, char** out_error) {
+  const char *sql, size_t *resume_offset, const char *catalog_json,
+  const char *options_json, const char *const*param_names,
+  const char *const*param_types, size_t param_count, uint8_t **out_proto,
+  size_t *out_len, int *out_is_end, char **out_error) {
   *out_proto = nullptr;
   *out_len = 0;
   *out_is_end = 0;
@@ -710,7 +709,7 @@ int GoogleSQL_AnalyzeNextStatementParams(
     options.set_parameter_mode(googlesql::PARAMETER_POSITIONAL);
   }
   options.set_parse_location_record_type(
-      googlesql::PARSE_LOCATION_RECORD_FULL_NODE_SCOPE);
+    googlesql::PARSE_LOCATION_RECORD_FULL_NODE_SCOPE);
 
   googlesql::TypeFactory type_factory;
 
@@ -722,16 +721,16 @@ int GoogleSQL_AnalyzeNextStatementParams(
       std::strcmp(catalog_json, "{}") != 0) {
     googlesql::SimpleCatalogProto catalog_proto;
     auto json_status = google::protobuf::util::JsonStringToMessage(
-        catalog_json, &catalog_proto);
+      catalog_json, &catalog_proto);
     if (!json_status.ok()) {
       *out_error = ErrorToMalloc(absl::InvalidArgumentError(
-          std::string("bad catalog_json: ") +
-          std::string(json_status.message())));
+        std::string("bad catalog_json: ") +
+        std::string(json_status.message())));
       return 1;
     }
     auto deserialized = googlesql::SimpleCatalog::Deserialize(
-        catalog_proto, /*pools=*/{}, &type_factory,
-        /*extended_type_deserializer=*/nullptr);
+      catalog_proto, /*pools=*/{}, &type_factory,
+      /*extended_type_deserializer=*/nullptr);
     if (!deserialized.ok()) {
       *out_error = ErrorToMalloc(deserialized.status());
       return 1;
@@ -760,8 +759,8 @@ int GoogleSQL_AnalyzeNextStatementParams(
   std::unique_ptr<const googlesql::AnalyzerOutput> output;
   bool at_end_of_input = false;
   absl::Status status = googlesql::AnalyzeNextStatement(
-      &location, options, catalog.get(), &type_factory, &output,
-      &at_end_of_input);
+    &location, options, catalog.get(), &type_factory, &output,
+    &at_end_of_input);
   if (!status.ok()) {
     *out_error = ErrorToMalloc(status);
     return 1;
@@ -783,15 +782,15 @@ int GoogleSQL_AnalyzeNextStatementParams(
   return 0;
 }
 
-int GoogleSQL_AnalyzeNextStatement(const char* sql, size_t* resume_offset,
-                                   const char* catalog_json,
-                                   const char* options_json, uint8_t** out_proto,
-                                   size_t* out_len, int* out_is_end,
-                                   char** out_error) {
+int GoogleSQL_AnalyzeNextStatement(const char *sql, size_t *resume_offset,
+                                   const char *catalog_json,
+                                   const char *options_json, uint8_t **out_proto,
+                                   size_t *out_len, int *out_is_end,
+                                   char **out_error) {
   return GoogleSQL_AnalyzeNextStatementParams(
-      sql, resume_offset, catalog_json, options_json, /*param_names=*/nullptr,
-      /*param_types=*/nullptr, /*param_count=*/0, out_proto, out_len,
-      out_is_end, out_error);
+    sql, resume_offset, catalog_json, options_json, /*param_names=*/nullptr,
+    /*param_types=*/nullptr, /*param_count=*/0, out_proto, out_len,
+    out_is_end, out_error);
 }
 
 // ---------------------------------------------------------------------------
@@ -808,16 +807,16 @@ int GoogleSQL_AnalyzeNextStatement(const char* sql, size_t* resume_offset,
 // (capture-group count) and reports a compile error, writing nothing.
 //
 // Returns 0 on success, 1 on pattern-compile error (*out_err malloc'd).
-int GoogleSQL_RegexpFind(const char* pat, int patlen, const char* subj,
+int GoogleSQL_RegexpFind(const char *pat, int patlen, const char *subj,
                          int subjlen, int startpos, int max_matches,
-                         int* out_offsets, int cap, int* out_nmatches,
-                         int* out_ngroups, char** out_err) {
+                         int *out_offsets, int cap, int *out_nmatches,
+                         int *out_ngroups, char **out_err) {
   *out_err = nullptr;
   *out_nmatches = 0;
   *out_ngroups = 0;
   RE2 re(absl::string_view(pat, patlen));
   if (!re.ok()) {
-    *out_err = reinterpret_cast<char*>(CopyToMalloc(re.error()));
+    *out_err = reinterpret_cast<char *>(CopyToMalloc(re.error()));
     return 1;
   }
   const int ngroups = re.NumberOfCapturingGroups();
@@ -833,7 +832,7 @@ int GoogleSQL_RegexpFind(const char* pat, int patlen, const char* subj,
                   nsub)) {
       break;
     }
-    if ((found + 1) * nsub * 2 > cap) break;  // no room for this match
+    if ((found + 1) * nsub * 2 > cap) break; // no room for this match
     const int base = found * nsub * 2;
     int mstart = 0, mend = 0;
     for (int i = 0; i < nsub; i++) {
@@ -852,7 +851,7 @@ int GoogleSQL_RegexpFind(const char* pat, int patlen, const char* subj,
       }
     }
     found++;
-    pos = (mend == mstart) ? mend + 1 : mend;  // advance past empty match
+    pos = (mend == mstart) ? mend + 1 : mend; // advance past empty match
   }
   *out_nmatches = found;
   return 0;
@@ -860,21 +859,21 @@ int GoogleSQL_RegexpFind(const char* pat, int patlen, const char* subj,
 
 // RE2::GlobalReplace with \1-style rewrites (BigQuery/RE2 share the syntax).
 // Result may contain embedded NULs; length is reported via *out_len.
-int GoogleSQL_RegexpReplace(const char* pat, int patlen, const char* subj,
-                            int subjlen, const char* rewrite, int rwlen,
-                            char** out, int* out_len, char** out_err) {
+int GoogleSQL_RegexpReplace(const char *pat, int patlen, const char *subj,
+                            int subjlen, const char *rewrite, int rwlen,
+                            char **out, int *out_len, char **out_err) {
   *out_err = nullptr;
   *out = nullptr;
   *out_len = 0;
   RE2 re(absl::string_view(pat, patlen));
   if (!re.ok()) {
-    *out_err = reinterpret_cast<char*>(CopyToMalloc(re.error()));
+    *out_err = reinterpret_cast<char *>(CopyToMalloc(re.error()));
     return 1;
   }
   std::string s(subj, subjlen);
   RE2::GlobalReplace(&s, re, absl::string_view(rewrite, rwlen));
   *out_len = static_cast<int>(s.size());
-  *out = reinterpret_cast<char*>(CopyToMalloc(s));
+  *out = reinterpret_cast<char *>(CopyToMalloc(s));
   return 0;
 }
 
@@ -884,13 +883,13 @@ int GoogleSQL_RegexpReplace(const char* pat, int patlen, const char* subj,
 // ---------------------------------------------------------------------------
 
 // mode: "NFC" / "NFD" / "NFKC" / "NFKD". Input/output are UTF-8.
-int GoogleSQL_Normalize(const char* mode, const char* in, int inlen, char** out,
-                        int* out_len, char** out_err) {
+int GoogleSQL_Normalize(const char *mode, const char *in, int inlen, char **out,
+                        int *out_len, char **out_err) {
   *out_err = nullptr;
   *out = nullptr;
   *out_len = 0;
   icu::ErrorCode ec;
-  const icu::Normalizer2* norm = nullptr;
+  const icu::Normalizer2 *norm = nullptr;
   if (std::strcmp(mode, "NFC") == 0) {
     norm = icu::Normalizer2::getNFCInstance(ec);
   } else if (std::strcmp(mode, "NFD") == 0) {
@@ -900,49 +899,49 @@ int GoogleSQL_Normalize(const char* mode, const char* in, int inlen, char** out,
   } else if (std::strcmp(mode, "NFKD") == 0) {
     norm = icu::Normalizer2::getNFKDInstance(ec);
   } else {
-    *out_err = reinterpret_cast<char*>(
-        CopyToMalloc(std::string("unexpected normalize mode ") + mode));
+    *out_err = reinterpret_cast<char *>(
+      CopyToMalloc(std::string("unexpected normalize mode ") + mode));
     return 1;
   }
   if (ec.isFailure() || norm == nullptr) {
-    *out_err = reinterpret_cast<char*>(
-        CopyToMalloc(std::string("normalizer unavailable")));
+    *out_err = reinterpret_cast<char *>(
+      CopyToMalloc(std::string("normalizer unavailable")));
     return 1;
   }
   icu::UnicodeString us = icu::UnicodeString::fromUTF8(
-      absl::string_view(in, inlen));
+    absl::string_view(in, inlen));
   icu::UnicodeString normalized = norm->normalize(us, ec);
   if (ec.isFailure()) {
-    *out_err = reinterpret_cast<char*>(CopyToMalloc(std::string("normalize failed")));
+    *out_err = reinterpret_cast<char *>(CopyToMalloc(std::string("normalize failed")));
     return 1;
   }
   std::string result;
   normalized.toUTF8String(result);
   *out_len = static_cast<int>(result.size());
-  *out = reinterpret_cast<char*>(CopyToMalloc(result));
+  *out = reinterpret_cast<char *>(CopyToMalloc(result));
   return 0;
 }
 
 // op: 0=upper, 1=lower. Simple (per-code-point) case mapping, matching Go's
 // strings.To{Upper,Lower} (unicode.To{Upper,Lower}). Input/output UTF-8.
-int GoogleSQL_CaseMap(int op, const char* in, int inlen, char** out,
-                      int* out_len) {
+int GoogleSQL_CaseMap(int op, const char *in, int inlen, char **out,
+                      int *out_len) {
   std::string result;
   result.reserve(inlen + 4);
   int32_t i = 0;
   while (i < inlen) {
     UChar32 c;
-    U8_NEXT(reinterpret_cast<const uint8_t*>(in), i, inlen, c);
-    if (c < 0) c = 0xFFFD;  // malformed -> replacement
+    U8_NEXT(reinterpret_cast<const uint8_t *>(in), i, inlen, c);
+    if (c < 0) c = 0xFFFD; // malformed -> replacement
     UChar32 mapped = (op == 0) ? u_toupper(c) : u_tolower(c);
     uint8_t buf[4];
     int32_t off = 0;
     UBool err = false;
     U8_APPEND(buf, off, 4, mapped, err);
-    result.append(reinterpret_cast<char*>(buf), off);
+    result.append(reinterpret_cast<char *>(buf), off);
   }
   *out_len = static_cast<int>(result.size());
-  *out = reinterpret_cast<char*>(CopyToMalloc(result));
+  *out = reinterpret_cast<char *>(CopyToMalloc(result));
   return 0;
 }
 
@@ -952,69 +951,68 @@ int GoogleSQL_CaseMap(int op, const char* in, int inlen, char** out,
 // ---------------------------------------------------------------------------
 
 namespace {
+  // getCanonicalID + createTimeZone (alias lookup plus a fresh heap object)
+  // cost far more per call than getOffset's own transition-table search
+  // (`zig build tz-bench` measures the gap). Cached per thread, keyed on the
+  // caller's exact zone spelling rather than the canonical name, so no
+  // synchronization is needed: every connection in this engine is
+  // single-threaded end to end. Every getOffset call below still runs fresh
+  // against the real instant, so DST is never at risk — only the zone
+  // resolution is memoized, not the offset.
+  struct TimeZoneCacheEntry {
+    std::string zone;
+    std::unique_ptr<icu::TimeZone> tz;
+  };
 
-// getCanonicalID + createTimeZone (alias lookup plus a fresh heap object)
-// cost far more per call than getOffset's own transition-table search
-// (`zig build tz-bench` measures the gap). Cached per thread, keyed on the
-// caller's exact zone spelling rather than the canonical name, so no
-// synchronization is needed: every connection in this engine is
-// single-threaded end to end. Every getOffset call below still runs fresh
-// against the real instant, so DST is never at risk — only the zone
-// resolution is memoized, not the offset.
-struct TimeZoneCacheEntry {
-  std::string zone;
-  std::unique_ptr<icu::TimeZone> tz;
-};
-constexpr size_t kTimeZoneCacheCapacity = 16;
-thread_local std::vector<TimeZoneCacheEntry> g_tz_cache;
+  constexpr size_t kTimeZoneCacheCapacity = 16;
+  thread_local std::vector<TimeZoneCacheEntry> g_tz_cache;
 
-// Resolved icu::TimeZone for `zone`, from the thread-local cache if present;
-// canonicalizes and constructs (then caches) on a miss. Null if `zone` is not
-// a recognized ID.
-icu::TimeZone* ResolveTimeZone(absl::string_view zone) {
-  for (size_t i = 0; i < g_tz_cache.size(); ++i) {
-    if (g_tz_cache[i].zone == zone) {
-      // Move the hit to the back so eviction below takes the actual
-      // least-recently-used entry, not just the oldest inserted one.
-      if (i + 1 != g_tz_cache.size()) {
-        std::rotate(g_tz_cache.begin() + i, g_tz_cache.begin() + i + 1,
-                    g_tz_cache.end());
+  // Resolved icu::TimeZone for `zone`, from the thread-local cache if present;
+  // canonicalizes and constructs (then caches) on a miss. Null if `zone` is not
+  // a recognized ID.
+  icu::TimeZone *ResolveTimeZone(absl::string_view zone) {
+    for (size_t i = 0; i < g_tz_cache.size(); ++i) {
+      if (g_tz_cache[i].zone == zone) {
+        // Move the hit to the back so eviction below takes the actual
+        // least-recently-used entry, not just the oldest inserted one.
+        if (i + 1 != g_tz_cache.size()) {
+          std::rotate(g_tz_cache.begin() + i, g_tz_cache.begin() + i + 1,
+                      g_tz_cache.end());
+        }
+        return g_tz_cache.back().tz.get();
       }
-      return g_tz_cache.back().tz.get();
     }
+
+    icu::UnicodeString id = icu::UnicodeString::fromUTF8(zone);
+    icu::UnicodeString canonical;
+    icu::ErrorCode ec;
+    icu::TimeZone::getCanonicalID(id, canonical, ec);
+    if (ec.isFailure()) return nullptr;
+
+    std::unique_ptr<icu::TimeZone> tz(icu::TimeZone::createTimeZone(canonical));
+    icu::TimeZone *raw = tz.get();
+    if (g_tz_cache.size() >= kTimeZoneCacheCapacity) {
+      g_tz_cache.erase(g_tz_cache.begin());
+    }
+    g_tz_cache.push_back({std::string(zone), std::move(tz)});
+    return raw;
   }
-
-  icu::UnicodeString id = icu::UnicodeString::fromUTF8(zone);
-  icu::UnicodeString canonical;
-  icu::ErrorCode ec;
-  icu::TimeZone::getCanonicalID(id, canonical, ec);
-  if (ec.isFailure()) return nullptr;
-
-  std::unique_ptr<icu::TimeZone> tz(icu::TimeZone::createTimeZone(canonical));
-  icu::TimeZone* raw = tz.get();
-  if (g_tz_cache.size() >= kTimeZoneCacheCapacity) {
-    g_tz_cache.erase(g_tz_cache.begin());
-  }
-  g_tz_cache.push_back({std::string(zone), std::move(tz)});
-  return raw;
-}
-
-}  // namespace
+} // namespace
 
 // zone: an IANA/Olson ID ("America/Chicago") or ICU custom ID ("GMT-08:00").
 // date_millis: a UTC instant, milliseconds since epoch. Writes the zone's
 // total offset (raw + DST) in seconds east of UTC to *out_offset_seconds.
 // Returns 0 on success; 1 if `zone` is not a recognized ID.
-int GoogleSQL_TimeZoneOffsetSeconds(const char* zone, int zonelen,
-                                     int64_t date_millis,
-                                     int32_t* out_offset_seconds,
-                                     char** out_err) {
+int GoogleSQL_TimeZoneOffsetSeconds(const char *zone, int zonelen,
+                                    int64_t date_millis,
+                                    int32_t *out_offset_seconds,
+                                    char **out_err) {
   *out_err = nullptr;
   *out_offset_seconds = 0;
-  icu::TimeZone* tz = ResolveTimeZone(absl::string_view(zone, zonelen));
+  icu::TimeZone *tz = ResolveTimeZone(absl::string_view(zone, zonelen));
   if (tz == nullptr) {
-    *out_err = reinterpret_cast<char*>(CopyToMalloc(
-        std::string("invalid time zone: ") + std::string(zone, zonelen)));
+    *out_err = reinterpret_cast<char *>(CopyToMalloc(
+      std::string("invalid time zone: ") + std::string(zone, zonelen)));
     return 1;
   }
   int32_t raw_offset = 0, dst_offset = 0;
@@ -1022,14 +1020,13 @@ int GoogleSQL_TimeZoneOffsetSeconds(const char* zone, int zonelen,
   tz->getOffset(static_cast<UDate>(date_millis), /*local=*/false, raw_offset,
                 dst_offset, offset_ec);
   if (offset_ec.isFailure()) {
-    *out_err = reinterpret_cast<char*>(
-        CopyToMalloc(std::string("time zone offset lookup failed")));
+    *out_err = reinterpret_cast<char *>(
+      CopyToMalloc(std::string("time zone offset lookup failed")));
     return 1;
   }
   *out_offset_seconds = (raw_offset + dst_offset) / 1000;
   return 0;
 }
 
-void GoogleSQL_Free(void* p) { std::free(p); }
-
-}  // extern "C"
+void GoogleSQL_Free(void *p) { std::free(p); }
+} // extern "C"

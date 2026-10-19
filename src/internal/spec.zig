@@ -542,6 +542,9 @@ pub const TableSpec = struct {
     /// holds the SQLite translation the engine runs; the metadata API reports
     /// this one. Serialised only when non-empty.
     source_sql: []const u8 = "",
+    /// A view whose CREATE VIEW listed its column names.
+    /// `columns` holds those names, and a refresh lists them again. Serialised only when set.
+    explicit_columns: bool = false,
     /// A view's columns as its query analyzes against the tables it reads today, once a refresh
     /// has re-analyzed it. BigQuery binds a view's query late, so a query through the view sees
     /// these, while the metadata API and INFORMATION_SCHEMA keep reporting `columns`, the schema
@@ -756,6 +759,7 @@ pub const TableSpec = struct {
         try appendStringFieldIfSet(&out, alloc, "description", self.description);
         try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
         try appendStringFieldIfSet(&out, alloc, "sourceSql", self.source_sql);
+        if (self.explicit_columns) try out.appendSlice(alloc, ",\"explicitColumns\":true");
         if (self.analysis_columns.len > 0) {
             try out.appendSlice(alloc, ",\"analysisColumns\":[");
             for (self.analysis_columns, 0..) |col, i| {
@@ -973,6 +977,7 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
     if (obj.get("sourceSql")) |v| {
         if (v == .string) table_spec.source_sql = try alloc.dupe(u8, v.string);
     }
+    if (getBool(obj, "explicitColumns")) |b| table_spec.explicit_columns = b;
     if (obj.get("analysisColumns")) |v| {
         if (v == .array) {
             const cols = try alloc.alloc(*ColumnSpec, v.array.items.len);
@@ -1648,6 +1653,7 @@ test "metadata and source SQL round-trip through JSON and stay out of it when em
     const bare_json = try bare.toJson(alloc);
     try testing.expect(std.mem.indexOf(u8, bare_json, "\"metadata\"") == null);
     try testing.expect(std.mem.indexOf(u8, bare_json, "\"sourceSql\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bare_json, "\"explicitColumns\"") == null);
 
     const with = try makeGoShapeSpec(alloc);
     // The resource text is carried as a string: its own quotes and nesting
@@ -1656,15 +1662,21 @@ test "metadata and source SQL round-trip through JSON and stay out of it when em
         \\{"description":"he said \"hi\"","schema":{"fields":[{"name":"a","type":"INTEGER"}]}}
     ;
     with.source_sql = "SELECT a FROM `p.d.t`";
+    with.explicit_columns = true;
     const encoded = try with.toJson(alloc);
     try testing.expect(std.mem.indexOf(u8, encoded, ",\"metadata\":\"{\\\"description\\\"") != null);
     try testing.expect(
-        std.mem.indexOf(u8, encoded, ",\"sourceSql\":\"SELECT a FROM `p.d.t`\"}") != null,
+        std.mem.indexOf(
+            u8,
+            encoded,
+            ",\"sourceSql\":\"SELECT a FROM `p.d.t`\",\"explicitColumns\":true}",
+        ) != null,
     );
 
     const decoded = try tableSpecFromJson(alloc, encoded);
     try testing.expectEqualStrings(with.metadata, decoded.metadata);
     try testing.expectEqualStrings(with.source_sql, decoded.source_sql);
+    try testing.expect(decoded.explicit_columns);
     try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 
