@@ -2274,7 +2274,7 @@ pub const Db = struct {
             try db.requireDataset(arena, table_spec.name_path);
         }
         const table_name = try table_spec.tableName(arena);
-        const replacing = table_spec.create_mode == spec.create_mode_create_or_replace;
+        const replacing = table_spec.create_mode == .CREATE_OR_REPLACE;
         const from_query = table_spec.query.len != 0;
         const through_declared = from_query and table_spec.hasNotNull();
 
@@ -2371,7 +2371,7 @@ pub const Db = struct {
         // IF NOT EXISTS on an already-registered table keeps the existing spec, so the first
         // registration's schema stays visible. The analyzer catalog is re-rendered from the spec
         // map per statement, so not upserting here is what makes the statement a no-op.
-        if (table_spec.create_mode == spec.create_mode_create_if_not_exists and
+        if (table_spec.create_mode == .CREATE_IF_NOT_EXISTS and
             db.tableSpecExists(table_name))
         {
             return consumed;
@@ -2463,21 +2463,30 @@ pub const Db = struct {
         const arena = statement.arena;
         const base = cv.parent orelse return error.TransformFailed;
         const create = base.parent orelse return error.TransformFailed;
+        const is_temp = (create.create_scope orelse .CREATE_DEFAULT_SCOPE) == .CREATE_TEMP;
+        const name_path = if (is_temp)
+            try normalizePath(arena, create.name_path)
+        else
+            try db.qualifyPath(arena, create.name_path);
+        const create_mode = create.create_mode orelse .CREATE_DEFAULT;
+        // IF NOT EXISTS over an existing view leaves its definition, SQLite view and schema as they are.
+        if (create_mode == .CREATE_IF_NOT_EXISTS and
+            db.tableSpecExists(try spec.formatPath(arena, name_path)))
+        {
+            return;
+        }
+
         const definition = try ViewDefinition.buildFromProto(db, statement, base);
         const query_str = definition.statement.query.toString(arena) catch return error.OutOfMemory;
 
         const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
-        const is_temp = (create.create_scope orelse .CREATE_DEFAULT_SCOPE) == .CREATE_TEMP;
         const table_spec = try arena.create(spec.TableSpec);
         table_spec.* = .{
             .is_temp = is_temp,
             .is_view = true,
-            .name_path = if (is_temp)
-                try normalizePath(arena, create.name_path)
-            else
-                try db.qualifyPath(arena, create.name_path),
+            .name_path = name_path,
             .columns = definition.columns,
-            .create_mode = goCreateMode(create.create_mode),
+            .create_mode = create_mode,
             .query = query_str,
             .updated_at = now.rfc3339,
             .created_at = now.rfc3339,
@@ -2494,7 +2503,7 @@ pub const Db = struct {
             arena,
             try table_spec.tableName(arena),
             definition,
-            table_spec.create_mode == spec.create_mode_create_or_replace,
+            table_spec.create_mode == .CREATE_OR_REPLACE,
         );
         try savepoint.release();
         db.registerTableSpec(table_spec) catch |err|
@@ -3343,17 +3352,6 @@ fn formatNamePath(
     return spec.formatPath(arena, try normalizePath(arena, path));
 }
 
-/// Maps the 0-based proto CreateMode onto the 1-based values persisted in TableSpec JSON (see
-/// spec.zig's create_mode_* constants).
-fn goCreateMode(mode: ?pb.ResolvedCreateStatementEnums_CreateMode) i64 {
-    return switch (mode orelse .CREATE_DEFAULT) {
-        .CREATE_DEFAULT => spec.create_mode_create_default,
-        .CREATE_OR_REPLACE => spec.create_mode_create_or_replace,
-        .CREATE_IF_NOT_EXISTS => spec.create_mode_create_if_not_exists,
-        else => spec.create_mode_unspecified,
-    };
-}
-
 /// Type of one function argument. A templated argument keeps
 /// only its SignatureArgumentKind; a fixed one carries the concrete type.
 fn functionArgumentSpecType(
@@ -3654,7 +3652,7 @@ fn newTableSpecFromCreate(
         .name_path = try normalizePath(arena, create.name_path),
         .columns = try columnSpecsFromDefs(arena, base.column_definition_list),
         .primary_key = if (base.primary_key) |pk| pk.column_name_list else &.{},
-        .create_mode = goCreateMode(create.create_mode),
+        .create_mode = create.create_mode orelse .CREATE_DEFAULT,
         .query = query_str,
         .updated_at = now.rfc3339,
         .created_at = now.rfc3339,
@@ -4491,7 +4489,7 @@ const catalog_test = struct {
         table_spec.* = .{
             .name_path = &.{"t1"},
             .columns = cols,
-            .create_mode = spec.create_mode_create_default,
+            .create_mode = .CREATE_DEFAULT,
             .updated_at = "2024-01-02T03:04:05Z",
             .created_at = "2024-01-02T03:04:05Z",
         };
@@ -4614,7 +4612,7 @@ test "dotted table names resolve and scan" {
     table_spec.* = .{
         .name_path = &.{ "proj", "ds", "t" },
         .columns = &.{col},
-        .create_mode = spec.create_mode_create_default,
+        .create_mode = .CREATE_DEFAULT,
         .updated_at = "2024-01-02T03:04:05Z",
         .created_at = "2024-01-02T03:04:05Z",
     };
@@ -5024,6 +5022,46 @@ test "CREATE OR REPLACE VIEW creates a view that does not exist yet" {
     try db.exec("CREATE OR REPLACE VIEW d.v AS SELECT 1 AS a", &.{}, .{});
 
     var rows = try db.query("SELECT a FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
+test "CREATE VIEW IF NOT EXISTS over an existing view keeps the first definition" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE VIEW IF NOT EXISTS d.v AS SELECT 'x' AS a", &.{}, .{});
+
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqualStrings("SELECT a FROM d.t", v.source_sql);
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, v.columns[0].type.typeKind());
+    var rows = try db.query("SELECT a FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
+test "CREATE VIEW IF NOT EXISTS over an existing table leaves the table" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // recidiviz-bigquery-sandbox, 2026-10-19: a no-op, and the table keeps its type and schema.
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW IF NOT EXISTS d.t AS SELECT 'x' AS a", &.{}, .{});
+
+    const t = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expect(!t.is_view);
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, t.columns[0].type.typeKind());
+    var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
     defer rows.deinit();
     try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
 }

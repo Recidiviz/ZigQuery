@@ -262,16 +262,6 @@ pub fn sqliteTypeName(k: pb.TypeKind) []const u8 {
 // TableSpec / ColumnSpec (Go spec.go TableSpec, ColumnSpec)
 // ----------------------------------------------------------------------
 
-/// go-googlesql ResolvedCreateStatementEnums_CreateMode values as persisted
-/// by Go in TableSpec JSON (`createMode`). NOTE: these are the Go binding's
-/// 1-based values, NOT the googlesql fork's 0-based proto enum
-/// (pb.ResolvedCreateStatementEnums_CreateMode); converting a resolved
-/// CREATE statement's proto mode requires +1 (CREATE-statement task).
-pub const create_mode_unspecified: i64 = 0;
-pub const create_mode_create_default: i64 = 1;
-pub const create_mode_create_or_replace: i64 = 2;
-pub const create_mode_create_if_not_exists: i64 = 3;
-
 /// Go name_path.go formatPath: "_"-joined (the canonical SQLite name).
 pub fn formatPath(alloc: std.mem.Allocator, path: []const []const u8) error{OutOfMemory}![]u8 {
     return std.mem.join(alloc, "_", path);
@@ -524,7 +514,8 @@ pub const TableSpec = struct {
     name_path: []const []const u8 = &.{},
     columns: []const *ColumnSpec = &.{},
     primary_key: []const []const u8 = &.{},
-    create_mode: i64 = create_mode_unspecified,
+    /// Persisted in TableSpec JSON (`createMode`) as the proto enum's number.
+    create_mode: pb.ResolvedCreateStatementEnums_CreateMode = .CREATE_DEFAULT,
     query: []const u8 = "",
     updated_at: []const u8 = "", // RFC3339 timestamp
     created_at: []const u8 = "", // RFC3339 timestamp
@@ -606,9 +597,9 @@ pub const TableSpec = struct {
         // BigQuery's does.
         const clustering: []const u8 = "";
         const stmt: []const u8 = switch (self.create_mode) {
-            create_mode_create_default, create_mode_create_or_replace => "CREATE TABLE",
-            create_mode_create_if_not_exists => "CREATE TABLE IF NOT EXISTS",
-            else => "", // Go's switch has no default: stmt stays "".
+            .CREATE_DEFAULT, .CREATE_OR_REPLACE => "CREATE TABLE",
+            .CREATE_IF_NOT_EXISTS => "CREATE TABLE IF NOT EXISTS",
+            _ => "",
         };
         return std.fmt.allocPrint(alloc, "{s} `{s}` ({s}) {s}", .{
             stmt,
@@ -682,9 +673,9 @@ pub const TableSpec = struct {
     /// Go viewSQLiteSchema.
     fn viewSqliteSchema(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
         const stmt: []const u8 = switch (self.create_mode) {
-            create_mode_create_default, create_mode_create_or_replace => "CREATE VIEW",
-            create_mode_create_if_not_exists => "CREATE VIEW IF NOT EXISTS",
-            else => "",
+            .CREATE_DEFAULT, .CREATE_OR_REPLACE => "CREATE VIEW",
+            .CREATE_IF_NOT_EXISTS => "CREATE VIEW IF NOT EXISTS",
+            _ => "",
         };
         return std.fmt.allocPrint(alloc, "{s} `{s}` AS {s}", .{
             stmt,
@@ -716,7 +707,7 @@ pub const TableSpec = struct {
             try appendJsonStringArray(&out, alloc, self.primary_key);
         }
         try out.appendSlice(alloc, ",\"createMode\":");
-        try out.print(alloc, "{d}", .{self.create_mode});
+        try out.print(alloc, "{d}", .{@backingInt(self.create_mode)});
         try out.appendSlice(alloc, ",\"query\":");
         try appendJsonString(&out, alloc, self.query);
         try out.appendSlice(alloc, ",\"updatedAt\":");
@@ -895,6 +886,16 @@ pub fn appendJsonString(
     try out.append(alloc, '"');
 }
 
+/// A `createMode` the proto enum has no member for is refused rather than carried.
+fn createModeFromJson(n: i64) Error!pb.ResolvedCreateStatementEnums_CreateMode {
+    return switch (n) {
+        0 => .CREATE_DEFAULT,
+        1 => .CREATE_OR_REPLACE,
+        2 => .CREATE_IF_NOT_EXISTS,
+        else => error.InvalidType,
+    };
+}
+
 /// json.Unmarshal into TableSpec: accepts the Go shape (missing fields,
 /// null-vs-[] slices, any field order). All returned memory is from `alloc`.
 pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*TableSpec {
@@ -913,7 +914,7 @@ pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!
     table_spec.name_path = try stringSliceField(alloc, obj, "namePath");
     table_spec.primary_key = try stringSliceField(alloc, obj, "primaryKey");
     if (obj.get("createMode")) |v| {
-        if (v == .integer) table_spec.create_mode = v.integer;
+        if (v == .integer) table_spec.create_mode = try createModeFromJson(v.integer);
     }
     if (obj.get("query")) |v| {
         if (v == .string) table_spec.query = try alloc.dupe(u8, v.string);
@@ -1321,7 +1322,7 @@ const go_table_spec_json =
     "{\"name\":\"a\",\"type\":{\"name\":\"\",\"kind\":2,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"isNotNull\":false}," ++
     "{\"name\":\"b\",\"type\":{\"name\":\"\",\"kind\":8,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"isNotNull\":true}," ++
     "{\"name\":\"c\",\"type\":{\"name\":\"\",\"kind\":16,\"signatureKind\":0,\"elementType\":{\"name\":\"\",\"kind\":2,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"fieldTypes\":null},\"isNotNull\":false}" ++
-    "],\"primaryKey\":[\"a\"],\"createMode\":1,\"query\":\"\"," ++
+    "],\"primaryKey\":[\"a\"],\"createMode\":0,\"query\":\"\"," ++
     "\"updatedAt\":\"2024-01-02T03:04:05Z\",\"createdAt\":\"2024-01-02T03:04:05Z\"}";
 
 fn makeGoShapeSpec(alloc: std.mem.Allocator) !*TableSpec {
@@ -1339,7 +1340,7 @@ fn makeGoShapeSpec(alloc: std.mem.Allocator) !*TableSpec {
         .name_path = &.{"t1"},
         .columns = try alloc.dupe(*ColumnSpec, &.{ col_a, col_b, col_c }),
         .primary_key = &.{"a"},
-        .create_mode = create_mode_create_default,
+        .create_mode = .CREATE_DEFAULT,
         .updated_at = "2024-01-02T03:04:05Z",
         .created_at = "2024-01-02T03:04:05Z",
     };
@@ -1373,11 +1374,31 @@ test "TableSpec JSON round-trips through the Go shape" {
         pb.TypeKind.TYPE_INT64,
         decoded.columns[2].type.element_type.?.typeKind(),
     );
-    try testing.expectEqual(create_mode_create_default, decoded.create_mode);
+    try testing.expectEqual(
+        pb.ResolvedCreateStatementEnums_CreateMode.CREATE_DEFAULT,
+        decoded.create_mode,
+    );
     try testing.expectEqualStrings("2024-01-02T03:04:05Z", decoded.updated_at);
 
     // Re-encoding reproduces the Go bytes exactly.
     try testing.expectEqualStrings(go_table_spec_json, try decoded.toJson(alloc));
+}
+
+test "createMode persists as the proto enum's number" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const table_spec = try makeGoShapeSpec(alloc);
+    table_spec.create_mode = .CREATE_IF_NOT_EXISTS;
+    const json = try table_spec.toJson(alloc);
+    try testing.expect(std.mem.indexOf(u8, json, "\"createMode\":2,") != null);
+    try testing.expectEqual(
+        pb.ResolvedCreateStatementEnums_CreateMode.CREATE_IF_NOT_EXISTS,
+        (try tableSpecFromJson(alloc, json)).create_mode,
+    );
+
+    try testing.expectError(error.InvalidType, tableSpecFromJson(alloc, "{\"createMode\":3}"));
 }
 
 test "SQLiteSchema golden strings" {
@@ -1404,7 +1425,7 @@ test "SQLiteSchema golden strings" {
     );
 
     // IF NOT EXISTS mode.
-    no_pk.create_mode = create_mode_create_if_not_exists;
+    no_pk.create_mode = .CREATE_IF_NOT_EXISTS;
     try testing.expectEqualStrings(
         "CREATE TABLE IF NOT EXISTS `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT) ",
         try no_pk.sqliteSchema(alloc),
@@ -1415,7 +1436,7 @@ test "SQLiteSchema golden strings" {
     view.* = .{
         .is_view = true,
         .name_path = &.{ "ds", "v1" },
-        .create_mode = create_mode_create_or_replace,
+        .create_mode = .CREATE_OR_REPLACE,
         .query = "SELECT 1",
     };
     try testing.expectEqualStrings("CREATE VIEW `ds_v1` AS SELECT 1", try view.sqliteSchema(alloc));
@@ -1533,7 +1554,7 @@ test "SQLiteSchema adds one CHECK per column with NOT NULL members, positioned" 
     t.* = .{
         .name_path = &.{"t"},
         .columns = &.{ r, rs, plain },
-        .create_mode = create_mode_create_default,
+        .create_mode = .CREATE_DEFAULT,
     };
 
     try testing.expectEqualStrings(
@@ -1559,7 +1580,7 @@ test "SQLiteSchema quotes a member name's apostrophe and keeps a dotted column n
     const r = try alloc.create(ColumnSpec);
     r.* = .{ .name = "a.b", .type = r_t };
     const t = try alloc.create(TableSpec);
-    t.* = .{ .name_path = &.{"t"}, .columns = &.{r}, .create_mode = create_mode_create_default };
+    t.* = .{ .name_path = &.{"t"}, .columns = &.{r}, .create_mode = .CREATE_DEFAULT };
 
     try testing.expectEqualStrings(
         "CREATE TABLE `t` (`a.b` TEXT,CONSTRAINT `a.b` CHECK (zigquery_required(`a.b`," ++
@@ -1575,7 +1596,7 @@ test "declaredSchemaAs names the declared columns under the given name, whatever
 
     const ctas = try makeGoShapeSpec(alloc);
     ctas.query = "SELECT 1 AS a, 'x' AS b, [1] AS c";
-    ctas.create_mode = create_mode_create_if_not_exists;
+    ctas.create_mode = .CREATE_IF_NOT_EXISTS;
     try testing.expectEqualStrings(
         "CREATE TABLE `scratch` (`a` INT,`b` TEXT NOT NULL,`c` TEXT)",
         try ctas.declaredSchemaAs(alloc, "scratch"),
@@ -1592,7 +1613,7 @@ test "declaredSchemaAs names the declared columns under the given name, whatever
     members.* = .{
         .name_path = &.{"t"},
         .columns = &.{r},
-        .create_mode = create_mode_create_or_replace,
+        .create_mode = .CREATE_OR_REPLACE,
         .query = "SELECT STRUCT(1 AS x) AS r",
     };
     try testing.expectEqualStrings(

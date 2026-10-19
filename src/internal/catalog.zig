@@ -1711,7 +1711,7 @@ fn testTableSpec(alloc: std.mem.Allocator, name_path: []const []const u8) !*spec
     ts.* = .{
         .name_path = name_path,
         .columns = try alloc.dupe(*spec.ColumnSpec, &.{ col_a, col_b }),
-        .create_mode = spec.create_mode_create_default,
+        .create_mode = .CREATE_DEFAULT,
         .updated_at = "2024-01-02T03:04:05Z",
         .created_at = "2024-01-02T03:04:05Z",
     };
