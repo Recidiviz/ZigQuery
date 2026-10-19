@@ -1505,8 +1505,7 @@ pub const Db = struct {
         var statement_count: u32 = 0;
 
         var cursor: ScriptCursor = .{ .offset = 0, .args = args };
-        var next: ScriptCursor = undefined;
-        while (true) : (cursor = next) {
+        while (true) {
             const decls = switch (db.param_mode) {
                 .named => named_decls,
                 // Declaring every *remaining* positional type is safe:
@@ -1528,7 +1527,7 @@ pub const Db = struct {
                 mode,
             );
             const executed = run.executed;
-            next = .{
+            const next: ScriptCursor = .{
                 .offset = run.resume_offset,
                 // Positional parameters are consumed statement by statement, each statement
                 // taking as many as it has placeholders; named parameters apply to every one.
@@ -1567,6 +1566,8 @@ pub const Db = struct {
                     },
                 }
             }
+
+            cursor = next;
         }
     }
 

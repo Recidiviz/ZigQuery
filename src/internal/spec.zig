@@ -1568,6 +1568,40 @@ test "SQLiteSchema quotes a member name's apostrophe and keeps a dotted column n
     );
 }
 
+test "declaredSchemaAs names the declared columns under the given name, whatever the CTAS mode" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const ctas = try makeGoShapeSpec(alloc);
+    ctas.query = "SELECT 1 AS a, 'x' AS b, [1] AS c";
+    ctas.create_mode = create_mode_create_if_not_exists;
+    try testing.expectEqualStrings(
+        "CREATE TABLE `scratch` (`a` INT,`b` TEXT NOT NULL,`c` TEXT)",
+        try ctas.declaredSchemaAs(alloc, "scratch"),
+    );
+
+    // r STRUCT<x INT64 NOT NULL>
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const r_t = try alloc.create(Type);
+    r_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRUCT), .field_types = &.{x} };
+    const r = try alloc.create(ColumnSpec);
+    r.* = .{ .name = "r", .type = r_t };
+    const members = try alloc.create(TableSpec);
+    members.* = .{
+        .name_path = &.{"t"},
+        .columns = &.{r},
+        .create_mode = create_mode_create_or_replace,
+        .query = "SELECT STRUCT(1 AS x) AS r",
+    };
+    try testing.expectEqualStrings(
+        "CREATE TABLE `t` (`r` TEXT,CONSTRAINT `r` CHECK (zigquery_required(`r`," ++
+            "'0','Required field r.x cannot be null; error in writing field r')))",
+        try members.declaredSchemaAs(alloc, "t"),
+    );
+}
+
 test "requiredFieldFromMessage reads the path and column back, embedded or not" {
     const ui_text = "Required field y.x cannot be null; error in writing field y";
     const bare = requiredFieldFromMessage(ui_text).?;

@@ -122,8 +122,15 @@ pub fn parse(job: *const pb.Job) ParseError!?LoadSpec {
 
     const dest = cfg.destination_table orelse return error.NoDestinationTable;
 
-    var spec = LoadSpec{ .destination = try refFrom(dest) };
+    var spec = LoadSpec{ .destination = try refFrom(dest), .schema = cfg.schema };
+    try readDispositions(cfg, &spec);
+    readRowOptions(cfg, &spec);
+    try readCsvSyntax(cfg, &spec);
+    return spec;
+}
 
+/// The source format, and what the job does with its destination.
+fn readDispositions(cfg: *const pb.JobConfigurationLoad, spec: *LoadSpec) ParseError!void {
     if (cfg.source_format) |text| {
         spec.source_format = std.meta.stringToEnum(SourceFormat, text) orelse
             return error.UnsupportedSourceFormat;
@@ -137,6 +144,10 @@ pub fn parse(job: *const pb.Job) ParseError!?LoadSpec {
         spec.create_disposition = std.meta.stringToEnum(CreateDisposition, text) orelse
             return error.InvalidCreateDisposition;
     }
+}
+
+/// Which rows are read, and how many may be bad.
+fn readRowOptions(cfg: *const pb.JobConfigurationLoad, spec: *LoadSpec) void {
     if (cfg.autodetect) |v| spec.autodetect = v.value orelse false;
     if (cfg.skip_leading_rows) |v| {
         if (v.value) |n| spec.skip_leading_rows = @intCast(@max(n, 0));
@@ -147,6 +158,10 @@ pub fn parse(job: *const pb.Job) ParseError!?LoadSpec {
     if (cfg.allow_jagged_rows) |v| spec.allow_jagged_rows = v.value orelse false;
     if (cfg.allow_quoted_newlines) |v| spec.allow_quoted_newlines = v.value orelse false;
     if (cfg.ignore_unknown_values) |v| spec.ignore_unknown_values = v.value orelse false;
+}
+
+/// The delimiter, quote and null marker a CSV is read with.
+fn readCsvSyntax(cfg: *const pb.JobConfigurationLoad, spec: *LoadSpec) ParseError!void {
     if (cfg.field_delimiter) |text| {
         spec.field_delimiter = oneByte(text) orelse return error.InvalidDelimiter;
     }
@@ -160,8 +175,6 @@ pub fn parse(job: *const pb.Job) ParseError!?LoadSpec {
     if (cfg.null_marker) |v| {
         if (v.value) |text| spec.null_marker = text;
     }
-    spec.schema = cfg.schema;
-    return spec;
 }
 
 /// What the client is told about a configuration that never became a job.
@@ -385,6 +398,36 @@ test "the dispositions that change an existing table's schema are refused" {
         \\ "destinationTable":{"projectId":"p","datasetId":"d","tableId":"t"}}}}
     );
     try testing.expectError(error.SchemaUpdateUnsupported, parse(update));
+}
+
+test "only WRITE_TRUNCATE replaces the destination's rows" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const truncate = try loadJob(arena,
+        \\{"configuration":{"load":{"writeDisposition":"WRITE_TRUNCATE",
+        \\ "destinationTable":{"projectId":"p","datasetId":"d","tableId":"t"}}}}
+    );
+    const truncate_spec = (try parse(truncate)).?;
+    try testing.expect(truncate_spec.replacesDestination());
+    try testing.expect(!truncate_spec.refusesOccupiedDestination());
+
+    const absent = try loadJob(arena,
+        \\{"configuration":{"load":{
+        \\ "destinationTable":{"projectId":"p","datasetId":"d","tableId":"t"}}}}
+    );
+    const absent_spec = (try parse(absent)).?;
+    try testing.expect(!absent_spec.replacesDestination());
+    try testing.expect(!absent_spec.refusesOccupiedDestination());
+
+    const empty = try loadJob(arena,
+        \\{"configuration":{"load":{"writeDisposition":"WRITE_EMPTY",
+        \\ "destinationTable":{"projectId":"p","datasetId":"d","tableId":"t"}}}}
+    );
+    const empty_spec = (try parse(empty)).?;
+    try testing.expect(!empty_spec.replacesDestination());
+    try testing.expect(empty_spec.refusesOccupiedDestination());
 }
 
 test "an empty quote asks for no quoting" {

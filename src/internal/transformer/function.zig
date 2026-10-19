@@ -262,7 +262,7 @@ const lowerings = std.StaticStringMap(Lowering).initComptime(.{
     .{ "zigquery_not", Lowering{ .op = "NOT", .form = .prefix, .min_args = 1, .max_args = 1 } },
     // Lowers over ARRAY and STRUCT too, by the .any operand rule.
     .{ "zigquery_is_null", Lowering{ .op = "IS NULL", .form = .is_null, .min_args = 1, .max_args = 1, .operands = .any } },
-    // Arguments after the first non-NULL one are not evaluated. conditional_expressions.md#coalesce;
+    // Arguments after first non-NULL one are not evaluated (conditional_expressions.md#coalesce)
     .{ "zigquery_coalesce", Lowering{ .op = "COALESCE", .form = .call, .min_args = 1, .operands = .any } },
     // IFNULL is COALESCE's two-argument synonym, conditional_expressions.md#ifnull
     .{ "zigquery_ifnull", Lowering{ .op = "COALESCE", .form = .call, .min_args = 2, .max_args = 2, .operands = .any } },

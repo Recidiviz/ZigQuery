@@ -1338,7 +1338,12 @@ pub const Server = struct {
             null;
 
         const id = try query_handler.randomId(arena, &s.rng);
-        _ = s.uploads.create(id, project_id, req.body, declared, now) catch |err| switch (err) {
+        const opening: upload.Opening = .{
+            .project_id = project_id,
+            .metadata = req.body,
+            .declared_total = declared,
+        };
+        _ = s.uploads.create(id, opening, now) catch |err| switch (err) {
             error.OutOfMemory => return err,
         };
 
@@ -1386,7 +1391,8 @@ pub const Server = struct {
 
         if (range) |r| {
             if (r.isStatusQuery()) return incompleteUpload(arena, session.received());
-            s.uploads.append(session, r, req.body, nowMillis()) catch |err| switch (err) {
+            const chunk: upload.Chunk = .{ .range = r, .bytes = req.body };
+            s.uploads.append(session, chunk, nowMillis()) catch |err| switch (err) {
                 error.OutOfMemory => return err,
                 error.TooLarge => return badRequest(arena, "upload exceeds the size this " ++
                     "emulator accepts"),
@@ -1399,7 +1405,8 @@ pub const Server = struct {
             if (!session.isComplete(r)) return incompleteUpload(arena, session.received());
         } else {
             // No Content-Range: the whole body in one request.
-            s.uploads.append(session, .{}, req.body, nowMillis()) catch |err| switch (err) {
+            const chunk: upload.Chunk = .{ .bytes = req.body };
+            s.uploads.append(session, chunk, nowMillis()) catch |err| switch (err) {
                 error.OutOfMemory => return err,
                 else => return badRequest(arena, "upload could not be accepted"),
             };
@@ -1522,17 +1529,17 @@ pub const Server = struct {
         // A row the reader accepted can still be one the engine will not store.
         const bad_records = read.bad_records + rejected;
         if (bad_records > spec.max_bad_records) {
-            s.db.rawExec("ROLLBACK", &.{}) catch {};
+            try s.db.rawExec("ROLLBACK", &.{});
             committed = true; // the deferred rollback has nothing left to undo
             // The rollback returns SQLite to where it was, but a table the load created is
             // also in the analyzer's catalog, which the transaction does not cover. A job
             // that wrote nothing must not leave a destination behind.
             if (existing == null) {
-                s.db.exec(try std.fmt.allocPrint(
+                try s.db.exec(try std.fmt.allocPrint(
                     arena,
                     "DROP TABLE IF EXISTS `{s}.{s}.{s}`",
                     .{ dst.project_id, dst.dataset_id, dst.table_id },
-                ), &.{}, .{}) catch {};
+                ), &.{}, .{});
             }
             return tooManyBadRecords(s, arena, project_id, job_id, spec, unix_seconds);
         }
@@ -1577,13 +1584,13 @@ pub const Server = struct {
             try s.db.exec(ddl, &.{}, .{});
             var metadata_json: std.ArrayList(u8) = .empty;
             try tables_handler.writeMetadata(arena, &metadata_json, read.schema_node);
-            s.db.setTableMetadata(
+            try s.db.setTableMetadata(
                 arena,
                 dst.project_id,
                 dst.dataset_id,
                 dst.table_id,
                 metadata_json.items,
-            ) catch {};
+            );
         }
 
         if (read.rowCount() == 0) return 0;

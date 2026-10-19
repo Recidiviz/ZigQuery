@@ -1730,12 +1730,20 @@ test "staleViewNames lists the views over a stale view, through every chain and 
     try c.createCatalogTablesIfNotExist(&db);
 
     const Read = struct {
-        fn view(catalog: *Catalog, arena: std.mem.Allocator, name: []const u8, reads: []const []const u8) !*spec.TableSpec {
+        fn view(
+            catalog: *Catalog,
+            arena: std.mem.Allocator,
+            name: []const u8,
+            reads: []const []const u8,
+        ) !*spec.TableSpec {
             const view_spec = try testTableSpec(arena, try arena.dupe([]const u8, &.{name}));
             view_spec.is_view = true;
             view_spec.source_sql = "SELECT a, b FROM t";
             const dependencies = try arena.alloc(spec.ViewDependency, reads.len);
-            for (reads, 0..) |read, i| dependencies[i] = .{ .name = read, .fingerprint = catalog.fingerprint(read) };
+            for (reads, 0..) |read, i| dependencies[i] = .{
+                .name = read,
+                .fingerprint = catalog.fingerprint(read),
+            };
             view_spec.dependencies = dependencies;
             return view_spec;
         }
