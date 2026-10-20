@@ -184,9 +184,10 @@
             .desc = "unnest_timestamp",
             .sql = "SELECT x FROM UNNEST([TIMESTAMP '2000-01-02 10:20:30', '2000-01-02 01:02:03']) x",
             .unordered = true,
+            // Rebased to BigQuery's UTC default time zone (#38); upstream googlesql assumes America/Los_Angeles.
             .rows = .{
-                .{"2000-01-02 18:20:30+00"},
-                .{"2000-01-02 09:02:03+00"},
+                .{"2000-01-02 10:20:30+00"},
+                .{"2000-01-02 01:02:03+00"},
             },
         },
         .{

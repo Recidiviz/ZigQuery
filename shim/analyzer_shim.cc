@@ -20,6 +20,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/time/time.h"
 #include "re2/re2.h"
 #include "unicode/errorcode.h"
 #include "unicode/normalizer2.h"
@@ -611,6 +612,9 @@ int GoogleSQL_AnalyzeNextStatementWithCatalogParams(
   }
 
   googlesql::AnalyzerOptions options(handle->lang);
+  // BigQuery reads a TIMESTAMP literal with no zone, and every other
+  // zoneless civil time the analyzer folds, as UTC.
+  options.set_default_time_zone(absl::UTCTimeZone());
   // Undeclared parameters stay on unless positional types are actually
   // declared below, which is the one combination GoogleSQL rejects. Leaving
   // it on is what lets a parameter the caller said nothing about still
@@ -698,6 +702,8 @@ int GoogleSQL_AnalyzeNextStatementParams(
   }
 
   googlesql::AnalyzerOptions options(lang);
+  // See the note in the handle variant on the default time zone.
+  options.set_default_time_zone(absl::UTCTimeZone());
   // options_json carries the parameter mode: `{"parameter_mode":"positional"}`
   // selects positional (`?`) parameters; anything else keeps the default
   // named (`@name`) mode. Mirrors the Go analyzer's getParameterMode +

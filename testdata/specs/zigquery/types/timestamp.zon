@@ -10,5 +10,27 @@
                 .{ "-62135596800.0", "253402300799.999999" },
             },
         },
+        .{
+            .desc = "a literal with no zone is read as UTC",
+            .sql =
+            \\SELECT UNIX_SECONDS(TIMESTAMP '2016-10-18 2:51:45'),
+            \\  UNIX_SECONDS(TIMESTAMP '2016-10-18 2:51:45+00'),
+            \\  UNIX_SECONDS(TIMESTAMP '2016-10-18 2:51:45 UTC'),
+            \\  CAST(TIMESTAMP '2016-10-18 2:51:45' AS STRING)
+            ,
+            .rows = .{
+                .{ 1476759105, 1476759105, 1476759105, "2016-10-18 02:51:45+00" },
+            },
+        },
+        .{
+            .desc = "a literal with no zone equals the same string cast at run time",
+            .sql =
+            \\WITH t AS (SELECT '2016-10-18 2:51:45' AS s)
+            \\SELECT TIMESTAMP '2016-10-18 2:51:45' = CAST(s AS TIMESTAMP) FROM t
+            ,
+            .rows = .{
+                .{true},
+            },
+        },
     },
 }
