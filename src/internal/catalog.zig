@@ -1424,17 +1424,13 @@ fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.Functio
     {
         const expr_t = try alloc.create(spec.Type);
         expr_t.* = .{
-            .name = "expression",
             .kind = @backingInt(pb.TypeKind.TYPE_STRING),
             .signature_kind = arg_arbitrary,
         };
         const search_t = try alloc.create(spec.Type);
-        search_t.* = .{
-            .name = "search_value_literal",
-            .kind = @backingInt(pb.TypeKind.TYPE_STRING),
-        };
+        search_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRING) };
         const ret_t = try alloc.create(spec.Type);
-        ret_t.* = .{ .name = "BOOL", .kind = @backingInt(pb.TypeKind.TYPE_BOOL) };
+        ret_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_BOOL) };
         const args = try alloc.alloc(*spec.NameWithType, 2);
         const a0 = try alloc.create(spec.NameWithType);
         a0.* = .{ .name = "expression", .type = expr_t };
@@ -1455,9 +1451,9 @@ fn missingFunctions(alloc: std.mem.Allocator) error{OutOfMemory}![]*spec.Functio
     // min_by / max_by (x ANY_1, y ANY_2) -> ANY_1, aggregate.
     for ([_][]const u8{ "min_by", "max_by" }, 1..) |name, i| {
         const x_t = try alloc.create(spec.Type);
-        x_t.* = .{ .name = "x", .signature_kind = arg_any_1 };
+        x_t.* = .{ .signature_kind = arg_any_1 };
         const y_t = try alloc.create(spec.Type);
-        y_t.* = .{ .name = "y", .signature_kind = arg_any_2 };
+        y_t.* = .{ .signature_kind = arg_any_2 };
         const ret_t = try alloc.create(spec.Type);
         ret_t.* = .{ .signature_kind = arg_any_1 };
         const args = try alloc.alloc(*spec.NameWithType, 2);
