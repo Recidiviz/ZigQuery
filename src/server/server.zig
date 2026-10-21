@@ -458,6 +458,8 @@ pub const Server = struct {
                 .literalMs = debug_stats.msFromNs(phase.totalNs(.codec_literal), ms1),
                 .literalCount = phase.count(.codec_literal),
             },
+            .viewRefreshMs = debug_stats.msFromNs(phase.totalNs(.view_refresh), ms1),
+            .viewRefreshCount = phase.count(.view_refresh),
             .analysisFraction = .{
                 .v = if (handle_ms == 0) 0 else (analyze_ms + transform_ms) / handle_ms,
             },
@@ -1336,7 +1338,12 @@ pub const Server = struct {
             null;
 
         const id = try query_handler.randomId(arena, &s.rng);
-        _ = s.uploads.create(id, project_id, req.body, declared, now) catch |err| switch (err) {
+        const opening: upload.Opening = .{
+            .project_id = project_id,
+            .metadata = req.body,
+            .declared_total = declared,
+        };
+        _ = s.uploads.create(id, opening, now) catch |err| switch (err) {
             error.OutOfMemory => return err,
         };
 
@@ -1384,7 +1391,8 @@ pub const Server = struct {
 
         if (range) |r| {
             if (r.isStatusQuery()) return incompleteUpload(arena, session.received());
-            s.uploads.append(session, r, req.body, nowMillis()) catch |err| switch (err) {
+            const chunk: upload.Chunk = .{ .range = r, .bytes = req.body };
+            s.uploads.append(session, chunk, nowMillis()) catch |err| switch (err) {
                 error.OutOfMemory => return err,
                 error.TooLarge => return badRequest(arena, "upload exceeds the size this " ++
                     "emulator accepts"),
@@ -1397,7 +1405,8 @@ pub const Server = struct {
             if (!session.isComplete(r)) return incompleteUpload(arena, session.received());
         } else {
             // No Content-Range: the whole body in one request.
-            s.uploads.append(session, .{}, req.body, nowMillis()) catch |err| switch (err) {
+            const chunk: upload.Chunk = .{ .bytes = req.body };
+            s.uploads.append(session, chunk, nowMillis()) catch |err| switch (err) {
                 error.OutOfMemory => return err,
                 else => return badRequest(arena, "upload could not be accepted"),
             };
@@ -1520,17 +1529,17 @@ pub const Server = struct {
         // A row the reader accepted can still be one the engine will not store.
         const bad_records = read.bad_records + rejected;
         if (bad_records > spec.max_bad_records) {
-            s.db.rawExec("ROLLBACK", &.{}) catch {};
+            try s.db.rawExec("ROLLBACK", &.{});
             committed = true; // the deferred rollback has nothing left to undo
             // The rollback returns SQLite to where it was, but a table the load created is
             // also in the analyzer's catalog, which the transaction does not cover. A job
             // that wrote nothing must not leave a destination behind.
             if (existing == null) {
-                s.db.exec(try std.fmt.allocPrint(
+                try s.db.exec(try std.fmt.allocPrint(
                     arena,
                     "DROP TABLE IF EXISTS `{s}.{s}.{s}`",
                     .{ dst.project_id, dst.dataset_id, dst.table_id },
-                ), &.{}, .{}) catch {};
+                ), &.{}, .{});
             }
             return tooManyBadRecords(s, arena, project_id, job_id, spec, unix_seconds);
         }
@@ -1575,13 +1584,13 @@ pub const Server = struct {
             try s.db.exec(ddl, &.{}, .{});
             var metadata_json: std.ArrayList(u8) = .empty;
             try tables_handler.writeMetadata(arena, &metadata_json, read.schema_node);
-            s.db.setTableMetadata(
+            try s.db.setTableMetadata(
                 arena,
                 dst.project_id,
                 dst.dataset_id,
                 dst.table_id,
                 metadata_json.items,
-            ) catch {};
+            );
         }
 
         if (read.rowCount() == 0) return 0;
@@ -4283,6 +4292,37 @@ test "a view made by DDL reports the query it was written with" {
     try testing.expect(
         std.mem.indexOf(u8, got.body, "\"name\":\"name\",\"type\":\"STRING\"") != null,
     );
+}
+
+test "a view with a column list reports the listed names and descriptions" {
+    // recidiviz-bigquery-sandbox, 2026-10-19: tables.get reports the listed names, each listed
+    // description, and view.query without the list.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var s = try Server.init(testing.allocator, testing.io, .{ .project = "test", .dataset = "ds1" });
+    defer s.deinit();
+    try createStreamTable(s, arena, "base");
+    const ddl = try request(s, arena, .POST, "/projects/test/jobs",
+        \\{"configuration":{"query":{"query":"CREATE VIEW `test.ds1.v` (who OPTIONS(description='the name'), years) AS SELECT name, age FROM `test.ds1.base`"}}}
+    );
+    try testing.expectEqual(std.http.Status.ok, ddl.status);
+
+    const got = try request(s, arena, .GET, "/projects/test/datasets/ds1/tables/v", "");
+    try testing.expectEqual(std.http.Status.ok, got.status);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got.body,
+        \\"schema":{"fields":[{"description":"the name","name":"who","type":"STRING"},{"name":"years","type":"INTEGER"}]}
+        ,
+    ) != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        got.body,
+        \\"view":{"query":"SELECT name, age FROM `test.ds1.base`","useLegacySql":false}
+        ,
+    ) != null);
 }
 
 test "nested modes and field descriptions come back exactly as posted" {

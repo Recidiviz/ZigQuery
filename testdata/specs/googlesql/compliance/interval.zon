@@ -217,8 +217,9 @@
             \\  DATETIME  '1970-01-02 03:04:05.678' - INTERVAL '1-1 1 1:1:1.111' YEAR TO SECOND,
             \\  TIMESTAMP '1970-01-01 02:03:04.567' - INTERVAL '1 1:1:1.111' DAY TO SECOND,
             ,
+            // Rebased to BigQuery's UTC default time zone (#38); upstream googlesql assumes America/Los_Angeles.
             .rows = .{
-                .{ "2010-09-29 22:58:59", "1968-12-01 02:03:04.567", "1969-12-31 09:02:03.456+00" },
+                .{ "2010-09-29 22:58:59", "1968-12-01 02:03:04.567", "1969-12-31 01:02:03.456+00" },
             },
         },
         .{

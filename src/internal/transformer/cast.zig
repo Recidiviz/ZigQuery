@@ -78,9 +78,7 @@ fn writeType(
     out: *std.ArrayList(u8),
     t: *const spec.Type,
 ) Error!void {
-    try out.appendSlice(alloc, "{\"name\":");
-    try writeJsonString(alloc, out, t.name);
-    try out.print(alloc, ",\"kind\":{d},\"signatureKind\":{d},\"elementType\":", .{
+    try out.print(alloc, "{{\"name\":\"\",\"kind\":{d},\"signatureKind\":{d},\"elementType\":", .{
         t.kind,
         t.signature_kind,
     });

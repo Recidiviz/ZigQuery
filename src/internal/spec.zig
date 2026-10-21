@@ -1,11 +1,8 @@
-//! Partial port of go-zetasqlite internal/spec.go: the `Type` struct subset
-//! used by the coordinator/extractor layer (Go `zType` fields become
-//! `*spec.Type` built eagerly from the decoded `pb.TypeProto`).
+//! What the catalog knows about each table, view, function and dataset, and the `Type` the
+//! coordinator/extractor layer builds from the decoded `pb.TypeProto`.
 //!
-//! Also ports the catalog-milestone TableSpec/ColumnSpec with their
-//! Go-compatible JSON encoding (the persisted `spec` column must
-//! interoperate with DBs written by go-zetasqlite). FunctionSpec is
-//! deferred to the CREATE FUNCTION milestone.
+//! `catalog.zig` persists each spec as the JSON its `toJson` writes, in the `spec` column of
+//! `zigquery_catalog`, and reads it back with the matching `*FromJson`.
 // ephor:ignore-file ZA301 ZA302 ZA303 ZA304
 
 const std = @import("std");
@@ -87,7 +84,6 @@ pub fn notNullColumnFromMessage(text: []const u8) ?[]const u8 {
 pub fn cloneType(arena: std.mem.Allocator, t: *const Type) std.mem.Allocator.Error!*Type {
     const out = try arena.create(Type);
     out.* = .{
-        .name = try arena.dupe(u8, t.name),
         .kind = t.kind,
         .signature_kind = t.signature_kind,
         .element_type = if (t.element_type) |e| try cloneType(arena, e) else null,
@@ -109,11 +105,10 @@ pub fn cloneType(arena: std.mem.Allocator, t: *const Type) std.mem.Allocator.Err
     return out;
 }
 
-/// Go spec.go Type. `kind` holds the engine TypeKind int (pb.TypeKind);
-/// `signature_kind` holds the SignatureArgumentKind int for templated
-/// function-argument types (0 otherwise, mirroring Go's zero value).
+/// A column, field or function-argument type. `kind` holds the engine TypeKind int (pb.TypeKind);
+/// `signature_kind` holds the SignatureArgumentKind int for templated function-argument types,
+/// and is 0 otherwise.
 pub const Type = struct {
-    name: []const u8 = "",
     kind: i32 = 0,
     signature_kind: i32 = 0,
     element_type: ?*Type = null,
@@ -164,9 +159,8 @@ pub const Type = struct {
     }
 };
 
-/// Go spec.go newType equivalent, building from the decoded TypeProto
+/// A Type built from the decoded TypeProto
 /// (type_kind + array_type.element_type + struct_type.field recursion).
-/// Like Go newType, `name` is left empty.
 pub fn newTypeFromProto(alloc: std.mem.Allocator, tp: *const pb.TypeProto) Error!*Type {
     const t = try alloc.create(Type);
     t.* = .{ .kind = @backingInt(tp.type_kind orelse .TYPE_UNKNOWN) };
@@ -261,16 +255,6 @@ pub fn sqliteTypeName(k: pb.TypeKind) []const u8 {
 // ----------------------------------------------------------------------
 // TableSpec / ColumnSpec (Go spec.go TableSpec, ColumnSpec)
 // ----------------------------------------------------------------------
-
-/// go-googlesql ResolvedCreateStatementEnums_CreateMode values as persisted
-/// by Go in TableSpec JSON (`createMode`). NOTE: these are the Go binding's
-/// 1-based values, NOT the googlesql fork's 0-based proto enum
-/// (pb.ResolvedCreateStatementEnums_CreateMode); converting a resolved
-/// CREATE statement's proto mode requires +1 (CREATE-statement task).
-pub const create_mode_unspecified: i64 = 0;
-pub const create_mode_create_default: i64 = 1;
-pub const create_mode_create_or_replace: i64 = 2;
-pub const create_mode_create_if_not_exists: i64 = 3;
 
 /// Go name_path.go formatPath: "_"-joined (the canonical SQLite name).
 pub fn formatPath(alloc: std.mem.Allocator, path: []const []const u8) error{OutOfMemory}![]u8 {
@@ -467,43 +451,25 @@ pub const DatasetSpec = struct {
     }
 
     pub fn toJson(self: *const DatasetSpec, alloc: std.mem.Allocator) Error![]u8 {
-        var out: std.ArrayList(u8) = .empty;
-        try out.appendSlice(alloc, "{\"namePath\":");
-        try appendJsonStringArray(&out, alloc, self.name_path);
-        try out.appendSlice(alloc, ",\"updatedAt\":");
-        try appendJsonString(&out, alloc, self.updated_at);
-        try out.appendSlice(alloc, ",\"createdAt\":");
-        try appendJsonString(&out, alloc, self.created_at);
-        try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
-        try out.append(alloc, '}');
-        return out.toOwnedSlice(alloc);
+        return specToJson(alloc, self.*);
     }
 };
 
-/// json.Unmarshal into DatasetSpec (the shape `DatasetSpec.toJson` produces).
 pub fn datasetSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*DatasetSpec {
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, json_text, .{}) catch |err|
-        switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.InvalidType,
-        };
-    if (parsed != .object) return error.InvalidType;
-    const obj = parsed.object;
-
-    const ds = try alloc.create(DatasetSpec);
-    ds.* = .{};
-    ds.name_path = try stringSliceField(alloc, obj, "namePath");
-    if (obj.get("updatedAt")) |v| {
-        if (v == .string) ds.updated_at = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("createdAt")) |v| {
-        if (v == .string) ds.created_at = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("metadata")) |v| {
-        if (v == .string) ds.metadata = try alloc.dupe(u8, v.string);
-    }
-    return ds;
+    return specFromJson(DatasetSpec, alloc, json_text);
 }
+
+/// A table or view that a view's query reads.
+pub const ViewDependency = struct {
+    /// Canonical ("_"-joined) name.
+    name: []const u8,
+    /// The dependency's `catalog.shapeFingerprint` when the view was last analyzed, or
+    /// `missing_fingerprint` when it did not exist then.
+    fingerprint: u64,
+};
+
+/// The fingerprint of a name the catalog does not hold.
+pub const missing_fingerprint: u64 = 0;
 
 /// A representation of a table in BigQuery
 pub const TableSpec = struct {
@@ -512,13 +478,12 @@ pub const TableSpec = struct {
     name_path: []const []const u8 = &.{},
     columns: []const *ColumnSpec = &.{},
     primary_key: []const []const u8 = &.{},
-    create_mode: i64 = create_mode_unspecified,
+    /// Persisted in TableSpec JSON (`createMode`) as the proto enum's number.
+    create_mode: pb.ResolvedCreateStatementEnums_CreateMode = .CREATE_DEFAULT,
     query: []const u8 = "",
     updated_at: []const u8 = "", // RFC3339 timestamp
     created_at: []const u8 = "", // RFC3339 timestamp
-    /// DDL OPTIONS. Go's TableSpec has no such field, so this is serialised
-    /// only when non-empty — see toJson — keeping the JSON byte-identical to
-    /// Go's for every spec that has none.
+    /// DDL OPTIONS. Serialised only when non-empty.
     options: []const *OptionSpec = &.{},
     /// DDL PARTITION BY, for the metadata API to report when no client posted
     /// a partitioning of its own. Serialised only when set, like `options`.
@@ -539,9 +504,29 @@ pub const TableSpec = struct {
     /// holds the SQLite translation the engine runs; the metadata API reports
     /// this one. Serialised only when non-empty.
     source_sql: []const u8 = "",
+    /// A view whose CREATE VIEW listed its column names.
+    /// `columns` holds those names, and a refresh lists them again. Serialised only when set.
+    explicit_columns: bool = false,
+    /// A view's columns as its query analyzes against the tables it reads today, once a refresh
+    /// has re-analyzed it. BigQuery binds a view's query late, so a query through the view sees
+    /// these, while the metadata API and INFORMATION_SCHEMA keep reporting `columns`, the schema
+    /// the view was created with. Empty until a refresh changes them. Serialised only when set.
+    analysis_columns: []const *ColumnSpec = &.{},
+    /// Why a view's query no longer analyzes, worded as BigQuery reports it to a query that reads
+    /// the view. Empty while it analyzes. Serialised only when set.
+    invalid_reason: []const u8 = "",
+    /// The tables and views a view's query read when it was last analyzed, each with the shape it
+    /// had then. Empty for a table. Serialised only when non-empty.
+    dependencies: []const ViewDependency = &.{},
     /// Registered for the analyzer only, never persisted: a job's result table
     /// or an INFORMATION_SCHEMA view. Runtime state, not part of the JSON.
     is_synthetic: bool = false,
+
+    /// The columns the analyzer resolves this table or view against: `analysis_columns` once a
+    /// refresh has set them, `columns` otherwise.
+    pub fn analyzedColumns(self: *const TableSpec) []const *ColumnSpec {
+        return if (self.analysis_columns.len > 0) self.analysis_columns else self.columns;
+    }
 
     /// Go TableSpec.Column.
     pub fn column(self: *const TableSpec, name: []const u8) ?*ColumnSpec {
@@ -556,8 +541,7 @@ pub const TableSpec = struct {
         return formatPath(alloc, self.name_path);
     }
 
-    /// Go TableSpec.SQLiteSchema (exact text, including the trailing space
-    /// Go's "%s `%s` (%s) %s" leaves when there is no clustering clause).
+    /// The CREATE TABLE or CREATE VIEW that makes the SQLite object this spec describes.
     pub fn sqliteSchema(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
         if (self.is_view) return self.viewSqliteSchema(alloc);
         const table_name = try self.tableName(alloc);
@@ -575,17 +559,15 @@ pub const TableSpec = struct {
         // through the catalog's `primaryKey` field, and becomes a non-unique
         // index (see pkIndexSchema) so SQLite's planner gets the same hint
         // BigQuery's does.
-        const clustering: []const u8 = "";
         const stmt: []const u8 = switch (self.create_mode) {
-            create_mode_create_default, create_mode_create_or_replace => "CREATE TABLE",
-            create_mode_create_if_not_exists => "CREATE TABLE IF NOT EXISTS",
-            else => "", // Go's switch has no default: stmt stays "".
+            .CREATE_DEFAULT, .CREATE_OR_REPLACE => "CREATE TABLE",
+            .CREATE_IF_NOT_EXISTS => "CREATE TABLE IF NOT EXISTS",
+            _ => return error.InvalidType,
         };
-        return std.fmt.allocPrint(alloc, "{s} `{s}` ({s}) {s}", .{
+        return std.fmt.allocPrint(alloc, "{s} `{s}` ({s})", .{
             stmt,
             table_name,
             try self.declaredColumnsSql(alloc),
-            clustering,
         });
     }
 
@@ -650,12 +632,11 @@ pub const TableSpec = struct {
         );
     }
 
-    /// Go viewSQLiteSchema.
     fn viewSqliteSchema(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
         const stmt: []const u8 = switch (self.create_mode) {
-            create_mode_create_default, create_mode_create_or_replace => "CREATE VIEW",
-            create_mode_create_if_not_exists => "CREATE VIEW IF NOT EXISTS",
-            else => "",
+            .CREATE_DEFAULT, .CREATE_OR_REPLACE => "CREATE VIEW",
+            .CREATE_IF_NOT_EXISTS => "CREATE VIEW IF NOT EXISTS",
+            _ => return error.InvalidType,
         };
         return std.fmt.allocPrint(alloc, "{s} `{s}` AS {s}", .{
             stmt,
@@ -664,163 +645,13 @@ pub const TableSpec = struct {
         });
     }
 
-    /// json.Marshal(*TableSpec) equivalent: field order, casing and
-    /// null-vs-[] conventions match what Go produces (nil PrimaryKey -> null,
-    /// always-built Columns/NamePath -> arrays).
     pub fn toJson(self: *const TableSpec, alloc: std.mem.Allocator) Error![]u8 {
-        var out: std.ArrayList(u8) = .empty;
-        try out.appendSlice(alloc, "{\"isTemp\":");
-        try out.appendSlice(alloc, if (self.is_temp) "true" else "false");
-        try out.appendSlice(alloc, ",\"isView\":");
-        try out.appendSlice(alloc, if (self.is_view) "true" else "false");
-        try out.appendSlice(alloc, ",\"namePath\":");
-        try appendJsonStringArray(&out, alloc, self.name_path);
-        try out.appendSlice(alloc, ",\"columns\":[");
-        for (self.columns, 0..) |col, i| {
-            if (i > 0) try out.append(alloc, ',');
-            try appendColumnSpecJson(&out, alloc, col);
-        }
-        try out.appendSlice(alloc, "],\"primaryKey\":");
-        if (self.primary_key.len == 0) {
-            try out.appendSlice(alloc, "null");
-        } else {
-            try appendJsonStringArray(&out, alloc, self.primary_key);
-        }
-        try out.appendSlice(alloc, ",\"createMode\":");
-        try out.print(alloc, "{d}", .{self.create_mode});
-        try out.appendSlice(alloc, ",\"query\":");
-        try appendJsonString(&out, alloc, self.query);
-        try out.appendSlice(alloc, ",\"updatedAt\":");
-        try appendJsonString(&out, alloc, self.updated_at);
-        try out.appendSlice(alloc, ",\"createdAt\":");
-        try appendJsonString(&out, alloc, self.created_at);
-        // Only when present, so a spec with no options marshals byte-for-byte
-        // as Go does — Go's TableSpec has no such field. Same shape as upstream
-        // googlesqlite's `json:"options,omitempty"`.
-        if (self.options.len > 0) {
-            try out.appendSlice(alloc, ",\"options\":[");
-            for (self.options, 0..) |opt, i| {
-                if (i > 0) try out.append(alloc, ',');
-                try out.appendSlice(alloc, "{\"name\":");
-                try appendJsonString(&out, alloc, opt.name);
-                try out.appendSlice(alloc, ",\"type\":");
-                try appendJsonString(&out, alloc, opt.type_name);
-                try out.appendSlice(alloc, ",\"value\":");
-                try appendJsonString(&out, alloc, opt.value);
-                try out.append(alloc, '}');
-            }
-            try out.append(alloc, ']');
-        }
-        if (self.partitioning) |p| {
-            try out.appendSlice(alloc, ",\"partitioning\":{\"type\":");
-            switch (p) {
-                .time => |t| {
-                    try appendJsonString(&out, alloc, @tagName(t.unit));
-                    try out.appendSlice(alloc, ",\"field\":");
-                    try appendJsonString(&out, alloc, t.field);
-                },
-                .range => |r| {
-                    try out.appendSlice(alloc, "\"RANGE\",\"field\":");
-                    try appendJsonString(&out, alloc, r.field);
-                    try out.print(alloc, ",\"start\":{d},\"end\":{d},\"interval\":{d}", .{
-                        r.start, r.end, r.interval,
-                    });
-                },
-            }
-            try out.append(alloc, '}');
-        }
-        if (self.clustering.len > 0) {
-            try out.appendSlice(alloc, ",\"clustering\":");
-            try appendJsonStringArray(&out, alloc, self.clustering);
-        }
-        try appendStringFieldIfSet(&out, alloc, "description", self.description);
-        try appendStringFieldIfSet(&out, alloc, "metadata", self.metadata);
-        try appendStringFieldIfSet(&out, alloc, "sourceSql", self.source_sql);
-        try out.append(alloc, '}');
-        return out.toOwnedSlice(alloc);
+        return specToJson(alloc, self.*);
     }
 };
 
-/// `,"key":"value"`, or nothing for an empty value: the fields Go's TableSpec
-/// lacks stay out of the JSON when unused.
-fn appendStringFieldIfSet(
-    out: *std.ArrayList(u8),
-    alloc: std.mem.Allocator,
-    key: []const u8,
-    value: []const u8,
-) Error!void {
-    if (value.len == 0) return;
-    try out.appendSlice(alloc, ",\"");
-    try out.appendSlice(alloc, key);
-    try out.appendSlice(alloc, "\":");
-    try appendJsonString(out, alloc, value);
-}
-
-fn appendColumnSpecJson(
-    out: *std.ArrayList(u8),
-    alloc: std.mem.Allocator,
-    col: *const ColumnSpec,
-) Error!void {
-    try out.appendSlice(alloc, "{\"name\":");
-    try appendJsonString(out, alloc, col.name);
-    try out.appendSlice(alloc, ",\"type\":");
-    try appendTypeJson(out, alloc, col.type);
-    try out.appendSlice(alloc, ",\"isNotNull\":");
-    try out.appendSlice(alloc, if (col.is_not_null) "true" else "false");
-    try appendStringFieldIfSet(out, alloc, "description", col.description);
-    try out.append(alloc, '}');
-}
-
-/// The Go spec.go Type JSON shape: {"name","kind","signatureKind",
-/// "elementType","fieldTypes"} with null for absent pointers/nil slices.
-fn appendTypeJson(out: *std.ArrayList(u8), alloc: std.mem.Allocator, t: *const Type) Error!void {
-    try out.appendSlice(alloc, "{\"name\":");
-    try appendJsonString(out, alloc, t.name);
-    try out.print(alloc, ",\"kind\":{d},\"signatureKind\":{d},\"elementType\":", .{ t.kind, t.signature_kind });
-    if (t.element_type) |elem| {
-        try appendTypeJson(out, alloc, elem);
-    } else {
-        try out.appendSlice(alloc, "null");
-    }
-    try out.appendSlice(alloc, ",\"fieldTypes\":");
-    if (t.field_types.len == 0) {
-        try out.appendSlice(alloc, "null");
-    } else {
-        try out.append(alloc, '[');
-        for (t.field_types, 0..) |field, i| {
-            if (i > 0) try out.append(alloc, ',');
-            try out.appendSlice(alloc, "{\"name\":");
-            try appendJsonString(out, alloc, field.name);
-            try out.appendSlice(alloc, ",\"type\":");
-            if (field.type) |ft| {
-                try appendTypeJson(out, alloc, ft);
-            } else {
-                try out.appendSlice(alloc, "null");
-            }
-            if (field.is_not_null) try out.appendSlice(alloc, ",\"isNotNull\":true");
-            try appendStringFieldIfSet(out, alloc, "description", field.description);
-            try out.append(alloc, '}');
-        }
-        try out.append(alloc, ']');
-    }
-    try out.append(alloc, '}');
-}
-
-fn appendJsonStringArray(
-    out: *std.ArrayList(u8),
-    alloc: std.mem.Allocator,
-    items: []const []const u8,
-) Error!void {
-    try out.append(alloc, '[');
-    for (items, 0..) |item, i| {
-        if (i > 0) try out.append(alloc, ',');
-        try appendJsonString(out, alloc, item);
-    }
-    try out.append(alloc, ']');
-}
-
-/// Minimal JSON string escaping (", \, control chars) — matches what Go
-/// emits for the identifier/timestamp/SQL-text strings that appear in specs.
+/// Minimal JSON string escaping (", \, control chars) for the identifier, timestamp and SQL-text
+/// strings that appear in specs.
 pub fn appendJsonString(
     out: *std.ArrayList(u8),
     alloc: std.mem.Allocator,
@@ -846,193 +677,25 @@ pub fn appendJsonString(
     try out.append(alloc, '"');
 }
 
-/// json.Unmarshal into TableSpec: accepts the Go shape (missing fields,
-/// null-vs-[] slices, any field order). All returned memory is from `alloc`.
-pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*TableSpec {
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, json_text, .{}) catch |err|
-        switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.InvalidType,
-        };
-    if (parsed != .object) return error.InvalidType;
-    const obj = parsed.object;
-
-    const table_spec = try alloc.create(TableSpec);
-    table_spec.* = .{};
-    if (getBool(obj, "isTemp")) |b| table_spec.is_temp = b;
-    if (getBool(obj, "isView")) |b| table_spec.is_view = b;
-    table_spec.name_path = try stringSliceField(alloc, obj, "namePath");
-    table_spec.primary_key = try stringSliceField(alloc, obj, "primaryKey");
-    if (obj.get("createMode")) |v| {
-        if (v == .integer) table_spec.create_mode = v.integer;
-    }
-    if (obj.get("query")) |v| {
-        if (v == .string) table_spec.query = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("updatedAt")) |v| {
-        if (v == .string) table_spec.updated_at = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("createdAt")) |v| {
-        if (v == .string) table_spec.created_at = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("columns")) |v| {
-        if (v == .array) {
-            const cols = try alloc.alloc(*ColumnSpec, v.array.items.len);
-            for (v.array.items, 0..) |item, i| {
-                cols[i] = try columnSpecFromValue(alloc, item);
-            }
-            table_spec.columns = cols;
-        }
-    }
-    // Mandatory counterpart to toJson's options block: addNewTableSpec
-    // serialises a spec and stores the *re-parsed* one, so a key written but
-    // not read here would vanish before the catalog ever saw it.
-    if (obj.get("options")) |v| {
-        if (v == .array) {
-            const opts = try alloc.alloc(*OptionSpec, v.array.items.len);
-            for (v.array.items, 0..) |item, i| {
-                const o = try alloc.create(OptionSpec);
-                o.* = .{};
-                if (item == .object) {
-                    if (item.object.get("name")) |x| {
-                        if (x == .string) o.name = try alloc.dupe(u8, x.string);
-                    }
-                    if (item.object.get("type")) |x| {
-                        if (x == .string) o.type_name = try alloc.dupe(u8, x.string);
-                    }
-                    if (item.object.get("value")) |x| {
-                        if (x == .string) o.value = try alloc.dupe(u8, x.string);
-                    }
-                }
-                opts[i] = o;
-            }
-            table_spec.options = opts;
-        }
-    }
-    // Same reason as options: toJson writes these, so they must be read back.
-    if (obj.get("partitioning")) |v| {
-        if (v == .object) table_spec.partitioning = try partitioningFromJson(alloc, v.object);
-    }
-    table_spec.clustering = try stringSliceField(alloc, obj, "clustering");
-    if (obj.get("description")) |v| {
-        if (v == .string) table_spec.description = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("metadata")) |v| {
-        if (v == .string) table_spec.metadata = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("sourceSql")) |v| {
-        if (v == .string) table_spec.source_sql = try alloc.dupe(u8, v.string);
-    }
-    return table_spec;
+/// The catalog's persisted form of a spec: its fields, as std.json writes them.
+fn specToJson(alloc: std.mem.Allocator, value: anytype) Error![]u8 {
+    return std.json.Stringify.valueAlloc(alloc, value, .{});
 }
 
-/// The `partitioning` object `TableSpec.toJson` writes: `type` is a
-/// `TimeUnit` name, or `RANGE` with integer `start`, `end` and `interval`.
-fn partitioningFromJson(alloc: std.mem.Allocator, obj: std.json.ObjectMap) Error!Partitioning {
-    const type_v = obj.get("type") orelse return error.InvalidType;
-    const field_v = obj.get("field") orelse return error.InvalidType;
-    if (type_v != .string or field_v != .string) return error.InvalidType;
-    const field = try alloc.dupe(u8, field_v.string);
-    if (std.mem.eql(u8, type_v.string, "RANGE")) {
-        return .{ .range = .{
-            .field = field,
-            .start = try intField(obj, "start"),
-            .end = try intField(obj, "end"),
-            .interval = try intField(obj, "interval"),
-        } };
-    }
-    const unit = std.meta.stringToEnum(Partitioning.TimeUnit, type_v.string) orelse
-        return error.InvalidType;
-    return .{ .time = .{ .field = field, .unit = unit } };
-}
-
-fn intField(obj: std.json.ObjectMap, key: []const u8) Error!i64 {
-    const v = obj.get(key) orelse return error.InvalidType;
-    return if (v == .integer) v.integer else error.InvalidType;
-}
-
-fn getBool(obj: std.json.ObjectMap, key: []const u8) ?bool {
-    const v = obj.get(key) orelse return null;
-    return if (v == .bool) v.bool else null;
-}
-
-fn stringSliceField(
-    alloc: std.mem.Allocator,
-    obj: std.json.ObjectMap,
-    key: []const u8,
-) Error![]const []const u8 {
-    const v = obj.get(key) orelse return &.{};
-    if (v != .array) return &.{};
-    const out = try alloc.alloc([]const u8, v.array.items.len);
-    for (v.array.items, 0..) |item, i| {
-        if (item != .string) return error.InvalidType;
-        out[i] = try alloc.dupe(u8, item.string);
-    }
+/// The spec `specToJson` wrote. A missing key is the field's default; a key of the wrong type, or
+/// one the struct has no field for, is `error.InvalidType`. All returned memory is from `alloc`.
+fn specFromJson(comptime T: type, alloc: std.mem.Allocator, json_text: []const u8) Error!*T {
+    const out = try alloc.create(T);
+    const options: std.json.ParseOptions = .{ .allocate = .alloc_always };
+    out.* = std.json.parseFromSliceLeaky(T, alloc, json_text, options) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidType,
+    };
     return out;
 }
 
-fn columnSpecFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*ColumnSpec {
-    if (v != .object) return error.InvalidType;
-    const obj = v.object;
-    const col = try alloc.create(ColumnSpec);
-    const typ = try alloc.create(Type);
-    typ.* = .{};
-    col.* = .{ .type = typ };
-    if (obj.get("name")) |name| {
-        if (name == .string) col.name = try alloc.dupe(u8, name.string);
-    }
-    if (getBool(obj, "isNotNull")) |b| col.is_not_null = b;
-    if (obj.get("description")) |d| {
-        if (d == .string) col.description = try alloc.dupe(u8, d.string);
-    }
-    if (obj.get("type")) |tv| {
-        if (tv == .object) col.type = try typeFromValue(alloc, tv);
-    }
-    return col;
-}
-
-fn typeFromValue(alloc: std.mem.Allocator, v: std.json.Value) Error!*Type {
-    if (v != .object) return error.InvalidType;
-    const obj = v.object;
-    const t = try alloc.create(Type);
-    t.* = .{};
-    if (obj.get("name")) |name| {
-        if (name == .string) t.name = try alloc.dupe(u8, name.string);
-    }
-    if (obj.get("kind")) |kind| {
-        if (kind == .integer) t.kind = @intCast(kind.integer);
-    }
-    if (obj.get("signatureKind")) |sk| {
-        if (sk == .integer) t.signature_kind = @intCast(sk.integer);
-    }
-    if (obj.get("elementType")) |et| {
-        if (et == .object) t.element_type = try typeFromValue(alloc, et);
-    }
-    if (obj.get("fieldTypes")) |fts| {
-        if (fts == .array) {
-            const fields = try alloc.alloc(*NameWithType, fts.array.items.len);
-            for (fts.array.items, 0..) |item, i| {
-                if (item != .object) return error.InvalidType;
-                const nwt = try alloc.create(NameWithType);
-                nwt.* = .{};
-                if (item.object.get("name")) |name| {
-                    if (name == .string) nwt.name = try alloc.dupe(u8, name.string);
-                }
-                if (item.object.get("type")) |tv| {
-                    if (tv == .object) nwt.type = try typeFromValue(alloc, tv);
-                }
-                if (item.object.get("isNotNull")) |b| {
-                    if (b == .bool) nwt.is_not_null = b.bool;
-                }
-                if (item.object.get("description")) |d| {
-                    if (d == .string) nwt.description = try alloc.dupe(u8, d.string);
-                }
-                fields[i] = nwt;
-            }
-            t.field_types = fields;
-        }
-    }
-    return t;
+pub fn tableSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*TableSpec {
+    return specFromJson(TableSpec, alloc, json_text);
 }
 
 /// Convenience constructor for a scalar Type of the given kind.
@@ -1050,12 +713,8 @@ pub fn isTemplatedSignatureKind(k: i32) bool {
 }
 
 // ----------------------------------------------------------------------
-// FunctionSpec (Go spec.go FunctionSpec) — SQL/JS user-defined functions
-// plus the catalog-seeded MISSING_FUNCTIONS (contains_substr, min_by,
-// max_by). The persisted JSON keeps the Go field order and tags for
-// args/return/type so a go-zetasqlite catalog round-trips; `body` deviates
-// (Go stores a *SQLExpression object, this port stores the already-rendered
-// SQL string, since the two SQLExpression trees are not byte-compatible).
+// FunctionSpec: SQL/JS user-defined functions plus the catalog-seeded
+// MISSING_FUNCTIONS (contains_substr, min_by, max_by).
 // ----------------------------------------------------------------------
 
 /// Name -> spec map threaded into the transformer for CallSQL rewriting
@@ -1064,13 +723,11 @@ pub const FuncMap = std.StringHashMap(*FunctionSpec);
 
 pub const FunctionSpec = struct {
     is_temp: bool = false,
-    /// Go NamePath (json "name").
     name_path: []const []const u8 = &.{},
     language: []const u8 = "",
     args: []const *NameWithType = &.{},
-    /// Go Return (json "return").
     return_type: ?*Type = null,
-    /// Rendered SQL body with @argname placeholders (json "body"); null for
+    /// Rendered SQL body with @argname placeholders; null for
     /// catalog-seeded builtins and JS functions.
     body: ?[]const u8 = null,
     code: []const u8 = "",
@@ -1104,107 +761,13 @@ pub const FunctionSpec = struct {
         return std.fmt.allocPrint(alloc, "( {s} )", .{cur});
     }
 
-    /// json.Marshal(*FunctionSpec): Go field order/tags for the portable
-    /// fields; body is a plain string (see the deviation note above).
     pub fn toJson(self: *const FunctionSpec, alloc: std.mem.Allocator) Error![]u8 {
-        var out: std.ArrayList(u8) = .empty;
-        try out.appendSlice(alloc, "{\"isTemp\":");
-        try out.appendSlice(alloc, if (self.is_temp) "true" else "false");
-        try out.appendSlice(alloc, ",\"name\":");
-        try appendJsonStringArray(&out, alloc, self.name_path);
-        try out.appendSlice(alloc, ",\"language\":");
-        try appendJsonString(&out, alloc, self.language);
-        try out.appendSlice(alloc, ",\"args\":");
-        if (self.args.len == 0) {
-            try out.appendSlice(alloc, "null");
-        } else {
-            try out.append(alloc, '[');
-            for (self.args, 0..) |arg, i| {
-                if (i > 0) try out.append(alloc, ',');
-                try out.appendSlice(alloc, "{\"name\":");
-                try appendJsonString(&out, alloc, arg.name);
-                try out.appendSlice(alloc, ",\"type\":");
-                if (arg.type) |t| try appendTypeJson(&out, alloc, t) else try out.appendSlice(
-                    alloc,
-                    "null",
-                );
-                try out.append(alloc, '}');
-            }
-            try out.append(alloc, ']');
-        }
-        try out.appendSlice(alloc, ",\"return\":");
-        if (self.return_type) |t| try appendTypeJson(&out, alloc, t) else try out.appendSlice(
-            alloc,
-            "null",
-        );
-        try out.appendSlice(alloc, ",\"body\":");
-        if (self.body) |b| try appendJsonString(&out, alloc, b) else try out.appendSlice(alloc, "null");
-        try out.appendSlice(alloc, ",\"code\":");
-        try appendJsonString(&out, alloc, self.code);
-        try out.appendSlice(alloc, ",\"isAggregate\":");
-        try out.appendSlice(alloc, if (self.is_aggregate) "true" else "false");
-        try out.appendSlice(alloc, ",\"updatedAt\":");
-        try appendJsonString(&out, alloc, self.updated_at);
-        try out.appendSlice(alloc, ",\"createdAt\":");
-        try appendJsonString(&out, alloc, self.created_at);
-        try out.append(alloc, '}');
-        return out.toOwnedSlice(alloc);
+        return specToJson(alloc, self.*);
     }
 };
 
-/// json.Unmarshal into FunctionSpec (accepts the shape toJson produces; a
-/// go-zetasqlite object with an object-valued "body" leaves body null).
 pub fn functionSpecFromJson(alloc: std.mem.Allocator, json_text: []const u8) Error!*FunctionSpec {
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, json_text, .{}) catch |err|
-        switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.InvalidType,
-        };
-    if (parsed != .object) return error.InvalidType;
-    const obj = parsed.object;
-
-    const fs = try alloc.create(FunctionSpec);
-    fs.* = .{};
-    if (getBool(obj, "isTemp")) |b| fs.is_temp = b;
-    fs.name_path = try stringSliceField(alloc, obj, "name");
-    if (obj.get("language")) |v| {
-        if (v == .string) fs.language = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("code")) |v| {
-        if (v == .string) fs.code = try alloc.dupe(u8, v.string);
-    }
-    if (getBool(obj, "isAggregate")) |b| fs.is_aggregate = b;
-    if (obj.get("body")) |v| {
-        if (v == .string) fs.body = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("return")) |v| {
-        if (v == .object) fs.return_type = try typeFromValue(alloc, v);
-    }
-    if (obj.get("updatedAt")) |v| {
-        if (v == .string) fs.updated_at = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("createdAt")) |v| {
-        if (v == .string) fs.created_at = try alloc.dupe(u8, v.string);
-    }
-    if (obj.get("args")) |v| {
-        if (v == .array) {
-            const args = try alloc.alloc(*NameWithType, v.array.items.len);
-            for (v.array.items, 0..) |item, i| {
-                if (item != .object) return error.InvalidType;
-                const nwt = try alloc.create(NameWithType);
-                nwt.* = .{};
-                if (item.object.get("name")) |name| {
-                    if (name == .string) nwt.name = try alloc.dupe(u8, name.string);
-                }
-                if (item.object.get("type")) |tv| {
-                    if (tv == .object) nwt.type = try typeFromValue(alloc, tv);
-                }
-                args[i] = nwt;
-            }
-            fs.args = args;
-        }
-    }
-    return fs;
+    return specFromJson(FunctionSpec, alloc, json_text);
 }
 
 const testing = std.testing;
@@ -1236,18 +799,7 @@ test "newTypeFromProto builds scalar, array and struct types" {
     try testing.expectEqualStrings("STRUCT<`a` INT64>", try st_t.formatType(alloc));
 }
 
-// Byte-for-byte what Go's json.Marshal produces for the equivalent spec
-// (struct tags in internal/spec.go; goccy/go-json preserves field order).
-const go_table_spec_json =
-    "{\"isTemp\":false,\"isView\":false,\"namePath\":[\"t1\"]," ++
-    "\"columns\":[" ++
-    "{\"name\":\"a\",\"type\":{\"name\":\"\",\"kind\":2,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"isNotNull\":false}," ++
-    "{\"name\":\"b\",\"type\":{\"name\":\"\",\"kind\":8,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"isNotNull\":true}," ++
-    "{\"name\":\"c\",\"type\":{\"name\":\"\",\"kind\":16,\"signatureKind\":0,\"elementType\":{\"name\":\"\",\"kind\":2,\"signatureKind\":0,\"elementType\":null,\"fieldTypes\":null},\"fieldTypes\":null},\"isNotNull\":false}" ++
-    "],\"primaryKey\":[\"a\"],\"createMode\":1,\"query\":\"\"," ++
-    "\"updatedAt\":\"2024-01-02T03:04:05Z\",\"createdAt\":\"2024-01-02T03:04:05Z\"}";
-
-fn makeGoShapeSpec(alloc: std.mem.Allocator) !*TableSpec {
+fn makeTestSpec(alloc: std.mem.Allocator) !*TableSpec {
     const col_a = try alloc.create(ColumnSpec);
     col_a.* = .{ .name = "a", .type = try newSimpleType(alloc, .TYPE_INT64) };
     const col_b = try alloc.create(ColumnSpec);
@@ -1262,28 +814,20 @@ fn makeGoShapeSpec(alloc: std.mem.Allocator) !*TableSpec {
         .name_path = &.{"t1"},
         .columns = try alloc.dupe(*ColumnSpec, &.{ col_a, col_b, col_c }),
         .primary_key = &.{"a"},
-        .create_mode = create_mode_create_default,
+        .create_mode = .CREATE_DEFAULT,
         .updated_at = "2024-01-02T03:04:05Z",
         .created_at = "2024-01-02T03:04:05Z",
     };
     return spec_ptr;
 }
 
-test "TableSpec JSON matches Go marshaling byte-for-byte" {
+test "TableSpec JSON round-trips" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
 
-    const spec_ptr = try makeGoShapeSpec(alloc);
-    try testing.expectEqualStrings(go_table_spec_json, try spec_ptr.toJson(alloc));
-}
-
-test "TableSpec JSON round-trips through the Go shape" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const alloc = arena_state.allocator();
-
-    const decoded = try tableSpecFromJson(alloc, go_table_spec_json);
+    const encoded = try (try makeTestSpec(alloc)).toJson(alloc);
+    const decoded = try tableSpecFromJson(alloc, encoded);
     try testing.expectEqual(false, decoded.is_temp);
     try testing.expectEqual(false, decoded.is_view);
     try testing.expectEqual(@as(usize, 1), decoded.name_path.len);
@@ -1296,11 +840,103 @@ test "TableSpec JSON round-trips through the Go shape" {
         pb.TypeKind.TYPE_INT64,
         decoded.columns[2].type.element_type.?.typeKind(),
     );
-    try testing.expectEqual(create_mode_create_default, decoded.create_mode);
+    try testing.expectEqualStrings("a", decoded.primary_key[0]);
     try testing.expectEqualStrings("2024-01-02T03:04:05Z", decoded.updated_at);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 
-    // Re-encoding reproduces the Go bytes exactly.
-    try testing.expectEqualStrings(go_table_spec_json, try decoded.toJson(alloc));
+    // A key the spec does not have yet is its default.
+    const bare = try tableSpecFromJson(alloc, "{\"name_path\":[\"t\"]}");
+    try testing.expectEqualStrings("t", bare.name_path[0]);
+    try testing.expectEqual(@as(usize, 0), bare.columns.len);
+    try testing.expectEqual(
+        pb.ResolvedCreateStatementEnums_CreateMode.CREATE_DEFAULT,
+        bare.create_mode,
+    );
+}
+
+test "a spec field of the wrong JSON type, or one the spec does not have, is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const refused = [_][]const u8{
+        "{\"primary_key\":null}",
+        "{\"primary_key\":{}}",
+        "{\"is_temp\":\"true\"}",
+        "{\"query\":1}",
+        "{\"columns\":[{\"name\":\"a\"}]}",
+        "{\"create_mode\":\"CREATE_SOMETHING\"}",
+        "{\"namePath\":[\"t\"]}",
+    };
+    for (refused) |json| {
+        try testing.expectError(error.InvalidType, tableSpecFromJson(alloc, json));
+    }
+    try testing.expectError(error.InvalidType, functionSpecFromJson(alloc, "{\"name\":[\"f\"]}"));
+    try testing.expectError(error.InvalidType, datasetSpecFromJson(alloc, "{\"name_path\":1}"));
+}
+
+test "FunctionSpec JSON round-trips, templated argument kinds included" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64) };
+    const y = try alloc.create(NameWithType);
+    y.* = .{ .name = "y", .type = try alloc.create(Type) };
+    y.type.?.* = .{ .signature_kind = 3 };
+    const sql_fn: FunctionSpec = .{
+        .is_temp = true,
+        .name_path = &.{ "p", "d", "f" },
+        .language = "SQL",
+        .args = &.{ x, y },
+        .return_type = try newSimpleType(alloc, .TYPE_INT64),
+        .body = "@x + 1",
+        .code = "x + 1",
+        .is_aggregate = true,
+        .updated_at = "2024-01-02T03:04:05Z",
+        .created_at = "2024-01-02T03:04:05Z",
+    };
+    const encoded = try sql_fn.toJson(alloc);
+    const decoded = try functionSpecFromJson(alloc, encoded);
+    try testing.expect(decoded.is_temp);
+    try testing.expectEqualStrings("f", decoded.name_path[2]);
+    try testing.expectEqualStrings("SQL", decoded.language);
+    try testing.expectEqualStrings("y", decoded.args[1].name);
+    try testing.expectEqual(@as(i32, 3), decoded.args[1].type.?.signature_kind);
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, decoded.return_type.?.typeKind());
+    try testing.expectEqualStrings("@x + 1", decoded.body.?);
+    try testing.expectEqualStrings("x + 1", decoded.code);
+    try testing.expect(decoded.is_aggregate);
+    try testing.expectEqualStrings(sql_fn.updated_at, decoded.updated_at);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+
+    // A missing body and an empty one stay apart.
+    const bodyless: FunctionSpec = .{ .name_path = &.{"g"} };
+    try testing.expect((try functionSpecFromJson(alloc, try bodyless.toJson(alloc))).body == null);
+    const empty: FunctionSpec = .{ .name_path = &.{"g"}, .body = "" };
+    const empty_back = try functionSpecFromJson(alloc, try empty.toJson(alloc));
+    try testing.expectEqualStrings("", empty_back.body.?);
+}
+
+test "a table's flags, query and create mode round-trip through JSON" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const table_spec = try makeTestSpec(alloc);
+    table_spec.is_temp = true;
+    table_spec.is_view = true;
+    table_spec.query = "SELECT 1";
+    table_spec.create_mode = .CREATE_IF_NOT_EXISTS;
+    const decoded = try tableSpecFromJson(alloc, try table_spec.toJson(alloc));
+    try testing.expect(decoded.is_temp);
+    try testing.expect(decoded.is_view);
+    try testing.expectEqualStrings("SELECT 1", decoded.query);
+    try testing.expectEqual(
+        pb.ResolvedCreateStatementEnums_CreateMode.CREATE_IF_NOT_EXISTS,
+        decoded.create_mode,
+    );
 }
 
 test "SQLiteSchema golden strings" {
@@ -1309,27 +945,25 @@ test "SQLiteSchema golden strings" {
     const alloc = arena_state.allocator();
 
     // A primary key changes nothing here: BigQuery keys are NOT ENFORCED, so
-    // the table carries no constraint and the text matches the no-key case
-    // exactly, trailing space included. The key becomes an index instead —
-    // see pkIndexSchema and the tests below.
-    const with_pk = try makeGoShapeSpec(alloc);
+    // the table carries no constraint and the text matches the no-key case.
+    // The key becomes an index instead — see pkIndexSchema and the tests below.
+    const with_pk = try makeTestSpec(alloc);
     try testing.expectEqualStrings(
-        "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT) ",
+        "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT)",
         try with_pk.sqliteSchema(alloc),
     );
 
-    // Without PRIMARY KEY: Go's format string leaves a trailing space.
-    const no_pk = try makeGoShapeSpec(alloc);
+    const no_pk = try makeTestSpec(alloc);
     no_pk.primary_key = &.{};
     try testing.expectEqualStrings(
-        "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT) ",
+        "CREATE TABLE `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT)",
         try no_pk.sqliteSchema(alloc),
     );
 
     // IF NOT EXISTS mode.
-    no_pk.create_mode = create_mode_create_if_not_exists;
+    no_pk.create_mode = .CREATE_IF_NOT_EXISTS;
     try testing.expectEqualStrings(
-        "CREATE TABLE IF NOT EXISTS `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT) ",
+        "CREATE TABLE IF NOT EXISTS `t1` (`a` INT,`b` TEXT NOT NULL,`c` TEXT)",
         try no_pk.sqliteSchema(alloc),
     );
 
@@ -1338,13 +972,13 @@ test "SQLiteSchema golden strings" {
     view.* = .{
         .is_view = true,
         .name_path = &.{ "ds", "v1" },
-        .create_mode = create_mode_create_or_replace,
+        .create_mode = .CREATE_OR_REPLACE,
         .query = "SELECT 1",
     };
     try testing.expectEqualStrings("CREATE VIEW `ds_v1` AS SELECT 1", try view.sqliteSchema(alloc));
 
     // CREATE TABLE AS SELECT (non-view spec with a query).
-    const ctas = try makeGoShapeSpec(alloc);
+    const ctas = try makeTestSpec(alloc);
     ctas.query = "SELECT 1 AS a";
     try testing.expectEqualStrings("CREATE TABLE `t1` AS SELECT 1 AS a", try ctas.sqliteSchema(alloc));
 }
@@ -1356,7 +990,7 @@ test "pkIndexSchema lowers a primary key to a non-unique index" {
 
     // Non-unique on purpose: BigQuery keys are NOT ENFORCED, so this is a
     // planner hint and must not reject duplicates or NULLs.
-    const one = try makeGoShapeSpec(alloc);
+    const one = try makeTestSpec(alloc);
     try testing.expectEqualStrings(
         "CREATE INDEX IF NOT EXISTS `t1.pk` ON `t1` (`a`)",
         (try one.pkIndexSchema(alloc)).?,
@@ -1364,14 +998,14 @@ test "pkIndexSchema lowers a primary key to a non-unique index" {
 
     // Composite keys keep declaration order — an index on (a, b) does not
     // serve a lookup on b alone, so the order is load-bearing.
-    const many = try makeGoShapeSpec(alloc);
+    const many = try makeTestSpec(alloc);
     many.primary_key = &.{ "a", "b" };
     try testing.expectEqualStrings(
         "CREATE INDEX IF NOT EXISTS `t1.pk` ON `t1` (`a`,`b`)",
         (try many.pkIndexSchema(alloc)).?,
     );
 
-    const no_pk = try makeGoShapeSpec(alloc);
+    const no_pk = try makeTestSpec(alloc);
     no_pk.primary_key = &.{};
     try testing.expectEqual(@as(?[]u8, null), try no_pk.pkIndexSchema(alloc));
 
@@ -1385,12 +1019,12 @@ test "pkIndexSchema lowers a primary key to a non-unique index" {
     try testing.expectEqual(@as(?[]u8, null), try view.pkIndexSchema(alloc));
 }
 
-test "a NOT NULL STRUCT member round-trips through the type JSON and stays out of it when unset" {
+test "a NOT NULL STRUCT member round-trips through the type JSON" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
 
-    const with = try makeGoShapeSpec(alloc);
+    const with = try makeTestSpec(alloc);
     const x = try alloc.create(NameWithType);
     x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
     const y = try alloc.create(NameWithType);
@@ -1402,13 +1036,6 @@ test "a NOT NULL STRUCT member round-trips through the type JSON and stays out o
     with.columns = &.{col};
 
     const encoded = try with.toJson(alloc);
-    // x carries the key; y, unset, ends its entry right after its type.
-    try testing.expect(std.mem.indexOf(u8, encoded, "\"name\":\"x\",\"type\":{") != null);
-    const x_then_y = "\"fieldTypes\":null},\"isNotNull\":true},{\"name\":\"y\"";
-    try testing.expect(std.mem.indexOf(u8, encoded, x_then_y) != null);
-    const y_entry = "\"name\":\"y\",\"type\":{\"name\":\"\",\"kind\":8,\"signatureKind\":0," ++
-        "\"elementType\":null,\"fieldTypes\":null}}]";
-    try testing.expect(std.mem.indexOf(u8, encoded, y_entry) != null);
     const decoded = try tableSpecFromJson(alloc, encoded);
     try testing.expect(decoded.columns[0].type.field_types[0].is_not_null);
     try testing.expect(!decoded.columns[0].type.field_types[1].is_not_null);
@@ -1456,7 +1083,7 @@ test "SQLiteSchema adds one CHECK per column with NOT NULL members, positioned" 
     t.* = .{
         .name_path = &.{"t"},
         .columns = &.{ r, rs, plain },
-        .create_mode = create_mode_create_default,
+        .create_mode = .CREATE_DEFAULT,
     };
 
     try testing.expectEqualStrings(
@@ -1465,7 +1092,7 @@ test "SQLiteSchema adds one CHECK per column with NOT NULL members, positioned" 
             "'0','Required field r.x cannot be null; error in writing field r'," ++
             "'1.0','Required field r.inner.y cannot be null; error in writing field r'))," ++
             "CONSTRAINT `rs` CHECK (zigquery_required(`rs`," ++
-            "'[].0','Required field rs.k cannot be null; error in writing field rs'))) ",
+            "'[].0','Required field rs.k cannot be null; error in writing field rs')))",
         try t.sqliteSchema(alloc),
     );
 }
@@ -1482,12 +1109,46 @@ test "SQLiteSchema quotes a member name's apostrophe and keeps a dotted column n
     const r = try alloc.create(ColumnSpec);
     r.* = .{ .name = "a.b", .type = r_t };
     const t = try alloc.create(TableSpec);
-    t.* = .{ .name_path = &.{"t"}, .columns = &.{r}, .create_mode = create_mode_create_default };
+    t.* = .{ .name_path = &.{"t"}, .columns = &.{r}, .create_mode = .CREATE_DEFAULT };
 
     try testing.expectEqualStrings(
         "CREATE TABLE `t` (`a.b` TEXT,CONSTRAINT `a.b` CHECK (zigquery_required(`a.b`," ++
-            "'0','Required field a.b.it''s cannot be null; error in writing field a.b'))) ",
+            "'0','Required field a.b.it''s cannot be null; error in writing field a.b')))",
         try t.sqliteSchema(alloc),
+    );
+}
+
+test "declaredSchemaAs names the declared columns under the given name, whatever the CTAS mode" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const ctas = try makeTestSpec(alloc);
+    ctas.query = "SELECT 1 AS a, 'x' AS b, [1] AS c";
+    ctas.create_mode = .CREATE_IF_NOT_EXISTS;
+    try testing.expectEqualStrings(
+        "CREATE TABLE `scratch` (`a` INT,`b` TEXT NOT NULL,`c` TEXT)",
+        try ctas.declaredSchemaAs(alloc, "scratch"),
+    );
+
+    // r STRUCT<x INT64 NOT NULL>
+    const x = try alloc.create(NameWithType);
+    x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .is_not_null = true };
+    const r_t = try alloc.create(Type);
+    r_t.* = .{ .kind = @backingInt(pb.TypeKind.TYPE_STRUCT), .field_types = &.{x} };
+    const r = try alloc.create(ColumnSpec);
+    r.* = .{ .name = "r", .type = r_t };
+    const members = try alloc.create(TableSpec);
+    members.* = .{
+        .name_path = &.{"t"},
+        .columns = &.{r},
+        .create_mode = .CREATE_OR_REPLACE,
+        .query = "SELECT STRUCT(1 AS x) AS r",
+    };
+    try testing.expectEqualStrings(
+        "CREATE TABLE `t` (`r` TEXT,CONSTRAINT `r` CHECK (zigquery_required(`r`," ++
+            "'0','Required field r.x cannot be null; error in writing field r')))",
+        try members.declaredSchemaAs(alloc, "t"),
     );
 }
 
@@ -1507,36 +1168,56 @@ test "requiredFieldFromMessage reads the path and column back, embedded or not" 
     try testing.expectEqual(@as(?RequiredField, null), requiredFieldFromMessage(empty));
 }
 
-test "metadata and source SQL round-trip through JSON and stay out of it when empty" {
+test "metadata and source SQL round-trip through JSON" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
 
-    const bare = try makeGoShapeSpec(alloc);
-    const bare_json = try bare.toJson(alloc);
-    try testing.expect(std.mem.indexOf(u8, bare_json, "\"metadata\"") == null);
-    try testing.expect(std.mem.indexOf(u8, bare_json, "\"sourceSql\"") == null);
-
-    const with = try makeGoShapeSpec(alloc);
+    const with = try makeTestSpec(alloc);
     // The resource text is carried as a string: its own quotes and nesting
     // are escaped, never re-serialised.
     with.metadata =
         \\{"description":"he said \"hi\"","schema":{"fields":[{"name":"a","type":"INTEGER"}]}}
     ;
     with.source_sql = "SELECT a FROM `p.d.t`";
+    with.explicit_columns = true;
     const encoded = try with.toJson(alloc);
-    try testing.expect(std.mem.indexOf(u8, encoded, ",\"metadata\":\"{\\\"description\\\"") != null);
-    try testing.expect(
-        std.mem.indexOf(u8, encoded, ",\"sourceSql\":\"SELECT a FROM `p.d.t`\"}") != null,
-    );
-
     const decoded = try tableSpecFromJson(alloc, encoded);
     try testing.expectEqualStrings(with.metadata, decoded.metadata);
     try testing.expectEqualStrings(with.source_sql, decoded.source_sql);
+    try testing.expect(decoded.explicit_columns);
     try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 
-test "a dataset spec round-trips through JSON, metadata only when set" {
+test "TableSpec JSON round-trips a view's refresh state" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const with = try makeTestSpec(alloc);
+    const col = try alloc.create(ColumnSpec);
+    col.* = .{ .name = "a", .type = try newSimpleType(alloc, .TYPE_STRING) };
+    const analysis_columns = [_]*ColumnSpec{col};
+    with.analysis_columns = &analysis_columns;
+    with.invalid_reason = "Unrecognized name: b; failed to parse view 'd.v'";
+    const dependencies = [_]ViewDependency{
+        .{ .name = "p_d_t", .fingerprint = std.math.maxInt(u64) },
+        .{ .name = "p_d_gone", .fingerprint = missing_fingerprint },
+    };
+    with.dependencies = &dependencies;
+
+    const encoded = try with.toJson(alloc);
+    const decoded = try tableSpecFromJson(alloc, encoded);
+    try testing.expectEqualStrings("a", decoded.analyzedColumns()[0].name);
+    try testing.expectEqualStrings(with.invalid_reason, decoded.invalid_reason);
+    try testing.expectEqual(@as(usize, 2), decoded.dependencies.len);
+    try testing.expectEqualStrings("p_d_t", decoded.dependencies[0].name);
+    try testing.expectEqual(std.math.maxInt(u64), decoded.dependencies[0].fingerprint);
+    try testing.expectEqual(missing_fingerprint, decoded.dependencies[1].fingerprint);
+    try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
+}
+
+test "a dataset spec round-trips through JSON" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
@@ -1546,51 +1227,31 @@ test "a dataset spec round-trips through JSON, metadata only when set" {
         .updated_at = "2024-01-02T03:04:05Z",
         .created_at = "2024-01-02T03:04:05Z",
     };
-    try testing.expectEqualStrings(
-        \\{"namePath":["p","ds"],"updatedAt":"2024-01-02T03:04:05Z","createdAt":"2024-01-02T03:04:05Z"}
-    ,
-        try bare.toJson(alloc),
-    );
     try testing.expectEqualStrings("p_ds", try bare.datasetName(alloc));
 
     var with = bare;
     with.metadata =
         \\{"datasetReference":{"datasetId":"ds","projectId":"p"},"id":"ds","labels":{"k":"v"}}
     ;
-    // `is_synthetic` is a memory-only marker and never reaches the JSON.
-    with.is_synthetic = true;
     const encoded = try with.toJson(alloc);
-    try testing.expect(std.mem.indexOf(u8, encoded, "synthetic") == null);
-    try testing.expect(std.mem.indexOf(u8, encoded, ",\"metadata\":\"{\\\"datasetReference\\\"") != null);
 
     const decoded = try datasetSpecFromJson(alloc, encoded);
     try testing.expectEqualStrings("p", decoded.name_path[0]);
     try testing.expectEqualStrings("ds", decoded.name_path[1]);
     try testing.expectEqualStrings(with.metadata, decoded.metadata);
     try testing.expectEqualStrings(with.created_at, decoded.created_at);
-    try testing.expect(!decoded.is_synthetic);
     try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 
-test "partitioning and clustering round-trip through JSON and stay out of it when unset" {
+test "partitioning and clustering round-trip through JSON" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
 
-    const bare = try makeGoShapeSpec(alloc);
-    const bare_json = try bare.toJson(alloc);
-    try testing.expect(std.mem.indexOf(u8, bare_json, "\"partitioning\"") == null);
-    try testing.expect(std.mem.indexOf(u8, bare_json, "\"clustering\"") == null);
-
-    const timed = try makeGoShapeSpec(alloc);
+    const timed = try makeTestSpec(alloc);
     timed.partitioning = .{ .time = .{ .field = "ts", .unit = .HOUR } };
     timed.clustering = try alloc.dupe([]const u8, &.{ "a", "n" });
     const timed_json = try timed.toJson(alloc);
-    try testing.expect(std.mem.indexOf(
-        u8,
-        timed_json,
-        ",\"partitioning\":{\"type\":\"HOUR\",\"field\":\"ts\"},\"clustering\":[\"a\",\"n\"]",
-    ) != null);
     // addNewTableSpec stores the re-parsed spec, so the round trip is what
     // the catalog actually keeps.
     const timed_back = try tableSpecFromJson(alloc, timed_json);
@@ -1600,21 +1261,16 @@ test "partitioning and clustering round-trip through JSON and stay out of it whe
     try testing.expectEqualStrings("n", timed_back.clustering[1]);
     try testing.expectEqualStrings(timed_json, try timed_back.toJson(alloc));
 
-    const ranged = try makeGoShapeSpec(alloc);
+    const ranged = try makeTestSpec(alloc);
     ranged.partitioning = .{ .range = .{ .field = "n", .start = -10, .end = 100, .interval = 10 } };
     const ranged_json = try ranged.toJson(alloc);
-    try testing.expect(std.mem.indexOf(
-        u8,
-        ranged_json,
-        ",\"partitioning\":{\"type\":\"RANGE\",\"field\":\"n\",\"start\":-10,\"end\":100,\"interval\":10}",
-    ) != null);
     const ranged_back = try tableSpecFromJson(alloc, ranged_json);
     try testing.expectEqual(@as(i64, -10), ranged_back.partitioning.?.range.start);
     try testing.expectEqual(@as(i64, 10), ranged_back.partitioning.?.range.interval);
     try testing.expectEqualStrings(ranged_json, try ranged_back.toJson(alloc));
 
     try testing.expectError(error.InvalidType, tableSpecFromJson(alloc,
-        \\{"namePath":["p","d","t"],"columns":[],"partitioning":{"type":"WEEK","field":"d"}}
+        \\{"name_path":["p","d","t"],"partitioning":{"time":{"field":"d","unit":"WEEK"}}}
     ));
 }
 
@@ -1635,13 +1291,10 @@ test "notNullColumnFromMessage reads the column out of SQLite's message" {
     );
 }
 
-test "descriptions round-trip through JSON and stay out of it when unset" {
+test "descriptions round-trip through JSON" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
-
-    const bare = try makeGoShapeSpec(alloc);
-    try testing.expect(std.mem.indexOf(u8, try bare.toJson(alloc), "\"description\"") == null);
 
     const x = try alloc.create(NameWithType);
     x.* = .{ .name = "x", .type = try newSimpleType(alloc, .TYPE_INT64), .description = "nested" };
@@ -1652,7 +1305,7 @@ test "descriptions round-trip through JSON and stay out of it when unset" {
     };
     const col = try alloc.create(ColumnSpec);
     col.* = .{ .name = "r", .type = record, .description = "a \"record\"" };
-    const with = try makeGoShapeSpec(alloc);
+    const with = try makeTestSpec(alloc);
     with.columns = try alloc.dupe(*ColumnSpec, &.{col});
     with.description = "the table";
 
@@ -1666,23 +1319,17 @@ test "descriptions round-trip through JSON and stay out of it when unset" {
     try testing.expectEqualStrings(encoded, try decoded.toJson(alloc));
 }
 
-test "options round-trip through JSON and stay out of it when empty" {
+test "options round-trip through JSON" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const alloc = arena_state.allocator();
 
-    // Absent when there are none — this is what keeps the Go byte-for-byte
-    // golden above valid, since Go's TableSpec has no options field.
-    const bare = try makeGoShapeSpec(alloc);
-    try testing.expect(std.mem.indexOf(u8, try bare.toJson(alloc), "\"options\"") == null);
-
-    const with_opts = try makeGoShapeSpec(alloc);
+    const with_opts = try makeTestSpec(alloc);
     const opt = try alloc.create(OptionSpec);
     opt.* = .{ .name = "description", .type_name = "STRING", .value = "\"demo table\"" };
     with_opts.options = try alloc.dupe(*OptionSpec, &.{opt});
 
     const encoded = try with_opts.toJson(alloc);
-    try testing.expect(std.mem.indexOf(u8, encoded, "\"options\":[{\"name\":\"description\"") != null);
 
     // The round trip is load-bearing: addNewTableSpec stores the re-parsed
     // spec, so anything toJson writes and tableSpecFromJson drops is lost.

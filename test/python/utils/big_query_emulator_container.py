@@ -148,7 +148,7 @@ class BigQueryEmulatorContainer(DockerContainer):
         # The image's ENTRYPOINT is the server, so the command is its flags alone.
         self.with_command(_emulator_args(self.port, self.grpc_port, data_from_json))
 
-        self.waiting_for = LogMessageWaitStrategy(READY_LOG_LINE)
+        self.waiting_for(LogMessageWaitStrategy(READY_LOG_LINE))
 
     def get_connection_url(self) -> str:
         """Get the HTTP connection URL for the emulator.

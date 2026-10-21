@@ -53,6 +53,8 @@ pub const Phase = enum {
     /// counted apart because it is the only codec work whose cost does not
     /// scale with rows.
     codec_literal,
+    /// Re-analyzing a view whose tables changed shape, and installing the result.
+    view_refresh,
 };
 
 /// Who asked. "SQLite is slow" could mean the caller's query, or the

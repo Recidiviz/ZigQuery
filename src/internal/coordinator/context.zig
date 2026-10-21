@@ -322,6 +322,9 @@ pub const TransformContext = struct {
     /// withFuncMap / funcMapFromContext). Set by the driver before
     /// transforming; null means no UDFs are registered.
     func_map: ?*const spec.FuncMap = null,
+    /// Canonical names of the tables and views the statement scans, in scan order.
+    /// Shared across context copies, like `collected_params`.
+    scanned_tables: *std.ArrayList([]const u8),
 
     /// Go funcMapFromContext: the UDF spec for `name`, or null.
     pub fn findFunctionSpec(self: *const TransformContext, name: []const u8) ?*spec.FunctionSpec {
@@ -337,6 +340,8 @@ pub const TransformContext = struct {
         mappings.* = std.StringHashMap([]const []const u8).init(alloc);
         const params = try alloc.create(std.ArrayList(CollectedParam));
         params.* = .empty;
+        const scanned_tables = try alloc.create(std.ArrayList([]const u8));
+        scanned_tables.* = .empty;
         const ctx = try alloc.create(TransformContext);
         ctx.* = .{
             .fragment_context = try FragmentContext.init(alloc),
@@ -345,6 +350,7 @@ pub const TransformContext = struct {
             .with_mappings = mappings,
             .collected_params = params,
             .alloc = alloc,
+            .scanned_tables = scanned_tables,
         };
         return ctx;
     }
@@ -416,9 +422,11 @@ pub const TransformContext = struct {
     }
 };
 
-/// Go TransformResult.
+/// One statement, transformed.
 pub const TransformResult = struct {
     fragment: sqlbuilder.SQLFragment,
+    /// Canonical names of the tables and views the statement scans, in scan order.
+    scanned_tables: []const []const u8,
 };
 
 // ----------------------------------------------------------------------

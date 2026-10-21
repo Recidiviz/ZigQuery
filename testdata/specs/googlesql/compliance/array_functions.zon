@@ -663,8 +663,9 @@
             \\SELECT ARRAY_CONCAT(ARRAY<TIMESTAMP>["2013-02-01 12:34:56.789012"],
             \\                    ARRAY<TIMESTAMP>["2014-09-11 01:01:01.001001 UTC"])
             ,
+            // Rebased to BigQuery's UTC default time zone (#38); upstream googlesql assumes America/Los_Angeles.
             .rows = .{
-                .{.{ "2013-02-01 20:34:56.789012+00", "2014-09-11 01:01:01.001001+00" }},
+                .{.{ "2013-02-01 12:34:56.789012+00", "2014-09-11 01:01:01.001001+00" }},
             },
         },
         .{
@@ -673,8 +674,9 @@
             \\SELECT ARRAY<TIMESTAMP>["2013-02-01 12:34:56.789012"] ||
             \\       ARRAY<TIMESTAMP>["2014-09-11 01:01:01.001001 UTC"]
             ,
+            // Rebased to BigQuery's UTC default time zone (#38); upstream googlesql assumes America/Los_Angeles.
             .rows = .{
-                .{.{ "2013-02-01 20:34:56.789012+00", "2014-09-11 01:01:01.001001+00" }},
+                .{.{ "2013-02-01 12:34:56.789012+00", "2014-09-11 01:01:01.001001+00" }},
             },
         },
         .{

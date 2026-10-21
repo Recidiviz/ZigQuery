@@ -252,26 +252,43 @@ pub fn detect(
 ) !Detection {
     if (rows.len == 0) return .{ .columns = &.{}, .data_start = 0 };
 
+    const start = locateData(rows, skip_leading_rows);
+    const all_data = if (start.data_start < rows.len) rows[start.data_start..] else &.{};
+    const data = all_data[0..@min(all_data.len, sample_rows)];
+    return .{
+        .columns = try detectColumns(arena, start.header, data),
+        .data_start = start.data_start,
+    };
+}
+
+const DataStart = struct {
+    /// The row naming the columns, when the row before the data reads as one.
+    header: ?[]const []const u8 = null,
+    data_start: u32,
+};
+
+fn locateData(rows: []const []const []const u8, skip_leading_rows: ?u32) DataStart {
     const candidate: ?u32 = switch (skip_leading_rows orelse 0) {
         0 => if (skip_leading_rows == null) 0 else null,
         else => |n| n - 1,
     };
+    const unread: DataStart = .{ .data_start = skip_leading_rows orelse 0 };
+    const row_index = candidate orelse return unread;
+    if (row_index >= rows.len) return unread;
 
-    var header: ?[]const []const u8 = null;
-    var data_start: u32 = if (skip_leading_rows) |n| n else 0;
-    if (candidate) |row_index| {
-        if (row_index < rows.len) {
-            const rest = rows[row_index + 1 ..];
-            if (looksLikeHeader(rows[row_index], rest[0..@min(rest.len, sample_rows)])) {
-                header = rows[row_index];
-            }
-            data_start = row_index + 1;
-        }
-    }
+    const rest = rows[row_index + 1 ..];
+    const is_header = looksLikeHeader(rows[row_index], rest[0..@min(rest.len, sample_rows)]);
+    return .{
+        .header = if (is_header) rows[row_index] else null,
+        .data_start = row_index + 1,
+    };
+}
 
-    const all_data = if (data_start < rows.len) rows[data_start..] else &.{};
-    const data = all_data[0..@min(all_data.len, sample_rows)];
-
+fn detectColumns(
+    arena: std.mem.Allocator,
+    header: ?[]const []const u8,
+    data: []const []const []const u8,
+) ![]const Column {
     // The reference takes the column count from the rows having the most fields, so a jagged
     // row does not shorten the schema. schema-detect
     var width: u32 = 0;
@@ -280,10 +297,6 @@ pub fn detect(
 
     const columns = try arena.alloc(Column, width);
     for (columns, 0..) |*column, i| {
-        var kind: Kind = .unknown;
-        for (data) |row| {
-            if (i < row.len) kind = merge(kind, inferValue(row[i]));
-        }
         // A header shorter than the widest row leaves the trailing columns unnamed.
         const named = if (header) |names|
             if (i < names.len) names[i] else null
@@ -294,10 +307,18 @@ pub fn detect(
                 try columnName(arena, text)
             else
                 try generatedName(arena, @intCast(i)),
-            .kind = kind,
+            .kind = columnKind(data, i),
         };
     }
-    return .{ .columns = columns, .data_start = data_start };
+    return columns;
+}
+
+fn columnKind(data: []const []const []const u8, i: usize) Kind {
+    var kind: Kind = .unknown;
+    for (data) |row| {
+        if (i < row.len) kind = merge(kind, inferValue(row[i]));
+    }
+    return kind;
 }
 
 const testing = std.testing;

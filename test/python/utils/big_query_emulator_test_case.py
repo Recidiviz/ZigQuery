@@ -56,7 +56,7 @@ def _fail_500(original_error: GoogleAPICallError) -> None:
     This function is used to mock the underlying error response and
     fails if it is a 500 response.
     """
-    if original_error.code == HTTPStatus.INTERNAL_SERVER_ERROR:
+    if getattr(original_error, "code", None) == HTTPStatus.INTERNAL_SERVER_ERROR:
         raise RuntimeError(
             "The BigQueryEmulator has failed with a 500 status code. "
             "To investigate: set the class attribute "

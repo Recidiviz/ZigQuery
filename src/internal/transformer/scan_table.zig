@@ -47,6 +47,7 @@ pub fn transform(
     if (data.type != .table) return error.UnsupportedNode;
     const table_data = data.table_scan orelse return error.UnsupportedNode;
     const alloc = coord.alloc;
+    try ctx.scanned_tables.append(ctx.alloc, table_data.table_name);
 
     // Each output column is the raw SQLite column, left pending: whoever
     // consumes this scan either references it in place or projects it under

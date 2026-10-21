@@ -92,23 +92,23 @@ fn parseField(
     var escapes: u32 = 0;
     while (pos.* < input.len) {
         const c = input[pos.*];
-        if (c == quote) {
-            // A doubled quote is one quote within the field. loading-data-cloud-storage-csv
-            if (pos.* + 1 < input.len and input[pos.* + 1] == quote) {
-                escapes += 1;
-                pos.* += 2;
-                continue;
-            }
-            const raw = input[start..pos.*];
-            pos.* += 1; // the closing quote
-            return .{ .text = try unescape(arena, raw, quote, escapes), .quoted = true };
+        // A doubled quote is one quote within the field. loading-data-cloud-storage-csv
+        const doubled = c == quote and pos.* + 1 < input.len and input[pos.* + 1] == quote;
+        if (doubled) {
+            escapes += 1;
+            pos.* += 2;
+            continue;
         }
+        if (c == quote) break;
         if ((c == '\n' or c == '\r') and !options.allow_quoted_newlines) {
             return error.QuotedNewline;
         }
         pos.* += 1;
-    }
-    return error.UnterminatedQuote;
+    } else return error.UnterminatedQuote;
+
+    const raw = input[start..pos.*];
+    pos.* += 1; // the closing quote
+    return .{ .text = try unescape(arena, raw, quote, escapes), .quoted = true };
 }
 
 /// Up to the next delimiter or line ending.

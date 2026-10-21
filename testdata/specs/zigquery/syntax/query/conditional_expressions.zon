@@ -102,6 +102,39 @@
             },
         },
         .{
+            .desc = "ifnull with logic that must keep its order of operations",
+            // LAG keeps the analyzer from folding the expression away.
+            // On the first row it is NULL, so `NULL AND TRUE` is NULL and IFNULL takes the fallback
+            .sql =
+            \\WITH t AS (SELECT 1 AS p, DATE '2024-01-01' AS s, TRUE AS m)
+            \\SELECT IFNULL(LAG(m) OVER w AND TRUE, FALSE) AS x
+            \\FROM t WINDOW w AS (PARTITION BY p ORDER BY s)
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
+            .desc = "coalesce with case that causes errors",
+            .sql = "SELECT COALESCE(\"STRING\", ERROR(\"error case!\"))",
+            .rows = .{
+                .{"STRING"},
+            },
+        },
+        .{
+            .desc = "coalesce with logic that must keep its order of operations",
+            // LAG keeps the analyzer from folding the expression away.
+            // On the first row it is NULL, so `NULL AND TRUE` is NULL and COALESCE takes the fallback
+            .sql =
+            \\WITH t AS (SELECT 1 AS p, DATE '2024-01-01' AS s, TRUE AS m)
+            \\SELECT COALESCE(LAG(m) OVER w AND TRUE, FALSE) AS x
+            \\FROM t WINDOW w AS (PARTITION BY p ORDER BY s)
+            ,
+            .rows = .{
+                .{false},
+            },
+        },
+        .{
             .desc = "ifnull",
             .sql = "SELECT IFNULL(10, 0)",
             .rows = .{

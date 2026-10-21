@@ -158,6 +158,21 @@ pub const Session = struct {
     }
 };
 
+/// What the initiating request says about the upload it opens.
+pub const Opening = struct {
+    project_id: []const u8,
+    /// The job configuration the initiating request carried.
+    metadata: []const u8,
+    /// What `X-Upload-Content-Length` promised, when it was sent.
+    declared_total: ?u64 = null,
+};
+
+/// One request's bytes, and where the client says they sit in the upload.
+pub const Chunk = struct {
+    range: ContentRange = .{},
+    bytes: []const u8,
+};
+
 /// The sessions this process is part way through.
 ///
 /// A session's bytes are freed as soon as its job runs, rather than waiting for the sweep: a
@@ -184,9 +199,7 @@ pub const SessionStore = struct {
     pub fn create(
         store: *SessionStore,
         id: []const u8,
-        project_id: []const u8,
-        metadata: []const u8,
-        declared_total: ?u64,
+        opening: Opening,
         now_ms: i64,
     ) !*Session {
         const owned_id = try store.gpa.dupe(u8, id);
@@ -194,10 +207,10 @@ pub const SessionStore = struct {
         const session = try store.gpa.create(Session);
         errdefer store.gpa.destroy(session);
         session.* = .{
-            .project_id = try store.gpa.dupe(u8, project_id),
-            .metadata = try store.gpa.dupe(u8, metadata),
+            .project_id = try store.gpa.dupe(u8, opening.project_id),
+            .metadata = try store.gpa.dupe(u8, opening.metadata),
             .bytes = .empty,
-            .declared_total = declared_total,
+            .declared_total = opening.declared_total,
             .expires_at_ms = now_ms + session_ttl_ms,
         };
         try store.map.put(store.gpa, owned_id, session);
@@ -212,15 +225,14 @@ pub const SessionStore = struct {
     pub fn append(
         store: *SessionStore,
         session: *Session,
-        range: ContentRange,
-        chunk: []const u8,
+        chunk: Chunk,
         now_ms: i64,
     ) Error!void {
-        if (range.first) |first| {
+        if (chunk.range.first) |first| {
             if (first != session.received()) return error.RangeMismatch;
         }
-        if (session.received() + chunk.len > max_session_bytes) return error.TooLarge;
-        try session.bytes.appendSlice(store.gpa, chunk);
+        if (session.received() + chunk.bytes.len > max_session_bytes) return error.TooLarge;
+        try session.bytes.appendSlice(store.gpa, chunk.bytes);
         session.expires_at_ms = now_ms + session_ttl_ms;
     }
 
@@ -301,16 +313,20 @@ test "content ranges, including the status query" {
     try testing.expectError(error.MalformedContentRange, parseContentRange("bytes 0-10"));
 }
 
+const six_bytes: Opening = .{ .project_id = "p", .metadata = "{}", .declared_total = 6 };
+
 test "a session accumulates chunks in order" {
     var store = SessionStore{ .gpa = testing.allocator };
     defer store.deinit();
 
-    const session = try store.create("abc", "p", "{}", 6, 0);
-    try store.append(session, try parseContentRange("bytes 0-2/6"), "abc", 0);
+    const session = try store.create("abc", six_bytes, 0);
+    const first: Chunk = .{ .range = try parseContentRange("bytes 0-2/6"), .bytes = "abc" };
+    try store.append(session, first, 0);
     try testing.expectEqual(@as(u64, 3), session.received());
     try testing.expect(!session.isComplete(try parseContentRange("bytes 0-2/6")));
 
-    try store.append(session, try parseContentRange("bytes 3-5/6"), "def", 0);
+    const second: Chunk = .{ .range = try parseContentRange("bytes 3-5/6"), .bytes = "def" };
+    try store.append(session, second, 0);
     try testing.expectEqualStrings("abcdef", session.bytes.items);
     try testing.expect(session.isComplete(try parseContentRange("bytes 3-5/6")));
 }
@@ -319,18 +335,16 @@ test "a chunk that does not continue the session is refused" {
     var store = SessionStore{ .gpa = testing.allocator };
     defer store.deinit();
 
-    const session = try store.create("abc", "p", "{}", 6, 0);
-    try testing.expectError(
-        error.RangeMismatch,
-        store.append(session, try parseContentRange("bytes 3-5/6"), "def", 0),
-    );
+    const session = try store.create("abc", six_bytes, 0);
+    const ahead: Chunk = .{ .range = try parseContentRange("bytes 3-5/6"), .bytes = "def" };
+    try testing.expectError(error.RangeMismatch, store.append(session, ahead, 0));
 }
 
 test "finishing a session releases it" {
     var store = SessionStore{ .gpa = testing.allocator };
     defer store.deinit();
 
-    _ = try store.create("abc", "p", "{}", null, 0);
+    _ = try store.create("abc", .{ .project_id = "p", .metadata = "{}" }, 0);
     try testing.expect(store.get("abc") != null);
     store.finish("abc");
     try testing.expect(store.get("abc") == null);
@@ -340,8 +354,8 @@ test "an abandoned session is swept" {
     var store = SessionStore{ .gpa = testing.allocator };
     defer store.deinit();
 
-    _ = try store.create("old", "p", "{}", null, 0);
-    _ = try store.create("new", "p", "{}", null, session_ttl_ms);
+    _ = try store.create("old", .{ .project_id = "p", .metadata = "{}" }, 0);
+    _ = try store.create("new", .{ .project_id = "p", .metadata = "{}" }, session_ttl_ms);
     store.sweep(session_ttl_ms + 1);
     try testing.expect(store.get("old") == null);
     try testing.expect(store.get("new") != null);

@@ -173,6 +173,8 @@ fn getZetasqliteFuncName(
 
     // funcName := strings.ReplaceAll(fullName, ".", "_")
     var func_name = try replaceDots(alloc, full_name);
+    // IFNULL: synonym for COALESCE (conditional_expressions.md#ifnull)
+    if (std.mem.eql(u8, func_name, "ifnull")) func_name = try alloc.dupe(u8, "coalesce");
 
     const exists_current_time = current_time_func_names.has(func_name);
     const exists_normal = existsNormalFunc(func_name);

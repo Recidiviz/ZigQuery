@@ -688,18 +688,23 @@ pub const Value = union(enum) {
                     return Value{ .interval = .{ .days = @intCast(duration_days) } };
                 },
             },
-            // Go TimestampValue/DatetimeValue.Sub: INTERVAL => calendar sub;
-            // otherwise => the difference as an INTERVAL (H:M:S.nanos duration).
+            // INTERVAL => calendar subtraction; otherwise => the difference as an INTERVAL.
+            // TIMESTAMP differences are carried entirely in hours.
             .timestamp => |m| switch (v) {
                 .interval => |iv| return Value{ .timestamp = addCalendar(m, iv, -1) },
                 else => return Value{
                     .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000),
                 },
             },
+            // DATETIME differences split whole days out of the time part; both
+            // carry the sign of the difference, so -36h is -1 day -12:00:00.
             .datetime => |m| switch (v) {
                 .interval => |iv| return Value{ .datetime = addCalendar(m, iv, -1) },
-                else => return Value{
-                    .interval = intervalFromDuration((m -% (try timeMicrosForCompare(v))) *% 1000),
+                else => {
+                    const diff_micros = m -% (try timeMicrosForCompare(v));
+                    var iv = intervalFromMicros(@rem(diff_micros, day_micros));
+                    iv.days = @intCast(@divTrunc(diff_micros, day_micros));
+                    return Value{ .interval = iv };
                 },
             },
             .time => return fail("sub operation is unsupported for time", error.UnsupportedOperation),
@@ -1865,10 +1870,9 @@ pub fn formatInterval(buf: []u8, iv_in: Interval) []const u8 {
     }) catch unreachable).len;
     if (c.sub_second_nanos != 0) {
         var tmp: [16]u8 = undefined;
-        const mant: []const u8 = if (c.sub_second_nanos < 0)
-            std.fmt.bufPrint(&tmp, "-{d:0>8}", .{@as(u32, @intCast(-c.sub_second_nanos))}) catch unreachable
-        else
-            std.fmt.bufPrint(&tmp, "{d:0>9}", .{@as(u32, @intCast(c.sub_second_nanos))}) catch unreachable;
+        // The hours field carries the sign of the whole H:M:S.F part.
+        const nanos: u32 = @intCast(i32Abs(c.sub_second_nanos));
+        const mant = std.fmt.bufPrint(&tmp, "{d:0>9}", .{nanos}) catch unreachable;
         var end: usize = mant.len;
         while (end > 0 and mant[end - 1] == '0') end -= 1;
         buf[w] = '.';
@@ -3066,6 +3070,7 @@ test "interval parse/format round trips (bigquery canonical)" {
         "0-0 0 1:2:3.5",
         "-1-2 0 0:0:0",
         "0-0 0 -1:2:3",
+        "0-0 -1 -12:34:56.789",
         "10-0 0 0:0:0",
     };
     for (cases) |s| {

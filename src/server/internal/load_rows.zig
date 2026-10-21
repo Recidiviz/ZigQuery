@@ -87,27 +87,42 @@ fn declaredColumns(
     spec: load_handler.LoadSpec,
     existing: ?*const spec_mod.TableSpec,
 ) !?[]const Column {
-    if (spec.schema) |schema| {
-        const out = try arena.alloc(Column, schema.fields.len);
-        for (schema.fields, out) |field, *column| {
-            column.* = .{
-                .name = field.name orelse "",
-                .type_name = field.type orelse "STRING",
-            };
-        }
-        return out;
-    }
-    if (existing) |table| {
-        const out = try arena.alloc(Column, table.columns.len);
-        for (table.columns, out) |source, *column| {
-            column.* = .{
-                .name = source.name,
-                .type_name = schema_mod.legacyTypeName(source.type.typeKind()),
-            };
-        }
-        return out;
-    }
+    if (spec.schema) |schema| return try schemaColumns(arena, schema);
+    if (existing) |table| return try tableColumns(arena, table);
     return null;
+}
+
+fn schemaColumns(arena: std.mem.Allocator, schema: *const pb.TableSchema) ![]const Column {
+    const out = try arena.alloc(Column, schema.fields.len);
+    for (schema.fields, out) |field, *column| {
+        column.* = .{
+            .name = field.name orelse "",
+            .type_name = field.type orelse "STRING",
+        };
+    }
+    return out;
+}
+
+fn tableColumns(arena: std.mem.Allocator, table: *const spec_mod.TableSpec) ![]const Column {
+    const out = try arena.alloc(Column, table.columns.len);
+    for (table.columns, out) |source, *column| {
+        column.* = .{
+            .name = source.name,
+            .type_name = schema_mod.legacyTypeName(source.type.typeKind()),
+        };
+    }
+    return out;
+}
+
+fn detectedColumns(arena: std.mem.Allocator, detection: autodetect.Detection) ![]const Column {
+    const out = try arena.alloc(Column, detection.columns.len);
+    for (detection.columns, out) |detected, *column| {
+        column.* = .{
+            .name = detected.name,
+            .type_name = detected.kind.legacyTypeName(),
+        };
+    }
+    return out;
 }
 
 fn schemaNodeFrom(arena: std.mem.Allocator, columns: []const Column) !std.json.Value {
@@ -128,6 +143,26 @@ fn fieldsOf(schema_node: std.json.Value) []const std.json.Value {
     return if (fields == .array) fields.array.items else &.{};
 }
 
+/// The cells of only the rows detection reads: it samples, so copying the cells of a whole file
+/// to hand it the first few hundred would cost more than the detection.
+fn sampleTexts(
+    arena: std.mem.Allocator,
+    parsed: []const csv.Row,
+    spec: load_handler.LoadSpec,
+) ![]const []const []const u8 {
+    const examined = @min(
+        parsed.len,
+        (spec.skip_leading_rows orelse 0) + autodetect.sample_rows + 1,
+    );
+    const texts = try arena.alloc([]const []const u8, examined);
+    for (parsed[0..examined], texts) |row, *dst| {
+        const cells = try arena.alloc([]const u8, row.len);
+        for (row, cells) |field, *cell| cell.* = field.text;
+        dst.* = cells;
+    }
+    return texts;
+}
+
 fn readCsv(
     arena: std.mem.Allocator,
     media: []const u8,
@@ -140,39 +175,17 @@ fn readCsv(
         .allow_quoted_newlines = spec.allow_quoted_newlines,
     }) catch return error.MalformedCsv;
 
-    // Only the rows detection reads: it samples, so copying the cells of a whole file to hand
-    // it the first few hundred would cost more than the detection.
-    const examined = @min(
-        parsed.len,
-        (spec.skip_leading_rows orelse 0) + autodetect.sample_rows + 1,
-    );
-    const texts = try arena.alloc([]const []const u8, examined);
-    for (parsed[0..examined], texts) |row, *dst| {
-        const cells = try arena.alloc([]const u8, row.len);
-        for (row, cells) |field, *cell| cell.* = field.text;
-        dst.* = cells;
-    }
-
     // Autodetect decides where the data starts even when the job supplied its own schema.
     const detection: ?autodetect.Detection = if (spec.autodetect)
-        try autodetect.detect(arena, texts, spec.skip_leading_rows)
+        try autodetect.detect(arena, try sampleTexts(arena, parsed, spec), spec.skip_leading_rows)
     else
         null;
     const data_start: usize = if (detection) |d|
         d.data_start
     else if (spec.skip_leading_rows) |n| n else 0;
 
-    const columns = (try declaredColumns(arena, spec, existing)) orelse blk: {
-        const d = detection orelse return error.NoSchema;
-        const out = try arena.alloc(Column, d.columns.len);
-        for (d.columns, out) |detected, *column| {
-            column.* = .{
-                .name = detected.name,
-                .type_name = detected.kind.legacyTypeName(),
-            };
-        }
-        break :blk out;
-    };
+    const columns = (try declaredColumns(arena, spec, existing)) orelse
+        try detectedColumns(arena, detection orelse return error.NoSchema);
 
     const schema_node = try schemaNodeFrom(arena, columns);
     const data = if (data_start < parsed.len) parsed[data_start..] else &.{};
@@ -234,18 +247,18 @@ pub const Batcher = struct {
                 b.pos = end;
                 return batch;
             },
-            .csv => |rows| {
-                var built: usize = 0;
-                while (b.pos < rows.len and built < batch_size) : (b.pos += 1) {
-                    const row = rows[b.pos];
-                    if (try b.build(row, &b.maps[built])) {
-                        b.values[built] = .{ .object = b.maps[built] };
-                        built += 1;
-                    }
-                }
-                return if (built == 0) null else b.values[0..built];
-            },
+            .csv => |rows| return b.nextCsv(rows),
         }
+    }
+
+    fn nextCsv(b: *Batcher, rows: []const csv.Row) !?[]const std.json.Value {
+        var built: usize = 0;
+        while (b.pos < rows.len and built < batch_size) : (b.pos += 1) {
+            if (!try b.build(rows[b.pos], &b.maps[built])) continue;
+            b.values[built] = .{ .object = b.maps[built] };
+            built += 1;
+        }
+        return if (built == 0) null else b.values[0..built];
     }
 
     /// Fills one pooled map from one CSV row. False when the row is a bad record.
@@ -300,21 +313,25 @@ fn cellValue(
         return .{ .float = f };
     }
     if (std.mem.eql(u8, column.type_name, "BOOLEAN")) {
-        const truths = [_][]const u8{ "true", "t", "yes", "y" };
-        const falsehoods = [_][]const u8{ "false", "f", "no", "n" };
-        for (truths) |word| {
-            if (std.ascii.eqlIgnoreCase(text, word)) return .{ .bool = true };
-        }
-        for (falsehoods) |word| {
-            if (std.ascii.eqlIgnoreCase(text, word)) return .{ .bool = false };
-        }
-        return null;
+        return .{ .bool = parseBool(text) orelse return null };
     }
     if (std.mem.eql(u8, column.type_name, "DATE")) {
         return .{ .string = try autodetect.normalizeDate(arena, text) };
     }
     // TIME, TIMESTAMP and STRING all reach the engine as text, which casts them.
     return .{ .string = text };
+}
+
+fn parseBool(text: []const u8) ?bool {
+    const truths = [_][]const u8{ "true", "t", "yes", "y" };
+    const falsehoods = [_][]const u8{ "false", "f", "no", "n" };
+    for (truths) |word| {
+        if (std.ascii.eqlIgnoreCase(text, word)) return true;
+    }
+    for (falsehoods) |word| {
+        if (std.ascii.eqlIgnoreCase(text, word)) return false;
+    }
+    return null;
 }
 
 fn readJson(
@@ -334,15 +351,7 @@ fn readJson(
             continue;
         };
         if (value != .object) return error.NotAnObject;
-        var it = value.object.iterator();
-        while (it.next()) |entry| {
-            // Flat objects only: a nested object or an array would have to become a RECORD or
-            // a repeated column.
-            switch (entry.value_ptr.*) {
-                .object, .array => return error.NestedJson,
-                else => {},
-            }
-        }
+        try requireFlat(value.object);
         try objects.append(value);
     }
 
@@ -361,34 +370,51 @@ fn readJson(
     };
 }
 
+/// Flat objects only: a nested object or an array would have to become a RECORD or a repeated
+/// column.
+fn requireFlat(object: std.json.ObjectMap) Error!void {
+    for (object.values()) |value| {
+        switch (value) {
+            .object, .array => return error.NestedJson,
+            else => {},
+        }
+    }
+}
+
+const SeenColumn = struct {
+    name: []const u8,
+    kind: autodetect.Kind,
+};
+
 /// Column names in the order they first appear, typed from the values under them.
 fn jsonColumns(arena: std.mem.Allocator, rows: []const std.json.Value) ![]const Column {
-    var names: std.ArrayList([]const u8) = .empty;
-    var kinds: std.ArrayList(autodetect.Kind) = .empty;
+    var seen: std.ArrayList(SeenColumn) = .empty;
     for (rows) |row| {
         var it = row.object.iterator();
         while (it.next()) |entry| {
-            const kind = jsonKind(entry.value_ptr.*);
-            const at = indexOfName(names.items, entry.key_ptr.*) orelse {
-                try names.append(arena, entry.key_ptr.*);
-                try kinds.append(arena, kind);
-                continue;
-            };
-            kinds.items[at] = autodetect.merge(kinds.items[at], kind);
+            try noteColumn(arena, &seen, entry.key_ptr.*, jsonKind(entry.value_ptr.*));
         }
     }
-    const out = try arena.alloc(Column, names.items.len);
-    for (out, names.items, kinds.items) |*column, name, kind| {
-        column.* = .{ .name = name, .type_name = kind.legacyTypeName() };
+    const out = try arena.alloc(Column, seen.items.len);
+    for (out, seen.items) |*column, s| {
+        column.* = .{ .name = s.name, .type_name = s.kind.legacyTypeName() };
     }
     return out;
 }
 
-fn indexOfName(names: []const []const u8, name: []const u8) ?usize {
-    for (names, 0..) |candidate, i| {
-        if (std.mem.eql(u8, candidate, name)) return i;
+/// Widens a column already seen to take `kind`, or adds it after the others.
+fn noteColumn(
+    arena: std.mem.Allocator,
+    seen: *std.ArrayList(SeenColumn),
+    name: []const u8,
+    kind: autodetect.Kind,
+) !void {
+    for (seen.items) |*column| {
+        if (!std.mem.eql(u8, column.name, name)) continue;
+        column.kind = autodetect.merge(column.kind, kind);
+        return;
     }
-    return null;
+    try seen.append(arena, .{ .name = name, .kind = kind });
 }
 
 fn jsonKind(value: std.json.Value) autodetect.Kind {
@@ -428,12 +454,7 @@ fn collect(
     var batcher = try Batcher.init(arena, reading, spec);
     var out = std.json.Array.init(arena);
     while (try batcher.next()) |batch| {
-        for (batch) |row| {
-            var copy: std.json.ObjectMap = .empty;
-            var it = row.object.iterator();
-            while (it.next()) |entry| try copy.put(arena, entry.key_ptr.*, entry.value_ptr.*);
-            try out.append(.{ .object = copy });
-        }
+        for (batch) |row| try out.append(.{ .object = try row.object.clone(arena) });
     }
     return .{ .rows = out.items, .bad_records = reading.bad_records + batcher.bad_records };
 }
@@ -569,4 +590,15 @@ test "a load that names no schema at all cannot proceed" {
     try testing.expectError(error.NoSchema, readFrom(arena, "1,2\n", .{
         .destination = .{ .project_id = "p", .dataset_id = "d", .table_id = "t" },
     }));
+}
+
+test "every read error has a message of its own" {
+    const names = @typeInfo(Error).error_set.error_names.?;
+    inline for (names, 0..) |a, i| {
+        const message = readErrorMessage(@field(Error, a));
+        try testing.expect(message.len > 0);
+        inline for (names[i + 1 ..]) |b| {
+            try testing.expect(!std.mem.eql(u8, message, readErrorMessage(@field(Error, b))));
+        }
+    }
 }

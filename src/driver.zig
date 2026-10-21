@@ -51,6 +51,12 @@ pub const Error = error{
     DatasetNotFound,
     /// Result-cell decoding failed.
     DecodeFailed,
+    /// A statement reads a view that is due for a refresh: a table or view its query reads has
+    /// changed shape since it was analyzed. The names are in the statement's
+    /// `Db.StatementDiagnostics`. Internal: the
+    /// statement pipeline refreshes those views and analyzes the statement again, so this never
+    /// reaches a caller of `query`, `exec` or `prepare`.
+    StaleViews,
     /// The database was written in a storage format this build cannot read.
     /// Distinct from ExecFailed because open() destroys the Db before
     /// returning, so there is no `lastError` to carry an explanation — the
@@ -365,6 +371,9 @@ pub const Db = struct {
     /// the persistent delta so a TEMP object shadows rather than loses to the
     /// persistent one it overrides.
     temp_cursor: catalog_mod.Cursor = .{},
+    /// How long the catalog's `written_table_names` was when this connection's open transaction
+    /// began, or null outside one. See `beginTransaction`.
+    transaction_start: ?usize = null,
 
     pub fn open(gpa: std.mem.Allocator, path: [:0]const u8) Error!*Db {
         return openWith(gpa, path, .{});
@@ -449,8 +458,11 @@ pub const Db = struct {
     /// The storage format this build reads and writes, kept in the database's
     /// `user_version`.
     ///
-    /// 4 — the current format, and the only one this build reads or writes: as
-    ///     3, but the self-delimiting codec stores DATE, DATETIME, TIME and
+    /// 5 — the current format, and the only one this build reads or writes: as
+    ///     4, but every view's catalog entry records the tables and views its
+    ///     query reads (`TableSpec.dependencies`), which a refresh relies on to
+    ///     know when the view is out of date.
+    /// 4 — the self-delimiting codec stores DATE, DATETIME, TIME and
     ///     NUMERIC/BIGNUMERIC as fixed-width little-endian integers rather than
     ///     as their rendered text (codec_binary.zig).
     /// 3 — every non-scalar value is a BLOB carrying one of the two payload
@@ -459,8 +471,9 @@ pub const Db = struct {
     /// 2 — orderable kinds as BLOB, NUMERIC/BIGNUMERIC still base64 in TEXT.
     /// 1 — every value as base64 in TEXT.
     ///
-    /// None of 1-3 is readable here and there is no migration: the code that
-    /// decoded them is gone. They are listed because refusing a database is only
+    /// None of 1-4 is readable here and there is no migration: the code that
+    /// decoded 1-3 is gone, and a version 4 catalog holds views whose dependencies
+    /// were never recorded. They are listed because refusing a database is only
     /// useful if the reader can tell what was refused.
     ///
     /// 3 is the one that would fail quietly rather than loudly if it were not
@@ -473,7 +486,7 @@ pub const Db = struct {
     /// so a database holding the older shape would not error — it would quietly
     /// stop deduplicating in DISTINCT and UNION, and stop matching in index
     /// lookups.
-    pub const storage_format_version: i64 = 4;
+    pub const storage_format_version: i64 = 5;
 
     /// Refuses a database this build cannot read, and stamps a new one.
     ///
@@ -608,6 +621,26 @@ pub const Db = struct {
     /// The handle embeds the schema resolved at prepare time, so it stays valid only while the
     /// catalog objects it referenced are unchanged.
     pub fn prepare(db: *Db, sql: []const u8, opts: QueryOptions) Error!PreparedStmt {
+        return db.prepareOnce(sql, opts) catch |err| switch (err) {
+            // The arena naming the stale views went with the failed attempt, so every stale view
+            // is refreshed.
+            error.StaleViews, error.AnalyzeFailed => {
+                if (opts.catalog_scope == .none) return db.errorAfterRefresh(err);
+                var arena_state = std.heap.ArenaAllocator.init(db.gpa);
+                defer arena_state.deinit();
+                const has_refreshed = db.refreshViewsForRetry(
+                    arena_state.allocator(),
+                    null,
+                ) catch |refresh_err|
+                    return db.errorAfterRefresh(refresh_err);
+                if (!has_refreshed) return db.errorAfterRefresh(err);
+                return db.prepareOnce(sql, opts) catch |retry_err| db.errorAfterRefresh(retry_err);
+            },
+            else => return err,
+        };
+    }
+
+    fn prepareOnce(db: *Db, sql: []const u8, opts: QueryOptions) Error!PreparedStmt {
         var arena_state = std.heap.ArenaAllocator.init(db.gpa);
         errdefer arena_state.deinit();
         const arena = arena_state.allocator();
@@ -648,16 +681,24 @@ pub const Db = struct {
         db.stmt_params = &.{};
         const stmt_node = statementNodeOf(analyzed.node) orelse return error.Unimplemented;
         var columns: []const OutputColumn = &.{};
+        // `prepare` refreshes every stale view on error.StaleViews, so the names go unread.
+        var diagnostics: StatementDiagnostics = .{};
+        const statement: AnalyzedStatement = .{
+            .arena = arena,
+            .node = analyzed.node,
+            .opts = opts,
+            .diagnostics = &diagnostics,
+        };
         const formatted = switch (stmt_node) {
             .resolved_query_stmt_node => |query_stmt| blk: {
-                const text = try transformStatement(db, arena, analyzed.node, opts);
-                columns = try outputColumns(arena, query_stmt);
+                const text = try transformStatement(db, statement);
+                columns = try outputColumns(arena, query_stmt.output_column_list);
                 break :blk text;
             },
             .resolved_insert_stmt_node,
             .resolved_update_stmt_node,
             .resolved_delete_stmt_node,
-            => try transformStatement(db, arena, analyzed.node, opts),
+            => try transformStatement(db, statement),
             else => return error.Unimplemented,
         };
         if (temp_tables.items.len > 0) {
@@ -1062,6 +1103,53 @@ pub const Db = struct {
     };
 
     /// Run a raw SQLite statement producing no rows.
+    /// Opens a transaction around the statements that follow, for a caller whose work must land
+    /// together, as a load or copy job's does. Ending it with `rollbackTransaction` also puts the
+    /// catalog back to what SQLite holds; a raw ROLLBACK would leave it describing tables and
+    /// views the rollback undid.
+    pub fn beginTransaction(db: *Db) Error!void {
+        if (db.transaction_start != null) {
+            db.setLastError("a transaction is already open on this connection");
+            return error.ExecFailed;
+        }
+        // Read before BEGIN, so the catalog lock is never taken inside the transaction for this.
+        const start = blk: {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            break :blk g.catalog.written_table_names.items.len;
+        };
+        try db.rawExec("BEGIN", &.{});
+        db.transaction_start = start;
+    }
+
+    /// Commits the transaction `beginTransaction` opened.
+    pub fn commitTransaction(db: *Db) Error!void {
+        if (db.transaction_start == null) {
+            db.setLastError("no transaction is open on this connection");
+            return error.ExecFailed;
+        }
+        try db.rawExec("COMMIT", &.{});
+        db.transaction_start = null;
+    }
+
+    /// Rolls back the transaction `beginTransaction` opened, and reads back the catalog rows the
+    /// transaction wrote, so the catalog again describes what SQLite holds.
+    pub fn rollbackTransaction(db: *Db) Error!void {
+        const start = db.transaction_start orelse {
+            db.setLastError("no transaction is open on this connection");
+            return error.ExecFailed;
+        };
+        db.transaction_start = null;
+        try db.rawExec("ROLLBACK", &.{});
+        var g = db.lockCatalog();
+        defer g.unlock();
+        g.catalog.resyncTableSpecs(
+            &db.sqlite_db,
+            g.catalog.written_table_names.items[start..],
+        ) catch |err|
+            return db.failCatalog(err);
+    }
+
     pub fn rawExec(db: *Db, sql: [:0]const u8, args: []const RawArg) Error!void {
         var rows = try db.rawQuery(sql, args);
         defer rows.deinit();
@@ -1301,15 +1389,30 @@ pub const Db = struct {
         };
 
         const catalog_json = if (opts.catalog_scope == .none)
-            try arena.dupeSentinel(u8, "{}", 0)
+            arena.dupeSentinel(u8, "{}", 0)
         else
-            db.statelessCatalogJson(arena) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => {
-                    db.setLastError(@errorName(err));
-                    return error.AnalyzeFailed;
-                },
-            };
+            db.statelessCatalogJson(arena);
+        return db.analyzeWithCatalogJson(arena, sqlz, offset, catalog_json, options_json, decls);
+    }
+
+    /// The stateless analyzer path: analyzes against a whole rendered catalog rather than the
+    /// persistent handle.
+    fn analyzeWithCatalogJson(
+        db: *Db,
+        arena: std.mem.Allocator,
+        sqlz: [:0]const u8,
+        offset: usize,
+        rendered_catalog_json: error{ OutOfMemory, InvalidSpec }![:0]u8,
+        options_json: [:0]const u8,
+        decls: ?analyzer_ffi.ParamDecls,
+    ) Error!analyzer_ffi.Analyzed {
+        const catalog_json = rendered_catalog_json catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidSpec => {
+                db.setLastError(@errorName(err));
+                return error.AnalyzeFailed;
+            },
+        };
         return analyzer_ffi.analyzeNextStatementOpts(
             arena,
             sqlz,
@@ -1346,7 +1449,6 @@ pub const Db = struct {
         // error positions stay accurate.
         const flattened_sql = try flattenBeginEndBlocks(arena, sql);
         const sqlz = try arena.dupeSentinel(u8, flattened_sql, 0);
-        var offset: usize = 0;
 
         // Publish the catalog snapshot the INFORMATION_SCHEMA vtabs read.
         // Taken here, under the lock and before any stepping: those callbacks
@@ -1361,24 +1463,21 @@ pub const Db = struct {
         // stays valid exactly as long as the rows do; Rows.deinit clears it.
         try db.publishInfoSchemaSnapshot(arena);
 
-        // Scan the literal-stripped query for `?` (positional) or `@name` (named); mixing the
-        // two is rejected.
+        // Scan the literal-stripped query for `?` (positional) or `@name` (named);
+        // mixing the two is rejected.
         db.param_mode = parameterMode(arena, sql) catch {
             db.setLastError("named parameter and positional parameter cannot be used together");
             return error.AnalyzeFailed;
         };
+
         const options_json: [:0]const u8 = switch (db.param_mode) {
             .positional => "{\"parameter_mode\":\"positional\"}",
             .named => "{}",
         };
 
-        // Positional parameters are consumed statement by statement across a script, each one
-        // taking as many as it has placeholders; named parameters apply to every statement.
-        var cur_args = args;
-
         // Named declarations are constant across the script, so build them
         // once; positional ones are rebuilt per statement below, because
-        // cur_args advances.
+        // the cursor's args advance.
         const named_decls = if (db.param_mode == .named)
             try paramDecls(arena, args, .named)
         else
@@ -1405,9 +1504,7 @@ pub const Db = struct {
         var outcome: StatementOutcome = .{};
         var statement_count: u32 = 0;
 
-        // The catalog is not re-read per statement. Every write goes through the in-process
-        // catalog, so it is current by construction, and a re-read would cost a SQLite round
-        // trip per statement and reopen the timestamp cursor's lost-commit window.
+        var cursor: ScriptCursor = .{ .offset = 0, .args = args };
         while (true) {
             const decls = switch (db.param_mode) {
                 .named => named_decls,
@@ -1415,127 +1512,48 @@ pub const Db = struct {
                 // supplying more than the statement has `?` is explicitly
                 // allowed, and the resolver only complains when a `?` sits
                 // past the end of the list. It has to be the remaining set
-                // rather than the whole one because cur_args has already
-                // advanced past what earlier statements consumed.
-                .positional => try paramDecls(arena, cur_args, .positional),
+                // rather than the whole one because the cursor's args have
+                // already advanced past what earlier statements consumed.
+                .positional => try paramDecls(arena, cursor.args, .positional),
             };
 
-            // Re-rendered per statement: DDL/DML actions mutate the
-            // catalog between statements of one script.
-            const analyzed = try db.analyzeOne(arena, sqlz, offset, opts, options_json, decls);
-            offset = analyzed.resume_offset;
-            const last = analyzed.at_end;
-
-            // Positional parameters this statement consumes; used to advance cur_args below.
-            var consumed: usize = 0;
-
-            // Parameter types are re-collected per statement by
-            // transformStatementFragment; clear any stale set first.
-            db.stmt_params = &.{};
-
-            const stmt_node = statementNodeOf(analyzed.node) orelse return error.Unimplemented;
-            outcome = .{
-                .statement_type = statementTypeOf(stmt_node) orelse return error.Unimplemented,
+            const run = try db.runStatementRefreshingViews(
+                arena,
+                sqlz,
+                cursor,
+                opts,
+                options_json,
+                decls,
+                mode,
+            );
+            const executed = run.executed;
+            const next: ScriptCursor = .{
+                .offset = run.resume_offset,
+                // Positional parameters are consumed statement by statement, each statement
+                // taking as many as it has placeholders; named parameters apply to every one.
+                .args = if (db.param_mode == .positional)
+                    cursor.args[executed.consumed..]
+                else
+                    cursor.args,
             };
+
             statement_count += 1;
-            switch (stmt_node) {
-                .resolved_query_stmt_node => |query_stmt| {
-                    const formatted = try transformStatement(db, arena, analyzed.node, opts);
 
-                    var stmt = db.sqlite_db.prepare(formatted) catch {
-                        db.setLastError(db.sqlite_db.errmsg());
-                        return error.ExecFailed;
-                    };
-                    errdefer stmt.finalize();
-                    consumed = try db.bindParams(arena, &stmt, cur_args);
-
-                    if (last and mode == .query) {
-                        return .{
-                            .stmt = stmt,
-                            .columns = try outputColumns(arena, query_stmt),
-                            .temp_tables = temp_tables.items,
-                            .outcome = scriptOutcome(outcome, statement_count),
-                        };
-                    }
-
-                    switch (mode) {
-                        .query => stmt.finalize(),
-                        .exec => {
-                            while (stmt.step() catch {
-                                db.setLastError(db.sqlite_db.errmsg());
-                                return error.ExecFailed;
-                            }) {}
-                            stmt.finalize();
-                        },
-                    }
-                },
-                .resolved_create_statement_node => |create_any| {
-                    consumed = try db.execCreateStatement(
-                        arena,
-                        analyzed.node,
-                        create_any,
-                        cur_args,
-                        opts,
-                    );
-                },
-                .resolved_insert_stmt_node,
-                .resolved_update_stmt_node,
-                .resolved_delete_stmt_node,
-                => {
-                    const fragment = try transformStatementFragment(db, arena, analyzed.node, opts);
-                    const changes_before = db.sqlite_db.totalChanges();
-                    consumed = try db.execSql(arena, try fragment.toString(arena), cur_args);
-                    var counts: DmlCounts = .{};
-                    counts.add(fragment, db.sqlite_db.totalChanges() - changes_before);
-                    outcome.dml = counts;
-                },
-                .resolved_drop_stmt_node => |drop_stmt| {
-                    consumed = try db.execDropStatement(
-                        arena,
-                        analyzed.node,
-                        drop_stmt,
-                        cur_args,
-                        opts,
-                    );
-                },
-                // TODO: Investigate sqlite UDF leak for DROP FUNCTION
-                .resolved_drop_function_stmt_node => |drop_fn| {
-                    const name = try formatNamePath(arena, drop_fn.name_path);
-                    db.unregisterFunctionSpec(name) catch |err| {
-                        // DROP FUNCTION IF EXISTS on a missing function is a no-op
-                        if (err == error.TableNotFound and (drop_fn.is_if_exists orelse false)) {
-                            // no-op
-                        } else return db.failCatalog(err);
-                    };
-                },
-                // The transformer lowers MERGE to a list of plain statements executed in order.
-                // (create merged temp table, INSERT/UPDATE/DELETE per WHEN clause, drop temp table)
-                .resolved_merge_stmt_node => {
-                    const fragment = try transformStatementFragment(db, arena, analyzed.node, opts);
-                    const compound = switch (fragment) {
-                        .compound => |c| c,
-                        else => return error.TransformFailed,
-                    };
-                    outcome.dml = try db.execCompound(arena, compound);
-                },
-                .resolved_truncate_stmt_node => |truncate_stmt| {
-                    try db.execTruncateStatement(arena, truncate_stmt);
-                },
-                // Unsupported but implemented as no-ops
-                .resolved_begin_stmt_node,
-                .resolved_commit_stmt_node,
-                .resolved_create_row_access_policy_stmt_node,
-                .resolved_drop_row_access_policy_stmt_node,
-                => {},
-                else => return error.Unimplemented,
+            outcome = .{ .statement_type = run.statement_type };
+            if (executed.dml) |dml| outcome.dml = dml;
+            if (executed.stmt) |stmt| {
+                return .{
+                    .stmt = stmt,
+                    .columns = executed.columns,
+                    .temp_tables = temp_tables.items,
+                    .outcome = scriptOutcome(outcome, statement_count),
+                };
             }
 
-            // Advance past the positional args this statement consumed.
-            if (db.param_mode == .positional) cur_args = cur_args[consumed..];
-
-            if (last) {
+            if (run.is_last) {
                 switch (mode) {
-                    // Query mode: the last statement was not a query (empty Prepared).
+                    // Query mode, but the last statement returns no rows (i.e. DDL/DML statements):
+                    // return only the outcome of the statment
                     // Temp tables are dropped now since no Rows will carry them.
                     .query => {
                         db.dropTempTables(arena, temp_tables.items);
@@ -1548,8 +1566,350 @@ pub const Db = struct {
                     },
                 }
             }
+
+            cursor = next;
         }
     }
+
+    /// What a statement's failed attempt reports back to the loop that may retry it, beyond the
+    /// error.
+    const StatementDiagnostics = struct {
+        /// The views the statement reads that were due for a refresh.
+        /// Set with `error.StaleViews`.
+        stale_views: []const []const u8 = &.{},
+    };
+
+    /// One analyzed statement, and what transforming it needs.
+    const AnalyzedStatement = struct {
+        arena: std.mem.Allocator,
+        node: *pb.AnyResolvedNodeProto,
+        opts: QueryOptions,
+        /// Where a failed transform reports what the statement loop needs to retry it.
+        diagnostics: *StatementDiagnostics,
+    };
+
+    /// Where a script's statement loop is: the statement it is on, and the positional parameters
+    /// left for it and the statements after it.
+    const ScriptCursor = struct {
+        /// Where the statement starts in the script.
+        offset: usize,
+        args: []const Param,
+    };
+
+    /// One statement of a script, analyzed and run.
+    const StatementRun = struct {
+        /// Where the next statement of the script starts.
+        resume_offset: usize,
+        is_last: bool,
+        statement_type: StatementType,
+        executed: Executed,
+    };
+
+    /// `runStatement`, run once more after refreshing views if it failed due to stale views
+    /// Nothing has run on a failed attempt: every action transforms before it executes.
+    fn runStatementRefreshingViews(
+        db: *Db,
+        arena: std.mem.Allocator,
+        sqlz: [:0]const u8,
+        cursor: ScriptCursor,
+        opts: QueryOptions,
+        options_json: [:0]const u8,
+        decls: ?analyzer_ffi.ParamDecls,
+        mode: Mode,
+    ) Error!StatementRun {
+        var diagnostics: StatementDiagnostics = .{};
+        return db.runStatement(
+            arena,
+            sqlz,
+            cursor,
+            opts,
+            options_json,
+            decls,
+            mode,
+            &diagnostics,
+        ) catch |err|
+            switch (err) {
+                error.StaleViews, error.AnalyzeFailed => {
+                    if (opts.catalog_scope == .none) return db.errorAfterRefresh(err);
+                    const has_refreshed = db.refreshViewsForRetry(
+                        arena,
+                        if (err == error.StaleViews) diagnostics.stale_views else null,
+                    ) catch |refresh_err|
+                        return db.errorAfterRefresh(refresh_err);
+
+                    if (!has_refreshed) return db.errorAfterRefresh(err);
+                    var retry_diagnostics: StatementDiagnostics = .{};
+                    return db.runStatement(
+                        arena,
+                        sqlz,
+                        cursor,
+                        opts,
+                        options_json,
+                        decls,
+                        mode,
+                        &retry_diagnostics,
+                    ) catch |retry_err| db.errorAfterRefresh(retry_err);
+                },
+                else => return err,
+            };
+    }
+
+    /// Analyzes the statement at the cursor and runs it.
+    fn runStatement(
+        db: *Db,
+        arena: std.mem.Allocator,
+        sqlz: [:0]const u8,
+        cursor: ScriptCursor,
+        opts: QueryOptions,
+        options_json: [:0]const u8,
+        decls: ?analyzer_ffi.ParamDecls,
+        mode: Mode,
+        diagnostics: *StatementDiagnostics,
+    ) Error!StatementRun {
+        const analyzed = try db.analyzeOne(arena, sqlz, cursor.offset, opts, options_json, decls);
+        // Parameter types are re-collected per statement by
+        // transformStatementFragment; clear any stale set first.
+        db.stmt_params = &.{};
+        const stmt_node = statementNodeOf(analyzed.node) orelse return error.Unimplemented;
+        return .{
+            .resume_offset = analyzed.resume_offset,
+            .is_last = analyzed.at_end,
+            .statement_type = statementTypeOf(stmt_node) orelse return error.Unimplemented,
+            .executed = try db.execStatement(
+                .{
+                    .arena = arena,
+                    .node = analyzed.node,
+                    .opts = opts,
+                    .diagnostics = diagnostics,
+                },
+                stmt_node,
+                cursor.args,
+                mode,
+                analyzed.at_end,
+            ),
+        };
+    }
+
+    /// Refreshes the views a failed attempt at a statement found stale, and reports whether the
+    /// statement is worth analyzing again. `stale_views` are the ones its transform named, and a
+    /// view among them that cannot be refreshed fails the statement with its own error. Null
+    /// refreshes every stale view, for an attempt that failed analysis before its transform
+    /// could say which views it reads; the statement may read none of them, so one that cannot be
+    /// refreshed leaves the statement's error as it was. When nothing was refreshed, `lastError`
+    /// stays the attempt's.
+    fn refreshViewsForRetry(
+        db: *Db,
+        arena: std.mem.Allocator,
+        stale_views: ?[]const []const u8,
+    ) Error!bool {
+        var visited = std.StringHashMap(void).init(arena);
+        if (stale_views) |names| {
+            for (names) |name| try db.refreshViewAndDependencies(arena, &visited, name);
+            return true;
+        }
+
+        const names = blk: {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            break :blk try g.catalog.staleViewNames(arena);
+        };
+        const message = try arena.dupe(u8, db.lastError());
+        for (names) |name| {
+            db.refreshViewAndDependencies(arena, &visited, name) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    db.setLastError(message);
+                    return false;
+                },
+            };
+        }
+        return names.len > 0;
+    }
+
+    /// The error a statement reports when it failed with nothing to refresh, or failed again
+    /// after a refresh. `error.StaleViews` never reaches a caller.
+    fn errorAfterRefresh(db: *Db, err: Error) Error {
+        if (err != error.StaleViews) return err;
+        db.setLastError("a view this statement reads stayed stale after a refresh");
+        return error.AnalyzeFailed;
+    }
+
+    /// What running one analyzed statement produced.
+    const Executed = struct {
+        /// Positional parameters the statement consumed.
+        consumed: usize = 0,
+        /// The prepared, unstepped query, for the last statement of a `.query` run.
+        stmt: ?sqlite.Stmt = null,
+        columns: []const OutputColumn = &.{},
+        /// Rows an INSERT, UPDATE, DELETE or MERGE changed.
+        dml: ?DmlCounts = null,
+    };
+
+    /// Runs one analyzed statement: a query transforms and prepares, and steps unless it is the
+    /// last statement of a `.query` run; CREATE/DML/DROP/TRUNCATE actions execute inline and
+    /// mutate the catalog; BEGIN/COMMIT and ROW ACCESS POLICY statements are no-ops.
+    fn execStatement(
+        db: *Db,
+        statement: AnalyzedStatement,
+        stmt_node: pb.AnyResolvedStatementProto.NodeUnion,
+        args: []const Param,
+        mode: Mode,
+        is_last: bool,
+    ) Error!Executed {
+        const arena = statement.arena;
+        switch (stmt_node) {
+            .resolved_query_stmt_node => |query_stmt| {
+                const formatted = try transformStatement(db, statement);
+
+                var stmt = db.sqlite_db.prepare(formatted) catch {
+                    db.setLastError(db.sqlite_db.errmsg());
+                    return error.ExecFailed;
+                };
+                errdefer stmt.finalize();
+                const consumed = try db.bindParams(arena, &stmt, args);
+
+                if (is_last and mode == .query) {
+                    return .{
+                        .consumed = consumed,
+                        .stmt = stmt,
+                        .columns = try outputColumns(arena, query_stmt.output_column_list),
+                    };
+                }
+
+                switch (mode) {
+                    .query => stmt.finalize(),
+                    .exec => {
+                        while (stmt.step() catch {
+                            db.setLastError(db.sqlite_db.errmsg());
+                            return error.ExecFailed;
+                        }) {}
+                        stmt.finalize();
+                    },
+                }
+                return .{ .consumed = consumed };
+            },
+            .resolved_create_statement_node => |create_any| {
+                return .{
+                    .consumed = try db.execCreateStatement(statement, create_any, args),
+                };
+            },
+            .resolved_insert_stmt_node,
+            .resolved_update_stmt_node,
+            .resolved_delete_stmt_node,
+            => {
+                const fragment = (try transformStatementFragment(db, statement)).fragment;
+                const changes_before = db.sqlite_db.totalChanges();
+                const consumed = try db.execSql(arena, try fragment.toString(arena), args);
+                var counts: DmlCounts = .{};
+                counts.add(fragment, db.sqlite_db.totalChanges() - changes_before);
+                return .{ .consumed = consumed, .dml = counts };
+            },
+            .resolved_drop_stmt_node => |drop_stmt| {
+                return .{
+                    .consumed = try db.execDropStatement(arena, drop_stmt, args),
+                };
+            },
+            // TODO: Investigate sqlite UDF leak for DROP FUNCTION
+            .resolved_drop_function_stmt_node => |drop_fn| {
+                const name = try formatNamePath(arena, drop_fn.name_path);
+                db.unregisterFunctionSpec(name) catch |err| {
+                    // DROP FUNCTION IF EXISTS on a missing function is a no-op
+                    if (err == error.TableNotFound and (drop_fn.is_if_exists orelse false)) {
+                        // no-op
+                    } else return db.failCatalog(err);
+                };
+                return .{};
+            },
+            // The transformer lowers MERGE to a list of plain statements executed in order.
+            // (create merged temp table, INSERT/UPDATE/DELETE per WHEN clause, drop temp table)
+            .resolved_merge_stmt_node => {
+                const fragment = (try transformStatementFragment(db, statement)).fragment;
+                const compound = switch (fragment) {
+                    .compound => |c| c,
+                    else => return error.TransformFailed,
+                };
+                return .{ .dml = try db.execCompound(arena, compound) };
+            },
+            .resolved_truncate_stmt_node => |truncate_stmt| {
+                try db.execTruncateStatement(arena, truncate_stmt);
+                return .{};
+            },
+            // Unsupported but implemented as no-ops
+            .resolved_begin_stmt_node,
+            .resolved_commit_stmt_node,
+            .resolved_create_row_access_policy_stmt_node,
+            .resolved_drop_row_access_policy_stmt_node,
+            => return .{},
+            else => return error.Unimplemented,
+        }
+    }
+
+    /// A SQLite savepoint around steps that must land together or not at all.
+    ///
+    /// A savepoint rather than BEGIN, because load and copy jobs already hold a transaction open
+    /// around the driver calls they make, and savepoints nest inside one. Rolling back restores
+    /// SQLite, `zigquery_catalog` included, but not the in-memory catalog, so a caller changes the
+    /// catalog only once `release` has succeeded. That keeps the catalog right in autocommit only:
+    /// inside a caller's transaction a release commits nothing, which is why such a caller rolls
+    /// back with `rollbackTransaction`.
+    ///
+    /// ```zig
+    /// var savepoint = try Savepoint.begin(db, arena);
+    /// errdefer savepoint.rollback();
+    /// _ = try db.execSql(arena, create_sql, &.{});
+    /// _ = try db.execSql(arena, insert_sql, &.{});
+    /// try savepoint.release();
+    /// try db.registerTableSpec(table_spec);
+    /// ```
+    pub const Savepoint = struct {
+        db: *Db,
+        arena: std.mem.Allocator,
+        /// Set once `release` succeeds, after which there is nothing left to roll back. A caller's
+        /// `errdefer rollback()` stays armed past the release, for whatever fails after it.
+        is_released: bool = false,
+
+        const name = "zigquery_statement";
+
+        pub fn begin(db: *Db, arena: std.mem.Allocator) Error!Savepoint {
+            _ = try db.execSql(arena, "SAVEPOINT " ++ name, &.{});
+            return .{ .db = db, .arena = arena };
+        }
+
+        /// Keeps everything since `begin`.
+        /// In autocommit this commits it;
+        /// inside a caller's transaction it lands with that transaction's COMMIT.
+        ///
+        /// ```zig
+        /// if (rejected) {
+        ///     savepoint.rollback();
+        /// } else {
+        ///     try savepoint.release();
+        /// }
+        /// ```
+        pub fn release(savepoint: *Savepoint) Error!void {
+            _ = try savepoint.db.execSql(savepoint.arena, "RELEASE " ++ name, &.{});
+            savepoint.is_released = true;
+        }
+
+        /// Undoes everything since `begin`, unless it was released.
+        /// `lastError` keeps describing the failure that caused the rollback,
+        ///  even when the rollback itself fails.
+        ///
+        /// ```zig
+        /// var savepoint = try Savepoint.begin(db, arena);
+        /// errdefer savepoint.rollback();
+        /// try savepoint.release();
+        /// // A failure here leaves the released work in place.
+        /// try db.registerTableSpec(table_spec);
+        /// ```
+        pub fn rollback(savepoint: *const Savepoint) void {
+            if (savepoint.is_released) return;
+            const failure = savepoint.arena.dupe(u8, savepoint.db.lastError()) catch null;
+            savepoint.db.execCleanup(savepoint.arena, "ROLLBACK TO " ++ name);
+            savepoint.db.execCleanup(savepoint.arena, "RELEASE " ++ name);
+            if (failure) |message| savepoint.db.setLastError(message);
+        }
+    };
 
     /// Drops the given temp tables/views and removes their catalog specs. Best-effort: errors
     /// are logged, not returned, since cleanup runs after the query has already produced its
@@ -1597,18 +1957,23 @@ pub const Db = struct {
     }
 
     /// Runs a compound fragment's statements in order, without args, counting the rows each one
-    /// changes under the kind of change it makes.
+    /// changes under the kind of change it makes. All of them land or none do, as a BigQuery
+    /// MERGE does: a failure in a later statement also undoes the earlier ones' writes and the
+    /// scratch table the first one made.
     fn execCompound(
         db: *Db,
         arena: std.mem.Allocator,
         compound: *const sqlbuilder.CompoundSQLFragment,
     ) Error!DmlCounts {
+        var savepoint = try Savepoint.begin(db, arena);
+        errdefer savepoint.rollback();
         var counts: DmlCounts = .{};
         for (compound.getStatements()) |statement| {
             const changes_before = db.sqlite_db.totalChanges();
             _ = try db.execSql(arena, try statement.toString(arena), &.{});
             counts.add(statement, db.sqlite_db.totalChanges() - changes_before);
         }
+        try savepoint.release();
         return counts;
     }
 
@@ -1640,11 +2005,9 @@ pub const Db = struct {
     /// CREATE dispatch: table, table-as-select, view or function.
     fn execCreateStatement(
         db: *Db,
-        arena: std.mem.Allocator,
-        node: *pb.AnyResolvedNodeProto,
+        statement: AnalyzedStatement,
         create_any: *const pb.AnyResolvedCreateStatementProto,
         args: []const Param,
-        opts: QueryOptions,
     ) Error!usize {
         const create_node = create_any.node orelse return error.Unimplemented;
         switch (create_node) {
@@ -1652,10 +2015,10 @@ pub const Db = struct {
                 const base_node = base_any.node orelse return error.Unimplemented;
                 switch (base_node) {
                     .resolved_create_table_stmt_node => |ct| {
-                        return db.execCreateTable(arena, ct, args);
+                        return db.execCreateTable(statement.arena, ct, args);
                     },
                     .resolved_create_table_as_select_stmt_node => |ctas| {
-                        return db.execCreateTableAsSelect(arena, node, ctas, args, opts);
+                        return db.execCreateTableAsSelect(statement, ctas, args);
                     },
                     else => return error.Unimplemented,
                 }
@@ -1664,14 +2027,14 @@ pub const Db = struct {
                 const view_node = view_any.node orelse return error.Unimplemented;
                 switch (view_node) {
                     .resolved_create_view_stmt_node => |cv| {
-                        try db.execCreateView(arena, node, cv, opts);
+                        try db.execCreateView(statement, cv);
                         return 0;
                     },
                     else => return error.Unimplemented,
                 }
             },
             .resolved_create_function_stmt_node => |cf| {
-                try db.execCreateFunction(arena, cf, opts);
+                try db.execCreateFunction(statement.arena, cf, statement.opts);
                 return 0;
             },
             else => return error.Unimplemented,
@@ -1836,13 +2199,12 @@ pub const Db = struct {
     /// list with NOT NULL columns, creates the declared shape and inserts the select.
     fn execCreateTableAsSelect(
         db: *Db,
-        arena: std.mem.Allocator,
-        node: *pb.AnyResolvedNodeProto,
+        statement: AnalyzedStatement,
         ctas: *const pb.ResolvedCreateTableAsSelectStmtProto,
         args: []const Param,
-        opts: QueryOptions,
     ) Error!usize {
-        const fragment = try transformStatementFragment(db, arena, node, opts);
+        const arena = statement.arena;
+        const fragment = (try transformStatementFragment(db, statement)).fragment;
         const create_table_stmt = switch (fragment) {
             .create_table_statement => |c| c,
             else => return error.TransformFailed,
@@ -1912,7 +2274,7 @@ pub const Db = struct {
             try db.requireDataset(arena, table_spec.name_path);
         }
         const table_name = try table_spec.tableName(arena);
-        const replacing = table_spec.create_mode == spec.create_mode_create_or_replace;
+        const replacing = table_spec.create_mode == .CREATE_OR_REPLACE;
         const from_query = table_spec.query.len != 0;
         const through_declared = from_query and table_spec.hasNotNull();
 
@@ -1924,29 +2286,28 @@ pub const Db = struct {
         // has, so a later read analyzes and then fails at prepare with "no such table".
         if (replacing and from_query) {
             const scratch = try std.fmt.allocPrint(arena, "{s}__zigquery_replace", .{table_name});
-            const drop_scratch = try std.fmt.allocPrint(
+
+            // The build, the swap and the index land together or not at all, so a failure at any
+            // step leaves the destination exactly as it was. Only then does the catalog change.
+            var savepoint = try Savepoint.begin(db, arena);
+            errdefer savepoint.rollback();
+
+            _ = try db.execSql(arena, try std.fmt.allocPrint(
                 arena,
                 "DROP TABLE IF EXISTS `{s}`",
                 .{scratch},
-            );
-            _ = try db.execSql(arena, drop_scratch, &.{});
-
-            const built = if (through_declared)
-                db.createDeclaredThenInsert(arena, .{
+            ), &.{});
+            const consumed = if (through_declared)
+                try db.createDeclaredThenInsert(arena, .{
                     .table_spec = table_spec,
                     .name = scratch,
                 }, args)
             else
-                db.execSql(arena, try std.fmt.allocPrint(
+                try db.execSql(arena, try std.fmt.allocPrint(
                     arena,
                     "CREATE TABLE `{s}` AS {s}",
                     .{ scratch, table_spec.query },
                 ), args);
-            const consumed = built catch |err| {
-                // Leave the destination exactly as it was.
-                db.execCleanup(arena, drop_scratch);
-                return err;
-            };
 
             const drop_old = try std.fmt.allocPrint(
                 arena,
@@ -1959,11 +2320,19 @@ pub const Db = struct {
                 "ALTER TABLE `{s}` RENAME TO `{s}`",
                 .{ scratch, table_name },
             );
+            // A view that queries the table we're creating must keep reading it by name.
+            // After the drop, but before the rename, the view may reference a nonexistent table.
+            // A modern-mode rename re-checks every view in the schema and refuses the rename.
+            // Legacy mode renames the table alone and leaves view text untouched.
+            _ = try db.execSql(arena, "PRAGMA legacy_alter_table = ON", &.{});
+            defer db.execCleanup(arena, "PRAGMA legacy_alter_table = OFF");
             _ = try db.execSql(arena, rename, &.{});
 
             // After the rename: SQLite's ALTER TABLE ... RENAME leaves index names alone, so an
             // index made on the scratch table would stay called `<t>__zigquery_replace.pk`.
             try db.execPkIndex(arena, table_spec);
+            try savepoint.release();
+
             db.registerTableSpec(table_spec) catch |err|
                 return db.failCatalog(err);
             return consumed;
@@ -2002,7 +2371,7 @@ pub const Db = struct {
         // IF NOT EXISTS on an already-registered table keeps the existing spec, so the first
         // registration's schema stays visible. The analyzer catalog is re-rendered from the spec
         // map per statement, so not upserting here is what makes the statement a no-op.
-        if (table_spec.create_mode == spec.create_mode_create_if_not_exists and
+        if (table_spec.create_mode == .CREATE_IF_NOT_EXISTS and
             db.tableSpecExists(table_name))
         {
             return consumed;
@@ -2012,100 +2381,313 @@ pub const Db = struct {
         return consumed;
     }
 
-    /// Execs the CREATE VIEW fragment SQL and registers a view spec whose query is the inner
-    /// SELECT text.
-    fn execCreateView(
+    /// A view's query as analyzed against the catalog as it stands:
+    /// what CREATE VIEW and a refresh both need, before either touches SQLite or the catalog.
+    const ViewDefinition = struct {
+        /// The CREATE VIEW the transformer produced, its view named as written.
+        statement: *const sqlbuilder.CreateViewStatement,
+        /// The view's columns: the query's output columns, names, and options
+        columns: []const *spec.ColumnSpec,
+        /// What the query reads, each with its shape now.
+        dependencies: []const spec.ViewDependency,
+
+        /// Transforms an analyzed CREATE VIEW into a ViewDefinition
+        fn buildFromProto(
+            db: *Db,
+            statement: AnalyzedStatement,
+            base: *const pb.ResolvedCreateViewBaseProto,
+        ) Error!ViewDefinition {
+            const arena = statement.arena;
+            const transformed = try transformStatementFragment(db, statement);
+            const create_view_stmt = switch (transformed.fragment) {
+                .create_view_statement => |c| c,
+                else => return error.TransformFailed,
+            };
+            const columns = if (base.has_explicit_columns orelse false)
+                try columnSpecsFromDefs(arena, base.column_definition_list)
+            else
+                try queryColumns(arena, base.output_column_list);
+            const dependencies = blk: {
+                var g = db.lockCatalog();
+                defer g.unlock();
+                break :blk try g.catalog.currentDependencies(arena, transformed.scanned_tables);
+            };
+
+            return .{
+                .statement = create_view_stmt,
+                .columns = columns,
+                .dependencies = dependencies,
+            };
+        }
+    };
+
+    fn queryColumns(
+        arena: std.mem.Allocator,
+        list: []const *pb.ResolvedOutputColumnProto,
+    ) Error![]const *spec.ColumnSpec {
+        const output_columns = try outputColumns(arena, list);
+        const columns = try arena.alloc(*spec.ColumnSpec, output_columns.len);
+        for (output_columns, columns) |output_column, *column| {
+            column.* = try arena.create(spec.ColumnSpec);
+            column.*.* = .{ .name = output_column.name, .type = output_column.type };
+        }
+        return columns;
+    }
+
+    /// Creates the SQLite view `name` runs as, replacing any view of that name first.
+    fn installSqliteView(
         db: *Db,
         arena: std.mem.Allocator,
-        node: *pb.AnyResolvedNodeProto,
-        cv: *const pb.ResolvedCreateViewStmtProto,
-        opts: QueryOptions,
+        name: []const u8,
+        definition: ViewDefinition,
+        is_replacing: bool,
     ) Error!void {
-        const fragment = try transformStatementFragment(db, arena, node, opts);
-        const create_view_stmt = switch (fragment) {
-            .create_view_statement => |c| c,
-            else => return error.TransformFailed,
-        };
-        const query_str = create_view_stmt.query.toString(arena) catch return error.OutOfMemory;
-
-        const base = cv.parent orelse return error.TransformFailed;
-        const create = base.parent orelse return error.TransformFailed;
-
-        // A view's columns come from the output column list.
-        const columns = try arena.alloc(*spec.ColumnSpec, base.output_column_list.len);
-        for (base.output_column_list, 0..) |oc, i| {
-            const column = oc.column orelse return error.TransformFailed;
-            const tp = column.type orelse return error.TransformFailed;
-            const col = try arena.create(spec.ColumnSpec);
-            col.* = .{
-                .name = oc.name orelse "",
-                .type = spec.newTypeFromProto(arena, tp) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => return error.TransformFailed,
+        if (is_replacing) {
+            const drop_fragment = sqlbuilder.SQLFragment{
+                .drop_statement = &sqlbuilder.DropStatement{
+                    .if_exists = true,
+                    .object_type = "VIEW",
+                    .object_name = name,
                 },
             };
-            columns[i] = col;
+            const drop_sql = drop_fragment.toString(arena) catch return error.OutOfMemory;
+            _ = try db.execSql(arena, drop_sql, &.{});
         }
 
-        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
+        const create_fragment = sqlbuilder.SQLFragment{
+            .create_view_statement = &sqlbuilder.CreateViewStatement{
+                .if_not_exists = definition.statement.if_not_exists,
+                .view_name = name,
+                .query = definition.statement.query,
+            },
+        };
+        const create_sql = create_fragment.toString(arena) catch return error.OutOfMemory;
+        _ = try db.execSql(arena, create_sql, &.{});
+    }
+
+    /// Execs the CREATE VIEW fragment SQL and registers a view spec whose query is the SELECT text.
+    fn execCreateView(
+        db: *Db,
+        statement: AnalyzedStatement,
+        cv: *const pb.ResolvedCreateViewStmtProto,
+    ) Error!void {
+        const arena = statement.arena;
+        const base = cv.parent orelse return error.TransformFailed;
+        const create = base.parent orelse return error.TransformFailed;
         const is_temp = (create.create_scope orelse .CREATE_DEFAULT_SCOPE) == .CREATE_TEMP;
+        const name_path = if (is_temp)
+            try normalizePath(arena, create.name_path)
+        else
+            try db.qualifyPath(arena, create.name_path);
+        const create_mode = create.create_mode orelse .CREATE_DEFAULT;
+
+        // IF NOT EXISTS over an existing view no-ops
+        if (create_mode == .CREATE_IF_NOT_EXISTS and
+            db.tableSpecExists(try spec.formatPath(arena, name_path)))
+        {
+            return;
+        }
+
+        const definition = try ViewDefinition.buildFromProto(db, statement, base);
+        const query_str = definition.statement.query.toString(arena) catch return error.OutOfMemory;
+
+        const now = catalog_mod.nowTimestamps(arena) catch return error.OutOfMemory;
         const table_spec = try arena.create(spec.TableSpec);
         table_spec.* = .{
             .is_temp = is_temp,
             .is_view = true,
-            .name_path = if (is_temp)
-                try normalizePath(arena, create.name_path)
-            else
-                try db.qualifyPath(arena, create.name_path),
-            .columns = columns,
-            .create_mode = goCreateMode(create.create_mode),
+            .name_path = name_path,
+            .columns = definition.columns,
+            .create_mode = create_mode,
             .query = query_str,
             .updated_at = now.rfc3339,
             .created_at = now.rfc3339,
             .options = try optionSpecsFrom(arena, base.option_list),
             .description = try stringOption(arena, base.option_list, "description"),
             .source_sql = base.sql orelse "",
+            .explicit_columns = base.has_explicit_columns orelse false,
+            .dependencies = definition.dependencies,
         };
         if (!is_temp) try db.requireDataset(arena, table_spec.name_path);
 
-        if (table_spec.create_mode == spec.create_mode_create_or_replace) {
-            const drop_sql = try std.fmt.allocPrint(
-                arena,
-                "DROP VIEW IF EXISTS `{s}`",
-                .{try table_spec.tableName(arena)},
-            );
-            _ = try db.execSql(arena, drop_sql, &.{});
-        }
-        // The transformer named the view as written; the spec's name is the
-        // one SQLite must know it by.
-        const qualified = sqlbuilder.CreateViewStatement{
-            .if_not_exists = create_view_stmt.if_not_exists,
-            .view_name = try table_spec.tableName(arena),
-            .query = create_view_stmt.query,
-        };
-        const create_fragment = sqlbuilder.SQLFragment{ .create_view_statement = &qualified };
-        const create_sql = create_fragment.toString(arena) catch return error.OutOfMemory;
-        _ = try db.execSql(arena, create_sql, &.{});
+        var savepoint = try Savepoint.begin(db, arena);
+        errdefer savepoint.rollback();
+        try db.installSqliteView(
+            arena,
+            try table_spec.tableName(arena),
+            definition,
+            table_spec.create_mode == .CREATE_OR_REPLACE,
+        );
+        try savepoint.release();
         db.registerTableSpec(table_spec) catch |err|
             return db.failCatalog(err);
+    }
+
+    /// Brings the view `name`, after every view it reads, up to date with the tables and views
+    /// beneath them. A view whose query no longer analyzes is marked invalid rather than failing
+    /// the caller; a query that reads it then fails with the reason. A name that is not a
+    /// persistent view is left alone.
+    fn refreshViewAndDependencies(
+        db: *Db,
+        arena: std.mem.Allocator,
+        visited: *std.StringHashMap(void),
+        name: []const u8,
+    ) Error!void {
+        if ((try visited.getOrPut(name)).found_existing) return;
+        if (db.temps.findTableSpec(name) != null) return;
+        const view = blk: {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            const table_spec = g.catalog.findTableSpec(name) orelse return;
+            if (!catalog_mod.isRefreshableView(table_spec)) return;
+            break :blk table_spec;
+        };
+        for (view.dependencies) |dependency| {
+            try db.refreshViewAndDependencies(arena, visited, dependency.name);
+        }
+        // Checked after the dependencies' refreshes, which can change their shapes.
+        const is_stale = blk: {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            break :blk g.catalog.dependenciesChanged(view);
+        };
+        if (!is_stale) return;
+
+        var timer = phase.Timer.begin(.view_refresh);
+        defer timer.end();
+        // Only a failed analysis says the view's query no longer works; anything else, such as a
+        // busy database, says nothing about the view, so it stays stale and is refreshed again on
+        // its next use.
+        db.reanalyzeView(arena, view) catch |err| switch (err) {
+            error.AnalyzeFailed => try db.markViewInvalid(arena, view),
+            else => return err,
+        };
+    }
+
+    /// Re-runs `view`'s CREATE VIEW against the catalog as it stands, replacing its SQLite view and
+    /// its analyzed columns. Its reported schema, options and timestamps stay as created.
+    fn reanalyzeView(db: *Db, arena: std.mem.Allocator, view: *const spec.TableSpec) Error!void {
+        const sql = try refreshStatementSql(arena, view);
+        // As in BigQuery, a view never sees the TEMP tables of the script that reads it.
+        const analyzed = if (db.temps.tableCount() == 0)
+            try db.analyzeOne(arena, sql, 0, .{}, "{}", null)
+        else blk: {
+            var analyze_timer = phase.Timer.begin(.analyze);
+            defer analyze_timer.end();
+            const catalog_json = render: {
+                var g = db.lockCatalog();
+                defer g.unlock();
+                break :render g.catalog.catalogJson(arena);
+            };
+            break :blk try db.analyzeWithCatalogJson(arena, sql, 0, catalog_json, "{}", null);
+        };
+        const base = createViewBaseOf(analyzed.node) orelse return error.TransformFailed;
+        // The views it reads were refreshed first, so error.StaleViews is a failure here and the
+        // names go unread.
+        var diagnostics: StatementDiagnostics = .{};
+        const definition = try ViewDefinition.buildFromProto(db, .{
+            .arena = arena,
+            .node = analyzed.node,
+            .opts = .{},
+            .diagnostics = &diagnostics,
+        }, base);
+        const name = try view.tableName(arena);
+
+        var savepoint = try Savepoint.begin(db, arena);
+        errdefer savepoint.rollback();
+        try db.installSqliteView(arena, name, definition, true);
+        try savepoint.release();
+
+        var refreshed = view.*;
+        refreshed.query = definition.statement.query.toString(arena) catch
+            return error.OutOfMemory;
+        refreshed.invalid_reason = "";
+        refreshed.dependencies = definition.dependencies;
+        refreshed.analysis_columns = definition.columns;
+        const analyzed_fingerprint = catalog_mod.columnsFingerprint(
+            arena,
+            definition.columns,
+        ) catch |err|
+            switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.InvalidSpec => return error.TransformFailed,
+            };
+
+        var g = db.lockCatalog();
+        defer g.unlock();
+        // A view whose columns came out as before needs no new analyzer entry, and the views
+        // that read it stay fresh.
+        if (analyzed_fingerprint == g.catalog.fingerprint(name)) {
+            g.catalog.updateTableSpec(&db.sqlite_db, &refreshed) catch |err|
+                return db.failCatalog(err);
+            return;
+        }
+        g.catalog.addNewTableSpec(&db.sqlite_db, &refreshed) catch |err|
+            return db.failCatalog(err);
+    }
+
+    /// Records why `view` no longer analyzes, from `lastError`, so a query that reads it fails
+    /// with that reason until something it reads changes.
+    fn markViewInvalid(db: *Db, arena: std.mem.Allocator, view: *const spec.TableSpec) Error!void {
+        var invalid = view.*;
+        invalid.invalid_reason = try bigQueryViewError(arena, view, db.lastError());
+        const names = try arena.alloc([]const u8, view.dependencies.len);
+        for (view.dependencies, 0..) |dependency, i| names[i] = dependency.name;
+        var g = db.lockCatalog();
+        defer g.unlock();
+        invalid.dependencies = try g.catalog.currentDependencies(arena, names);
+        g.catalog.updateTableSpec(&db.sqlite_db, &invalid) catch |err|
+            return db.failCatalog(err);
+    }
+
+    /// Fails a statement that reads a view whose query is due for a refresh (out of date)
+    /// (`error.StaleViews`, naming them in `diagnostics.stale_views`),
+    /// or a view whose query no longer analyzes
+    /// (`error.AnalyzeFailed`, with BigQuery's message).
+    fn checkScannedViews(
+        db: *Db,
+        arena: std.mem.Allocator,
+        scanned: []const []const u8,
+        diagnostics: *StatementDiagnostics,
+    ) Error!void {
+        var stale: std.ArrayList([]const u8) = .empty;
+        var invalid_reason: ?[]const u8 = null;
+        {
+            var g = db.lockCatalog();
+            defer g.unlock();
+            for (scanned) |name| {
+                if (db.temps.findTableSpec(name) != null) continue;
+                switch (try g.catalog.viewStatus(arena, name)) {
+                    .fresh => {},
+                    .stale => try stale.append(arena, name),
+                    .invalid => |reason| {
+                        if (invalid_reason == null) invalid_reason = try arena.dupe(u8, reason);
+                    },
+                }
+            }
+        }
+        if (stale.items.len > 0) {
+            diagnostics.stale_views = stale.items;
+            return error.StaleViews;
+        }
+        if (invalid_reason) |reason| {
+            db.setLastError(reason);
+            return error.AnalyzeFailed;
+        }
     }
 
     /// Execs the formatted DROP for a table or view, then deletes the catalog spec.
     fn execDropStatement(
         db: *Db,
         arena: std.mem.Allocator,
-        node: *pb.AnyResolvedNodeProto,
         drop_stmt: *const pb.ResolvedDropStmtProto,
         args: []const Param,
-        opts: QueryOptions,
     ) Error!usize {
         const object_type = drop_stmt.object_type orelse "";
         if (!std.mem.eql(u8, object_type, "TABLE") and !std.mem.eql(u8, object_type, "VIEW")) {
             // DROP FUNCTION arrives as its own node kind, not through here.
             return error.Unimplemented;
         }
-        _ = node;
-        _ = opts;
         // A TEMP object is registered as written; anything else under the
         // project the name resolves to.
         const as_written = try formatNamePath(arena, drop_stmt.name_path);
@@ -2573,16 +3155,15 @@ fn stripSQLLiterals(arena: std.mem.Allocator, q: []const u8) error{OutOfMemory}!
 /// Transforms one analyzed statement into its SQL fragment.
 fn transformStatementFragment(
     db: ?*Db,
-    arena: std.mem.Allocator,
-    node: *pb.AnyResolvedNodeProto,
-    opts: QueryOptions,
-) Error!sqlbuilder.SQLFragment {
+    statement: Db.AnalyzedStatement,
+) Error!context_mod.TransformResult {
+    const arena = statement.arena;
     var timer = phase.Timer.begin(.transform);
     defer timer.end();
     const config = try arena.create(context_mod.TransformConfig);
     config.* = context_mod.defaultTransformConfig();
     const ctx = try context_mod.TransformContext.init(arena, config);
-    ctx.query_ctx.current_time_unix_micros = opts.current_time_unix_micros;
+    ctx.query_ctx.current_time_unix_micros = statement.opts.current_time_unix_micros;
     // The context carries the catalog's functions, so the function transformer can inline a
     // UDF body at its call site.
     if (db) |d| {
@@ -2590,7 +3171,10 @@ fn transformStatementFragment(
     }
 
     var coordinator = coordinator_mod.QueryCoordinator.init(arena);
-    const fragment = coordinator.transformStatementNode(node, ctx) catch |err| switch (err) {
+    const fragment = coordinator.transformStatementNode(
+        statement.node,
+        ctx,
+    ) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Unimplemented => return error.Unimplemented,
         error.UnsupportedFunction => {
@@ -2602,26 +3186,145 @@ fn transformStatementFragment(
             return error.TransformFailed;
         },
     };
+    if (db) |d| try d.checkScannedViews(arena, ctx.scanned_tables.items, statement.diagnostics);
     // Surface the parameter occurrences, with their resolved types, so bindParams can cast the
     // values a caller bound.
     if (db) |d| d.stmt_params = ctx.collected_params.items;
-    if (opts.capture) |cap| {
-        cap.ast_text = ast_text.render(cap.arena, node) catch "";
+    if (statement.opts.capture) |cap| {
+        cap.ast_text = ast_text.render(cap.arena, statement.node) catch "";
         cap.sql = fragment.toString(cap.arena) catch "";
     }
-    return fragment;
+    return .{ .fragment = fragment, .scanned_tables = ctx.scanned_tables.items };
 }
 
 /// Transforms one analyzed statement into SQLite SQL text.
-fn transformStatement(
-    db: ?*Db,
-    arena: std.mem.Allocator,
-    node: *pb.AnyResolvedNodeProto,
-    opts: QueryOptions,
-) Error![]const u8 {
-    const fragment = try transformStatementFragment(db, arena, node, opts);
-    return fragment.toString(arena);
+fn transformStatement(db: ?*Db, statement: Db.AnalyzedStatement) Error![]const u8 {
+    const transformed = try transformStatementFragment(db, statement);
+    return transformed.fragment.toString(statement.arena);
 }
+
+/// The view base of the CREATE VIEW an analyzed node holds, if it holds one.
+fn createViewBaseOf(node: *const pb.AnyResolvedNodeProto) ?*const pb.ResolvedCreateViewBaseProto {
+    const stmt_node = statementNodeOf(node) orelse return null;
+    const create_any = switch (stmt_node) {
+        .resolved_create_statement_node => |c| c,
+        else => return null,
+    };
+    const view_any = switch (create_any.node orelse return null) {
+        .resolved_create_view_base_node => |v| v,
+        else => return null,
+    };
+    return switch (view_any.node orelse return null) {
+        .resolved_create_view_stmt_node => |cv| cv.parent,
+        else => null,
+    };
+}
+
+/// `CREATE OR REPLACE VIEW` for a view's refresh: its query as the client wrote it, under the
+/// column names it listed, if it listed any.
+fn refreshStatementSql(arena: std.mem.Allocator, view: *const spec.TableSpec) Error![:0]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.print(arena, "CREATE OR REPLACE VIEW `{s}` ", .{
+        try std.mem.join(arena, ".", view.name_path),
+    });
+    if (view.explicit_columns) {
+        try out.append(arena, '(');
+        for (view.columns, 0..) |column, i| {
+            if (i > 0) try out.appendSlice(arena, ", ");
+            try appendQuotedIdentifier(arena, &out, column.name);
+        }
+        try out.appendSlice(arena, ") ");
+    }
+    try out.print(arena, "AS {s}", .{view.source_sql});
+    return out.toOwnedSliceSentinel(arena, 0);
+}
+
+/// A GoogleSQL quoted identifier: backticks, with `\` and `` ` `` escaped.
+fn appendQuotedIdentifier(
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    name: []const u8,
+) error{OutOfMemory}!void {
+    try out.append(arena, '`');
+    for (name) |c| {
+        if (c == '`' or c == '\\') try out.append(arena, '\\');
+        try out.append(arena, c);
+    }
+    try out.append(arena, '`');
+}
+
+/// What BigQuery tells a query that reads `view` when the view's query no longer analyzes, given
+/// the analyzer's `message` from re-analyzing it.
+fn bigQueryViewError(
+    arena: std.mem.Allocator,
+    view: *const spec.TableSpec,
+    message: []const u8,
+) error{OutOfMemory}![]const u8 {
+    // The position is in the CREATE VIEW the refresh analyzed, not in anything the reader wrote.
+    const without_position = if (std.mem.lastIndexOf(u8, message, " [at ")) |at|
+        if (std.mem.endsWith(u8, message, "]")) message[0..at] else message
+    else
+        message;
+    // A view that reads a broken view reports the broken view's error.
+    if (std.mem.indexOf(u8, without_position, view_parse_error_marker) != null) {
+        return arena.dupe(u8, without_position);
+    }
+    if (try columnCountError(arena, view, without_position)) |reworded| return reworded;
+    const table_not_found = "Table not found: ";
+    if (std.mem.startsWith(u8, without_position, table_not_found)) {
+        const written = std.mem.trim(u8, without_position[table_not_found.len..], "`");
+        var segments = std.mem.splitScalar(u8, written, '.');
+        var parts: std.ArrayList([]const u8) = .empty;
+        while (segments.next()) |segment| try parts.append(arena, std.mem.trim(u8, segment, "`"));
+        if (parts.items.len == 2) try parts.insert(arena, 0, view.name_path[0]);
+        if (parts.items.len == 3) {
+            return std.fmt.allocPrint(
+                arena,
+                "Not found: Table {s}:{s}.{s} was not found in location US",
+                .{ parts.items[0], parts.items[1], parts.items[2] },
+            );
+        }
+    }
+    return std.fmt.allocPrint(
+        arena,
+        "{s}; " ++ view_parse_error_marker ++ " '{s}'",
+        .{ without_position, try viewErrorName(arena, view) },
+    );
+}
+
+/// BigQuery names a view in its errors by dataset and name. A view with no dataset, as an engine
+/// test creates without a default project, goes by its name alone.
+fn viewErrorName(
+    arena: std.mem.Allocator,
+    view: *const spec.TableSpec,
+) error{OutOfMemory}![]const u8 {
+    const path = view.name_path;
+    if (path.len < 2) return path[path.len - 1];
+    return std.fmt.allocPrint(arena, "{s}.{s}", .{ path[path.len - 2], path[path.len - 1] });
+}
+
+/// A view whose column list no longer has as many names as its query has columns.
+fn columnCountError(
+    arena: std.mem.Allocator,
+    view: *const spec.TableSpec,
+    message: []const u8,
+) error{OutOfMemory}!?[]const u8 {
+    const prefix = "The number of view column names (";
+    const middle = ") must be equal to the number of columns from the view query (";
+    if (!std.mem.startsWith(u8, message, prefix) or !std.mem.endsWith(u8, message, ")")) {
+        return null;
+    }
+    const counts = message[prefix.len .. message.len - 1];
+    const at = std.mem.indexOf(u8, counts, middle) orelse return null;
+    return try std.fmt.allocPrint(
+        arena,
+        "Invalid view definition for {s} with {s} columns vs. {s} columns from view query",
+        .{ try viewErrorName(arena, view), counts[0..at], counts[at + middle.len ..] },
+    );
+}
+
+/// BigQuery's words for a view whose query no longer analyzes.
+const view_parse_error_marker = "failed to parse view";
 
 /// Unwraps an analyzed node down to its statement-kind union.
 fn statementNodeOf(
@@ -2715,17 +3418,6 @@ fn formatNamePath(
     path: []const []const u8,
 ) error{OutOfMemory}![]u8 {
     return spec.formatPath(arena, try normalizePath(arena, path));
-}
-
-/// Maps the 0-based proto CreateMode onto the 1-based values persisted in TableSpec JSON (see
-/// spec.zig's create_mode_* constants).
-fn goCreateMode(mode: ?pb.ResolvedCreateStatementEnums_CreateMode) i64 {
-    return switch (mode orelse .CREATE_DEFAULT) {
-        .CREATE_DEFAULT => spec.create_mode_create_default,
-        .CREATE_OR_REPLACE => spec.create_mode_create_or_replace,
-        .CREATE_IF_NOT_EXISTS => spec.create_mode_create_if_not_exists,
-        else => spec.create_mode_unspecified,
-    };
 }
 
 /// Type of one function argument. A templated argument keeps
@@ -3028,7 +3720,7 @@ fn newTableSpecFromCreate(
         .name_path = try normalizePath(arena, create.name_path),
         .columns = try columnSpecsFromDefs(arena, base.column_definition_list),
         .primary_key = if (base.primary_key) |pk| pk.column_name_list else &.{},
-        .create_mode = goCreateMode(create.create_mode),
+        .create_mode = create.create_mode orelse .CREATE_DEFAULT,
         .query = query_str,
         .updated_at = now.rfc3339,
         .created_at = now.rfc3339,
@@ -3040,13 +3732,10 @@ fn newTableSpecFromCreate(
     return table_spec;
 }
 
-/// Like `translate`, but against a live database's catalog, so the statement
-/// may reference tables and views that database has created. `translate`
-/// analyzes with an empty catalog and cannot.
-///
-/// For inspecting emitted SQL — `EXPLAIN QUERY PLAN` over a recreated view
-/// graph, say — where the query is only meaningful in terms of what is already
-/// there.
+/// Like `translate`, but against a live database's catalog
+/// The statement may reference tables and views that have been created. A view whose tables
+/// changed shape since it was analyzed is refreshed first, as `query` would, so the SQL is what
+/// running the statement would execute.
 pub fn translateOn(
     db: *Db,
     arena: std.mem.Allocator,
@@ -3057,56 +3746,77 @@ pub fn translateOn(
     var out: std.ArrayList([]const u8) = .empty;
     var offset: usize = 0;
     while (true) {
-        const analyzed = blk: {
-            if (db.syncedCatalogHandle(arena)) |handle| {
-                break :blk analyzer_ffi.analyzeNextStatementWithCatalog(
-                    arena,
-                    handle,
-                    sqlz,
-                    offset,
-                    "{}",
-                    null,
-                ) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => {
-                        db.setLastError(analyzer_ffi.last_error);
-                        return error.AnalyzeFailed;
-                    },
-                };
-            }
-            const catalog_json = db.statelessCatalogJson(arena) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => {
-                    db.setLastError(@errorName(err));
-                    return error.AnalyzeFailed;
+        var diagnostics: Db.StatementDiagnostics = .{};
+        const translated = translateStatementOn(
+            db,
+            arena,
+            sqlz,
+            offset,
+            opts,
+            &diagnostics,
+        ) catch |err|
+            switch (err) {
+                // As `runStatementRefreshingViews` does: refresh the views and translate once more.
+                error.StaleViews, error.AnalyzeFailed => retry: {
+                    if (opts.catalog_scope == .none) return db.errorAfterRefresh(err);
+                    const has_refreshed = db.refreshViewsForRetry(
+                        arena,
+                        if (err == error.StaleViews) diagnostics.stale_views else null,
+                    ) catch |refresh_err|
+                        return db.errorAfterRefresh(refresh_err);
+                    if (!has_refreshed) return db.errorAfterRefresh(err);
+                    var retry_diagnostics: Db.StatementDiagnostics = .{};
+                    break :retry translateStatementOn(
+                        db,
+                        arena,
+                        sqlz,
+                        offset,
+                        opts,
+                        &retry_diagnostics,
+                    ) catch |retry_err| return db.errorAfterRefresh(retry_err);
                 },
+                else => return err,
             };
-            break :blk analyzer_ffi.analyzeNextStatement(
-                arena,
-                sqlz,
-                offset,
-                catalog_json,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => {
-                    db.setLastError(analyzer_ffi.last_error);
-                    return error.AnalyzeFailed;
-                },
-            };
-        };
-        offset = analyzed.resume_offset;
-        try out.append(arena, transformStatement(db, arena, analyzed.node, opts) catch |err| {
-            db.setLastError(@errorName(err));
-            return err;
-        });
-        if (analyzed.at_end) break;
+        try out.append(arena, translated.sql);
+        if (translated.is_last) break;
+        offset = translated.resume_offset;
     }
     return out.toOwnedSlice(arena);
 }
 
-/// Analyze + transform without executing: the SQLite SQL text of every
-/// statement in `sql` (CLI --sql mode and golden tests). On AnalyzeFailed
-/// the message is in analyzer_ffi.last_error.
+/// One statement of a `translateOn` script, analyzed and transformed.
+const TranslatedStatement = struct {
+    sql: []const u8,
+    /// Where the next statement of the script starts.
+    resume_offset: usize,
+    is_last: bool,
+};
+
+/// Analyzes the statement at `offset` against `db`'s catalog and transforms it to SQLite SQL.
+fn translateStatementOn(
+    db: *Db,
+    arena: std.mem.Allocator,
+    sqlz: [:0]const u8,
+    offset: usize,
+    opts: QueryOptions,
+    diagnostics: *Db.StatementDiagnostics,
+) Error!TranslatedStatement {
+    const analyzed = try db.analyzeOne(arena, sqlz, offset, opts, "{}", null);
+    return .{
+        .sql = try transformStatement(db, .{
+            .arena = arena,
+            .node = analyzed.node,
+            .opts = opts,
+            .diagnostics = diagnostics,
+        }),
+        .resume_offset = analyzed.resume_offset,
+        .is_last = analyzed.at_end,
+    };
+}
+
+/// Analyze + transform without executing:
+/// the SQLite SQL text of every statement in `sql` (CLI --sql mode and golden tests).
+/// On AnalyzeFailed the message is in analyzer_ffi.last_error.
 pub fn translate(
     arena: std.mem.Allocator,
     sql: []const u8,
@@ -3123,7 +3833,13 @@ pub fn translate(
             };
         offset = analyzed.resume_offset;
         if (queryStmtOf(analyzed.node) == null) return error.Unimplemented;
-        try out.append(arena, try transformStatement(null, arena, analyzed.node, opts));
+        var diagnostics: Db.StatementDiagnostics = .{};
+        try out.append(arena, try transformStatement(null, .{
+            .arena = arena,
+            .node = analyzed.node,
+            .opts = opts,
+            .diagnostics = &diagnostics,
+        }));
         if (analyzed.at_end) break;
     }
     return out.toOwnedSlice(arena);
@@ -3145,13 +3861,13 @@ fn queryStmtOf(node: *const pb.AnyResolvedNodeProto) ?*const pb.ResolvedQueryStm
     }
 }
 
-/// Output column specs — name plus resolved type — from the statement's output column list.
+/// `OutputColumn` specs from a query's or a view's output column list
 fn outputColumns(
     arena: std.mem.Allocator,
-    query_stmt: *const pb.ResolvedQueryStmtProto,
+    output_column_list: []const *pb.ResolvedOutputColumnProto,
 ) Error![]const OutputColumn {
-    const out = try arena.alloc(OutputColumn, query_stmt.output_column_list.len);
-    for (query_stmt.output_column_list, 0..) |oc, i| {
+    const out = try arena.alloc(OutputColumn, output_column_list.len);
+    for (output_column_list, 0..) |oc, i| {
         const column = oc.column orelse return error.AnalyzeFailed;
         const tp = column.type orelse return error.AnalyzeFailed;
         out[i] = .{
@@ -3841,7 +4557,7 @@ const catalog_test = struct {
         table_spec.* = .{
             .name_path = &.{"t1"},
             .columns = cols,
-            .create_mode = spec.create_mode_create_default,
+            .create_mode = .CREATE_DEFAULT,
             .updated_at = "2024-01-02T03:04:05Z",
             .created_at = "2024-01-02T03:04:05Z",
         };
@@ -3964,7 +4680,7 @@ test "dotted table names resolve and scan" {
     table_spec.* = .{
         .name_path = &.{ "proj", "ds", "t" },
         .columns = &.{col},
-        .create_mode = spec.create_mode_create_default,
+        .create_mode = .CREATE_DEFAULT,
         .updated_at = "2024-01-02T03:04:05Z",
         .created_at = "2024-01-02T03:04:05Z",
     };
@@ -4123,6 +4839,27 @@ test "INFORMATION_SCHEMA.SCHEMATA names the dataset" {
     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
 }
 
+// test "a prepared statement reads INFORMATION_SCHEMA after an exec freed the previous script's snapshot" {
+//     var db = try Db.open(testing.allocator, ":memory:");
+//     defer db.close();
+//     try db.exec("CREATE TABLE psd.tbl (x INT64)", &.{}, .{});
+//     // This exec publishes the snapshot into its own arena, which is freed when it returns.
+//     try db.exec("CREATE TABLE psd.names (n STRING)", &.{}, .{});
+//
+//     // `prepare` publishes no snapshot of its own, so the vtab scan reads whatever is left.
+//     var stmt = try db.prepare(
+//         \\INSERT INTO psd.names (n)
+//         \\SELECT table_name FROM psd.INFORMATION_SCHEMA.TABLES WHERE table_name = 'tbl'
+//     , .{});
+//     defer stmt.deinit();
+//     try stmt.exec(&.{});
+//
+//     var rows = try db.query("SELECT n FROM psd.names", &.{}, .{});
+//     defer rows.deinit();
+//     try testing.expectEqualStrings("tbl", (try rows.next()).?[0].string);
+//     try testing.expectEqual(@as(?[]const Cell, null), try rows.next());
+// }
+
 test "INFORMATION_SCHEMA.TABLE_OPTIONS reports DDL options for tables and views" {
     // option_value is the SQL literal as BigQuery renders it: double-quoted
     // with backslash escapes, NOT single-quoted. Verified against a real table
@@ -4203,6 +4940,717 @@ test "a default project qualifies two-part DDL names" {
 
     // A TEMP table stays where it was written, for the script that made it.
     try db.exec("CREATE TEMP TABLE scratch (a INT64); DROP TABLE scratch; SELECT 1", &.{}, .{});
+}
+
+// The expectations in the view column list tests were measured in recidiviz-bigquery-sandbox on
+// 2026-10-19.
+
+test "a view with a column list reads by the listed names" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v (x, y) AS SELECT a, b FROM d.t", &.{}, .{});
+
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqualStrings("x", v.columns[0].name);
+    try testing.expectEqualStrings("y", v.columns[1].name);
+    // The metadata API's view.query is the query alone.
+    try testing.expectEqualStrings("SELECT a, b FROM d.t", v.source_sql);
+
+    var rows = try db.query("SELECT x, y FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    const row = (try rows.next()).?;
+    try testing.expectEqual(@as(i64, 1), row[0].int);
+    try testing.expectEqual(@as(i64, 2), row[1].int);
+}
+
+test "a view's column list carries each column's description" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec(
+        "CREATE VIEW d.v (x OPTIONS(description='dx'), y) AS SELECT a, b FROM d.t",
+        &.{},
+        .{},
+    );
+
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqualStrings("dx", v.columns[0].description);
+    try testing.expectEqualStrings("", v.columns[1].description);
+}
+
+test "a view column list must name every column of the query once" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try testing.expectError(
+        error.AnalyzeFailed,
+        db.exec("CREATE VIEW d.v (x) AS SELECT a, b FROM d.t", &.{}, .{}),
+    );
+    try testing.expect(std.mem.startsWith(
+        u8,
+        db.lastError(),
+        "The number of view column names (1) must be equal to the number of columns from the " ++
+            "view query (2)",
+    ));
+    try testing.expectError(
+        error.AnalyzeFailed,
+        db.exec("CREATE VIEW d.v (x, X) AS SELECT a, b FROM d.t", &.{}, .{}),
+    );
+    try testing.expect(std.mem.startsWith(
+        u8,
+        db.lastError(),
+        "CREATE VIEW has columns with duplicate name X",
+    ));
+}
+
+test "a view's column list survives a refresh after its table's column type changes" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v (x, y) AS SELECT a, b FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'one' AS a, 2 AS b", &.{}, .{});
+    {
+        var rows = try db.query("SELECT x, y FROM `p.d.v`", &.{}, .{});
+        defer rows.deinit();
+        const row = (try rows.next()).?;
+        try testing.expectEqualStrings("one", row[0].string);
+        try testing.expectEqual(@as(i64, 2), row[1].int);
+    }
+
+    // The metadata keeps the names and types the view was created with.
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqualStrings("x", v.columns[0].name);
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, v.columns[0].type.typeKind());
+}
+
+test "a view whose column list no longer matches its query's columns is invalid" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v (x, y) AS SELECT * FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'one' AS a, 2 AS b, 3 AS c", &.{}, .{});
+
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT x, y FROM `p.d.v`", &.{}, .{}));
+    try testing.expectEqualStrings(
+        "Invalid view definition for d.v with 2 columns vs. 3 columns from view query",
+        db.lastError(),
+    );
+}
+
+test "translateOn translates a statement over a view whose table changed, as query would run it" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE VIEW d.w AS SELECT b FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS a", &.{}, .{});
+
+    const statements = try translateOn(db, arena, "SELECT a FROM `p.d.v`", .{});
+    try testing.expectEqual(@as(usize, 1), statements.len);
+
+    // A view that no longer analyzes reports BigQuery's reason, as query does.
+    try testing.expectError(error.AnalyzeFailed, translateOn(db, arena, "SELECT b FROM `p.d.w`", .{}));
+    try testing.expectEqualStrings("Unrecognized name: b; failed to parse view 'd.w'", db.lastError());
+}
+
+test "a table replaced inside a caller's transaction that rolls back keeps its old columns" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+
+    // As a load or copy job does: the driver runs inside a transaction its caller opened.
+    try db.beginTransaction();
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS b", &.{}, .{});
+    try db.rollbackTransaction();
+
+    const t = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("a", t.columns[0].name);
+    var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
+test "a table replaced inside a caller's transaction that commits keeps its new columns" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+
+    try db.beginTransaction();
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS b", &.{}, .{});
+    try db.commitTransaction();
+
+    const t = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("b", t.columns[0].name);
+    var rows = try db.query("SELECT b FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("x", (try rows.next()).?[0].string);
+}
+
+test "a connection holds one transaction at a time" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.beginTransaction();
+    try testing.expectError(error.ExecFailed, db.beginTransaction());
+    try db.rollbackTransaction();
+    try testing.expectError(error.ExecFailed, db.commitTransaction());
+    try testing.expectError(error.ExecFailed, db.rollbackTransaction());
+}
+
+test "a table created inside a caller's transaction that rolls back is gone from the catalog" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.existing AS SELECT 1 AS a", &.{}, .{});
+
+    try db.beginTransaction();
+    try db.exec("CREATE TABLE d.created AS SELECT 1 AS a", &.{}, .{});
+    try db.rollbackTransaction();
+
+    try testing.expect((try db.catalogTable(arena, "p", "d", "created")) == null);
+}
+
+test "a view refreshed inside a caller's transaction that rolls back is refreshed again" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT DATE '2024-01-01' AS d", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT d < '2024-06-01' AS early FROM d.t", &.{}, .{});
+    try db.exec(
+        "CREATE OR REPLACE TABLE d.t AS SELECT TIMESTAMP '2024-03-01 00:00:00 UTC' AS d",
+        &.{},
+        .{},
+    );
+
+    // The refresh reinstalls the SQLite view and records the view as fresh. The rollback
+    // restores the old SQLite view, translated for a DATE, so the catalog must not still call
+    // the view fresh.
+    try db.beginTransaction();
+    {
+        var rows = try db.query("SELECT early FROM `p.d.v`", &.{}, .{});
+        defer rows.deinit();
+        try testing.expectEqual(true, (try rows.next()).?[0].bool);
+    }
+    try db.rollbackTransaction();
+
+    var rows = try db.query("SELECT early FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(true, (try rows.next()).?[0].bool);
+}
+
+test "CREATE OR REPLACE VIEW creates a view that does not exist yet" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE OR REPLACE VIEW d.v AS SELECT 1 AS a", &.{}, .{});
+
+    var rows = try db.query("SELECT a FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
+test "CREATE VIEW IF NOT EXISTS over an existing view keeps the first definition" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE VIEW IF NOT EXISTS d.v AS SELECT 'x' AS a", &.{}, .{});
+
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqualStrings("SELECT a FROM d.t", v.source_sql);
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, v.columns[0].type.typeKind());
+    var rows = try db.query("SELECT a FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
+test "CREATE VIEW IF NOT EXISTS over an existing table leaves the table" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // recidiviz-bigquery-sandbox, 2026-10-19: a no-op, and the table keeps its type and schema.
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW IF NOT EXISTS d.t AS SELECT 'x' AS a", &.{}, .{});
+
+    const t = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expect(!t.is_view);
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, t.columns[0].type.typeKind());
+    var rows = try db.query("SELECT a FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 1), (try rows.next()).?[0].int);
+}
+
+test "a view with no dataset reports BigQuery's error once its query no longer analyzes" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW v AS SELECT b FROM t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE t AS SELECT 1 AS a", &.{}, .{});
+
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT * FROM v", &.{}, .{}));
+    try testing.expectEqualStrings("Unrecognized name: b; failed to parse view 'v'", db.lastError());
+}
+
+test "a view whose refresh fails for a reason other than analysis is refreshed again on its next use" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS a", &.{}, .{});
+
+    // A table where the view's SQLite view was makes reinstalling it fail in SQLite, not in
+    // analysis.
+    try db.rawExec("DROP VIEW `p_d_v`", &.{});
+    try db.rawExec("CREATE TABLE `p_d_v` (a TEXT)", &.{});
+    try testing.expectError(error.ExecFailed, db.query("SELECT a FROM `p.d.v`", &.{}, .{}));
+    try testing.expectEqualStrings("", (try db.catalogTable(arena, "p", "d", "v")).?.invalid_reason);
+
+    try db.rawExec("DROP TABLE `p_d_v`", &.{});
+    var rows = try db.query("SELECT CONCAT(a, 'y') FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("xy", (try rows.next()).?[0].string);
+}
+
+test "a savepoint's rollback keeps the error it rolls back, and does nothing once released" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
+
+    var rolled_back = try Db.Savepoint.begin(db, arena);
+    try db.exec("INSERT INTO d.t (a) VALUES (1)", &.{}, .{});
+    db.setLastError("the failure being rolled back");
+    rolled_back.rollback();
+    try testing.expectEqualStrings("the failure being rolled back", db.lastError());
+
+    // Something failing after a release leaves its own error, not "no such savepoint".
+    var released = try Db.Savepoint.begin(db, arena);
+    try released.release();
+    db.setLastError("a failure after the release");
+    released.rollback();
+    try testing.expectEqualStrings("a failure after the release", db.lastError());
+
+    var rows = try db.query("SELECT COUNT(*) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
+}
+
+test "a view over a dropped table does not block replacing an unrelated table" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    // BigQuery allows a view whose source is gone; it only fails when queried.
+    try db.exec("CREATE TABLE x.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW x.v AS SELECT a FROM x.t", &.{}, .{});
+    try db.exec("DROP TABLE x.t", &.{}, .{});
+
+    try db.exec("CREATE TABLE y.u AS SELECT 1 AS b", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE y.u AS SELECT 2 AS b", &.{}, .{});
+
+    var rows = try db.query("SELECT b FROM `p.y.u`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 2), (try rows.next()).?[0].int);
+}
+
+test "a view reads its table's new column types after the table is replaced" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS a", &.{}, .{});
+
+    var rows = try db.query("SELECT CONCAT(a, 'y') FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("xy", (try rows.next()).?[0].string);
+}
+
+test "a view's comparison follows its table's new column type" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    // The view's output schema is `early BOOL` before and after the replace,
+    // but the literal '2024-06-01' was coerced to a DATE when the view was
+    // translated.
+    // BigQuery re-analyzes the view per query and coerces it to a TIMESTAMP instead.
+    try db.exec("CREATE TABLE d.t AS SELECT DATE '2024-01-01' AS d", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT d < '2024-06-01' AS early FROM d.t", &.{}, .{});
+    try db.exec(
+        "CREATE OR REPLACE TABLE d.t AS SELECT TIMESTAMP '2024-03-01 00:00:00 UTC' AS d",
+        &.{},
+        .{},
+    );
+
+    var rows = try db.query("SELECT early FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(true, (try rows.next()).?[0].bool);
+}
+
+test "a view over a column its table's replacement dropped fails analysis" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT b FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT b FROM `p.d.v`", &.{}, .{}));
+    try testing.expectEqualStrings(
+        "Unrecognized name: b; failed to parse view 'd.v'",
+        db.lastError(),
+    );
+    // BigQuery fails every query through the view, not only those that read the lost column.
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT COUNT(*) FROM `p.d.v`", &.{}, .{}));
+}
+
+test "a view whose table is dropped fails with BigQuery's error, and works once it is back" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("DROP TABLE d.t", &.{}, .{});
+    try db.exec("CREATE TABLE d.unrelated AS SELECT 1 AS z", &.{}, .{});
+
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT a FROM `p.d.v`", &.{}, .{}));
+    try testing.expectEqualStrings(
+        "Not found: Table p:d.t was not found in location US",
+        db.lastError(),
+    );
+
+    // Recreated with a different type: the view analyzes again, against the new one.
+    try db.exec("CREATE TABLE d.t AS SELECT 'back' AS a", &.{}, .{});
+    var rows = try db.query("SELECT CONCAT(a, '!') FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("back!", (try rows.next()).?[0].string);
+}
+
+test "a view over a view follows a type change two levels down" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v1 AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE VIEW d.v2 AS SELECT a FROM d.v1", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS a", &.{}, .{});
+
+    var rows = try db.query("SELECT CONCAT(a, 'y') FROM `p.d.v2`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("xy", (try rows.next()).?[0].string);
+}
+
+test "a column added two levels down is visible through a view over a view on the first query" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v1 AS SELECT * FROM d.t", &.{}, .{});
+    try db.exec("CREATE VIEW d.v2 AS SELECT * FROM d.v1", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 1 AS a, 'new' AS c", &.{}, .{});
+
+    // `c` fails analysis before the transform names the views it scans, so the retry refreshes
+    // every stale view: it must refresh v2 as well as v1, not stop at v1's direct dependency.
+    var rows = try db.query("SELECT c FROM `p.d.v2`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("new", (try rows.next()).?[0].string);
+}
+
+test "a column added three levels down is visible through a chain of views on the first query" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v1 AS SELECT * FROM d.t", &.{}, .{});
+    try db.exec("CREATE VIEW d.v2 AS SELECT * FROM d.v1", &.{}, .{});
+    try db.exec("CREATE VIEW d.v3 AS SELECT * FROM d.v2", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 1 AS a, 'new' AS c", &.{}, .{});
+
+    var rows = try db.query("SELECT c FROM `p.d.v3`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("new", (try rows.next()).?[0].string);
+}
+
+test "a prepared statement sees a column added two levels down through a view over a view" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v1 AS SELECT * FROM d.t", &.{}, .{});
+    try db.exec("CREATE VIEW d.v2 AS SELECT * FROM d.v1", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 1 AS a, 'new' AS c", &.{}, .{});
+
+    var stmt = try db.prepare("SELECT c FROM `p.d.v2`", .{});
+    defer stmt.deinit();
+    try testing.expectEqualStrings("c", stmt.columns[0].name);
+}
+
+test "a view over a view that no longer analyzes reports the inner view's error" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a, 2 AS b", &.{}, .{});
+    try db.exec("CREATE VIEW d.v1 AS SELECT b FROM d.t", &.{}, .{});
+    try db.exec("CREATE VIEW d.v2 AS SELECT b FROM d.v1", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+
+    try testing.expectError(error.AnalyzeFailed, db.query("SELECT b FROM `p.d.v2`", &.{}, .{}));
+    try testing.expectEqualStrings(
+        "Unrecognized name: b; failed to parse view 'd.v1'",
+        db.lastError(),
+    );
+}
+
+test "a view keeps reporting the schema it was created with after its table changes" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS a", &.{}, .{});
+    {
+        // Refreshes the view.
+        var rows = try db.query("SELECT a FROM `p.d.v`", &.{}, .{});
+        defer rows.deinit();
+        try testing.expectEqualStrings("x", (try rows.next()).?[0].string);
+    }
+
+    // As BigQuery does: the metadata API and INFORMATION_SCHEMA keep the creation-time schema.
+    const v = (try db.catalogTable(arena, "p", "d", "v")).?;
+    try testing.expectEqual(pb.TypeKind.TYPE_INT64, v.columns[0].type.typeKind());
+    var rows = try db.query(
+        "SELECT data_type FROM d.INFORMATION_SCHEMA.COLUMNS WHERE table_name = 'v'",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    try testing.expectEqualStrings("INT64", (try rows.next()).?[0].string);
+}
+
+test "a refresh does not see a TEMP table named like the view's source" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    // The view names its source by the last segment alone, which the catalog also registers
+    // `p.d.t` under. Once `p.d.t` is gone, a TEMP table can take that name.
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM t", &.{}, .{});
+    try db.exec("DROP TABLE d.t", &.{}, .{});
+
+    // In BigQuery a view never reads a script's TEMP tables, so the view's source is still gone.
+    try testing.expectError(error.AnalyzeFailed, db.query(
+        \\CREATE TEMP TABLE t AS SELECT 'temp' AS a;
+        \\SELECT a FROM `p.d.v`
+    , &.{}, .{}));
+}
+
+test "re-materializing a table with the same columns refreshes no view over it" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    const refreshes_before = phase.count(.view_refresh);
+    // A view deploy materializes by dropping the table and letting a job recreate it.
+    try db.exec("DROP TABLE d.t", &.{}, .{});
+    try db.exec("CREATE TABLE d.t AS SELECT 2 AS a", &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 3 AS a", &.{}, .{});
+
+    var rows = try db.query("SELECT a FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 3), (try rows.next()).?[0].int);
+    try testing.expectEqual(refreshes_before, phase.count(.view_refresh));
+}
+
+test "a view that nothing reads is not refreshed until something does" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    const refreshes_before = phase.count(.view_refresh);
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS a", &.{}, .{});
+    try db.exec("CREATE TABLE d.other AS SELECT 1 AS z", &.{}, .{});
+    try testing.expectEqual(refreshes_before, phase.count(.view_refresh));
+
+    // Recreating the view replaces it outright; there is nothing left to refresh.
+    try db.exec("CREATE OR REPLACE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+    var rows = try db.query("SELECT CONCAT(a, 'y') FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("xy", (try rows.next()).?[0].string);
+    try testing.expectEqual(refreshes_before, phase.count(.view_refresh));
+}
+
+test "a refreshed view stays refreshed across connections to the same file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const db_path = try std.fmt.allocPrintSentinel(
+        arena,
+        ".zig-cache/tmp/{s}/refreshed.db",
+        .{tmp.sub_path},
+        0,
+    );
+
+    {
+        var db = try Db.open(testing.allocator, db_path);
+        defer db.close();
+        db.default_project = "p";
+        try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+        try db.exec("CREATE VIEW d.v AS SELECT a FROM d.t", &.{}, .{});
+        try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 'x' AS a", &.{}, .{});
+        var rows = try db.query("SELECT a FROM `p.d.v`", &.{}, .{});
+        defer rows.deinit();
+        try testing.expectEqualStrings("x", (try rows.next()).?[0].string);
+    }
+
+    var db = try Db.open(testing.allocator, db_path);
+    defer db.close();
+    db.default_project = "p";
+    const refreshes_before = phase.count(.view_refresh);
+    var rows = try db.query("SELECT CONCAT(a, 'y') FROM `p.d.v`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqualStrings("xy", (try rows.next()).?[0].string);
+    try testing.expectEqual(refreshes_before, phase.count(.view_refresh));
+}
+
+test "CREATE OR REPLACE TABLE AS SELECT without options clears the old table's" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec(
+        \\CREATE TABLE d.t (a INT64 OPTIONS(description='col a'))
+        \\CLUSTER BY a OPTIONS(description='table t')
+    , &.{}, .{});
+    try db.exec("CREATE OR REPLACE TABLE d.t AS SELECT 2 AS a", &.{}, .{});
+
+    const t = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("", t.description);
+    try testing.expectEqualStrings("", t.columns[0].description);
+    try testing.expectEqual(@as(usize, 0), t.clustering.len);
+    try testing.expectEqual(@as(usize, 0), t.options.len);
+}
+
+test "a table's metadata does not survive DROP TABLE and CREATE TABLE of the same name" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
+    try db.setTableMetadata(arena, "p", "d", "t", "{\"labels\":{\"team\":\"data\"}}");
+    try db.exec("DROP TABLE d.t", &.{}, .{});
+    try db.exec("CREATE TABLE d.t (a INT64)", &.{}, .{});
+
+    const t = (try db.catalogTable(arena, "p", "d", "t")).?;
+    try testing.expectEqualStrings("", t.metadata);
+}
+
+test "a failed CREATE OR REPLACE TABLE AS SELECT leaves no scratch table behind" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try db.exec("CREATE TABLE d.t AS SELECT 1 AS a", &.{}, .{});
+    try testing.expect(std.meta.isError(
+        db.exec("CREATE OR REPLACE TABLE d.t AS SELECT CAST('x' AS INT64) AS a", &.{}, .{}),
+    ));
+
+    try testing.expectEqual(@as(usize, 1), (try db.catalogTablesIn(arena, "p", "d")).len);
+    var rows = try db.query(
+        "SELECT COUNT(*) FROM d.INFORMATION_SCHEMA.TABLES WHERE table_name != 't'",
+        &.{},
+        .{},
+    );
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 0), (try rows.next()).?[0].int);
 }
 
 test "catalogTable answers only the path it was asked for" {
@@ -5088,6 +6536,48 @@ test "a MERGE reports the rows all of its WHEN clauses changed" {
             \\WHEN MATCHED THEN DELETE
         ),
     );
+}
+
+test "a MERGE that fails partway keeps none of its writes and does not block the next MERGE" {
+    var db = try Db.open(testing.allocator, ":memory:");
+    defer db.close();
+    db.default_project = "p";
+
+    try db.exec(
+        \\CREATE TABLE d.t (id INT64, n INT64);
+        \\CREATE TABLE d.s (id INT64, v STRING);
+        \\INSERT INTO d.t (id, n) VALUES (1, 1), (2, 2);
+        \\INSERT INTO d.s (id, v) VALUES (1, '5'), (3, 'not a number');
+    , &.{}, .{});
+    // The UPDATE for id 1 succeeds before the INSERT for id 3 fails.
+    try testing.expect(std.meta.isError(db.exec(
+        \\MERGE d.t T USING d.s S ON T.id = S.id
+        \\WHEN MATCHED THEN UPDATE SET n = CAST(S.v AS INT64)
+        \\WHEN NOT MATCHED THEN INSERT (id, n) VALUES (S.id, CAST(S.v AS INT64))
+    , &.{}, .{})));
+
+    {
+        var rows = try db.query("SELECT id, n FROM `p.d.t` ORDER BY id", &.{}, .{});
+        defer rows.deinit();
+        const first = (try rows.next()).?;
+        try testing.expectEqual(@as(i64, 1), first[0].int);
+        try testing.expectEqual(@as(i64, 1), first[1].int);
+        const second = (try rows.next()).?;
+        try testing.expectEqual(@as(i64, 2), second[0].int);
+        try testing.expectEqual(@as(i64, 2), second[1].int);
+        try testing.expect((try rows.next()) == null);
+    }
+
+    // The failed MERGE left no scratch table behind for the next one to collide with.
+    try db.exec("UPDATE d.s SET v = '3' WHERE id = 3", &.{}, .{});
+    try db.exec(
+        \\MERGE d.t T USING d.s S ON T.id = S.id
+        \\WHEN MATCHED THEN UPDATE SET n = CAST(S.v AS INT64)
+        \\WHEN NOT MATCHED THEN INSERT (id, n) VALUES (S.id, CAST(S.v AS INT64))
+    , &.{}, .{});
+    var rows = try db.query("SELECT SUM(n) FROM `p.d.t`", &.{}, .{});
+    defer rows.deinit();
+    try testing.expectEqual(@as(i64, 5 + 2 + 3), (try rows.next()).?[0].int);
 }
 
 test "a statement that is not DML reports its type and no row count" {

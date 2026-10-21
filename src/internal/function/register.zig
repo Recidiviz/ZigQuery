@@ -562,8 +562,6 @@ test "conditional functions" {
     ));
     try env.expectErrorMsg("IF: invalid argument num 2", "SELECT zigquery_if(1, 2)");
 
-    try env.expectInt(9, "SELECT zigquery_ifnull(NULL, 9)");
-    try env.expectInt(4, "SELECT zigquery_ifnull(4, 9)");
     try env.expectNullResult("SELECT zigquery_nullif(3, 3)");
     try env.expectInt(3, "SELECT zigquery_nullif(3, 4)");
     try env.expectNullResult("SELECT zigquery_nullif(NULL, 4)");
