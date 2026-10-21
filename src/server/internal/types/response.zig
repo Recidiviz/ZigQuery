@@ -379,7 +379,7 @@ test "multiple rows and a string totalRows" {
 test "date, timestamp and bytes renderings" {
     // TIMESTAMP is decimal Unix seconds; BYTES are base64.
     try expectResponse("SELECT DATE '2024-01-02' AS d, TIMESTAMP '2024-01-02 03:04:05' AS ts, b'ab' AS raw",
-        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"d","type":"DATE"},{"name":"ts","type":"TIMESTAMP"},{"name":"raw","type":"BYTES"}]},"rows":[{"f":[{"v":"2024-01-02"},{"v":"1704193445.0"},{"v":"YWI="}]}],"totalRows":"1","jobComplete":true}
+        \\{"jobReference":{"jobId":"<JOBID>","projectId":"test"},"schema":{"fields":[{"name":"d","type":"DATE"},{"name":"ts","type":"TIMESTAMP"},{"name":"raw","type":"BYTES"}]},"rows":[{"f":[{"v":"2024-01-02"},{"v":"1704164645.0"},{"v":"YWI="}]}],"totalRows":"1","jobComplete":true}
     );
 }
 
