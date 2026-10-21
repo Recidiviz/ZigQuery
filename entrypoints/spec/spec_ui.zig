@@ -168,11 +168,11 @@ fn renderResultsJson(arena: std.mem.Allocator, records: []const spec_run.Record)
     for (records, rows, 0..) |r, *row, i| {
         row.* = .{
             .index = i,
-            .spec = r.spec,
-            .desc = r.desc,
+            .spec = try validUtf8(arena, r.spec),
+            .desc = try validUtf8(arena, r.desc),
             .outcome = spec_run.bucket(r),
-            .detail = r.detail,
-            .unsupported_in_bigquery = r.unsupported_in_bigquery,
+            .detail = try validUtf8(arena, r.detail),
+            .unsupported_in_bigquery = try validUtf8Opt(arena, r.unsupported_in_bigquery),
             .stale = r.unsupported_stale,
         };
     }
@@ -180,19 +180,55 @@ fn renderResultsJson(arena: std.mem.Allocator, records: []const spec_run.Record)
 }
 
 fn renderCaseJson(arena: std.mem.Allocator, index: usize, r: spec_run.Record) ![]const u8 {
+    const setup_sql = try arena.alloc([]const u8, r.full.setup_sql.len);
+    for (r.full.setup_sql, setup_sql) |src, *dst| dst.* = try validUtf8(arena, src);
     return std.json.Stringify.valueAlloc(arena, Case{
         .index = index,
-        .spec = r.spec,
-        .desc = r.desc,
+        .spec = try validUtf8(arena, r.spec),
+        .desc = try validUtf8(arena, r.desc),
         .outcome = spec_run.bucket(r),
-        .detail = r.detail,
-        .unsupported_in_bigquery = r.unsupported_in_bigquery,
+        .detail = try validUtf8(arena, r.detail),
+        .unsupported_in_bigquery = try validUtf8Opt(arena, r.unsupported_in_bigquery),
         .stale = r.unsupported_stale,
-        .input_sql = r.full.input_sql,
-        .setup_sql = r.full.setup_sql,
-        .ast_text = r.full.ast_text,
-        .transformed_sql = r.full.transformed_sql,
-        .expected_text = r.full.expected_text,
-        .received_text = r.full.received_text,
+        .input_sql = try validUtf8(arena, r.full.input_sql),
+        .setup_sql = setup_sql,
+        .ast_text = try validUtf8(arena, r.full.ast_text),
+        .transformed_sql = try validUtf8(arena, r.full.transformed_sql),
+        .expected_text = try validUtf8(arena, r.full.expected_text),
+        .received_text = try validUtf8(arena, r.full.received_text),
     }, .{});
+}
+
+/// `std.json` writes a `[]const u8` that is not valid UTF-8 as an array of byte
+/// numbers, which `spec_ui.html` cannot render. A received value can hold a
+/// partial multi-byte character (e.g. a byte-wise substring), so every text field
+/// goes through here: each invalid byte becomes U+FFFD.
+fn validUtf8(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
+    if (std.unicode.utf8ValidateSlice(s)) return s;
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < s.len) {
+        const len = std.unicode.utf8ByteSequenceLength(s[i]) catch 0;
+        if (len != 0 and i + len <= s.len and std.unicode.utf8ValidateSlice(s[i..][0..len])) {
+            try out.appendSlice(arena, s[i..][0..len]);
+            i += len;
+        } else {
+            try out.appendSlice(arena, "\u{FFFD}");
+            i += 1;
+        }
+    }
+    return out.items;
+}
+
+fn validUtf8Opt(arena: std.mem.Allocator, s: ?[]const u8) !?[]const u8 {
+    return if (s) |v| try validUtf8(arena, v) else null;
+}
+
+test validUtf8 {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expectEqualStrings("row 0: σ", try validUtf8(a, "row 0: σ"));
+    try std.testing.expectEqualStrings("[\u{FFFD}, σ]", try validUtf8(a, "[\xcf, σ]"));
+    try std.testing.expectEqualStrings("ab\u{FFFD}", try validUtf8(a, "ab\xcf"));
 }
