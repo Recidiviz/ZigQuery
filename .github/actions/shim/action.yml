@@ -1,9 +1,9 @@
 name: googlesql shim
 description: >
-  Restore the googlesql shim's two build outputs for the current platform
-  from cache, building both with bazel only on a miss: the dynamic library
-  (for -Dshim-dylib, the dev/test/harness path) and the statically-linkable
-  relocatable object (for -Dshim-static-obj, what exe/server_exe use).
+  Restore the googlesql shim's two build outputs for the current platform from cache:
+  the dynamic library (for -Dshim-dylib, the dev/test/harness path) and the
+  statically-linkable relocatable object (for -Dshim-static-obj).
+  Never builds: the calling job must `needs:` a job that runs .github/workflows/shim.yml
 
 inputs:
   platform:
@@ -20,139 +20,22 @@ outputs:
   key:
     description: The content-addressed cache key that was used
     value: ${{ steps.vars.outputs.key }}
-  cache-hit:
-    description: "true when the shim came from cache"
-    value: ${{ steps.restore.outputs.cache-hit }}
 
 runs:
   using: composite
   steps:
-    # The shim is the single most expensive thing in this repo to build and
-    # among the least frequently changed, so it is keyed on its actual inputs
-    # rather than on the commit. Note `git rev-parse HEAD:<submodule>` reads
-    # the gitlink out of the tree — it does not need the submodule checked
-    # out, which is what lets the cache-hit path skip that 82 MB fetch.
     - id: vars
       shell: bash
-      run: |
-        set -euo pipefail
-        case "${{ inputs.platform }}" in
-          darwin-*) lib=libgooglesql_shim.dylib
-                    static_target=libgooglesql_shim_static_macos ;;
-          *)        lib=libgooglesql_shim.so
-                    static_target=libgooglesql_shim_static_linux ;;
-        esac
-        static_lib="$static_target.o"
-        if command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum "$@"; }
-        else sha() { shasum -a 256 "$@"; }; fi
+      run: '"$GITHUB_ACTION_PATH/../../scripts/shim-vars.sh" "${{ inputs.platform }}"'
 
-        key=$( { git rev-parse "HEAD:third_party/googlesql"
-                 sha shim/analyzer_shim.cc shim/shim.lds shim/BUILD.bazel \
-                     shim/shim_exports_macos.list \
-                     MODULE.bazel MODULE.bazel.lock .bazelrc .bazelversion
-                 echo "${{ inputs.platform }}"
-               } | sha | cut -c1-32 )
-
-        echo "lib=$lib"                                   >> "$GITHUB_OUTPUT"
-        echo "static_target=$static_target"                >> "$GITHUB_OUTPUT"
-        echo "static_lib=$static_lib"                      >> "$GITHUB_OUTPUT"
-        echo "path=dist/shim/$lib"                        >> "$GITHUB_OUTPUT"
-        echo "static-path=dist/shim/$static_lib"           >> "$GITHUB_OUTPUT"
-        echo "key=shim-${{ inputs.platform }}-$key"       >> "$GITHUB_OUTPUT"
-
-    - id: restore
-      uses: actions/cache@v4
+    - uses: actions/cache/restore@v4
       with:
         path: dist/shim
         key: ${{ steps.vars.outputs.key }}
-
-    # Everything below is the miss path only.
-    # googlesql has no submodules of its own, so this stays non-recursive.
-    # The shallow fetch needs the server to serve an arbitrary SHA (GitHub
-    # does); the fallback covers the case where it will not, rather than
-    # failing an hour-long job on a clone flag.
-    - if: steps.restore.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        git submodule update --init --depth 1 third_party/googlesql \
-          || git submodule update --init third_party/googlesql
-
-    # bazelisk-version is required, not optional: left empty this action uses
-    # a *pre-installed* bazelisk, which GitHub's images ship but RunsOn's
-    # ubuntu24-full does not — that is a `bazel: command not found` at the
-    # build step below. Bazelisk then reads .bazelversion (7.6.1) for the
-    # actual Bazel it fetches.
-    - if: steps.restore.outputs.cache-hit != 'true'
-      uses: bazel-contrib/setup-bazel@0.19.0
-      with:
-        bazelisk-version: "1.25.0"
-        bazelisk-cache: true
-        repository-cache: true
-        disk-cache: ${{ steps.vars.outputs.key }}
-
-    - if: steps.restore.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        # 70% of cores, not all of them. googlesql's generated sources
-        # (resolved_ast/*, the analyzer rewriters) are multi-GB compiles, and
-        # at full parallelism the box runs out of memory and the runner drops
-        # off mid-build — the same failure this tree already documents on a
-        # developer laptop, which is why .bazelrc pins --jobs=4 there.
-        #
-        # .bazelrc's pin is for that laptop and says so; the command line
-        # beats both rc files, which is the documented way to override it.
-        cores=$( (nproc 2>/dev/null || sysctl -n hw.ncpu) )
-        jobs=$(( cores * 7 / 10 ))
-        [ "$jobs" -lt 1 ] && jobs=1
-        echo "using $jobs of $cores cores"
-        if [ "${{ runner.os }}" = "Linux" ]; then
-          # .bazelrc applies --config=clang unconditionally; Bazel's default
-          # Linux toolchain would otherwise pick gcc and ignore those flags.
-          # Not assumed present: the runner image is not at parity with
-          # GitHub's, which is how the missing bazelisk above surfaced.
-          if ! command -v clang >/dev/null 2>&1; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq clang
-          fi
-          export CC=clang CXX=clang++
-        fi
-        if [ "${{ runner.os }}" = "macOS" ]; then
-          # BoringSSL (pulled in transitively by googlesql) ships its own
-          # openssl/*.h, and clang searches /usr/local/include by default on
-          # macOS. Homebrew's prefix is architecture-dependent — /usr/local on
-          # Intel, /opt/homebrew on Apple Silicon — so on an x64 runner the
-          # preinstalled OpenSSL 3 headers shadow BoringSSL's: crypto.h
-          # macro-defines OPENSSL_zalloc, BoringSSL declares it as a function,
-          # and the declaration stops parsing. arm64 never sees this.
-          #
-          # Moved rather than deleted, and only the headers: nothing in this
-          # build consumes system OpenSSL, and the runner is ephemeral.
-          if [ -d /usr/local/include/openssl ]; then
-            echo "shadowing system OpenSSL headers (Homebrew prefix clash)"
-            sudo rm -rf /usr/local/include/openssl.bazel-disabled
-            sudo mv /usr/local/include/openssl \
-                    /usr/local/include/openssl.bazel-disabled
-          fi
-        fi
-        bazel version
-        # Both outputs share SHIM_SRCS/SHIM_DEPS's compile actions, so one
-        # invocation building both is a modest increment over building
-        # either alone, not a second from-source build.
-        bazel build -c opt \
-          --jobs="$jobs" --local_resources=cpu="$jobs" \
-          "//shim:${{ steps.vars.outputs.lib }}" \
-          "//shim:${{ steps.vars.outputs.static_target }}"
-
-        mkdir -p dist/shim
-        cp -f "bazel-bin/shim/${{ steps.vars.outputs.lib }}" dist/shim/
-        cp -f "bazel-bin/shim/${{ steps.vars.outputs.static_lib }}" dist/shim/
-        # bazel-bin outputs are read-only; the cache save needs to be able to
-        # re-read and later overwrite these.
-        chmod u+w "dist/shim/${{ steps.vars.outputs.lib }}" \
-                  "dist/shim/${{ steps.vars.outputs.static_lib }}"
+        fail-on-cache-miss: true
 
     - shell: bash
       run: |
         set -euo pipefail
         ls -l "${{ steps.vars.outputs.path }}" "${{ steps.vars.outputs.static-path }}"
-        echo "shim: ${{ steps.vars.outputs.path }}, ${{ steps.vars.outputs.static-path }} (cache-hit=${{ steps.restore.outputs.cache-hit }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "shim: ${{ steps.vars.outputs.path }}, ${{ steps.vars.outputs.static-path }}" >> "$GITHUB_STEP_SUMMARY"

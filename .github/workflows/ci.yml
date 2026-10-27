@@ -19,21 +19,12 @@ env:
   ZIG_VERSION: "0.17.0-dev.2131+d08989840"
 
 jobs:
-  # Populates the shim cache once per run so the jobs below can never race
-  # into N simultaneous cold bazel builds. On a hit this is ~20s; the big
-  # runner only earns its keep on the miss path.
   shim:
     name: shim (linux-x64)
-    runs-on: runs-on=${{ github.run_id }}/runner=shim-x64/extras=s3-cache
-    outputs:
-      path: ${{ steps.shim.outputs.path }}
-    steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
-      - id: shim
-        uses: ./.github/actions/shim
-        with:
-          platform: linux-x64
+    uses: ./.github/workflows/shim.yml
+    with:
+      platform: linux-x64
+      runner: runs-on=${{ github.run_id }}/runner=shim-x64/extras=s3-cache
 
   # No shim: the ephor artifact is a standalone executable that never links
   # the engine module, and build.zig only treats the shim path as a string at
@@ -215,10 +206,19 @@ jobs:
   # Cross-arch breakage is cheap to catch here and expensive to discover at
   # tag time. Push-only: it needs its own arm64 shim, which is a second cold
   # bazel build the first time the submodule moves.
+  shim-arm64:
+    name: shim (linux-arm64)
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/shim.yml
+    with:
+      platform: linux-arm64
+      runner: runs-on=${{ github.run_id }}/runner=shim-arm64/extras=s3-cache
+
   build-arm64:
     name: build (linux-arm64)
     if: github.event_name == 'push'
-    runs-on: runs-on=${{ github.run_id }}/runner=shim-arm64/extras=s3-cache
+    needs: shim-arm64
+    runs-on: runs-on=${{ github.run_id }}/runner=zig-arm64/extras=s3-cache
     steps:
       - uses: runs-on/action@v2
       - uses: actions/checkout@v4

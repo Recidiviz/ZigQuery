@@ -47,8 +47,11 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
-  shim:
-    name: shim (${{ matrix.platform }})
+  # Builds into the cache only; everything after restores. Serialized per
+  # cache key with CI, so a tag cut while CI is building the same shim waits
+  # for it rather than starting a second cold build.
+  shim-build:
+    name: shim build (${{ matrix.platform }})
     needs: version
     strategy:
       fail-fast: false
@@ -69,6 +72,33 @@ jobs:
           #
           # Keeping a real x64 runner rather than cross-compiling means the
           # tarball is built and smoke-tested on the architecture it targets.
+          - platform: darwin-arm64
+            runner: zigquery-mac-build
+            runs_on_agent: false
+          - platform: darwin-x64
+            runner: zigquery-mac-build-x64
+            runs_on_agent: false
+    uses: ./.github/workflows/shim.yml
+    with:
+      platform: ${{ matrix.platform }}
+      runner: ${{ matrix.runner }}
+      runs_on_agent: ${{ matrix.runs_on_agent }}
+
+  shim:
+    name: shim (${{ matrix.platform }})
+    needs: [version, shim-build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
+            runs_on_agent: true
+          - platform: linux-arm64
+            runner: runs-on=${{ github.run_id }}/runner=zig-arm64/extras=s3-cache
+            runs_on_agent: true
+          # Same mac runners as shim-build: darwin restores from GitHub's
+          # cache, which a RunsOn runner (S3-backed) cannot see.
           - platform: darwin-arm64
             runner: zigquery-mac-build
             runs_on_agent: false
