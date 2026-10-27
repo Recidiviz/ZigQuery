@@ -20,11 +20,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  gsql-bench:
+  shim:
     if: >-
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'bench')
+    name: shim (linux-x64)
+    uses: ./.github/workflows/shim.yml
+    with:
+      platform: linux-x64
+      runner: runs-on=${{ github.run_id }}/runner=shim-x64/extras=s3-cache
+
+  gsql-bench:
     name: gsql-bench
+    needs: shim
     # bench-x64 is spot:false and pinned to one instance family on purpose —
     # a run that lands on different silicon, or gets reclaimed and retried
     # elsewhere, is not comparable with the history it is charted against.
