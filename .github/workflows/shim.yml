@@ -48,8 +48,13 @@ jobs:
       static-path: ${{ steps.vars.outputs.static-path }}
       key: ${{ steps.vars.outputs.key }}
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: vars
         run: .github/scripts/shim-vars.sh "${{ inputs.platform }}"
 
@@ -63,15 +68,20 @@ jobs:
       cancel-in-progress: false
       queue: max
     steps:
-      - uses: runs-on/action@v2
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
         if: inputs.runs_on_agent
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Restore and save are separate steps, rather than actions/cache's post
       # step, so the save is unmistakably inside the concurrency group: the
       # next waiter starts only once the entry exists.
       - id: restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: dist/shim
           key: ${{ needs.key.outputs.key }}
@@ -92,7 +102,7 @@ jobs:
       # build step below. Bazelisk then reads .bazelversion (7.6.1) for the
       # actual Bazel it fetches.
       - if: steps.restore.outputs.cache-hit != 'true'
-        uses: bazel-contrib/setup-bazel@0.19.0
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
         with:
           bazelisk-version: "1.25.0"
           bazelisk-cache: true
@@ -160,7 +170,7 @@ jobs:
                     "dist/shim/${{ needs.key.outputs.static_lib }}"
 
       - if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: dist/shim
           key: ${{ needs.key.outputs.key }}

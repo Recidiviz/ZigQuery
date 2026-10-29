@@ -33,8 +33,13 @@ jobs:
     name: ephor + fmt
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/zig
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -61,8 +66,13 @@ jobs:
     needs: shim
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: shim
         uses: ./.github/actions/shim
         with:
@@ -78,8 +88,13 @@ jobs:
     needs: shim
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: shim
         uses: ./.github/actions/shim
         with:
@@ -114,8 +129,13 @@ jobs:
     needs: shim
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: shim
         uses: ./.github/actions/shim
         with:
@@ -142,8 +162,13 @@ jobs:
     needs: shim
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: shim
         uses: ./.github/actions/shim
         with:
@@ -166,7 +191,7 @@ jobs:
           cp LICENSE NOTICE THIRD_PARTY_NOTICES "$ctx/dist/"
           docker build -f Dockerfile -t zigquery-emulator:ci "$ctx"
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           working-directory: test/python
           enable-cache: true
@@ -188,8 +213,13 @@ jobs:
     name: gen-proto drift
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/zig
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -220,8 +250,13 @@ jobs:
     needs: shim-arm64
     runs-on: runs-on=${{ github.run_id }}/runner=zig-arm64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: shim
         uses: ./.github/actions/shim
         with:
