@@ -25,8 +25,13 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       publish: ${{ steps.v.outputs.publish }}
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: v
         run: |
           set -euo pipefail
@@ -107,9 +112,14 @@ jobs:
             runs_on_agent: false
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: runs-on/action@v2
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
         if: matrix.runs_on_agent
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: shim
         uses: ./.github/actions/shim
         with:
@@ -151,7 +161,7 @@ jobs:
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: shim-dist-${{ matrix.platform }}
           path: |
@@ -180,9 +190,14 @@ jobs:
             runs_on_agent: false
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: runs-on/action@v2
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
         if: matrix.runs_on_agent
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: shim
         uses: ./.github/actions/shim
         with:
@@ -257,7 +272,7 @@ jobs:
           grep -q "\[bigquery-emulator\] REST server listening at 0.0.0.0:9050" server.log
           echo "banner OK"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist-${{ matrix.platform }}
           path: |
@@ -282,9 +297,14 @@ jobs:
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist-${{ matrix.platform }}
 
@@ -304,8 +324,8 @@ jobs:
           image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -315,7 +335,7 @@ jobs:
       # below. workflow_dispatch builds the image but exports nothing, which
       # keeps the dry run honest without publishing a tag.
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           platforms: ${{ matrix.docker_platform }}
@@ -333,7 +353,7 @@ jobs:
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: needs.version.outputs.publish == 'true'
         with:
           name: digest-${{ matrix.platform }}
@@ -346,14 +366,19 @@ jobs:
     if: needs.version.outputs.publish == 'true'
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/download-artifact@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: digest-*
           path: /tmp/digests
           merge-multiple: true
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -382,8 +407,13 @@ jobs:
     if: needs.version.outputs.publish == 'true'
     runs-on: runs-on=${{ github.run_id }}/runner=zig-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/download-artifact@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: dist-*
           path: artifacts
@@ -392,7 +422,7 @@ jobs:
       # match these. Same directory on purpose: the shim tarball then lands in
       # SHA256SUMS and in `files: artifacts/*.tar.gz` below with no further
       # changes.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: shim-dist-*
           path: artifacts
@@ -401,7 +431,7 @@ jobs:
           cd artifacts
           cat ./*.sha256 > SHA256SUMS
           ls -l
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.version.outputs.version }}
           generate_release_notes: true

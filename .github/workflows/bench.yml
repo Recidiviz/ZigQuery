@@ -38,8 +38,13 @@ jobs:
     # elsewhere, is not comparable with the history it is charted against.
     runs-on: runs-on=${{ github.run_id }}/runner=bench-x64/extras=s3-cache
     steps:
-      - uses: runs-on/action@v2
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: runs-on/action@284bff869d4a825f778ac7c38e50f1e31ef198fd # v2.6.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: shim
         uses: ./.github/actions/shim
         with:
@@ -67,7 +72,7 @@ jobs:
       # fail-on-alert stays false: on shared cloud hardware a hard gate here
       # would fire on noise, not regressions. The alert comment is the signal;
       # a real regression is confirmed by re-running or bisecting locally.
-      - uses: benchmark-action/github-action-benchmark@v1
+      - uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: gsql-bench (goccy/googlesqlite corpus)
           tool: customSmallerIsBetter
