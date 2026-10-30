@@ -3,10 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    # server-port is transitional: it carries all current work and master is
-    # ~73 commits behind it. Drop it from this list once it has been merged
-    # and the default branch is settled.
-    branches: [master, main, server-port]
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
